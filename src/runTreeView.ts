@@ -26,6 +26,12 @@ import { convergenceIconId, convergenceRowText, convergenceToCsv } from "./probl
 import { convergencePlotRecipe } from "./problemtype/convergencePlot";
 import { readConvergence } from "./problemtype/convergenceFile";
 import { monitorPlotRecipe, monitorRowText, monitorsToCsv } from "./problemtype/monitors";
+import { optimizationIconId, optimizationPlotRecipe, optimizationRowText } from "./problemtype/optimization/summaryLog";
+import { readOptimization } from "./problemtype/optimization/summaryLogFile";
+import { romIconId, romRowText, romSingularValuesRecipe, romStatus } from "./problemtype/rom/romResults";
+import { isRomCase, readRomResults } from "./problemtype/rom/romResultsFile";
+import { deliverToPreview } from "./previewSession";
+import { viewTypeForMesh } from "./meshExport";
 import { evaluateMonitors, readMonitors } from "./problemtype/monitorsFile";
 import { openPlotBuilder } from "./plotController";
 import {
@@ -117,6 +123,17 @@ class RunTreeProvider implements vscode.TreeDataProvider<Node> {
         label: convergenceRowText(r.progress.convergence),
         icon: convergenceIconId(r.progress.convergence),
       });
+    }
+    if (r.progress?.optimization) {
+      out.push({
+        kind: "detail",
+        label: optimizationRowText(r.progress.optimization),
+        icon: optimizationIconId(r.progress.optimization),
+      });
+    }
+    if (isRomCase(r.caseDir)) {
+      const status = romStatus(readRomResults(r.caseDir));
+      out.push({ kind: "detail", label: romRowText(status), icon: romIconId(status) });
     }
     const saved = readMonitors(r.meshFsPath).parsed.monitors.length;
     if (saved > 0) out.push({ kind: "detail", label: monitorRowText([], saved), icon: "dashboard" });
@@ -239,6 +256,64 @@ export function registerRunTreeView(runs: RunManager, context: vscode.ExtensionC
       const plot = convergencePlotRecipe(read.parsed.steps, title);
       openPlotBuilder(context, undefined, plot.recipe, title);
       for (const note of [...plot.notes, ...read.parsed.warnings]) void vscode.window.showWarningMessage(note);
+    }),
+    vscode.commands.registerCommand("kratos.runs.plotOptimization", (node?: Node) => {
+      if (node?.kind !== "run") return;
+      const read = readOptimization(node.record.caseDir);
+      if (!read.parsed || !read.info || read.parsed.rows.length === 0) {
+        void vscode.window.showInformationMessage(read.reason ?? "No optimization iterations have been written for this run yet.");
+        return;
+      }
+      const title = `Optimization — ${node.record.stem}`;
+      const plot = optimizationPlotRecipe(read.parsed, read.info, title);
+      openPlotBuilder(context, undefined, plot.recipe, title);
+      for (const note of [...plot.notes, ...read.parsed.warnings]) void vscode.window.showWarningMessage(note);
+    }),
+    vscode.commands.registerCommand("kratos.runs.openDesignFields", (node?: Node) => {
+      if (node?.kind !== "run") return;
+      const read = readOptimization(node.record.caseDir);
+      if (!read.info?.designFieldsFolder) {
+        void vscode.window.showInformationMessage(read.info ? "This optimization case writes no design fields (VTU output is off)." : (read.reason ?? "Not an optimization case."));
+        return;
+      }
+      void vscode.commands.executeCommand("kratos.vtk.openLatestResults", node.record.caseDir, {
+        excludeNewest: node.record.status !== "finished",
+        outputFolder: read.info.designFieldsFolder,
+      });
+    }),
+    vscode.commands.registerCommand("kratos.runs.plotSingularValues", (node?: Node) => {
+      if (node?.kind !== "run") return;
+      const results = readRomResults(node.record.caseDir);
+      if (!results.singularValues || results.singularValues.length === 0) {
+        void vscode.window.showInformationMessage(
+          isRomCase(node.record.caseDir)
+            ? "No singular values have been written yet (rom_data/SingularValuesVector.npy; the case writes them when \"Write singular values\" is on)."
+            : "Not a ROM case."
+        );
+        return;
+      }
+      const title = `Singular values — ${node.record.stem}`;
+      const plot = romSingularValuesRecipe(results.singularValues, results.modes, title);
+      openPlotBuilder(context, undefined, plot.recipe, title);
+      for (const note of [...plot.notes, ...results.warnings]) void vscode.window.showWarningMessage(note);
+    }),
+    vscode.commands.registerCommand("kratos.runs.showHromElements", async (node?: Node) => {
+      if (node?.kind !== "run") return;
+      const results = readRomResults(node.record.caseDir);
+      const elements = results.hromElements ?? [];
+      const conditions = results.hromConditions ?? [];
+      if (elements.length + conditions.length === 0) {
+        void vscode.window.showInformationMessage("No HROM elements have been selected yet (rom_data/HROM_ElementIds.npy is written by the HROM training).");
+        return;
+      }
+      // The ids are Kratos entity ids (HRomTrainingUtility maps its numpy
+      // indexes back through element.Id), so they select directly on the mesh.
+      deliverToPreview(node.record.meshFsPath, {
+        type: "selectionSeed",
+        name: "HROM",
+        kinds: { Elements: elements, Conditions: conditions },
+      });
+      await vscode.commands.executeCommand("vscode.openWith", vscode.Uri.file(node.record.meshFsPath), viewTypeForMesh(node.record.meshFsPath));
     }),
     vscode.commands.registerCommand("kratos.runs.exportMonitors", async (node?: Node) => {
       if (node?.kind !== "run") return;

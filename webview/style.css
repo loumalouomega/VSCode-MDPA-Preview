@@ -2166,6 +2166,7 @@ input.outline-label-input {
   #streamline-panel,
   #flow-panel,
   #link-panel,
+  #optimization-panel,
   #lighting-panel,
   #bookmarks-panel,
   #record-panel,
@@ -2198,7 +2199,7 @@ input.outline-label-input {
    out of the top of the viewport. The panels scroll internally
    (`overflow-y: auto`), so the lost height costs nothing but a scrollbar on a
    short window. */
-:is(#quality-panel, #export-report-panel, #meshsize-panel, #sphere-panel, #beam-panel, #integral-panel, #streamline-panel, #flow-panel, #link-panel, #inspect-panel, #selection-panel) {
+:is(#quality-panel, #export-report-panel, #meshsize-panel, #sphere-panel, #beam-panel, #integral-panel, #streamline-panel, #flow-panel, #link-panel, #optimization-panel, #inspect-panel, #selection-panel) {
   bottom: calc(var(--nav-rest, 8px) + var(--nav-height, 0px) + var(--ui-s-3));
 }
 
@@ -2950,7 +2951,8 @@ input.outline-label-input {
 #integral-panel,
 #streamline-panel,
 #flow-panel,
-#link-panel {
+#link-panel,
+#optimization-panel {
   position: absolute;
   top: 8px;
   left: 8px;
@@ -4383,8 +4385,48 @@ button.pt-preflight-row:hover,
    .meshsize-* rules the other three do not share. It is wider than the rest for
    the same reason: five numeric columns do not fit 300px. */
 #integral-panel,
-#flow-panel {
+#flow-panel,
+#optimization-panel {
   width: 420px;
+}
+
+/* Optimization progress (optimizationPanel.ts): two hand-drawn charts, a
+   legend and the newest summary rows. The canvas height is fixed here and
+   echoed by setupChartCanvas (CHART_H = 110). */
+#optimization-panel .opt-chart {
+  display: block;
+  width: 100%;
+  height: 110px;
+}
+#optimization-panel .opt-formulation {
+  font-weight: 600;
+  margin-bottom: var(--ui-s-1);
+}
+#optimization-panel .opt-verdict {
+  margin-bottom: var(--ui-s-1);
+}
+#optimization-panel .opt-warning {
+  color: var(--vscode-editorWarning-foreground, #cca700);
+}
+#optimization-panel .opt-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ui-s-1) var(--ui-s-3);
+  font-size: var(--ui-fs-label);
+}
+#optimization-panel .opt-legend > span {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ui-s-1);
+}
+#optimization-panel .opt-swatch {
+  display: inline-block;
+  width: 10px;
+  height: 3px;
+}
+#optimization-panel .opt-table-wrap {
+  max-height: 220px;
+  overflow: auto;
 }
 
 /* The streamline form is a stack of label + input rows, like the probe panel's

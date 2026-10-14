@@ -342,8 +342,11 @@ export function activate(context: vscode.ExtensionContext): void {
      */
     vscode.commands.registerCommand(
       "kratos.vtk.openLatestResults",
-      async (caseDir: string, opts?: { excludeNewest?: boolean }) => {
-        const outDir = path.join(caseDir, "vtk_output");
+      async (caseDir: string, opts?: { excludeNewest?: boolean; outputFolder?: string }) => {
+        // An optimization case writes its design fields elsewhere (the folder
+        // its optimization_parameters.json names); every other case uses vtk_output.
+        const folder = opts?.outputFolder ?? "vtk_output";
+        const outDir = path.join(caseDir, folder);
         let names: string[] = [];
         try {
           names = await fs.promises.readdir(outDir);
@@ -353,7 +356,7 @@ export function activate(context: vscode.ExtensionContext): void {
         const latest = latestResultFile(names, { excludeNewest: opts?.excludeNewest });
         if (!latest) {
           vscode.window.showInformationMessage(
-            "No results in vtk_output/ yet — run the case first (results appear as the solver writes steps)."
+            `No results in ${folder}/ yet — run the case first (results appear as the solver writes steps).`
           );
           return;
         }
@@ -448,6 +451,7 @@ export function activate(context: vscode.ExtensionContext): void {
         ["exportReport", "inspect the last export report"],
         ["flowBalance", "compute a flow balance"],
         ["linkPreviews", "link previews"],
+        ["optimizationProgress", "follow an optimization run"],
         ["compareSplit", "compare another mesh in a split pane"],
         ["dataTable", "open the data table"],
         ["lighting", "adjust lighting"],

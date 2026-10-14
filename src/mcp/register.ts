@@ -48,6 +48,8 @@ import {
   caseRun,
   caseStatus,
   caseConvergence,
+  caseOptimization,
+  caseRom,
   caseMonitors,
   caseStop,
   materialPresetList,
@@ -821,7 +823,7 @@ export function registerAllTools(server: McpServer): void {
     "problemtype_list",
     {
       description:
-        "List available Kratos problemtypes: the built-ins (structural, fluid, convection-diffusion, potential flow, shallow water) plus workspace-authored .js/.py problemtypes; load failures are reported per entry.",
+        "List available Kratos problemtypes: the built-ins (single-physics solids, fluids and thermal; coupled FSI/CHT/buoyancy/CoSimulation; the four ROM problemtypes that train reduced-order models with RomApplication; the Structural Optimization problemtype for OptimizationApplication; Flowgraph) plus workspace-authored .js/.py problemtypes, each with its family and domains; load failures are reported per entry.",
       inputSchema: { workspaceDirs: WORKSPACE_DIRS },
     },
     run(problemtypeList)
@@ -1066,6 +1068,36 @@ export function registerAllTools(server: McpServer): void {
       },
     },
     run(caseConvergence)
+  );
+
+  server.registerTool(
+    "case_optimization",
+    {
+      description:
+        "The progress of a Structural Optimization case (OptimizationApplication): the per-iteration summary the optimizer's ascii output process writes (the file named in the case's optimization_parameters.json, summary.csv by default), parsed with the reader the Kratos Runs row and the Optimization progress panel use. " +
+        "Returns the problem formulation, the objective's current value and change from its initial value, each constraint's value and standardized value (satisfied when <= 0; unknown when the column is absent), and a verdict: finished, stopped (the cooperative stop finalizes the run), running, incomplete (no end-of-file marker: killed or crashed) or no-data. " +
+        "`rows` is at most `limit` evenly spaced rows (default 200); `outputPath` ending in .csv writes every row. Read-only.",
+      inputSchema: {
+        meshPath: z.string().describe("Path to the mesh the case belongs to"),
+        limit: z.number().int().min(2).max(10000).optional().describe("Maximum rows returned (default 200)"),
+        outputPath: z.string().optional().describe("Write the full summary as .csv"),
+      },
+    },
+    run(caseOptimization)
+  );
+
+  server.registerTool(
+    "case_rom",
+    {
+      description:
+        "The results of a ROM case (RomApplication): the number of modes from rom_data/RomParameters.json, the singular-value decay, the HROM element and condition ids (Kratos entity ids), the sampled parameters (RomSamples.json), the per-analysis progress the generated driver records and its end summary (stopped runs leave a partial database). " +
+        "Lists are bounded by `limit` (default 200). Read-only.",
+      inputSchema: {
+        meshPath: z.string().describe("Path to the mesh the case belongs to"),
+        limit: z.number().int().min(2).max(10000).optional().describe("Maximum list lengths returned (default 200)"),
+      },
+    },
+    run(caseRom)
   );
 
   server.registerTool(

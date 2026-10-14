@@ -143,6 +143,7 @@ export const PANEL_IDS = [
   "bookmarks",
   "record",
   "link",
+  "optimization",
 ] as const;
 export type PanelId = (typeof PANEL_IDS)[number];
 

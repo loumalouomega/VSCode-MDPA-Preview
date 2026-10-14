@@ -10,6 +10,7 @@
  */
 
 import type { ConvergenceSummary } from "./convergence";
+import type { OptimizationSummary } from "./optimization/summaryLog";
 import { TIMELINE_EXTENSIONS } from "../parser/meshFormats";
 import { VtkFileGroup, fileFor, groupVtkFiles } from "../parser/vtkFileGroup";
 
@@ -45,6 +46,8 @@ export interface RunProgress {
   lastLine?: string;
   /** Read from the case's `kkss-convergence-v2.jsonl`, never from stdout. */
   convergence?: ConvergenceSummary;
+  /** Read from an optimization case's summary file (optimization_parameters.json names it). */
+  optimization?: OptimizationSummary;
 }
 
 /**

@@ -558,6 +558,11 @@
         "category": "%category.KratosMdpa%"
       },
       {
+        "command": "kratos.mdpa.optimizationProgress",
+        "title": "%command.kratos.mdpa.optimizationProgress.title%",
+        "category": "%category.KratosMdpa%"
+      },
+      {
         "command": "kratos.mdpa.flowBalance",
         "title": "%command.kratos.mdpa.flowBalance.title%",
         "category": "%category.KratosMdpa%"
@@ -696,6 +701,26 @@
       {
         "command": "kratos.runs.plotConvergence",
         "title": "%command.kratos.runs.plotConvergence.title%",
+        "category": "%category.KratosRuns%"
+      },
+      {
+        "command": "kratos.runs.plotOptimization",
+        "title": "%command.kratos.runs.plotOptimization.title%",
+        "category": "%category.KratosRuns%"
+      },
+      {
+        "command": "kratos.runs.openDesignFields",
+        "title": "%command.kratos.runs.openDesignFields.title%",
+        "category": "%category.KratosRuns%"
+      },
+      {
+        "command": "kratos.runs.plotSingularValues",
+        "title": "%command.kratos.runs.plotSingularValues.title%",
+        "category": "%category.KratosRuns%"
+      },
+      {
+        "command": "kratos.runs.showHromElements",
+        "title": "%command.kratos.runs.showHromElements.title%",
         "category": "%category.KratosRuns%"
       },
       {
@@ -1016,6 +1041,22 @@
           "when": "(view == kratos.runs || view == kratos.runsSidebar) && viewItem =~ /^kratosRun\\./"
         },
         {
+          "command": "kratos.runs.plotOptimization",
+          "when": "(view == kratos.runs || view == kratos.runsSidebar) && viewItem =~ /^kratosRun\\./"
+        },
+        {
+          "command": "kratos.runs.openDesignFields",
+          "when": "(view == kratos.runs || view == kratos.runsSidebar) && viewItem =~ /^kratosRun\\./"
+        },
+        {
+          "command": "kratos.runs.plotSingularValues",
+          "when": "(view == kratos.runs || view == kratos.runsSidebar) && viewItem =~ /^kratosRun\\./"
+        },
+        {
+          "command": "kratos.runs.showHromElements",
+          "when": "(view == kratos.runs || view == kratos.runsSidebar) && viewItem =~ /^kratosRun\\./"
+        },
+        {
           "command": "kratos.runs.exportMonitors",
           "when": "(view == kratos.runs || view == kratos.runsSidebar) && viewItem =~ /^kratosRun\\./"
         },
@@ -1080,6 +1121,22 @@
         },
         {
           "command": "kratos.runs.plotConvergence",
+          "when": "false"
+        },
+        {
+          "command": "kratos.runs.plotOptimization",
+          "when": "false"
+        },
+        {
+          "command": "kratos.runs.openDesignFields",
+          "when": "false"
+        },
+        {
+          "command": "kratos.runs.plotSingularValues",
+          "when": "false"
+        },
+        {
+          "command": "kratos.runs.showHromElements",
           "when": "false"
         },
         {

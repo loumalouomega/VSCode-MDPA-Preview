@@ -1,6 +1,7 @@
 import { discoverOutputs } from './problemtype/outputDiscovery';
 import { solverArgv } from './problemtype/threadControl';
 import { readConvergenceSummary } from './problemtype/convergenceFile';
+import { readOptimizationSummary } from './problemtype/optimization/summaryLogFile';
 /**
  * The run registry: the one place that knows which Kratos solves are in flight.
  *
@@ -460,8 +461,17 @@ export class RunManager implements vscode.Disposable {
     // Convergence comes from the script's own versioned records, never from
     // stdout; a case with no monitor file simply has no summary.
     const convergence = readConvergenceSummary(record.caseDir, record.status);
-    const { convergence: _stale, ...rest } = record.progress ?? {};
-    record.progress = { ...rest, fileCount: outputs.results.length, stepLabel: latest?.step, ...(convergence ? { convergence } : {}) };
+    // An optimization case reports its iterations through the summary file
+    // its optimization_parameters.json names; any other case has none.
+    const optimization = readOptimizationSummary(record.caseDir, record.status);
+    const { convergence: _stale, optimization: _staleOptimization, ...rest } = record.progress ?? {};
+    record.progress = {
+      ...rest,
+      fileCount: outputs.results.length,
+      stepLabel: latest?.step,
+      ...(convergence ? { convergence } : {}),
+      ...(optimization ? { optimization } : {}),
+    };
   }
 
   private disposeWatcher(id: string): void {
