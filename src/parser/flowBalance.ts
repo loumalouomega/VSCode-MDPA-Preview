@@ -836,8 +836,12 @@ export async function flowBalanceSeries(
     const step = steps[i];
     opts.onProgress?.(i, steps.length, step.label);
     try {
-      rows.push({ label: step.label, frameIndex: step.frameIndex, result: flowBalance(await step.load(), spec) });
+      rows.push({ label: step.label, frameIndex: step.frameIndex, result: flowBalance(await step.load(opts.signal), spec) });
     } catch (err) {
+      if (opts.signal?.aborted && err instanceof Error && err.message === "cancelled") {
+        cancelled = true;
+        break;
+      }
       rows.push({ label: step.label, frameIndex: step.frameIndex, error: err instanceof Error ? err.message : String(err) });
     }
   }

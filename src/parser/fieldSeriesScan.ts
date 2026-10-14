@@ -77,8 +77,15 @@ export async function collectFieldSeries(
 
     let sample: FieldSample | SampleMiss;
     try {
-      sample = sampleFieldAt(await step.load(), spec);
+      sample = sampleFieldAt(await step.load(opts.signal), spec);
     } catch (err) {
+      if (opts.signal?.aborted && err instanceof Error && err.message === "cancelled") {
+        // The read was cut mid-step: forget this step rather than record an error.
+        series.labels.pop();
+        series.frameIndices.pop();
+        series.cancelled = true;
+        break;
+      }
       series.errors.push({
         label: step.label,
         message: err instanceof Error ? err.message : String(err),
@@ -158,7 +165,7 @@ export function stepsFromGroup(group: VtkFileGroup, dir: string, rank: number): 
     path: fsPath,
     label,
     frameIndex,
-    load: async () => { const model = await parseMeshFile(fsPath); model.subModelParts = await mergeSubparts(model,group,dir,rank,label,group.rootPrefix); return model; },
+    load: async (signal) => { const model = await parseMeshFile(fsPath, undefined, signal ? { signal } : undefined); model.subModelParts = await mergeSubparts(model,group,dir,rank,label,group.rootPrefix); return model; },
   }));
 }
 
@@ -247,7 +254,7 @@ export function stepsFromInFile(fsPath: string, timeValues: number[]): SeriesSte
     path: fsPath,
     label: String(t),
     frameIndex: i,
-    load: () => parseMeshFile(fsPath, undefined, { timeStep: i }),
+    load: (signal) => parseMeshFile(fsPath, undefined, { timeStep: i, signal }),
   }));
 }
 
@@ -340,7 +347,7 @@ export async function discoverSeriesSteps(
   // Not a series at all — one step, so the caller gets one honest point rather
   // than an error it has to special-case.
   return {
-    steps: [{ path: abs, label: "", frameIndex: 0, load: () => parseMeshFile(abs) }],
+    steps: [{ path: abs, label: "", frameIndex: 0, load: (signal) => parseMeshFile(abs, undefined, signal ? { signal } : undefined) }],
     source: "single",
   };
 }

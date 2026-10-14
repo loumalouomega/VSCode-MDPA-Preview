@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- **Cancellable in-flight series step reads** (roadmap item 2): `SeriesStep.load(signal?)` forwards the signal to `parseMeshFile`, so cancelling `mesh_field_series`, `mesh_flow_balance`, `mesh_probe` or a viewer series scan cuts a meshio++ read in the middle of a step instead of waiting for it; the cut step is dropped, not recorded as an error.
 - **Tensor-component and heat-flux plot presets** (roadmap item 9): `plot_preset` gains `tensorComponents` (one history curve per component index of a tensor/vector field for a SubModelPart, named by index only — no Voigt order or invariant is inferred) and `heatFluxBalance` (flux of a supplied nodal heat-flux vector through boundary SubModelParts, positive out of the domain; no conductivity or gradient is inferred).
 - **Pressure-drop unit conversion for plots** (roadmap item 9): a `boundaryMean` or `mean` region source (and the `sectionComparison` preset / MCP `plot_preset`) accepts an explicit `pressureDensity` (kg/m³) for a field recording SI kinematic pressure (m²/s²) and reports it in Pa, so two sections subtract into a pressure drop. The density is never inferred; unknown, already-physical or non-pressure fields and other operations are refused by name.
 
