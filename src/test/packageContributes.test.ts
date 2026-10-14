@@ -91,7 +91,9 @@ test("every command the welcome view links to is declared", () => {
   const welcome = contributes.viewsWelcome.find((w: any) => w.view === "kratos.start");
   assert.ok(welcome, "the start view has no welcome content, so it renders empty");
 
-  const linked = [...String(welcome.contents).matchAll(/\(command:([^)]+)\)/g)].map((m) => m[1]);
+  const nlsText = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "..", "package.nls.json"), "utf8"));
+  const contents = String(welcome.contents).replace(/^%(.+)%$/, (_m: string, k: string) => nlsText[k] ?? "");
+  const linked = [...contents.matchAll(/\(command:([^)]+)\)/g)].map((m) => m[1]);
   assert.ok(linked.length > 0, "no command links in the welcome content");
   for (const cmd of linked) {
     assert.ok(declared.has(cmd), `${cmd} is linked but not in contributes.commands`);
