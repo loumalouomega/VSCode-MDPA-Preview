@@ -112,6 +112,8 @@ export interface MenuMessage {
   to?: string;
   overwrite?: boolean;
   file?: string;
+  /** Command-line `loadProblem`: folder to extract into. */
+  into?: string;
   /**
    * meshio++ writer key forcing an ambiguous extension's flavour — `gmsh` /
    * `ansys` / `freefem` for `.msh`, `abaqus` / `ansysinp` for `.inp`
@@ -162,17 +164,17 @@ export async function runMenu(
     return false;
   }
   if (msg.type === "menuLoadProblem") {
-    await loadProblem();
+    await loadProblem({ file: msg.file, into: msg.into });
     return false;
   }
   const ctx = getCtx();
   if (!ctx) return false;
   if (msg.type === "menuSave") return saveMesh(ctx, extContext);
-  else if (msg.type === "menuSaveAs") await saveMeshAs(ctx);
+  else if (msg.type === "menuSaveAs") await saveMeshAs(ctx, msg.to, msg.overwrite);
   else if (msg.type === "menuExport") await exportMesh(ctx, msg.format ?? "", msg.outputFormat, msg.to, msg.overwrite);
   else if (msg.type === "menuExportPart")
     await exportSubModelPart(ctx, msg.format ?? "", msg.path ?? "", msg.outputFormat, msg.to, msg.overwrite);
-  else if (msg.type === "menuExportSkin") await exportSkin(ctx, msg.format ?? "", msg.outputFormat);
+  else if (msg.type === "menuExportSkin") await exportSkin(ctx, msg.format ?? "", msg.outputFormat, msg.to, msg.overwrite);
   else if (msg.type === "menuExportDerived") await exportDerived(ctx, msg.derive, msg.format, msg.outputFormat);
   else if (msg.type === "menuExportSelection") await exportSelection(ctx, msg.selection, msg.format, msg.outputFormat);
   else if (msg.type === "menuExportPartitions") await exportPartitions(ctx);
@@ -617,13 +619,17 @@ async function saveOpenFoamInPlace(ctx: ExportContext, extContext: vscode.Extens
 }
 
 /** Save As… — write the source format to a user-chosen path. */
-export async function saveMeshAs(ctx: ExportContext): Promise<boolean> {
+export async function saveMeshAs(ctx: ExportContext, to?: string, overwrite?: boolean): Promise<boolean> {
   const ext = meshExtname(ctx.fsPath);
   // Not .foam: its default filename would be the source path itself, so one
   // click would land back on the case the guards above just refused. Export
   // still offers .foam, where the destination is a conscious choice.
   const targetExt: ExportableExtension =
     isExportableExtension(ext) && ext !== ".foam" ? ext : ".vtu";
+  if (to) {
+    const file = resolveDestination(to, path.dirname(ctx.fsPath), targetExt, overwrite);
+    return file ? serializeToPath(ctx, file, targetExt) : false;
+  }
   const stem = meshStem(ctx.fsPath);
   const dest = await vscode.window.showSaveDialog({
     defaultUri: vscode.Uri.file(path.join(path.dirname(ctx.fsPath), `${stem}${targetExt}`)),
@@ -804,7 +810,9 @@ export async function exportSelection(
 export async function exportSkin(
   ctx: ExportContext,
   targetExt?: string,
-  outputFormat?: string
+  outputFormat?: string,
+  to?: string,
+  overwrite?: boolean
 ): Promise<void> {
   let ext = targetExt?.toLowerCase();
   if (!ext) {
@@ -827,6 +835,11 @@ export async function exportSkin(
   const { model: skin, faces } = extractSkinModel(ctx.model);
   if (faces === 0) {
     vscode.window.showWarningMessage("No surface or volume cells to take a skin from.");
+    return;
+  }
+  if (to) {
+    const file = resolveDestination(to, path.dirname(ctx.fsPath), ext, overwrite);
+    if (file) await serializeModelToPath(skin, file, ext, undefined, flavour, { ops: ctx.ops, sourceFile: ctx.fsPath, reportSink: ctx.reportSink });
     return;
   }
   const stem = path.basename(ctx.fsPath, path.extname(ctx.fsPath));

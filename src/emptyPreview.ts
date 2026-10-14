@@ -752,7 +752,7 @@ function attachEmptyPanel(
       return;
     }
     if (msg?.type === "menuLoadProblem") {
-      const opened = await loadProblem({ open: false });
+      const opened = await loadProblem({ open: false, file: typeof msg.file === "string" ? msg.file : undefined, into: typeof msg.into === "string" ? msg.into : undefined });
       if (!opened) return;
       await bindPickedFile(opened.fsPath, "initial");
       return;
