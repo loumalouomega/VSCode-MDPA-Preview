@@ -4,6 +4,12 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Tensor-invariant plot preset** (roadmap item 9): `plot_preset` gains `tensorInvariants` (and a Presets-selector entry in the Plots pane): trace, hydrostatic, von Mises, J2, deviatoric norm, principal max/mid/min and maximum shear of a tensor field, over time, for a SubModelPart. The component layout is **required and never inferred** — `"full3x3"`, `"full2x2"` or explicit `{xx, yy, zz?, xy, yz?, xz?}` indices for a Voigt-style order — with optional engineering-shear halving; missing zz/yz/xz are taken as zero and disclosed, a non-finite row is a gap (never 0), and a layout/width mismatch is refused by name. Regional `mean`/`min`/`max` sources take the same `tensor` spec. Frame invariance, uniaxial, pure-shear and hydrostatic known values are tested (`plotTensor.test.ts`).
+
 ## [5.10.0] - 2026-10-14
 
 ### Added

@@ -1,3 +1,4 @@
+import { validateTensorSpec } from "./tensorInvariants";
 import { PLOT_FAMILIES, REGION_OPERATIONS, PlotRecipe, PlotSource, PlotTransform } from "./types";
 import { PLOT_MAX_ROWS } from "./importTable";
 
@@ -52,6 +53,12 @@ export function validatePlotRecipe(value: unknown): PlotRecipe {
     if (s.type === "region") {
       requireValue(REGION_OPERATIONS.includes(s.operation) && ["current", "history"].includes(s.scope), "Choose a region operation and scope.");
       requireValue(s.component === undefined || s.component === "magnitude" || (Number.isInteger(s.component) && s.component >= 0 && s.component < 32), "Invalid region component.");
+      if (s.tensor !== undefined) {
+        requireValue(["mean", "min", "max"].includes(s.operation), "Tensor invariants apply to mean, min and max only.");
+        requireValue(s.component === undefined, "Choose either a component or a tensor invariant, not both.");
+        const problem = validateTensorSpec(s.tensor);
+        requireValue(problem === undefined, problem ?? "");
+      }
       requireValue(s.orientation === undefined || ["outward", "winding"].includes(s.orientation), "Invalid boundary orientation.");
       requireValue(s.boundary === undefined || ["conditions", "exterior"].includes(s.boundary), "Invalid boundary source.");
       if (s.boundary === "exterior") {
@@ -137,7 +144,7 @@ export function emptyPlotRecipe(source?: PlotSource): PlotRecipe {
 export const PLOT_CAPABILITIES = {
   version: 1, families: PLOT_FAMILIES, sources: ["table", "inline", "mesh", "history", "probe", "region"],
   regionOperations: REGION_OPERATIONS,
-  presets: [{ id: "sectionComparison", label: "Section comparison over time" }, { id: "volumeTotal", label: "Measure-weighted total of an Elemental field" }, { id: "tensorComponents", label: "Components of a tensor/vector field over time" }, { id: "heatFluxBalance", label: "Heat-flux balance through boundary sections" }, { id: "tableRelationship", label: "Table column relationship" }],
+  presets: [{ id: "sectionComparison", label: "Section comparison over time" }, { id: "volumeTotal", label: "Measure-weighted total of an Elemental field" }, { id: "tensorComponents", label: "Components of a tensor/vector field over time" }, { id: "tensorInvariants", label: "Tensor invariants (von Mises, principal) from a supplied layout" }, { id: "heatFluxBalance", label: "Heat-flux balance through boundary sections" }, { id: "tableRelationship", label: "Table column relationship" }],
   thresholdCheck: "plot_preset threshold: user-supplied limit and direction on an evaluated curve; equality is not a violation and gaps are counted separately, never passed or failed",
   exteriorBoundary: "boundary: \"exterior\" integrates over faces owned by exactly one Element of the region (Nodal fields, outward normals); faces shared with an Element outside the region are excluded and reported, never assigned to a side",
   transforms: ["smooth", "regression", "derivative", "integral", "normalize", "convert"] as PlotTransform["op"][],
