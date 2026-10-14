@@ -14,6 +14,8 @@ export interface SectionComparisonParams {
   component?: number | "magnitude";
   /** Explicit physical times (one per frame); without them the axis is a step label, not time. */
   times?: number[]; timeUnit?: string;
+  /** kg/m³; converts a field recording SI kinematic pressure (m²/s²) to Pa so the sections can be subtracted. Never inferred. */
+  pressureDensity?: number;
 }
 export interface TableRelationshipParams {
   /** `x`/`y` are the importer's column ids (`c0`, `c1`, … in file order; see plot_table_read). */
@@ -29,7 +31,7 @@ export function sectionComparisonPreset(p: SectionComparisonParams): PlotRecipe 
   const recipe = emptyPlotRecipe();
   const operation = p.operation ?? "boundaryMean";
   p.sections.forEach((section, i) => {
-    const source: PlotRegionSource = { id: `section:${i}`, type: "region", path: p.path, kind: p.kind ?? "Nodal", variable: p.variable, submodelpart: section, scope: "history", operation, ...(p.component !== undefined ? { component: p.component } : {}), ...(p.times ? { times: p.times } : {}), ...(p.timeUnit ? { timeUnit: p.timeUnit } : {}) };
+    const source: PlotRegionSource = { id: `section:${i}`, type: "region", path: p.path, kind: p.kind ?? "Nodal", variable: p.variable, submodelpart: section, scope: "history", operation, ...(p.component !== undefined ? { component: p.component } : {}), ...(p.pressureDensity !== undefined ? { pressureDensity: p.pressureDensity } : {}), ...(p.times ? { times: p.times } : {}), ...(p.timeUnit ? { timeUnit: p.timeUnit } : {}) };
     recipe.sources.push(source);
     const spec: PlotSeriesSpec = { id: `curve:${source.id}`, source: source.id, name: `${p.variable} · ${section}`, x: "time", y: "v0", color: COLORS[i % COLORS.length] };
     recipe.series.push(spec);
@@ -70,6 +72,56 @@ export function volumeTotalPreset(p: VolumeTotalParams): PlotRecipe {
   });
   recipe.presentation.family = scope === "history" ? "line" : "bar";
   recipe.presentation.title = `${p.variable} measure-weighted total`;
+  return validatePlotRecipe(recipe);
+}
+
+export interface TensorComponentsParams {
+  path: string; variable: string; kind?: FieldBlockKind;
+  /** SubModelPart whose entities (mean) or boundary (boundaryMean) are sampled. */
+  submodelpart: string;
+  operation?: "mean" | "boundaryMean";
+  /** Component indices to plot (row-major as stored). Give these or `width`. */
+  components?: number[];
+  /** Field width: plots components 0..width-1. */
+  width?: number;
+  times?: number[]; timeUnit?: string;
+}
+/** One curve per supplied component of a tensor (or any vector) field over time. Components are named by index only: the file does not state a Voigt order, so no stress/strain meaning is inferred. */
+export function tensorComponentsPreset(p: TensorComponentsParams): PlotRecipe {
+  const comps = p.components ?? (p.width !== undefined ? Array.from({ length: p.width }, (_, i) => i) : undefined);
+  if (!p.submodelpart) throw new Error("Choose the SubModelPart to sample.");
+  if (!comps || comps.length < 1 || !comps.every(c => Number.isInteger(c) && c >= 0 && c < 9) || new Set(comps).size !== comps.length) throw new Error("Give distinct component indices (0-8) or a field width of 1-9.");
+  const recipe = emptyPlotRecipe();
+  const operation = p.operation ?? "mean";
+  comps.forEach((component, i) => {
+    const source: PlotRegionSource = { id: `component:${component}`, type: "region", path: p.path, kind: p.kind ?? "Nodal", variable: p.variable, submodelpart: p.submodelpart, scope: "history", operation, component, ...(p.times ? { times: p.times } : {}), ...(p.timeUnit ? { timeUnit: p.timeUnit } : {}) };
+    recipe.sources.push(source);
+    recipe.series.push({ id: `curve:${source.id}`, source: source.id, name: `${p.variable} [${component}] · ${p.submodelpart}`, x: "time", y: "v0", color: COLORS[i % COLORS.length] });
+  });
+  recipe.presentation.title = `${p.variable} components: ${p.submodelpart}`;
+  return validatePlotRecipe(recipe);
+}
+
+export interface HeatFluxBalanceParams {
+  path: string;
+  /** A supplied 2/3-component Nodal heat-flux vector field. */
+  variable: string;
+  /** Boundary SubModelParts, one curve each; at least one. */
+  sections: string[];
+  orientation?: "outward" | "winding";
+  thickness?: number;
+  times?: number[]; timeUnit?: string;
+}
+/** Flux of a supplied nodal heat-flux vector through boundary SubModelParts over time. Positive is out of the domain (outward normals); no conductivity or temperature gradient is used or inferred. */
+export function heatFluxBalancePreset(p: HeatFluxBalanceParams): PlotRecipe {
+  if (!Array.isArray(p.sections) || p.sections.length < 1 || new Set(p.sections).size !== p.sections.length) throw new Error("Heat-flux balance needs at least one distinct boundary SubModelPart.");
+  const recipe = emptyPlotRecipe();
+  p.sections.forEach((section, i) => {
+    const source: PlotRegionSource = { id: `flux:${i}`, type: "region", path: p.path, kind: "Nodal", variable: p.variable, submodelpart: section, scope: "history", operation: "flux", ...(p.orientation ? { orientation: p.orientation } : {}), ...(p.thickness !== undefined ? { thickness: p.thickness } : {}), ...(p.times ? { times: p.times } : {}), ...(p.timeUnit ? { timeUnit: p.timeUnit } : {}) };
+    recipe.sources.push(source);
+    recipe.series.push({ id: `curve:${source.id}`, source: source.id, name: `${p.variable} flux · ${section}`, x: "time", y: "v0", color: COLORS[i % COLORS.length] });
+  });
+  recipe.presentation.title = `${p.variable} flux: ${p.sections.join(", ")}`;
   return validatePlotRecipe(recipe);
 }
 
@@ -129,14 +181,18 @@ export function checkThreshold(series: Pick<PlotSeriesData, "id" | "points">, li
 }
 
 export const PLOT_PRESETS = [
-  { id: "sectionComparison", label: "Section comparison over time", params: ["path", "variable", "sections", "kind?", "operation?", "component?", "times?", "timeUnit?"] },
+  { id: "sectionComparison", label: "Section comparison over time", params: ["path", "variable", "sections", "kind?", "operation?", "component?", "pressureDensity?", "times?", "timeUnit?"] },
   { id: "volumeTotal", label: "Measure-weighted total of an Elemental field", params: ["path", "variable", "regions?", "scope?", "times?", "timeUnit?"] },
+  { id: "tensorComponents", label: "Components of a tensor/vector field over time", params: ["path", "variable", "submodelpart", "components?", "width?", "kind?", "operation?", "times?", "timeUnit?"] },
+  { id: "heatFluxBalance", label: "Heat-flux balance through boundary sections", params: ["path", "variable", "sections", "orientation?", "thickness?", "times?", "timeUnit?"] },
   { id: "tableRelationship", label: "Table column relationship", params: ["path", "x", "y", "units?", "family?", "xLabel?", "yLabel?"] },
 ] as const;
 export type PlotPresetId = typeof PLOT_PRESETS[number]["id"];
 export function buildPlotPreset(id: string, params: any): PlotRecipe {
   if (id === "sectionComparison") return sectionComparisonPreset(params);
   if (id === "volumeTotal") return volumeTotalPreset(params);
+  if (id === "tensorComponents") return tensorComponentsPreset(params);
+  if (id === "heatFluxBalance") return heatFluxBalancePreset(params);
   if (id === "tableRelationship") return tableRelationshipPreset(params);
   throw new Error(`Unknown plot preset ${id}; available: ${PLOT_PRESETS.map(p => p.id).join(", ")}.`);
 }

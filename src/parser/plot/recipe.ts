@@ -62,6 +62,7 @@ export function validatePlotRecipe(value: unknown): PlotRecipe {
       requireValue(s.referencePoint === undefined || (Array.isArray(s.referencePoint) && s.referencePoint.length === 3 && s.referencePoint.every(number)), "Moment reference point needs finite XYZ coordinates.");
       for (const key of ["thickness", "pressureDensity"]) requireValue(s[key] === undefined || (number(s[key]) && s[key] > 0), `${key} must be finite and positive.`);
       requireValue(s.pressureOffset === undefined || number(s.pressureOffset), "Pressure offset must be finite.");
+      requireValue(s.pressureDensity === undefined || ["boundaryMean", "mean", "pressureForce", "pressureMoment"].includes(s.operation), "Pressure density applies only to pressure loads and mean values.");
       if (s.operation === "measureIntegral") {
         requireValue(s.kind === "Elemental", "Measure-weighted totals read an Elemental field.");
         for (const key of ["boundary", "orientation", "thickness", "pressureOffset", "pressureDensity", "referencePoint"]) requireValue(s[key] === undefined, `${key} does not apply to a measure-weighted total.`);
@@ -136,7 +137,7 @@ export function emptyPlotRecipe(source?: PlotSource): PlotRecipe {
 export const PLOT_CAPABILITIES = {
   version: 1, families: PLOT_FAMILIES, sources: ["table", "inline", "mesh", "history", "probe", "region"],
   regionOperations: REGION_OPERATIONS,
-  presets: [{ id: "sectionComparison", label: "Section comparison over time" }, { id: "volumeTotal", label: "Measure-weighted total of an Elemental field" }, { id: "tableRelationship", label: "Table column relationship" }],
+  presets: [{ id: "sectionComparison", label: "Section comparison over time" }, { id: "volumeTotal", label: "Measure-weighted total of an Elemental field" }, { id: "tensorComponents", label: "Components of a tensor/vector field over time" }, { id: "heatFluxBalance", label: "Heat-flux balance through boundary sections" }, { id: "tableRelationship", label: "Table column relationship" }],
   thresholdCheck: "plot_preset threshold: user-supplied limit and direction on an evaluated curve; equality is not a violation and gaps are counted separately, never passed or failed",
   exteriorBoundary: "boundary: \"exterior\" integrates over faces owned by exactly one Element of the region (Nodal fields, outward normals); faces shared with an Element outside the region are excluded and reported, never assigned to a side",
   transforms: ["smooth", "regression", "derivative", "integral", "normalize", "convert"] as PlotTransform["op"][],

@@ -829,7 +829,8 @@ export async function meshFlowBalance(args: {
   const { steps, source } = await discoverSeriesSteps(abs);
   // A lone file is not a series; `parseMeshFile` does not read .mdpa, so it goes through loadMesh like every other tool.
   const loadable = source === "single" ? steps.map((s) => ({ ...s, load: async () => (await loadMesh(abs, undefined, undefined, undefined, undefined, undefined, execution.signal)).model })) : steps;
-  const series = await flowBalanceSeries(loadable, spec);
+  const series = await flowBalanceSeries(loadable, spec, { signal: execution.signal });
+  throwIfCancelled(execution.signal);
   writeCsv(flowSeriesToCsv(series));
   return {
     path: abs,
@@ -1881,7 +1882,7 @@ export async function meshProbe(args: {
     throwIfCancelled(execution.signal);
     try {
       // A lone file is not a series; `parseMeshFile` does not read .mdpa, so it goes through loadMesh like every other tool.
-      const model = source === "single" ? (await loadMesh(abs, undefined, undefined, undefined, undefined, undefined, execution.signal)).model : await step.load();
+      const model = source === "single" ? (await loadMesh(abs, undefined, undefined, undefined, undefined, undefined, execution.signal)).model : await step.load(execution.signal);
       results.push({ label: step.label, result: await probeAlongPath(model, params) });
     } catch (err) {
       // A cancel is not a bad step: it must end the scan, not be recorded and skipped.
