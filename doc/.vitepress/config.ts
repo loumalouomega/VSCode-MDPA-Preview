@@ -39,6 +39,7 @@ export default defineConfig({
           { text: 'Header Summary', link: '/guide/header-summary' },
           { text: 'Mesh Quality', link: '/guide/mesh-quality' },
           { text: 'Mesh Size', link: '/guide/mesh-size' },
+          { text: 'Mesh Analysis', link: '/guide/mesh-analysis' },
           { text: 'Field Visualization', link: '/guide/field-visualization' },
           { text: 'Sphere / Particle Elements', link: '/guide/sphere-elements' },
           { text: 'Beam / Line Elements', link: '/guide/beam-elements' },
@@ -49,9 +50,11 @@ export default defineConfig({
           { text: 'Data Table & CSV', link: '/guide/data-table' },
           { text: 'Plot Over Time', link: '/guide/time-series-plot' },
           { text: 'Scientific Plot Builder', link: '/guide/scientific-plots' },
+          { text: 'Plot Presets', link: '/guide/plot-presets' },
           { text: 'GiD Postprocess', link: '/guide/gid-postprocess' },
           { text: 'OpenFOAM Cases', link: '/guide/openfoam' },
           { text: 'Mesh Editing & History', link: '/guide/mesh-editing' },
+          { text: 'Batch Transform', link: '/guide/batch-transform' },
           { text: 'Export Report & Provenance', link: '/guide/export-report' },
           { text: 'Selection & Properties', link: '/guide/selection' },
           { text: 'View Layers', link: '/guide/view-layers' },
@@ -62,7 +65,8 @@ export default defineConfig({
           { text: 'Linked Previews', link: '/guide/linked-previews' },
           { text: 'Compare in Split', link: '/guide/compare-split' },
           { text: 'Recording a Video', link: '/guide/video-recording' },
-          { text: 'Rendering Backend', link: '/guide/renderer' }
+          { text: 'Rendering Backend', link: '/guide/renderer' },
+          { text: 'Settings Reference', link: '/guide/settings' }
         ]
       },
       {
@@ -113,6 +117,7 @@ export default defineConfig({
           { text: 'Header Summary', link: '/guide/header-summary' },
             { text: 'Mesh Quality', link: '/guide/mesh-quality' },
             { text: 'Mesh Size', link: '/guide/mesh-size' },
+            { text: 'Mesh Analysis', link: '/guide/mesh-analysis' },
             { text: 'Field Visualization', link: '/guide/field-visualization' },
             { text: 'Sphere / Particle Elements', link: '/guide/sphere-elements' },
             { text: 'Beam / Line Elements', link: '/guide/beam-elements' },
@@ -123,9 +128,11 @@ export default defineConfig({
             { text: 'Data Table & CSV', link: '/guide/data-table' },
             { text: 'Plot Over Time', link: '/guide/time-series-plot' },
             { text: 'Scientific Plot Builder', link: '/guide/scientific-plots' },
+          { text: 'Plot Presets', link: '/guide/plot-presets' },
             { text: 'GiD Postprocess', link: '/guide/gid-postprocess' },
           { text: 'OpenFOAM Cases', link: '/guide/openfoam' },
             { text: 'Mesh Editing & History', link: '/guide/mesh-editing' },
+          { text: 'Batch Transform', link: '/guide/batch-transform' },
             { text: 'Export Report & Provenance', link: '/guide/export-report' },
             { text: 'Selection & Properties', link: '/guide/selection' },
             { text: 'View Layers', link: '/guide/view-layers' },
@@ -136,7 +143,8 @@ export default defineConfig({
             { text: 'Linked Previews', link: '/guide/linked-previews' },
           { text: 'Compare in Split', link: '/guide/compare-split' },
             { text: 'Recording a Video', link: '/guide/video-recording' },
-            { text: 'Rendering Backend', link: '/guide/renderer' }
+            { text: 'Rendering Backend', link: '/guide/renderer' },
+            { text: 'Settings Reference', link: '/guide/settings' }
           ]
         },
         {
