@@ -2061,6 +2061,10 @@ input.outline-label-input {
   color: var(--vscode-descriptionForeground, #888);
 }
 
+#loading-cancel {
+  min-width: 120px;
+}
+
 /* ── Shared recipes for everything that floats or takes input ─────────────
    The analysis panels below, the find bar, the timeline bar and the sidebar forms
    all read from the three lists in this block, so a change to "what a card / a

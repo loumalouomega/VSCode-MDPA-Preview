@@ -259,6 +259,7 @@ export const LOADING_HTML = `<div id="loading">
       <div id="loading-logo">${TOOLBAR_ICONS.loading}</div>
       <div id="loading-bar-wrap"><div id="loading-bar"></div></div>
       <div id="loading-label">Reading file…</div>
+      <button type="button" id="loading-cancel" class="panel-btn">Cancel</button>
     </div>
   </div>`;
 

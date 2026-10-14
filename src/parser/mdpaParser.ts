@@ -623,8 +623,10 @@ export function parseMdpa(text: string): MdpaModel {
 
 export async function parseMdpaFile(
   fsPath: string,
-  onProgress?: (phase: "read", bytesRead: number, totalBytes: number) => void
+  onProgress?: (phase: "read", bytesRead: number, totalBytes: number) => void,
+  signal?: AbortSignal
 ): Promise<MdpaModel> {
+  if (signal?.aborted) throw new Error("cancelled");
   const stat = await fs.promises.stat(fsPath);
   const totalBytes = stat.size;
 
@@ -632,8 +634,23 @@ export async function parseMdpaFile(
     const core = new MdpaParserCore();
     let bytesRead = 0;
     let lineCount = 0;
+    let settled = false;
 
     const stream = fs.createReadStream(fsPath, { encoding: "utf8" });
+    const onAbort = (): void => {
+      if (!settled) {
+        settled = true;
+        signal?.removeEventListener("abort", onAbort);
+        stream.destroy(new Error("cancelled"));
+        try {
+          rl.close();
+        } catch {
+          /* already closing */
+        }
+        reject(new Error("cancelled"));
+      }
+    };
+    if (signal) signal.addEventListener("abort", onAbort, { once: true });
     stream.on("data", (chunk: string | Buffer) => {
       bytesRead += typeof chunk === "string" ? Buffer.byteLength(chunk, "utf8") : chunk.length;
     });
@@ -641,6 +658,10 @@ export async function parseMdpaFile(
     const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
 
     rl.on("line", (line) => {
+      if (signal?.aborted) {
+        onAbort();
+        return;
+      }
       core.feedLine(line);
       lineCount++;
       if (onProgress && lineCount % 50_000 === 0) {
@@ -649,6 +670,13 @@ export async function parseMdpaFile(
     });
 
     rl.on("close", () => {
+      if (settled) return;
+      settled = true;
+      signal?.removeEventListener("abort", onAbort);
+      if (signal?.aborted) {
+        reject(new Error("cancelled"));
+        return;
+      }
       if (onProgress) {
         onProgress("read", totalBytes, totalBytes);
       }
@@ -659,8 +687,18 @@ export async function parseMdpaFile(
       }
     });
 
-    rl.on("error", reject);
-    stream.on("error", reject);
+    rl.on("error", (err) => {
+      if (settled) return;
+      settled = true;
+      signal?.removeEventListener("abort", onAbort);
+      reject(err);
+    });
+    stream.on("error", (err) => {
+      if (settled) return;
+      settled = true;
+      signal?.removeEventListener("abort", onAbort);
+      reject(err);
+    });
   });
 }
 

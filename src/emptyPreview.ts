@@ -326,6 +326,8 @@ function attachEmptyPanel(
   // resolves `undefined`, so it neither posts a stale frame nor reports
   // "cancelled" as an error.
   const frameReads = createSupersedingRunner();
+  /** Abort for MDPA/series discovery reads (loading-overlay Cancel). */
+  let loadAbort: AbortController | undefined;
 
   const postSeriesFrame = async (
     group: NonNullable<PreviewSession["currentGroup"]>,
@@ -343,7 +345,7 @@ function attachEmptyPanel(
     try {
       const framePath = path.join(dir, file);
       const parsed = isMdpa(session.fsPath)
-        ? await parseMdpaFile(framePath)
+        ? await parseMdpaFile(framePath, undefined, loadAbort?.signal)
         : await (async () => {
             const rootModel = await frameReads.run((signal) => parseMeshFile(framePath, undefined, { signal }));
             if (rootModel === undefined) return undefined;
@@ -430,6 +432,8 @@ function attachEmptyPanel(
       return;
     }
     loadInProgress = true;
+    loadAbort = new AbortController();
+    const loadSignal = loadAbort.signal;
     try {
       const thresholdMb = vscode.workspace
         .getConfiguration("kratos")
@@ -484,7 +488,7 @@ function attachEmptyPanel(
         session.frameFile = fsPath;
         const model = await parseMdpaFile(fsPath, (phase, bytesRead, totalBytes) => {
           if (!session.disposed) panel.webview.postMessage({ type: "progress", phase, bytesRead, totalBytes });
-        });
+        }, loadSignal);
         const hadBase = session.history.hasBase();
         if (hadBase) session.history.rebase(model);
         else session.history.setBase(model);
@@ -508,11 +512,12 @@ function attachEmptyPanel(
       let kind = timelineKindFor(fileName);
       let probed: number[] = [];
       if (kind === "filename") {
-        probed = await probeInFileSteps(fsPath);
+        probed = await probeInFileSteps(fsPath, loadSignal);
+        if (loadSignal.aborted) throw new Error("cancelled");
         if (probed.length > 1) kind = "in-file";
       }
       if (kind === "in-file") {
-        const times = probed.length > 1 ? probed : await readMeshTimeSteps(fsPath);
+        const times = probed.length > 1 ? probed : await readMeshTimeSteps(fsPath, loadSignal);
         if (times.length > 1) {
           session.inFileTimeValues = times;
           session.currentGroup = undefined;
@@ -576,7 +581,11 @@ function attachEmptyPanel(
       session.ensurePt();
       await applyPendingRecipe();
     } catch (err) {
-      if (!session.disposed) {
+      if (loadSignal.aborted || (err instanceof Error && err.message === "cancelled")) {
+        if (!session.disposed) {
+          panel.webview.postMessage({ type: "error", message: "Loading cancelled." });
+        }
+      } else if (!session.disposed) {
         panel.webview.postMessage({
           type: "error",
           message: err instanceof Error ? err.message : String(err),
@@ -584,6 +593,7 @@ function attachEmptyPanel(
       }
     } finally {
       loadInProgress = false;
+      if (loadAbort?.signal === loadSignal) loadAbort = undefined;
       if (queuedReload && !session.disposed) {
         queuedReload = false;
         void loadBound("reload");
@@ -758,6 +768,9 @@ function attachEmptyPanel(
       if (session.currentGroup) await postSeriesFrame(session.currentGroup, fi, true);
       else if (session.inFileTimeValues) await postInFileFrame(fi, true);
       else panel.webview.postMessage({ type: "vtkFrameError", requestId: msg.requestId, message: "Timeline is unavailable." });
+    } else if (msg?.type === "vtkCancelFrame") {
+      frameReads.cancel();
+      loadAbort?.abort();
     } else if (msg?.type === "menuReload") {
       await loadBound("reload");
     } else if (msg?.type === "menuSave") {

@@ -262,6 +262,7 @@ export async function packSeries(
           beforeRead: () => {
             if (abort.signal.aborted) throw new Error(CANCELLED);
           },
+          signal: abort.signal,
           provenance: mode,
         });
         const outDir = path.dirname(dest.fsPath);

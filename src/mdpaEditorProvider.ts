@@ -233,6 +233,8 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
     let pendingParseReason: "initial" | "reload" = "initial";
     let frameGeneration = 0;
     let frameQueue: Promise<void> = Promise.resolve();
+    /** Abort for the in-flight initial/series read (loading-overlay Cancel). */
+    let loadAbort: AbortController | undefined;
     /** View-layers sidecar posted once per bound file (keyed, so a rebind to a
      * different file re-posts instead of clobbering edits with a stale list). */
     let viewLayersPostedFor: string | undefined;
@@ -347,7 +349,7 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
         const framePath = path.join(path.dirname(fsPath), file);
         const parsed = await parseMdpaFile(framePath, (phase, bytesRead, totalBytes) => {
           if (!session.disposed) webviewPanel.webview.postMessage({ type: "progress", phase, bytesRead, totalBytes });
-        });
+        }, loadAbort?.signal);
         if (!current()) return;
         const first = !session.history.hasBase();
         const adopted = await adoptSeriesFrame(parsed, skipAsyncOps);
@@ -400,6 +402,8 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
       }
       parseInProgress = true;
       pendingParse = false;
+      loadAbort = new AbortController();
+      const loadSignal = loadAbort.signal;
       try {
         // Above the threshold, report the file's shape instead of building a
         // model of it. Deliberately BEFORE parseMdpaFile: the point is not to
@@ -475,7 +479,8 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
                 totalBytes,
               });
             }
-          }
+          },
+          loadSignal
         );
         session.lastModel = model;
         // Two questions, and they used to share one boolean — which is how a
@@ -543,7 +548,14 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
           }
         }
       } catch (err) {
-        if (!session.disposed) {
+        if (loadSignal.aborted || (err instanceof Error && err.message === "cancelled")) {
+          if (!session.disposed) {
+            webviewPanel.webview.postMessage({
+              type: "error",
+              message: "Loading cancelled.",
+            });
+          }
+        } else if (!session.disposed) {
           webviewPanel.webview.postMessage({
             type: "error",
             message: err instanceof Error ? err.message : String(err),
@@ -551,6 +563,7 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
         }
       } finally {
         parseInProgress = false;
+        if (loadAbort?.signal === loadSignal) loadAbort = undefined;
         if (pendingParse && !session.disposed) {
           const queued = pendingParseReason;
           pendingParseReason = "initial";
@@ -886,6 +899,8 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
         })();
       } else if (msg?.type === "applyOp") {
         void session.opRunner?.applyOperation(msg as Record<string, unknown>);
+      } else if (msg?.type === "vtkCancelFrame") {
+        loadAbort?.abort();
       } else if (msg?.type === "applyBatch") {
         void session.opRunner?.applyBatch(msg as { ops?: unknown[] });
       } else if (msg?.type === "opCancel") {

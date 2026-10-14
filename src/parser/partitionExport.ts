@@ -75,8 +75,10 @@ export interface PartitionExportResult {
 export async function partitionParts(
   model: MdpaModel,
   params: PartitionExportParams,
-  diagnostics: MdpaDiagnostic[] = []
+  diagnostics: MdpaDiagnostic[] = [],
+  opts: { signal?: AbortSignal } = {}
 ): Promise<PartitionExportResult> {
+  if (opts.signal?.aborted) throw new Error("cancelled");
   const nparts = Math.floor(params.nparts);
   if (!(nparts >= 1)) throw new Error("nparts must be at least 1.");
   const ghostLayers = Math.floor(params.ghostLayers ?? 0);
@@ -119,7 +121,9 @@ export async function partitionParts(
   }
 
   const m = await loadMeshio();
+  if (opts.signal?.aborted) throw new Error("cancelled");
   const raw = m.partition(mesh, nparts, params.method ?? "sfc", params.imbalance ?? 0.03, "eco", params.seed ?? 0, true, ghostLayers, weightsKey, false);
+  if (opts.signal?.aborted) throw new Error("cancelled");
   if (raw.length !== nparts) throw new Error(`partition returned ${raw.length} part(s) for ${nparts}; the result was discarded.`);
 
   // Global block-major source index -> (kind, id).

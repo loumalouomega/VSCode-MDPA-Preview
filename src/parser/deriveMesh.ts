@@ -142,11 +142,13 @@ export async function deriveMesh(
   spec: DeriveSpec,
   diagnostics: MdpaDiagnostic[] = [],
   /** Only the streamlines kind reads this (per-seed progress for MCP log lines). */
-  streamOpts?: StreamlineOptions
+  streamOpts?: StreamlineOptions & { signal?: AbortSignal }
 ): Promise<DeriveResult> {
+  const signal = streamOpts?.signal;
+  if (signal?.aborted) throw new Error("cancelled");
   if (model.nodeCount === 0 && !DERIVE_STANDALONE_KINDS.includes(spec.kind)) throw new Error("The mesh has no nodes.");
   switch (spec.kind) {
-    case "featureEdges": { const r = await featureEdges(model, spec); return { model: r.model, suffix: "feature_edges", summary: `Feature edges: ${JSON.stringify(r.counts)}` }; }
+    case "featureEdges": { const r = await featureEdges(model, spec); if (signal?.aborted) throw new Error("cancelled"); return { model: r.model, suffix: "feature_edges", summary: `Feature edges: ${JSON.stringify(r.counts)}` }; }
     case "streamlines": {
       const { kind: _kind, frame, ...params } = spec;
       const r = await traceStreamlines(model, params, streamOpts ?? {});
@@ -163,15 +165,20 @@ export async function deriveMesh(
     case "grid":
     case "voxelize":
     case "sdfVolume": {
+      if (signal?.aborted) throw new Error("cancelled");
       const r = await sampleGrid(model, spec, diagnostics);
+      if (signal?.aborted) throw new Error("cancelled");
       return { model: r.model, raw: r.raw, denseLattice: r.denseLattice, summary: r.summary, suffix: r.suffix };
     }
     case "slice": {
       if (!finite3(spec.origin) || !finite3(spec.normal)) throw new Error("A slice needs a finite origin and normal (3 numbers each).");
       if (spec.normal.every((v) => v === 0)) throw new Error("The slice normal must not be the zero vector.");
+      if (signal?.aborted) throw new Error("cancelled");
       const mesh = modelToMeshio(model, diagnostics, { dim: 3 });
       if (mesh.cells.length === 0) throw new Error("The mesh has no cells to slice.");
+      if (signal?.aborted) throw new Error("cancelled");
       const m = await loadMeshio();
+      if (signal?.aborted) throw new Error("cancelled");
       const cut = m.slice(mesh, spec.origin, spec.normal, true) as MeshioMesh;
       if (cut.cells.length === 0 || cut.cells.every((c) => "data" in c && c.data.length === 0)) {
         throw new Error("The plane does not cut the mesh.");
@@ -199,9 +206,12 @@ export async function deriveMesh(
       }
       const comp = spec.component ?? "mag";
       if (comp !== "mag" && (comp < 0 || comp >= field.components)) throw new Error(`"${spec.variable}" has no component ${comp}.`);
+      if (signal?.aborted) throw new Error("cancelled");
       const mesh = modelToMeshio(model, diagnostics, { dim: 3 });
       if (mesh.cells.length === 0) throw new Error("The mesh has no cells to contour.");
+      if (signal?.aborted) throw new Error("cancelled");
       const m = await loadMeshio();
+      if (signal?.aborted) throw new Error("cancelled");
       // Upstream: a NEGATIVE component means the row magnitude (the opposite sense to gradient's "all").
       const surf = m.isosurface(mesh, sanitizeVariable(spec.variable), spec.values, comp === "mag" ? -1 : comp, true) as MeshioMesh;
       if (surf.cells.length === 0 || surf.cells.every((c) => "data" in c && c.data.length === 0)) {
@@ -219,7 +229,9 @@ export async function deriveMesh(
       };
     }
     case "decimate": {
+      if (signal?.aborted) throw new Error("cancelled");
       const r = await decimateModel(model, spec, diagnostics);
+      if (signal?.aborted) throw new Error("cancelled");
       const pct = (100 * r.reduction).toPrecision(3);
       const err = Math.sqrt(r.maxErrorApplied);
       return {
