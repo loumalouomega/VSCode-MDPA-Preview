@@ -10,6 +10,7 @@ import { assertFreshElmerDestination } from "./parser/caeFiles";
 import * as vscode from "vscode";
 import * as path from "node:path";
 import * as fs from "node:fs";
+import { resolveCommandPath, overwriteRefusal } from "./parser/commandPath";
 import { once } from "node:events";
 import { MdpaModel } from "./parser/types";
 import { meshExtname, meshStem, SUPPORTED_MESH_EXTENSIONS } from "./parser/meshFormats";
@@ -107,6 +108,10 @@ export interface MenuMessage {
     | "menuSaveProblem"
     | "menuLoadProblem";
   format?: string;
+  /** Command-line file arguments: skip the dialog and write/open here. */
+  to?: string;
+  overwrite?: boolean;
+  file?: string;
   /**
    * meshio++ writer key forcing an ambiguous extension's flavour — `gmsh` /
    * `ansys` / `freefem` for `.msh`, `abaqus` / `ansysinp` for `.inp`
@@ -152,7 +157,8 @@ export async function runMenu(
   extContext: vscode.ExtensionContext
 ): Promise<boolean> {
   if (msg.type === "menuOpen") {
-    await openMesh();
+    if (msg.file) await openMeshAt(msg.file, getCtx() ? path.dirname(getCtx()!.fsPath) : vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd());
+    else await openMesh();
     return false;
   }
   if (msg.type === "menuLoadProblem") {
@@ -163,9 +169,9 @@ export async function runMenu(
   if (!ctx) return false;
   if (msg.type === "menuSave") return saveMesh(ctx, extContext);
   else if (msg.type === "menuSaveAs") await saveMeshAs(ctx);
-  else if (msg.type === "menuExport") await exportMesh(ctx, msg.format ?? "", msg.outputFormat);
+  else if (msg.type === "menuExport") await exportMesh(ctx, msg.format ?? "", msg.outputFormat, msg.to, msg.overwrite);
   else if (msg.type === "menuExportPart")
-    await exportSubModelPart(ctx, msg.format ?? "", msg.path ?? "", msg.outputFormat);
+    await exportSubModelPart(ctx, msg.format ?? "", msg.path ?? "", msg.outputFormat, msg.to, msg.overwrite);
   else if (msg.type === "menuExportSkin") await exportSkin(ctx, msg.format ?? "", msg.outputFormat);
   else if (msg.type === "menuExportDerived") await exportDerived(ctx, msg.derive, msg.format, msg.outputFormat);
   else if (msg.type === "menuExportSelection") await exportSelection(ctx, msg.selection, msg.format, msg.outputFormat);
@@ -185,7 +191,7 @@ export async function runMenu(
       "Export Analysis as CSV"
     );
   else if (msg.type === "menuSaveProblem")
-    await saveProblem({ fsPath: ctx.fsPath, ops: ctx.ops ?? [] });
+    await saveProblem({ fsPath: ctx.fsPath, ops: ctx.ops ?? [] }, msg.to, msg.overwrite);
   return false;
 }
 
@@ -489,6 +495,35 @@ export function viewTypeForMesh(fsPath: string): string {
  * that only existed to launch one — the standalone empty panel — can close
  * itself once a real preview has taken over.
  */
+/** Command-line `open <file>`: resolve, validate and open without a dialog. */
+export function resolveOpenPath(raw: unknown, baseDir: string): string | undefined {
+  const res = resolveCommandPath(raw, baseDir);
+  if (!res.ok) { vscode.window.showWarningMessage(res.reason); return undefined; }
+  const ext = meshExtname(res.path);
+  if (!fs.existsSync(res.path)) { vscode.window.showWarningMessage(`${res.path} does not exist.`); return undefined; }
+  if (ext !== ".mdpa" && !(SUPPORTED_MESH_EXTENSIONS as readonly string[]).includes(ext)) {
+    vscode.window.showWarningMessage(`${res.path} is not a supported mesh file.`);
+    return undefined;
+  }
+  return res.path;
+}
+
+export async function openMeshAt(raw: unknown, baseDir: string): Promise<vscode.Uri | undefined> {
+  const file = resolveOpenPath(raw, baseDir);
+  if (!file) return undefined;
+  const uri = vscode.Uri.file(file);
+  await vscode.commands.executeCommand("vscode.openWith", uri, viewTypeForMesh(file));
+  return uri;
+}
+
+/** Command-line destination: resolved against the mesh folder, never overwrites without `overwrite`. */
+export function resolveDestination(raw: unknown, baseDir: string, ext: string, overwrite?: boolean): string | undefined {
+  const res = resolveCommandPath(raw, baseDir, { ext });
+  if (!res.ok) { vscode.window.showWarningMessage(res.reason); return undefined; }
+  if (!overwrite && fs.existsSync(res.path)) { vscode.window.showWarningMessage(overwriteRefusal(res.path)); return undefined; }
+  return res.path;
+}
+
 export async function openMesh(): Promise<vscode.Uri | undefined> {
   const meshExts = SUPPORTED_MESH_EXTENSIONS.map((e) => e.slice(1));
   const picks = await vscode.window.showOpenDialog({
@@ -644,7 +679,9 @@ function exportTitle(ext: ExportableExtension, flavour?: string): string {
 export async function exportMesh(
   ctx: ExportContext,
   targetExt: string,
-  outputFormat?: string
+  outputFormat?: string,
+  to?: string,
+  overwrite?: boolean
 ): Promise<void> {
   const ext = targetExt.toLowerCase();
   if (!isExportableExtension(ext)) {
@@ -653,6 +690,11 @@ export async function exportMesh(
   }
   const flavour = await pickExportFlavour(ext, outputFormat);
   if (EXPORT_FORMAT_FLAVOURS[ext] && !flavour) return;
+  if (to) {
+    const file = resolveDestination(to, path.dirname(ctx.fsPath), ext, overwrite);
+    if (file) await serializeToPath(ctx, file, ext, flavour);
+    return;
+  }
   const stem = path.basename(ctx.fsPath, path.extname(ctx.fsPath));
   const dest = await vscode.window.showSaveDialog({
     defaultUri: vscode.Uri.file(path.join(path.dirname(ctx.fsPath), `${stem}${ext}`)),
@@ -668,7 +710,9 @@ export async function exportSubModelPart(
   ctx: ExportContext,
   targetExt: string,
   partPath: string,
-  outputFormat?: string
+  outputFormat?: string,
+  to?: string,
+  overwrite?: boolean
 ): Promise<void> {
   const ext = targetExt.toLowerCase();
   if (!isExportableExtension(ext)) {
@@ -682,6 +726,11 @@ export async function exportSubModelPart(
   }
   const flavour = await pickExportFlavour(ext, outputFormat);
   if (EXPORT_FORMAT_FLAVOURS[ext] && !flavour) return;
+  if (to) {
+    const file = resolveDestination(to, path.dirname(ctx.fsPath), ext, overwrite);
+    if (file) await serializeModelToPath(sub, file, ext, ctx.sourceText, flavour, { ops: ctx.ops, sourceFile: ctx.fsPath, reportSink: ctx.reportSink });
+    return;
+  }
   const stem = path.basename(ctx.fsPath, path.extname(ctx.fsPath));
   // Use the part's leaf name for the suggested file, sanitised for the filesystem.
   const leaf = partPath.split("/").pop() || partPath;

@@ -10,6 +10,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - **Tensor-invariant plot preset** (roadmap item 9): `plot_preset` gains `tensorInvariants` (and a Presets-selector entry in the Plots pane): trace, hydrostatic, von Mises, J2, deviatoric norm, principal max/mid/min and maximum shear of a tensor field, over time, for a SubModelPart. The component layout is **required and never inferred** — `"full3x3"`, `"full2x2"` or explicit `{xx, yy, zz?, xy, yz?, xz?}` indices for a Voigt-style order — with optional engineering-shear halving; missing zz/yz/xz are taken as zero and disclosed, a non-finite row is a gap (never 0), and a layout/width mismatch is refused by name. Regional `mean`/`min`/`max` sources take the same `tensor` spec. Frame invariance, uniaxial, pure-shear and hydrostatic known values are tested (`plotTensor.test.ts`).
 
+- **Command-line file paths** (roadmap item 1): `open <file>`, `export <format> to=<file>`, `exportPart <format> <part> to=<file>` and `saveProblem to=<file>` skip the host dialog, so file steps can sit inside a `;` sequence. Relative paths resolve against the mesh's folder, a missing extension is appended and a wrong one refused, and an existing file is never replaced unless `overwrite=true`. Without a path the dialogs are unchanged.
+
 ## [5.10.0] - 2026-10-14
 
 ### Added

@@ -7,6 +7,7 @@
  * opens the extracted mesh.
  */
 
+import { resolveDestination } from "./meshExport";
 import * as vscode from "vscode";
 import * as path from "node:path";
 import * as fs from "node:fs";
@@ -58,7 +59,7 @@ export interface ProblemContext {
  * case files exist next to the mesh (ProjectParameters.json, the materials
  * file(s) it references, MainKratos.py, `<stem>_case.mdpa`).
  */
-export async function saveProblem(ctx: ProblemContext): Promise<void> {
+export async function saveProblem(ctx: ProblemContext, to?: string, overwrite?: boolean): Promise<void> {
   const dir = path.dirname(ctx.fsPath);
   const meshName = path.basename(ctx.fsPath);
   const stem = path.basename(ctx.fsPath, path.extname(ctx.fsPath));
@@ -74,11 +75,18 @@ export async function saveProblem(ctx: ProblemContext): Promise<void> {
     return;
   }
 
-  const dest = await vscode.window.showSaveDialog({
-    defaultUri: vscode.Uri.file(path.join(dir, `${stem}.kratosproblem.zip`)),
-    filters: { "Problem archive": ["zip"] },
-    title: "Save Problem",
-  });
+  let dest: { fsPath: string } | undefined;
+  if (to) {
+    const file = resolveDestination(to, dir, ".zip", overwrite);
+    if (!file) return;
+    dest = { fsPath: file };
+  } else {
+    dest = await vscode.window.showSaveDialog({
+      defaultUri: vscode.Uri.file(path.join(dir, `${stem}.kratosproblem.zip`)),
+      filters: { "Problem archive": ["zip"] },
+      title: "Save Problem",
+    });
+  }
   if (!dest) return;
   try {
     await fs.promises.writeFile(dest.fsPath, buildProblemZip(manifest, files));
