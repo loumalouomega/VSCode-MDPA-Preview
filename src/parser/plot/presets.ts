@@ -50,6 +50,53 @@ export function tableRelationshipPreset(p: TableRelationshipParams): PlotRecipe 
   return validatePlotRecipe(recipe);
 }
 
+export interface VolumeTotalParams {
+  path: string; variable: string;
+  /** SubModelParts to total; none = the whole mesh. */
+  regions?: string[];
+  scope?: "current" | "history";
+  times?: number[]; timeUnit?: string;
+}
+/** Measure-weighted total (sum of value x length/area/volume) of a scalar Elemental field per region. */
+export function volumeTotalPreset(p: VolumeTotalParams): PlotRecipe {
+  const scope = p.scope ?? "current";
+  const regions = p.regions?.length ? p.regions : [""];
+  if (new Set(regions).size !== regions.length) throw new Error("Volume total regions must be distinct.");
+  const recipe = emptyPlotRecipe();
+  regions.forEach((region, i) => {
+    const source: PlotRegionSource = { id: `total:${i}`, type: "region", path: p.path, kind: "Elemental", variable: p.variable, ...(region ? { submodelpart: region } : {}), scope, operation: "measureIntegral", ...(scope === "history" && p.times ? { times: p.times } : {}), ...(scope === "history" && p.timeUnit ? { timeUnit: p.timeUnit } : {}) };
+    recipe.sources.push(source);
+    recipe.series.push({ id: `curve:${source.id}`, source: source.id, name: `${p.variable} total · ${region || "whole mesh"}`, x: scope === "history" ? "time" : "region", y: "v0", color: COLORS[i % COLORS.length] });
+  });
+  recipe.presentation.family = scope === "history" ? "line" : "bar";
+  recipe.presentation.title = `${p.variable} measure-weighted total`;
+  return validatePlotRecipe(recipe);
+}
+
+export interface SectionDifference {
+  from: string; to: string;
+  /** x values present in both series with a value on both sides. */
+  matched: number;
+  /** x values in either series that could not produce a difference (unmatched or a gap on one side). */
+  gaps: number;
+  unit?: string;
+  points: { x: number | string | null; y: number | null }[];
+}
+/** `from - to` at exactly matching x. Unmatched x or a gap on either side is a gap, never 0; differing units are refused. */
+export function sectionDifference(from: Pick<PlotSeriesData, "id" | "points" | "yColumn">, to: Pick<PlotSeriesData, "id" | "points" | "yColumn">): SectionDifference {
+  if ((from.yColumn.unit ?? "") !== (to.yColumn.unit ?? "")) throw new Error(`Cannot subtract ${to.id} from ${from.id}: units differ (${from.yColumn.unit ?? "unknown"} vs ${to.yColumn.unit ?? "unknown"}).`);
+  const right = new Map<string, number | null>(); for (const pt of to.points) right.set(String(pt.x), pt.y);
+  const seen = new Set<string>(), points: SectionDifference["points"] = []; let matched = 0, gaps = 0;
+  for (const pt of from.points) {
+    const k = String(pt.x); seen.add(k);
+    const r = right.get(k);
+    const ok = r !== undefined && r !== null && pt.y !== null && Number.isFinite(r) && Number.isFinite(pt.y);
+    if (ok) { matched++; points.push({ x: pt.x, y: pt.y! - r! }); } else { gaps++; points.push({ x: pt.x, y: null }); }
+  }
+  for (const k of right.keys()) if (!seen.has(k)) gaps++;
+  return { from: from.id, to: to.id, matched, gaps, ...(from.yColumn.unit ? { unit: from.yColumn.unit } : {}), points };
+}
+
 export interface ThresholdCheck {
   series: string; limit: number; direction: "above" | "below";
   /** Points that passed through the check (finite y). */
@@ -83,11 +130,13 @@ export function checkThreshold(series: Pick<PlotSeriesData, "id" | "points">, li
 
 export const PLOT_PRESETS = [
   { id: "sectionComparison", label: "Section comparison over time", params: ["path", "variable", "sections", "kind?", "operation?", "component?", "times?", "timeUnit?"] },
+  { id: "volumeTotal", label: "Measure-weighted total of an Elemental field", params: ["path", "variable", "regions?", "scope?", "times?", "timeUnit?"] },
   { id: "tableRelationship", label: "Table column relationship", params: ["path", "x", "y", "units?", "family?", "xLabel?", "yLabel?"] },
 ] as const;
 export type PlotPresetId = typeof PLOT_PRESETS[number]["id"];
 export function buildPlotPreset(id: string, params: any): PlotRecipe {
   if (id === "sectionComparison") return sectionComparisonPreset(params);
+  if (id === "volumeTotal") return volumeTotalPreset(params);
   if (id === "tableRelationship") return tableRelationshipPreset(params);
   throw new Error(`Unknown plot preset ${id}; available: ${PLOT_PRESETS.map(p => p.id).join(", ")}.`);
 }

@@ -56,7 +56,7 @@ export type PlotSource = (
   | { id: string; type: "probe"; path: string; points: [number, number, number][]; variable: string; samples?: number; timeStep?: number; /** UI binding; headless extraction uses the explicit captured timeStep. */ followTimeline?: boolean }
   | PlotRegionSource) & { run?: PlotRunBinding };
 
-export const REGION_OPERATIONS = ["min", "max", "mean", "sum", "boundaryMean", "boundaryIntegral", "pressureForce", "pressureMoment", "flux", "reactionMoment"] as const;
+export const REGION_OPERATIONS = ["min", "max", "mean", "sum", "boundaryMean", "boundaryIntegral", "pressureForce", "pressureMoment", "flux", "reactionMoment", "measureIntegral"] as const;
 export type RegionOperation = typeof REGION_OPERATIONS[number];
 export interface PlotRegionSource {
   id: string;

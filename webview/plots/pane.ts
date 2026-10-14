@@ -2,6 +2,7 @@
 import { loadPlotLibrary } from "./chart";
 import { mountPlotWorkspace, type PlotBridge } from "./workspace";
 import { appendFemCurve, emptyPlotRecipe, type FemPlotContext } from "../../src/parser/plot/fem";
+import { buildPlotPreset } from "../../src/parser/plot/presets";
 import type { PlotSource } from "../../src/parser/plot/types";
 import { glyph } from "../../src/uiGlyphs";
 
@@ -22,6 +23,7 @@ export function initPlotPane(bridge:PlotBridge,getContext:()=>FemPlotContext,han
     const context=getContext();
     if(preset?.type==="history")workspace?.plotPoint(preset.kind,preset.entityId,preset.variable);
     else if(preset?.type==="probe"){const field=context.fields.find(f=>f.kind==="Nodal"&&f.variable===preset.variable);const source:PlotSource={...preset,id:`probe:${Date.now()}`,path:context.path,timeStep:context.frameIndex};workspace?.setRecipe(appendFemCurve(emptyPlotRecipe(),source,field&&field.components>1?"magnitude":0,field?.components??1,`${preset.variable} · line profile`));}
+    else if(preset?.type==="recipe"){try{workspace?.setRecipe(buildPlotPreset(String(preset.id),{path:context.path,...preset.params}));}catch(e){document.getElementById("plot-status")!.textContent=e instanceof Error?e.message:String(e);}}
     else if(preset?.type==="mesh")workspace?.setRecipe(emptyPlotRecipe({...preset,id:"mesh",path:context.path,timeStep:context.frameIndex}));
   };
   document.getElementById("plot-hide")!.addEventListener("click",collapse);restore.addEventListener("click",()=>void open());
