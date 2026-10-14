@@ -24,7 +24,7 @@ A floating **dock** appears at the bottom-centre of the viewport once a model lo
   - **View** — **Center on model** (re-center the focal point on the visible bounds without changing the orbit angle or zoom) and the **Edges** toggle.
 - The chevron at the end collapses the whole dock to a single small button.
 
-Every control is reachable from the keyboard, and all of them are webview-local — no round-trip to the extension host.
+Every control is reachable from the keyboard, and all of them are webview-local — no round-trip to the extension host. Each can also be typed into the bottom [command line](./command-line) (`view top`, `layout 1x2`, `clip on axis=x pos=0.5`, `ortho on`).
 
 ## Background grid
 

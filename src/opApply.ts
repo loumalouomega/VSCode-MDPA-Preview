@@ -19,6 +19,7 @@ import * as vscode from "vscode";
 import { MdpaModel } from "./parser/types";
 import { OperationHistory } from "./parser/opHistoryCore";
 import { opRecordFromMessage, isAsyncOp, OP_LABELS, MmgRunOptions, OpRecord } from "./parser/operations";
+import { explainOpMessage } from "./parser/opExplain";
 
 export interface OpRunnerDeps {
   history: OperationHistory;
@@ -56,19 +57,36 @@ export function createOpRunner(deps: OpRunnerDeps): OpRunner {
   let opAbort: AbortController | undefined;
 
   async function applyOperation(msg: Record<string, unknown>): Promise<void> {
+    // A message typed into the command line carries a `cmdId`; its outcome is
+    // answered with `commandResult` (the echo line), and the native toast that
+    // would say the same thing is skipped. Form-driven ops carry none.
+    const cmdId = typeof msg.cmdId === "string" || typeof msg.cmdId === "number" ? msg.cmdId : undefined;
+    const reply = (ok: boolean, message?: string): void => {
+      if (cmdId !== undefined && !isDisposed()) {
+        webviewPanel.webview.postMessage({ type: "commandResult", cmdId, ok, message });
+      }
+    };
+    const warn = (text: string): void => {
+      if (cmdId === undefined) vscode.window.showWarningMessage(text);
+      reply(false, text);
+    };
     if (!history.hasBase() || !getLastModel()) {
-      vscode.window.showWarningMessage("The mesh is still loading; try again.");
+      warn("The mesh is still loading; try again.");
       return;
     }
     if (opInFlight) {
-      vscode.window.showWarningMessage("An operation is already running; wait for it to finish.");
+      warn("An operation is already running; wait for it to finish.");
       return;
     }
     // The live model lets remesh's `expr` mode see the mesh's own existing
     // Nodal fields as sizing-formula variables (see opRecordFromMessage).
     const rec = opRecordFromMessage(msg, getLastModel());
     if (!rec) {
-      vscode.window.showWarningMessage("Invalid operation parameters.");
+      warn(
+        cmdId === undefined
+          ? "Invalid operation parameters."
+          : explainOpMessage(msg, getLastModel())
+      );
       return;
     }
     const mmgOp = isAsyncOp(rec.op);
@@ -90,7 +108,7 @@ export function createOpRunner(deps: OpRunnerDeps): OpRunner {
       } else {
         outcome = await history.applyNew(rec);
       }
-      if (outcome.message) {
+      if (outcome.message && cmdId === undefined) {
         // A noop (rejected/cancelled/no-effect op) changes nothing on screen,
         // so make its explanation stand out.
         if (outcome.noop) vscode.window.showWarningMessage(outcome.message);
@@ -99,6 +117,7 @@ export function createOpRunner(deps: OpRunnerDeps): OpRunner {
       if (!outcome.noop) {
         onHistoryChanged?.();
         await rerender();
+        reply(true, outcome.message ?? `${OP_LABELS[rec.op]} applied.`);
       } else if (!isDisposed()) {
         // No model is re-posted for a noop, so without this the webview hears
         // nothing at all: the Edit history is trivially current, but a
@@ -106,11 +125,12 @@ export function createOpRunner(deps: OpRunnerDeps): OpRunner {
         // "Computing…" forever. opState is idempotent UI state — re-posting
         // it here settles those rows (see settleVariableRows).
         webviewPanel.webview.postMessage({ type: "opState", ...history.state() });
+        reply(false, outcome.message ?? `${OP_LABELS[rec.op]}: nothing to do.`);
       }
     } catch (err) {
-      vscode.window.showErrorMessage(
-        `Operation failed: ${err instanceof Error ? err.message : String(err)}`
-      );
+      const text = `Operation failed: ${err instanceof Error ? err.message : String(err)}`;
+      if (cmdId === undefined) vscode.window.showErrorMessage(text);
+      reply(false, text);
     } finally {
       opInFlight = false;
       opAbort = undefined;

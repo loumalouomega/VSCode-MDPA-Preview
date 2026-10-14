@@ -454,6 +454,7 @@ export function activate(context: vscode.ExtensionContext): void {
         ["bookmarks", "manage camera bookmarks"],
         ["record", "record the viewport"],
         ["propertiesEditor", "open the Properties editor"],
+        ["commandLine", "focus the command line"],
       ] as const
     ).map(([action, what]) =>
       vscode.commands.registerCommand(MENU_ACTION_COMMANDS[action], () =>

@@ -122,6 +122,8 @@ Reduce the density of mesh-operation forms with searchable actions, clear catego
 - **Verification:** in the extension and KKSS, open a probe chart and Selection together at the default and narrow viewport sizes, resize, traverse controls by keyboard, and perform selection and probe export without forced clicks or closing another panel. Include high-contrast themes and visible focus.
 - **Done when:** all visible panel actions remain reachable by pointer and keyboard, no chart intercepts another panel's controls, and resizing preserves the user's draft input. KKSS retains the embedded interaction regression; mesh owns the layout fix and extension coverage.
 
+**Command-line increment delivered (2026-10-14):** the bottom command row CAD-Preview has now exists here (`#commandline`, `src/parser/commandSpec.ts`/`commandParse.ts`, `webview/commandLine.ts`): every mesh operation and UI action is typeable (`translate dx=1`, `view top`, `export vtu`, `a ; b` sequences) with Tab completion, history, usage hints and host-worded rejection reasons (`commandResult`). Guide: `doc/guide/command-line.md`. Pending: path arguments for dialog-driven commands, and Playwright/real-VS-Code coverage beyond the Chromium harness.
+
 **Acceptance:** compare the same open → inspect → clip → edit → export workflow in both extensions, with visual and interaction checks in dark, light, and high-contrast themes and at small viewport sizes. **MCP:** UI-only exemption; any new underlying operation discovered during this work still needs parity.
 
 ### 2. Run expensive meshio++ work in cancellable workers — L
