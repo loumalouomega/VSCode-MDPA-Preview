@@ -149,13 +149,13 @@ const flowCell = (v: number | null | undefined): string => (v === null || v === 
 
 /** One balance as CSV: a row per section, then a `net` row. A gap is blank, never 0. */
 export function flowBalanceToCsv(r: FlowBalance): string {
-  const lines = [["section", "part", "area", "flux", "mass_flux", "mean_pressure", "facets", "unoriented", "internal", "flux_uncovered_area", "pressure_uncovered_area", "pressure_unit", "mean_pressure_Pa"].join(",")];
+  const lines = [["section", "part", "area", "flux", "mass_flux", "mean_pressure", "facets", "unoriented", "internal", "flux_uncovered_area", "pressure_uncovered_area", "pressure_unit", "mean_pressure_Pa", "non_manifold"].join(",")];
   const paOf = (name: string): string => {
     const m = r.pressureConversion?.means.find((x) => x.section === name);
     return flowCell(m?.value);
   };
   for (const s of r.sections) {
-    lines.push([csvField(s.name), csvField(s.part), flowCell(s.area), flowCell(s.flux), flowCell(s.massFlux), flowCell(s.meanPressure), s.facets, s.unoriented, s.internal, flowCell(s.fluxUncoveredArea), flowCell(s.pressureUncoveredArea), csvField(r.pressureUnit ?? ""), paOf(s.name)].join(","));
+    lines.push([csvField(s.name), csvField(s.part), flowCell(s.area), flowCell(s.flux), flowCell(s.massFlux), flowCell(s.meanPressure), s.facets, s.unoriented, s.internal, flowCell(s.fluxUncoveredArea), flowCell(s.pressureUncoveredArea), csvField(r.pressureUnit ?? ""), paOf(s.name), s.nonManifold ?? 0].join(","));
   }
   lines.push(["net", "", "", flowCell(r.netFlux), "", "", "", "", "", "", "", "", ""].join(","));
   lines.push(["imbalance", "", "", flowCell(r.imbalance), "", "", "", "", "", "", "", "", ""].join(","));

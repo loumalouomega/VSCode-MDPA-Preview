@@ -101,8 +101,10 @@ export interface FlowSection {
   degenerate: number;
   /** Under `outward`: facets with no adjacent Element (cannot be oriented). */
   unoriented: number;
-  /** Under `outward`: facets shared by two Elements — internal, not boundary. */
+  /** Under `outward`: facets shared by exactly two Elements — internal, not boundary. */
   internal: number;
+  /** Under `outward`: facets shared by three or more Elements — non-manifold, excluded and never assigned a side. */
+  nonManifold: number;
   /** Area over which the flux was actually integrated. */
   fluxArea: number;
   /** Area with no usable velocity at a corner (a gap). */
@@ -416,13 +418,21 @@ export function exteriorQuadrature(model: MdpaModel, partPath?: string): Boundar
   const inside = new Map<string, { count: number; corners: number[]; centroid: [number, number, number] }>();
   const outside = new Set<string>();
   let regionCells = 0;
+  // Cells that cannot contribute faces (unsupported type, absent node ids) and
+  // blocks whose mid-side nodes are ignored: counted, never silently dropped.
+  let skippedCells = 0;
+  const higherOrder = new Set<string>();
   // Pass 1 walks the region's cells; pass 2 (only for a sub-region) marks the faces an outside cell also owns.
   for (const pass of region ? [true, false] : [true]) {
     for (const block of model.blocks) {
-      if (block.kind !== "Elements" || cellCategory(block.vtkCellType) !== want) continue;
+      if (block.kind !== "Elements") continue;
+      const category0 = cellCategory(block.vtkCellType);
+      if (category0 === "unknown" && pass) { skippedCells += block.count; continue; }
+      if (category0 !== want) continue;
       const corners = Math.min(cornerCount(block.vtkCellType) || block.stride, block.stride);
       const table = volume ? volumeFaces(block.vtkCellType) : Array.from({ length: corners }, (_, i) => [i, (i + 1) % corners]);
-      if (!table) continue;
+      if (!table) { if (pass) skippedCells += block.count; continue; }
+      if (pass && block.stride > corners) higherOrder.add(block.name);
       for (let c = 0; c < block.count; c++) {
         if (region && region.has(block.entityIds[c]) !== pass) continue;
         const ci: number[] = [];
@@ -432,7 +442,7 @@ export function exteriorQuadrature(model: MdpaModel, partPath?: string): Boundar
           if (idx === undefined) { ok = false; break; }
           ci.push(idx);
         }
-        if (!ok) continue;
+        if (!ok) { skippedCells++; continue; }
         if (pass) regionCells++;
         const centroid: [number, number, number] = [0, 0, 0];
         for (const p of ci) for (let d = 0; d < 3; d++) centroid[d] += model.coords[p * 3 + d] / ci.length;
@@ -447,18 +457,28 @@ export function exteriorQuadrature(model: MdpaModel, partPath?: string): Boundar
       }
     }
   }
-  if (!regionCells) throw new Error(`The region has no ${want} Elements; exterior boundaries come from ${volume ? "volume" : "surface"} Elements.`);
+  if (!regionCells) throw new Error(`The region has no ${want} Elements; exterior boundaries come from ${volume ? "volume" : "surface"} Elements.${skippedCells ? ` ${skippedCells} Element(s) of unsupported type or with unresolved nodes were skipped.` : ""}`);
   const facets: Facet[] = [];
   const adj = new Map<string, Adjacency>();
-  let interior = 0;
+  let interior = 0, nonManifold = 0;
   for (const [key, f] of inside) {
+    if (f.count > 2) { nonManifold++; continue; }
     if (f.count > 1) { interior++; continue; }
     const shared = outside.has(key);
     facets.push({ corners: f.corners, conditionId: -1, label: `Exterior ${category === "surface" ? "face" : "edge"} (nodes ${f.corners.map((i) => model.nodeIds[i]).join(",")})`, ...(shared ? { sharedOutside: true } : {}) });
     adj.set(key, { count: shared ? 2 : 1, centroid: f.centroid });
   }
   if (!facets.length) throw new Error("The region has no exterior boundary (every face is shared between region elements).");
-  const result = quadratureFromFacets(model, facets, volume ? 3 : 2, "outward", adj, [], 0);
+  const result = quadratureFromFacets(model, facets, volume ? 3 : 2, "outward", adj, [...higherOrder], 0);
+  if (higherOrder.size) result.warnings.push(`Region Elements ${[...higherOrder].join(", ")} are higher-order: faces and Nodal field values use the corner skeleton (mid-side nodes are ignored).`);
+  if (skippedCells) {
+    result.incomplete = true;
+    result.warnings.push(`${skippedCells} Element(s) of unsupported type or with unresolved nodes were skipped; faces they own cannot be attributed, so the exterior boundary may be incomplete or include faces shared with them.`);
+  }
+  if (nonManifold) {
+    result.incomplete = true;
+    result.warnings.push(`${nonManifold} face(s) are shared by three or more region Elements (non-manifold) and were excluded.`);
+  }
   // One summary line instead of one per facet: a real region can have thousands of interface faces.
   const excluded = result.warnings.filter((w) => w.startsWith("Exterior "));
   result.warnings = result.warnings.filter((w) => !w.startsWith("Exterior "));
@@ -570,6 +590,7 @@ export function flowBalance(model: MdpaModel, spec: FlowBalanceSpec): FlowBalanc
       degenerate: 0,
       unoriented: 0,
       internal: 0,
+      nonManifold: 0,
       fluxArea: 0,
       fluxUncoveredArea: 0,
       flux: null,
@@ -631,6 +652,10 @@ export function flowBalance(model: MdpaModel, spec: FlowBalanceSpec): FlowBalanc
         const a = adj?.get(facetKey(c));
         if (!a) {
           sec.unoriented++;
+          continue;
+        }
+        if (a.count > 2) {
+          sec.nonManifold++;
           continue;
         }
         if (a.count > 1) {
@@ -699,6 +724,7 @@ export function flowBalance(model: MdpaModel, spec: FlowBalanceSpec): FlowBalanc
 
     if (sec.unoriented > 0) warnings.push(`Section "${name}": ${sec.unoriented} facet${sec.unoriented === 1 ? " has" : "s have"} no adjacent Element and could not be oriented outward; excluded (use orientation "winding" to trust the file's node order).`);
     if (sec.internal > 0) warnings.push(`Section "${name}": ${sec.internal} facet${sec.internal === 1 ? " is" : "s are"} shared by two Elements (internal, not boundary) and excluded.`);
+    if (sec.nonManifold > 0) warnings.push(`Section "${name}": ${sec.nonManifold} facet${sec.nonManifold === 1 ? " is" : "s are"} shared by three or more Elements (non-manifold; no side can be chosen) and excluded.`);
     if (sec.fluxUncoveredArea > 0) warnings.push(`Section "${name}": ${((100 * sec.fluxUncoveredArea) / (sec.fluxArea + sec.fluxUncoveredArea)).toPrecision(3)}% of the area has no velocity at a corner and is not in the flux.`);
     if (sec.pressureUncoveredArea > 0) warnings.push(`Section "${name}": ${((100 * sec.pressureUncoveredArea) / (sec.pressureArea + sec.pressureUncoveredArea)).toPrecision(3)}% of the area has no pressure at a corner and is not in the mean.`);
     if (sec.degenerate > 0) warnings.push(`Section "${name}": ${sec.degenerate} zero-area facet${sec.degenerate === 1 ? "" : "s"} skipped.`);
