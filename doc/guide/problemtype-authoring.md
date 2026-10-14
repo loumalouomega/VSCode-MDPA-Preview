@@ -101,6 +101,11 @@ defineProblemtype({
 | `bool` | checkbox | `boolean` |
 | `enum` | dropdown (needs `options: [{value, label?}]`) | `string` |
 | `vector3` | three numeric inputs | `[number, number, number]` |
+| `numberList` / `stringList` | comma-separated text input | `number[]` / `string[]` |
+| `smp` | SubModelPart picker | a slash-separated SubModelPart path |
+| `smpList` | SubModelPart chips with an add picker | `string[]` of paths |
+| `ref` | dropdown of the entry names of the collection named by `refCollection` | an entry name |
+| `caseValue` | grouped dropdown of every numeric value of the case (only inside a [collection](#collections-named-repeatable-entries)) | a case-value address, see below |
 
 Fields also accept `help` (tooltip) and `visibleWhen: { field, equals }` (show only when another field of the same form has a value).
 
@@ -140,7 +145,52 @@ All of these are optional and purely presentational — they change how the side
 - A section may declare `groups: [{ id, label, icon?, collapsed? }]`; a field joins one with `group: "<id>"`. Fields with no group are drawn first, `advanced: true` fields without a group fold under one collapsed *Advanced* group, and a group whose fields are all hidden by `visibleWhen` is not drawn. Keep existing field ids when regrouping — saved cases are keyed by `values[sectionId][fieldId]`.
 - A field may carry `min`, `max` and `step` (numeric inputs) and a `visibleWhen` that is one rule `{ field, equals }` / `{ field, oneOf }` or an array of rules that must all hold.
 - A condition has a `category` — `"initial"`, `"constraints"`, `"loads"` or `"other"` — that decides the branch it is listed under; when omitted it is derived from its process `list`. `icon` names its toolbar icon, and `noProcess: true` marks a condition that only labels a SubModelPart for the hooks (an interface) and emits no process.
-- `family` (`"solid"`, `"fluid"`, `"thermal"`, `"coupled"`, `"particles"`, `"workflow"`) puts the problemtype in a dropdown group.
+- `family` (`"solid"`, `"fluid"`, `"thermal"`, `"coupled"`, `"reduced"`, `"optimization"`, `"particles"`, `"workflow"`) puts the problemtype in a dropdown group.
+
+## Collections: named, repeatable entries
+
+Sections hold one value per field and conditions hold one assignment per SubModelPart. Some setups need neither: an optimization has a list of *responses*, *controls* and *constraints*, and a constraint names one of the responses; a reduced-order model has a list of *parameters*, each naming a value elsewhere in the case. A collection is that shape:
+
+```js
+collections: [
+  {
+    id: "responses", label: "Responses", min: 1,
+    entryTypes: [
+      { id: "mass", label: "Mass", parts: { label: "Evaluated on", target: "any" },
+        fields: [{ id: "perturbationSize", label: "Perturbation size", type: "number", default: 1e-6 }] },
+    ],
+    defaults: [{ name: "mass", type: "mass" }],
+  },
+  {
+    id: "constraints", label: "Constraints",
+    entryTypes: [
+      { id: "limit", label: "Response limit",
+        fields: [{ id: "response", label: "Response", type: "ref", refCollection: "responses" }] },
+    ],
+  },
+],
+```
+
+- A collection has `id`, `label`, one or more `entryTypes`, optional `min` / `max` entry counts, `icon`, `help` and `defaults` (`{ name, type, values? }` seeded into a fresh case).
+- An entry type has its own `fields`, and `parts: { label, target, min?, max? }` when entries apply to SubModelParts (a design region).
+- Entry names are identifiers (`[A-Za-z_][A-Za-z0-9_]*`) and unique within the collection. Renaming an entry in the sidebar rewrites every `ref` field that named it, in sections and in other entries.
+- A `ref` field may live in a section or in an entry. A `ref` whose entry no longer exists is drawn red, and Generate refuses the case.
+- The case stores entries under `CaseState.collections[collectionId]` as `{ name, type, parts, values }` in `<stem>.kratoscase.json`.
+- Generate refuses a case with too few or too many entries, a duplicate or invalid name, an unknown entry type, a part count outside the entry type's bounds, a SubModelPart missing from the mesh, or a dangling `ref`. Preflight reports the same problems, with the SubModelPart framed where there is one.
+- Hooks receive `ctx.collections[collectionId]`: the entries with defaults merged into `values` and `modelParts`, the parts as Kratos dotted names under the root model part.
+- An entry field's `visibleWhen` may name another field of the same entry or a field of any section (`algorithmType`, for example).
+
+A `caseValue` field holds the address of one numeric value of the case:
+
+| Address | Names |
+|---|---|
+| `section:<sectionId>/<fieldId>` | a section field |
+| `assignment:<conditionId>@<smpPath>/<fieldId>` | a field of the first assignment of that condition on that SubModelPart |
+| `material:<smpPath>/<variable>` | a material variable of the assignment on that SubModelPart |
+
+A trailing `[0]`, `[1]` or `[2]` selects one component of a `vector3`. The sidebar offers every number and vector component the case currently holds, grouped by section, conditions and materials.
+
+The built-in [Structural Optimization](./optimization) and [reduced-order model](./reduced-order-models) problemtypes are written this way.
 
 ## Coupled problemtypes: domains
 
@@ -160,6 +210,7 @@ Every hook receives a plain-JSON `ctx`:
 | `partsModelParts` | dotted names of the Parts assignments (e.g. `["FluidModelPart.Parts.Fluid"]`) |
 | `skinModelParts` | dotted names of every non-Parts assignment |
 | `subModelParts` | all SubModelPart paths available in the mesh |
+| `collections` | collection id → resolved entries (`name`, `type`, `parts`, `values` with defaults merged, dotted `modelParts`); present when the problemtype declares collections |
 
 ## Optional hooks
 

@@ -1,0 +1,17 @@
+% Toolbar icon: ptRom — Reduced-order model: a tall snapshot matrix reduced to a narrow basis.
+% NOTE: the committed svg-ui/ptRom.svg was drawn from this same picture
+% (24-unit grid, 1.6 stroke) without a LaTeX toolchain; regenerating via
+% `make ui` replaces it with the pdftocairo rendering of this source — same
+% glyph either way.
+\documentclass[tikz,border=0pt]{standalone}
+\begin{document}
+\begin{tikzpicture}[line width=1.6mm, line cap=round, line join=round, x=1mm,y=1mm]
+  \useasboundingbox (0,0) rectangle (24,24);
+  \draw (3,20) -- (12,20) -- (12,4) -- (3,4) -- cycle;
+  \draw (6,20) -- (6,4);
+  \draw (9,20) -- (9,4);
+  \draw (13.8,12) -- (17,12);
+  \draw (15.5,13.5) -- (17,12) -- (15.5,10.5);
+  \draw (19,16) -- (21,16) -- (21,8) -- (19,8) -- cycle;
+\end{tikzpicture}
+\end{document}

@@ -56,6 +56,8 @@ The built-ins track [GiDInterface](https://github.com/KratosMultiphysics/GiDInte
 | Fluids | **Fluid Dynamics** (monolithic QSVMS/DVMS/FIC and fractional step, wall law), **Compressible Fluid**, **Embedded Fluid**, **Free Surface** (edge-based level set), **Potential Flow**, **Shallow Water** (three solvers) |
 | Thermal | **Convection-Diffusion** |
 | Coupled physics | **Buoyancy** (Boussinesq natural convection), **Conjugate Heat Transfer** (fluid + solid), **Fluid-Structure Interaction** (partitioned Dirichlet-Neumann over an ALE mesh) |
+| Reduced-order models | **ROM · Structural Mechanics**, **ROM · Convection-diffusion**, **ROM · Fluid Dynamics**, **ROM · Potential Flow** (RomApplication's `RomManager`: POD basis and HROM over a sampled parameter space) — see [Reduced-Order Models](./reduced-order-models) |
+| Optimization | **Structural Optimization** (OptimizationApplication: material, shell thickness, vertex-morphing shape and SIMP topology controls; gradient and projection algorithms) — see [Structural Optimization](./optimization) |
 | Workflow | **Flowgraph** node editor |
 
 ### Coupled problemtypes
