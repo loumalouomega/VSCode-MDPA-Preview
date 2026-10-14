@@ -535,6 +535,11 @@
         "category": "Kratos MDPA"
       },
       {
+        "command": "kratos.mdpa.commandLine",
+        "title": "Focus Command Line",
+        "category": "Kratos MDPA"
+      },
+      {
         "command": "kratos.mdpa.faceNormals",
         "title": "Face Normals",
         "category": "Kratos MDPA"

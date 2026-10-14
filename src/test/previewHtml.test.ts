@@ -210,6 +210,17 @@ test("the status bar is the LAST child of #app, after #main, with every fact cel
   }
 });
 
+test("the command line sits between #main and the status bar", () => {
+  const html = buildPreviewHtml(base);
+  const cmd = html.indexOf(`id="commandline"`);
+  assert.ok(cmd > html.indexOf(`id="render-root"`), "the command line must follow the viewport");
+  assert.ok(cmd < html.indexOf(`id="statusbar"`), "the command line must precede the status bar");
+  const between = html.slice(html.indexOf(`id="render-root"`), cmd);
+  assert.ok(!between.includes(`<script`), "no script between the viewport and the command line");
+  assert.match(html, /<input id="cmd-input" type="text"[^>]*aria-label="Command line"/);
+  assert.ok(html.includes(`id="cmd-echo"`) && html.includes('role="status"'));
+});
+
 test("#toolbar is one container: every data-action button is inside it, with glyphs and a divider", () => {
   const html = buildPreviewHtml(base);
   const start = html.indexOf(`<div id="toolbar">`);
