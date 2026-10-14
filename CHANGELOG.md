@@ -12,6 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- **Plot presets and threshold check** (roadmap item 9, first increment): `src/parser/plot/presets.ts` builds ordinary validated plot recipes for a section comparison over time (a field's boundary mean or entity mean for two or more SubModelParts) and a table-column relationship (for example load against displacement, units only as supplied), and `checkThreshold` applies a user-supplied limit to an evaluated curve (equality is not a violation, gaps are counted and never passed or failed). New MCP tool `plot_preset` builds and optionally evaluates them; `mesh_capabilities.plotting` lists the presets. Measure-weighted volume totals and derived differences are not included yet.
 - **OpenFOAM multi-region and decomposed cases save in place for coordinate-only edits** (roadmap item 13): translate, scale, rotate, smooth and similar edits now rewrite only each region's `constant/<region>/polyMesh/points` or each processor's `points` file (mapped through the sorted-region node order or `pointProcAddressing`, and checked against the file first). Field files, addressing and every other file stay untouched. Changes to cells or patches in these shapes are still refused by name; MCP `mesh_transform` without `outputPath` follows the same rules.
 
 ## [5.8.0] - 2026-10-13

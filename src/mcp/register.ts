@@ -12,6 +12,7 @@ import {
   meshInfo,
   plotTableRead,
   plotDataset,
+  plotPreset,
   plotRuns,
   plotRunBind,
   plotTimeCursor,
@@ -142,6 +143,13 @@ export function registerAllTools(server: McpServer): void {
     inputSchema: { recipe: z.unknown(), outputPath: z.string().optional(), limit: z.number().int().positive().optional(), cacheDir: z.string().optional() },
   }, async (args, extra) => {
     try { return { content: [{ type: "text", text: JSON.stringify(await plotDataset(args, plottingExecution(extra))) }] }; }
+    catch (e) { return { content: [{ type: "text", text: e instanceof Error ? e.message : String(e) }], isError: true }; }
+  });
+  server.registerTool("plot_preset", {
+    description: "Build a named plot recipe and optionally evaluate it. Presets: sectionComparison (a field's boundaryMean/mean over time for two or more SubModelParts, history scope; differences are not derived) and tableRelationship (one supplied table column against another, e.g. load vs displacement; x/y are the importer's column ids c0, c1, … in file order as shown by plot_table_read; units only as supplied). With evaluate (or a threshold) the recipe runs through the same worker as plot_dataset. threshold applies a user-supplied limit and direction to the evaluated curves: equality is not a violation and gaps are counted separately, never passed or failed. Without evaluate it returns only the validated recipe for plot_dataset.",
+    inputSchema: { preset: z.enum(["sectionComparison", "tableRelationship"]), params: z.unknown(), evaluate: z.boolean().optional(), threshold: z.object({ limit: z.number(), direction: z.enum(["above", "below"]), series: z.string().optional() }).optional(), outputPath: z.string().optional(), limit: z.number().int().positive().optional(), cacheDir: z.string().optional() },
+  }, async (args, extra) => {
+    try { return { content: [{ type: "text", text: JSON.stringify(await plotPreset(args, plottingExecution(extra))) }] }; }
     catch (e) { return { content: [{ type: "text", text: e instanceof Error ? e.message : String(e) }], isError: true }; }
   });
   server.registerTool("plot_runs", {

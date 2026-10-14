@@ -5,6 +5,7 @@ import { MonitorDefinition, monitorsToCsv, upsertMonitor, validateMonitor } from
 import { evaluateMonitors, readMonitors, writeMonitors } from '../problemtype/monitorsFile';
 import { runPlotWorker } from "../plotWorkerClient";
 import { PLOT_CAPABILITIES, emptyPlotRecipe, validatePlotRecipe } from "../parser/plot/recipe";
+import { buildPlotPreset, checkThreshold, type ThresholdCheck } from "../parser/plot/presets";
 import { writePlotCsv } from "../parser/plot/files";
 import type { ImportOptions, PlotDataset, PlotExecution, PlotTable, PlotRunBinding } from "../parser/plot/types";
 import type { PlotTimeCursorRequest } from "../parser/plot/runs";
@@ -2511,6 +2512,25 @@ export async function plotDataset(args: { recipe: unknown; outputPath?: string; 
   const limit = Math.min(10000, Math.max(1, Math.floor(args.limit ?? 100)));
   const inline = recipe.sources.some(s=>s.type==="inline");
   return { ...result, recipe:inline?undefined:result.recipe, ...(inline?{inlineDataInRequest:true,recipeMetadata:{...recipe,sources:recipe.sources.map(s=>s.type==="inline"?{id:s.id,type:s.type,columns:s.table.columns,rowCount:s.table.rows.length,revision:s.table.revision}:s)}}:{}), outputPath: args.outputPath, jsonLimit: limit, series: result.series.map(s => ({ ...s, totalPoints: s.points.length, points: s.points.slice(0, limit), original: s.original.slice(0, limit) })) };
+}
+
+export async function plotPreset(args: { preset: string; params: unknown; evaluate?: boolean; threshold?: { limit: number; direction: "above" | "below"; series?: string }; outputPath?: string; limit?: number; cacheDir?: string }, execution: PlotExecution = {}): Promise<object> {
+  const recipe = buildPlotPreset(args.preset, args.params);
+  if (!args.evaluate && !args.threshold) return { preset: args.preset, recipe };
+  const dataset = await runPlotWorker({ recipe, ...(args.cacheDir ? { cacheDir: path.resolve(args.cacheDir) } : {}) }, execution) as PlotDataset;
+  if (args.outputPath) {
+    const out = path.resolve(args.outputPath);
+    if (path.extname(out).toLowerCase() !== ".csv") throw new Error("Plot numeric export requires a .csv path.");
+    await writePlotCsv(out, dataset, execution.signal);
+  }
+  let threshold: ThresholdCheck[] | undefined;
+  if (args.threshold) {
+    const chosen = args.threshold.series ? dataset.series.filter(s => s.id === args.threshold!.series) : dataset.series;
+    if (!chosen.length) throw new Error(`No evaluated series ${args.threshold.series}.`);
+    threshold = chosen.map(s => checkThreshold(s, args.threshold!.limit, args.threshold!.direction));
+  }
+  const limit = Math.min(10000, Math.max(1, Math.floor(args.limit ?? 100)));
+  return { preset: args.preset, recipe, diagnostics: dataset.diagnostics, partial: dataset.partial, ...(threshold ? { threshold } : {}), outputPath: args.outputPath, jsonLimit: limit, series: dataset.series.map(s => ({ id: s.id, name: s.name, statistics: s.statistics, diagnostics: s.diagnostics, totalPoints: s.points.length, points: s.points.slice(0, limit) })) };
 }
 
 // --- problemtype catalog ------------------------------------------------------
