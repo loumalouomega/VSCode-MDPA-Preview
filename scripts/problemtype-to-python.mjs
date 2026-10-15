@@ -116,6 +116,7 @@ if (decl.domains) {
     if (d.materialsFileName !== undefined) rest.push(`           materials_file_name=${JSON.stringify(d.materialsFileName)}`);
     if (d.required) rest.push(`           required=${py(d.required, 11)}`);
     if (d.meshNaming) rest.push(`           mesh_naming=${py(d.meshNaming, 11)}`);
+    if (d.pointLoadInterface) rest.push(`           point_load_interface=${py(d.pointLoadInterface, 11)}`);
     out.push(`${rest.join(",\n")}),`);
   }
   out.push("]");

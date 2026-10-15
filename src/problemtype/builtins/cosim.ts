@@ -310,6 +310,11 @@ const decl: ProblemtypeDeclaration = {
       conditionIds: [...structConditions.map((c) => c.id), "structureInterface"],
       required: [{ conditionId: "structureInterface", message: 'mark the structure side of the interface: assign at least one SubModelPart as "Coupling interface (structure side)".' }],
       meshNaming: { elements: "$field:s_elementBase", conditions: { 2: "LineLoadCondition", 3: "SurfaceLoadCondition" } },
+      // The interface face reads PRESSURE / SURFACE_LOAD, so the mapped
+      // POINT_LOAD needs one-node point conditions of its own. They go into a
+      // sibling part (the interface part must stay a pure surface for the
+      // mapper's displacement transfer); see interfacePointLoad.ts.
+      pointLoadInterface: { conditionId: "structureInterface" },
     },
   ],
   sections: [

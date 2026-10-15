@@ -20,6 +20,7 @@ import { CaseState, ProblemtypeRuntime } from "./types";
 import { flattenValues, resolveMeshNaming } from "./api";
 import { domainOfLaw, resolveDomainSize } from "./generate";
 import { adaptMeshNames, BlockRename } from "./meshAdapt";
+import { addInterfacePointLoads } from "./interfacePointLoad";
 
 /** One physics domain's own mesh file, sliced from the source (coupled problemtypes). */
 export interface DomainMesh {
@@ -98,7 +99,18 @@ export function planCaseMesh(
       const bases = resolveMeshNaming({ ...decl, meshNaming: d.meshNaming ?? decl.meshNaming }, values, domainSize);
       const renamed = adaptMeshNames(base, bases, domainSize);
       warnings.push(...renamed.warnings.map((w) => `${d.label}: ${w}`));
-      domainMeshes.push({ domainId: d.id, stem: `${stem}_${d.mdpaSuffix}`, model: renamed.model, renames: renamed.renames });
+      let domainModel = renamed.model;
+      if (d.pointLoadInterface) {
+        // The coupling's mapped POINT_LOAD is assembled by one-node point
+        // conditions in a sibling of the interface part (see interfacePointLoad.ts).
+        const paths = state.assignments
+          .filter((a) => a.conditionId === d.pointLoadInterface!.conditionId)
+          .map((a) => a.smpPath);
+        const applied = addInterfacePointLoads(domainModel, paths, domainSize);
+        domainModel = applied.model;
+        warnings.push(...applied.warnings.map((w) => `${d.label}: ${w}`));
+      }
+      domainMeshes.push({ domainId: d.id, stem: `${stem}_${d.mdpaSuffix}`, model: domainModel, renames: renamed.renames });
     }
     return {
       caseModel: model,
