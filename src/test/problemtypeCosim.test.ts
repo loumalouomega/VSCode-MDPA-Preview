@@ -6,6 +6,7 @@ import * as path from "node:path";
 import { spawnSync } from "node:child_process";
 
 import { parseMdpa } from "../parser/mdpaParser";
+import { findSubModelPart } from "../parser/subModelPartExtract";
 import { generateCase, domainProblems } from "../problemtype/generate";
 import { planCaseMesh } from "../problemtype/caseMesh";
 import { defaultCaseState, validateDeclaration } from "../problemtype/api";
@@ -232,6 +233,104 @@ test("cosim: a missing or unbalanced interface refuses generation before anythin
 test("cosim: the source mesh is sliced into one mesh per physics", () => {
   const plan = planCaseMesh(cosim, parseMdpa(MDPA), cosimState(), "flap", true);
   assert.deepEqual(plan.domainMeshes.map((m) => m.stem), ["flap_Fluid", "flap_Structural"]);
+});
+
+test("cosim: the structure slice emits interface point-load conditions in a sibling part", () => {
+  const plan = planCaseMesh(cosim, parseMdpa(MDPA), cosimState(), "flap", true);
+  const structure = plan.domainMeshes.find((m) => m.domainId === "structure")!;
+  const block = structure.model.blocks.find((b) => b.name === "PointLoadCondition3D1N");
+  assert.ok(block, "the structure slice carries the 1-node point load block");
+  assert.equal(block.stride, 1);
+  assert.deepEqual([...block.connectivity].sort((a, b) => a - b), [5, 6, 7], "one condition per interface node");
+  const sibling = findSubModelPart(structure.model, "SolidWallPointLoad");
+  assert.ok(sibling, "the point conditions live in a sibling of the interface part");
+  assert.deepEqual([...sibling.conditionIds].sort((a, b) => a - b), [...block.entityIds].sort((a, b) => a - b));
+  assert.deepEqual([...sibling.nodeIds].sort((a, b) => a - b), [5, 6, 7]);
+  // The interface part itself stays a pure surface: the mapper builds its
+  // interface from it, and mixing points in breaks the displacement transfer.
+  const surface = findSubModelPart(structure.model, "SolidWall")!;
+  for (const id of block.entityIds) assert.ok(![...surface.conditionIds].includes(id));
+  // The sibling carries no warning: this is the expected shape for CoSimulation.
+  assert.ok(!structure.renames.some((r) => r.to === "PointLoadCondition3D1N"));
+  const fluid = plan.domainMeshes.find((m) => m.domainId === "fluid")!;
+  assert.ok(!fluid.model.blocks.some((b) => b.name.startsWith("PointLoadCondition")), "the fluid slice gets none");
+});
+
+// The same mesh in 2D: triangle elements and line conditions, z all zero.
+const MDPA_2D = `Begin Properties 0
+End Properties
+
+Begin Nodes
+1 0.0 0.0 0.0
+2 1.0 0.0 0.0
+3 0.0 1.0 0.0
+4 0.0 0.0 0.0
+5 1.0 0.0 0.0
+6 0.0 -1.0 0.0
+End Nodes
+
+Begin Elements Element2D3N
+1 0 1 2 3
+2 0 4 5 6
+End Elements
+
+Begin Conditions LineCondition2D2N
+1 0 1 2
+2 0 4 5
+End Conditions
+
+Begin SubModelPart Fluid
+  Begin SubModelPartNodes
+  1
+  2
+  3
+  End SubModelPartNodes
+  Begin SubModelPartElements
+  1
+  End SubModelPartElements
+End SubModelPart
+
+Begin SubModelPart Solid
+  Begin SubModelPartNodes
+  4
+  5
+  6
+  End SubModelPartNodes
+  Begin SubModelPartElements
+  2
+  End SubModelPartElements
+End SubModelPart
+
+Begin SubModelPart FluidWall
+  Begin SubModelPartNodes
+  1
+  2
+  End SubModelPartNodes
+  Begin SubModelPartConditions
+  1
+  End SubModelPartConditions
+End SubModelPart
+
+Begin SubModelPart SolidWall
+  Begin SubModelPartNodes
+  4
+  5
+  End SubModelPartNodes
+  Begin SubModelPartConditions
+  2
+  End SubModelPartConditions
+End SubModelPart
+`;
+
+test("cosim: a 2D structure slice emits PointLoadCondition2D1N", () => {
+  const plan = planCaseMesh(cosim, parseMdpa(MDPA_2D), cosimState(), "flap", true);
+  const structure = plan.domainMeshes.find((m) => m.domainId === "structure")!;
+  assert.ok(structure.model.blocks.some((b) => b.name === "PointLoadCondition2D1N"));
+  const sibling = findSubModelPart(structure.model, "SolidWallPointLoad");
+  assert.ok(sibling);
+  assert.deepEqual([...sibling.nodeIds].sort((a, b) => a - b), [4, 5]);
+  // The line interface keeps its renamed surface condition.
+  assert.ok(structure.model.blocks.some((b) => b.name === "LineLoadCondition2D2N"));
 });
 
 test("cosim: the preparation record names the coupling document and the driver", async () => {

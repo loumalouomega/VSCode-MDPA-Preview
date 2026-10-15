@@ -289,6 +289,16 @@ export interface DomainSpec {
   required?: { conditionId: string; message: string }[];
   /** Mesh block naming expected by this domain's solver. */
   meshNaming?: MeshNamingSpec;
+  /**
+   * Load interface of a coupled problemtype (only CoSimulation, today): the
+   * assigned SubModelPart of `conditionId` stays the coupling destination,
+   * while one 1-node point condition per interface node is emitted into a
+   * sibling SubModelPart, so a transferred POINT_LOAD is assembled (the
+   * interface face itself carries a surface condition reading PRESSURE /
+   * SURFACE_LOAD). See `interfacePointLoad.ts` for why the sibling must not be
+   * the interface part itself.
+   */
+  pointLoadInterface?: { conditionId: string };
 }
 
 export interface MaterialLawSpec {
