@@ -25,7 +25,7 @@ Saved cases from earlier versions keep working: field ids are unchanged and regr
 ## Where the extension deliberately differs
 
 - Process lists follow GiD (`initial_conditions_process_list`, `constraints_process_list`, `loads_process_list`, `list_other_processes`), with the per-physics lists of the coupled apps. Thermal heat flux and thermal face live in the constraints list, as GiD writes them.
-- Coupled problemtypes slice the mesh you have open instead of expecting one per physics, and refuse a case with a missing domain or interface before writing anything.
+- Coupled problemtypes slice the mesh you have open instead of expecting one per physics, and refuse a case with a missing domain or interface before writing anything. FSI also checks that the interface sides pair one-to-one, carry boundary cells of the right dimension and overlap, and its driver records the coupling iterations of every step. The generic CoSimulation problemtype (`cosim`) has no GiD counterpart; its shape follows the CoSimulationApplication's Mok FSI benchmark (see [Coupled Simulations](./coupled-simulations)).
 - Potential flow writes the far field with `apply_far_field_and_wake_process` (the process current Kratos ships; GiD still names the older `apply_far_field_process`), and offers no 3D wake, wing-tip or 3D body entries because GiD itself only writes a `placeholder_process` for them.
 - The new problemtypes are written from GiDInterface's writers and have not been solver-run in this repository.
 

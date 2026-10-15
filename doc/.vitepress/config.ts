@@ -75,6 +75,7 @@ export default defineConfig({
         items: [
           { text: 'Running Kratos Simulations', link: '/guide/simulation' },
           { text: 'Running a Case', link: '/guide/running-a-case' },
+          { text: 'Coupled Simulations', link: '/guide/coupled-simulations' },
           { text: 'Structural Optimization', link: '/guide/optimization' },
           { text: 'Reduced-Order Models', link: '/guide/reduced-order-models' },
           { text: 'MCP Server', link: '/guide/mcp' },
@@ -157,6 +158,7 @@ export default defineConfig({
           items: [
             { text: 'Running Kratos Simulations', link: '/guide/simulation' },
             { text: 'Running a Case', link: '/guide/running-a-case' },
+            { text: 'Coupled Simulations', link: '/guide/coupled-simulations' },
             { text: 'Structural Optimization', link: '/guide/optimization' },
             { text: 'Reduced-Order Models', link: '/guide/reduced-order-models' },
             { text: 'MCP Server', link: '/guide/mcp' },
