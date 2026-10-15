@@ -694,6 +694,11 @@
         "category": "%category.KratosRuns%"
       },
       {
+        "command": "kratos.runs.exportResults",
+        "title": "%command.kratos.runs.exportResults.title%",
+        "category": "%category.KratosRuns%"
+      },
+      {
         "command": "kratos.runs.exportConvergence",
         "title": "%command.kratos.runs.exportConvergence.title%",
         "category": "%category.KratosRuns%"
@@ -1033,6 +1038,10 @@
           "when": "(view == kratos.runs || view == kratos.runsSidebar) && viewItem =~ /^kratosRun\\.(finished|failed|cancelled|orphaned)$/"
         },
         {
+          "command": "kratos.runs.exportResults",
+          "when": "(view == kratos.runs || view == kratos.runsSidebar) && viewItem =~ /^kratosRun\\./"
+        },
+        {
           "command": "kratos.runs.exportConvergence",
           "when": "(view == kratos.runs || view == kratos.runsSidebar) && viewItem =~ /^kratosRun\\./"
         },
@@ -1113,6 +1122,10 @@
         },
         {
           "command": "kratos.runs.packResults",
+          "when": "false"
+        },
+        {
+          "command": "kratos.runs.exportResults",
           "when": "false"
         },
         {

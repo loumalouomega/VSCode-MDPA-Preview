@@ -1,4 +1,5 @@
 import { discoverOutputs } from '../problemtype/outputDiscovery';
+import { exportCaseResults, normalizeExportFormats } from "../problemtype/resultExport";
 import { boundSteps, convergenceToCsv, summarizeConvergence, type ConvergenceStep } from '../problemtype/convergence';
 import { readConvergence } from '../problemtype/convergenceFile';
 import { optimizationFormulation, optimizationSummaryToCsv, summarizeOptimization } from "../problemtype/optimization/summaryLog";
@@ -3815,6 +3816,39 @@ const convergenceRow = (s: ConvergenceStep) => ({
   ...(s.error !== undefined ? { error: s.error } : {}),
   ...(s.residualUnavailableReason !== undefined ? { residualUnavailableReason: s.residualUnavailableReason } : {}),
 });
+
+/**
+ * Converts a case's solver output (`vtk_output/`) to other meshio++ formats.
+ *
+ * `formats` defaults to the case's saved `output.exportFormats`. A series goes
+ * into one file for `.xdmf`/`.pvd` and one file per step for every other format;
+ * the same `exportCaseResults` runs automatically when a run finishes in the
+ * extension.
+ */
+export async function caseExportResults(
+  args: { meshPath: string; formats?: string[]; folder?: string },
+  execution: PlotExecution = {}
+): Promise<object> {
+  const abs = path.resolve(args.meshPath);
+  if (!fs.existsSync(abs)) throw new Error(`File not found: ${abs}`);
+  let formats = normalizeExportFormats(args.formats);
+  let folder = args.folder;
+  if (formats.length === 0 || !folder) {
+    try {
+      const saved = parseCaseJson(fs.readFileSync(caseFilePath(abs), "utf8")).state?.output;
+      if (formats.length === 0) formats = normalizeExportFormats(saved?.exportFormats);
+      folder = folder ?? saved?.exportFolder;
+    } catch {
+      /* no saved case: the caller must name the formats */
+    }
+  }
+  if (formats.length === 0) throw new Error("Pass `formats` (e.g. [\".xdmf\", \".exo\"]) or save exportFormats in the case's output settings.");
+  throwIfCancelled(execution.signal);
+  return exportCaseResults(abs, { formats, folder }, {
+    convert: (a) => meshConvert(a, execution) as Promise<{ warnings?: string[] }>,
+    pack: (a) => meshPackSeries(a, execution) as Promise<{ files?: string[]; companions?: string[]; steps?: number; warnings?: string[] }>,
+  });
+}
 
 /**
  * The solver convergence history of a case, read from the

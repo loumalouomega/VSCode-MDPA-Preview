@@ -49,6 +49,7 @@ import {
   caseRun,
   caseStatus,
   caseConvergence,
+  caseExportResults,
   caseOptimization,
   caseRom,
   caseMonitors,
@@ -1081,6 +1082,23 @@ export function registerAllTools(server: McpServer): void {
       },
     },
     run(caseConvergence)
+  );
+
+  server.registerTool(
+    "case_export_results",
+    {
+      description:
+        "Convert a case's solver output (the VTK frames in vtk_output/) to other meshio++ formats. The solver always writes VTK; this is the post-run conversion. " +
+        "A time series becomes ONE file for `.xdmf`/`.xmf` (a single static mesh) and `.pvd` (an index plus one file per step); every other format gets one file per step named after the frame. " +
+        "An XDMF whose mesh changes between steps falls back to one file per step with a warning. `formats` defaults to the case's saved output.exportFormats; `folder` (default `converted`, relative to the case folder) must not be inside the solver output folder. " +
+        "A format that cannot be written is reported under `skipped` with the reason and never stops the others. The extension runs the same conversion automatically when a run finishes.",
+      inputSchema: {
+        meshPath: z.string().describe("Path to the mesh the case belongs to"),
+        formats: z.array(z.string()).optional().describe('Extensions such as ".xdmf", ".pvd", ".exo", ".msh", ".med" (default: the case\'s saved exportFormats)'),
+        folder: z.string().optional().describe("Output folder, absolute or relative to the case folder (default \"converted\")"),
+      },
+    },
+    runCancellable(caseExportResults)
   );
 
   server.registerTool(
