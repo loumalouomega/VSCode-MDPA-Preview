@@ -375,6 +375,9 @@ export function activate(context: vscode.ExtensionContext): void {
         );
       }
     ),
+    vscode.commands.registerCommand("kratos.case.exportResults", () =>
+      dispatchCase("exportResults")
+    ),
     vscode.commands.registerCommand("kratos.case.openResults", () =>
       dispatchCase("openResults")
     ),

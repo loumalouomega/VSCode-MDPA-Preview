@@ -19,6 +19,7 @@
  * copy silently loses its title buttons and context menu.
  */
 
+import { exportResultsInteractive } from "./resultExportHost";
 import * as path from "node:path";
 import * as vscode from "vscode";
 
@@ -228,6 +229,10 @@ export function registerRunTreeView(runs: RunManager, context: vscode.ExtensionC
     vscode.commands.registerCommand("kratos.runs.packResults", (node?: Node) => {
       if (node?.kind !== "run") return;
       void packSeries(path.join(node.record.caseDir, "vtk_output"), node.record.stem);
+    }),
+    vscode.commands.registerCommand("kratos.runs.exportResults", async (node?: Node) => {
+      if (node?.kind !== "run") return;
+      await exportResultsInteractive(node.record.meshFsPath);
     }),
     vscode.commands.registerCommand("kratos.runs.exportConvergence", async (node?: Node) => {
       if (node?.kind !== "run") return;

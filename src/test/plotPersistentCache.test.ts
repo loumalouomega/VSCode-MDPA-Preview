@@ -127,3 +127,49 @@ test("the plot worker reuses the persistent cache across sessions", async () => 
     assert.equal(hit(await runPlotWorker({ source }) as PlotTable), false, "no cacheDir = no cache");
   } finally { await removeScratchDir(dir); }
 });
+
+test("the stat shortcut skips rehashing untouched files and never survives a change", async () => {
+  const dir = await scratch();
+  try {
+    const file = path.join(dir, "m.mdpa"), cacheDir = path.join(dir, "cache");
+    await fs.writeFile(file, mdpa(1));
+    await new Promise(r => setTimeout(r, 30)); // let the file settle past the (test-sized) trust window
+    const source: PlotSource = { id: "n", type: "mesh", kind: "Nodes", path: file };
+    const options = { statSettleMs: 10 };
+    const cold = new PersistentPlotCache(cacheDir, options);
+    assert.equal(hit(await loadPlotSource(source, { persistent: cold })), false);
+    assert.ok(cold.counters.fullIdentities >= 1);
+    // A restarted session: lookup is served from the stat manifest with no content hash at all.
+    const warm = new PersistentPlotCache(cacheDir, options);
+    assert.equal(hit(await loadPlotSource(source, { persistent: warm })), true);
+    assert.equal(warm.counters.fullIdentities, 0);
+    assert.equal(warm.counters.statHits, 1);
+    // Same size, different bytes: ctime changes even if mtime is restored, so the shortcut misses.
+    const before = await fs.stat(file);
+    await fs.writeFile(file, mdpa(2));
+    await fs.utimes(file, before.atime, before.mtime);
+    const changed = new PersistentPlotCache(cacheDir, options);
+    const table = await loadPlotSource(source, { persistent: changed });
+    assert.equal(hit(table), false);
+    assert.equal(changed.counters.statHits, 0);
+    assert.equal(table.rows.find(r => r[0] === 2)?.some(v => v === 2), true);
+    // An added sibling file changes the directory listing and defeats the shortcut too.
+    await new Promise(r => setTimeout(r, 30));
+    const settle = new PersistentPlotCache(cacheDir, options);
+    await loadPlotSource(source, { persistent: settle });
+    await fs.writeFile(path.join(dir, "m_0_1.mdpa"), mdpa(1));
+    const listed = new PersistentPlotCache(cacheDir, options);
+    await loadPlotSource(source, { persistent: listed });
+    assert.equal(listed.counters.statHits, 0);
+    // Opt-out and the default trust window: a just-written file is never trusted.
+    const off = new PersistentPlotCache(cacheDir, { statFastPath: false });
+    await loadPlotSource(source, { persistent: off });
+    assert.equal(off.counters.statHits, 0);
+    await fs.writeFile(file, mdpa(3));
+    const fresh = new PersistentPlotCache(cacheDir);
+    await loadPlotSource(source, { persistent: fresh });
+    const again = new PersistentPlotCache(cacheDir);
+    await loadPlotSource(source, { persistent: again });
+    assert.equal(again.counters.statHits, 0, "a file written within the default settle window is rehashed");
+  } finally { await removeScratchDir(dir); }
+});

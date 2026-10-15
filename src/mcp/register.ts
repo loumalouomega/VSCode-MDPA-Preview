@@ -15,6 +15,7 @@ import {
   plotPreset,
   plotRuns,
   plotRunBind,
+  plotRunResolve,
   plotTimeCursor,
   plotRunTarget,
   meshQuality,
@@ -48,6 +49,7 @@ import {
   caseRun,
   caseStatus,
   caseConvergence,
+  caseExportResults,
   caseOptimization,
   caseRom,
   caseMonitors,
@@ -149,8 +151,8 @@ export function registerAllTools(server: McpServer): void {
     catch (e) { return { content: [{ type: "text", text: e instanceof Error ? e.message : String(e) }], isError: true }; }
   });
   server.registerTool("plot_preset", {
-    description: "Build a named plot recipe and optionally evaluate it. Presets: sectionComparison (a field's boundaryMean/mean over time for two or more SubModelParts, history scope; differences are not derived; an optional pressureDensity in kg/m³ converts a field recording SI kinematic pressure to Pa, never inferred) volumeTotal (sum of a scalar Elemental field times element length/area/volume, per SubModelPart or whole mesh; elements without a value or measure are excluded and reported, never zero) tensorComponents (one curve per component index of a tensor/vector field over time for a SubModelPart; named by index only, no Voigt or invariant meaning inferred), tensorInvariants (trace, hydrostatic, vonMises, j2, deviatoricNorm, principalMax/Mid/Min, maxShear of a tensor field over time for a SubModelPart; params.layout is REQUIRED and never inferred: \"full3x3\" (row-major xx,xy,xz,yx,yy,yz,zx,zy,zz), \"full2x2\", or explicit indices {xx,yy,zz?,xy,yz?,xz?} for a Voigt-style order; missing zz/yz/xz are zero (plane problem); shear \"engineering\" halves off-diagonals; operation mean/min/max; a non-finite row is a gap), heatFluxBalance (flux of a supplied nodal heat-flux vector through boundary SubModelParts over time; positive is out of the domain, no conductivity or gradient inferred) and tableRelationship (one supplied table column against another, e.g. load vs displacement; x/y are the importer's column ids c0, c1, … in file order as shown by plot_table_read; units only as supplied). With evaluate (or a threshold) the recipe runs through the same worker as plot_dataset. threshold applies a user-supplied limit and direction to the evaluated curves: equality is not a violation and gaps are counted separately, never passed or failed. With differences ([{from, to}] series ids) an evaluated run also reports from − to at exactly matching x (unmatched x or a gap is a gap; differing units are refused). Without evaluate it returns only the validated recipe for plot_dataset.",
-    inputSchema: { preset: z.enum(["sectionComparison", "volumeTotal", "tensorComponents", "tensorInvariants", "heatFluxBalance", "tableRelationship"]), params: z.unknown(), evaluate: z.boolean().optional(), differences: z.array(z.object({ from: z.string(), to: z.string() })).optional(), threshold: z.object({ limit: z.number(), direction: z.enum(["above", "below"]), series: z.string().optional() }).optional(), outputPath: z.string().optional(), limit: z.number().int().positive().optional(), cacheDir: z.string().optional() },
+    description: "Build a named plot recipe and optionally evaluate it. Presets: fieldDistribution (histogram of one component or the magnitude of a Nodal/Elemental/Conditional field over the mesh entities or one SubModelPart at the current frame; params.components is the field width, entities the field does not cover are excluded and reported, never zero) sectionComparison (a field's boundaryMean/mean over time for two or more SubModelParts, history scope; differences are not derived; an optional pressureDensity in kg/m³ converts a field recording SI kinematic pressure to Pa, never inferred) volumeTotal (sum of a scalar Elemental field times element length/area/volume, per SubModelPart or whole mesh; elements without a value or measure are excluded and reported, never zero) tensorComponents (one curve per component index of a tensor/vector field over time for a SubModelPart; named by index only, no Voigt or invariant meaning inferred), tensorInvariants (trace, hydrostatic, vonMises, j2, deviatoricNorm, principalMax/Mid/Min, maxShear of a tensor field over time for a SubModelPart; params.layout is REQUIRED and never inferred: \"full3x3\" (row-major xx,xy,xz,yx,yy,yz,zx,zy,zz), \"full2x2\", or explicit indices {xx,yy,zz?,xy,yz?,xz?} for a Voigt-style order; missing zz/yz/xz are zero (plane problem); shear \"engineering\" halves off-diagonals; operation mean/min/max; a non-finite row is a gap), heatFluxBalance (flux of a supplied nodal heat-flux vector through boundary SubModelParts over time; positive is out of the domain, no conductivity or gradient inferred) and tableRelationship (one supplied table column against another, e.g. load vs displacement; x/y are the importer's column ids c0, c1, … in file order as shown by plot_table_read; units only as supplied). With evaluate (or a threshold) the recipe runs through the same worker as plot_dataset. threshold applies a user-supplied limit and direction to the evaluated curves: equality is not a violation and gaps are counted separately, never passed or failed. With differences ([{from, to}] series ids) an evaluated run also reports from − to at exactly matching x (unmatched x or a gap is a gap; differing units are refused). Without evaluate it returns only the validated recipe for plot_dataset.",
+    inputSchema: { preset: z.enum(["fieldDistribution", "sectionComparison", "volumeTotal", "tensorComponents", "tensorInvariants", "heatFluxBalance", "tableRelationship"]), params: z.unknown(), evaluate: z.boolean().optional(), differences: z.array(z.object({ from: z.string(), to: z.string() })).optional(), threshold: z.object({ limit: z.number(), direction: z.enum(["above", "below"]), series: z.string().optional() }).optional(), outputPath: z.string().optional(), limit: z.number().int().positive().optional(), cacheDir: z.string().optional() },
   }, async (args, extra) => {
     try { return { content: [{ type: "text", text: JSON.stringify(await plotPreset(args, plottingExecution(extra))) }] }; }
     catch (e) { return { content: [{ type: "text", text: e instanceof Error ? e.message : String(e) }], isError: true }; }
@@ -167,6 +169,13 @@ export function registerAllTools(server: McpServer): void {
     inputSchema: {recordPath:z.string(),path:z.string()},
   }, async(args,extra)=>{
     try{return {content:[{type:"text",text:JSON.stringify(await plotRunBind(args,plottingExecution(extra)))}]};}
+    catch(e){return {content:[{type:"text",text:e instanceof Error?e.message:String(e)}],isError:true};}
+  });
+  server.registerTool("plot_run_resolve", {
+    description: "Explicit ownership resolution for one result path. status \"verified\" only with a recordPath naming an existing .kkss-execution.json receipt whose recorded job/request/owner IDs, source mesh and result/companion revisions still verify (returns the same binding as plot_run_bind). status \"unverified\" for a legacy run, a latest-run .kratosrun.json sidecar or no record: returns only a present-state snapshot revision, explicitly NOT ownership, which cannot be used as a run binding. status \"unresolved\" when a receipt exists but is stale, reused, non-terminal or lacks revisions, or the source cannot be read. Read-only; never scans for receipts and never infers past ownership from current bytes, paths, frame indices or entity IDs.",
+    inputSchema: {path:z.string(),recordPath:z.string().optional()},
+  }, async(args,extra)=>{
+    try{return {content:[{type:"text",text:JSON.stringify(await plotRunResolve(args,plottingExecution(extra)))}]};}
     catch(e){return {content:[{type:"text",text:e instanceof Error?e.message:String(e)}],isError:true};}
   });
   server.registerTool("plot_time_cursor", {
@@ -1073,6 +1082,23 @@ export function registerAllTools(server: McpServer): void {
       },
     },
     run(caseConvergence)
+  );
+
+  server.registerTool(
+    "case_export_results",
+    {
+      description:
+        "Convert a case's solver output (the VTK frames in vtk_output/) to other meshio++ formats. The solver always writes VTK; this is the post-run conversion. " +
+        "A time series becomes ONE file for `.xdmf`/`.xmf` (a single static mesh) and `.pvd` (an index plus one file per step); every other format gets one file per step named after the frame. " +
+        "An XDMF whose mesh changes between steps falls back to one file per step with a warning. `formats` defaults to the case's saved output.exportFormats; `folder` (default `converted`, relative to the case folder) must not be inside the solver output folder. " +
+        "A format that cannot be written is reported under `skipped` with the reason and never stops the others. The extension runs the same conversion automatically when a run finishes.",
+      inputSchema: {
+        meshPath: z.string().describe("Path to the mesh the case belongs to"),
+        formats: z.array(z.string()).optional().describe('Extensions such as ".xdmf", ".pvd", ".exo", ".msh", ".med" (default: the case\'s saved exportFormats)'),
+        folder: z.string().optional().describe("Output folder, absolute or relative to the case folder (default \"converted\")"),
+      },
+    },
+    runCancellable(caseExportResults)
   );
 
   server.registerTool(

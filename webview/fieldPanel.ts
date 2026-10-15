@@ -95,6 +95,8 @@ export interface FieldPanelHandlers {
   onCopyToAllPanes(): void;
   /** Scroll the Variables sidebar section to the selected field's row. */
   onRevealVariable(key: string): void;
+  /** Open the Plots pane on a histogram of the selected field and component. */
+  onPlotField(): void;
   /**
    * Export what the panel is showing as a mesh FILE: the isosurface(s) at the
    * current values, the threshold region with original ids, or that region's
@@ -216,6 +218,18 @@ export function renderFieldPanel(
     const row = document.createElement("div");
     row.className = "field-row";
     row.appendChild(reveal);
+    container.appendChild(row);
+  }
+
+  if (info) {
+    const plot = document.createElement("button");
+    plot.className = "field-range-reset field-plot-field";
+    plot.textContent = "Plot distribution";
+    plot.title = "Open the Plots pane on a histogram of this field (and component) over the mesh";
+    plot.addEventListener("click", () => handlers.onPlotField());
+    const row = document.createElement("div");
+    row.className = "field-row";
+    row.appendChild(plot);
     container.appendChild(row);
   }
 

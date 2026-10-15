@@ -6,7 +6,7 @@ import { buildPlotPreset } from "../../src/parser/plot/presets";
 import type { PlotSource } from "../../src/parser/plot/types";
 import { glyph } from "../../src/uiGlyphs";
 
-export function initPlotPane(bridge:PlotBridge,getContext:()=>FemPlotContext,handlers:{onPickPoints(active:boolean):void;onRegion(path:string):void}) {
+export function initPlotPane(bridge:PlotBridge,getContext:()=>FemPlotContext,handlers:{onPickPoints(active:boolean):void;onRegion(path:string):void;onShowField?(key:string,component:number|"magnitude"):void}) {
   const pane=document.getElementById("plot-pane")!,viewport=document.getElementById("viewport")!,sash=document.getElementById("plot-resizer")!,restore=document.getElementById("plot-restore")!;
   let workspace:ReturnType<typeof mountPlotWorkspace>|undefined,boot:Promise<void>|undefined,vertical=true,fraction=.48,pending:(()=>void)|undefined,ready=false;
   const size=()=>{pane.style.width=vertical?`${fraction*100}%`:"100%";pane.style.height=vertical?"100%":`${fraction*100}%`;viewport.classList.toggle("plot-vertical",vertical);sash.setAttribute("aria-orientation",vertical?"vertical":"horizontal");sash.setAttribute("aria-valuenow",String(Math.round(fraction*100)));};

@@ -447,6 +447,13 @@ export interface OutputState {
   controlType: "step" | "time";
   interval: number;
   nodalVariables: string[];
+  /**
+   * Extensions (`".xdmf"`, `".exo"`, …) the finished run's `vtk_output` frames are
+   * also converted to through meshio++. Absent or empty means no conversion.
+   */
+  exportFormats?: string[];
+  /** Folder for the converted files, relative to the case folder (default `converted`). */
+  exportFolder?: string;
 }
 
 /** The user's whole case setup — persisted as `<stem>.kratoscase.json`. */

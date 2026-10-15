@@ -1438,7 +1438,7 @@ function renderOutput(decl: ProblemtypeDeclaration): void {
   host.appendChild(stageCaption("Results", "results"));
   const { form, body } = cardBlock({
     key: `${decl.id}:output`,
-    title: "Output (VTK)",
+    title: "Output",
     icon: "field",
     collapsed: true,
   });
@@ -1491,6 +1491,26 @@ function renderOutput(decl: ProblemtypeDeclaration): void {
           .split(",")
           .map((s) => s.trim())
           .filter((s) => s.length > 0);
+        scheduleSend();
+      }
+    )
+  );
+  body.appendChild(
+    fieldInput(
+      {
+        id: "exportFormats",
+        label: "also export as",
+        type: "string",
+        help: "Comma-separated formats (.xdmf, .pvd, .exo, .msh, .med, …) the finished run's VTK output is converted to with meshio++. .xdmf and .pvd pack the series into one file; the others write one file per step into converted/",
+      },
+      (out.exportFormats ?? []).join(", "),
+      (v) => {
+        const list = String(v)
+          .split(",")
+          .map((s) => s.trim())
+          .filter((s) => s.length > 0);
+        if (list.length > 0) out.exportFormats = list;
+        else delete out.exportFormats;
         scheduleSend();
       }
     )

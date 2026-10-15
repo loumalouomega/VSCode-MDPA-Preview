@@ -61,6 +61,8 @@ export function validatePlotRecipe(value: unknown): PlotRecipe {
       }
       requireValue(s.orientation === undefined || ["outward", "winding"].includes(s.orientation), "Invalid boundary orientation.");
       requireValue(s.boundary === undefined || ["conditions", "exterior"].includes(s.boundary), "Invalid boundary source.");
+      requireValue(s.interface === undefined || ["exclude", "region"].includes(s.interface), "Invalid exterior interface side.");
+      requireValue(s.interface === undefined || s.boundary === "exterior", "The interface side applies to exterior boundaries only.");
       if (s.boundary === "exterior") {
         requireValue(["boundaryMean", "boundaryIntegral", "pressureForce", "pressureMoment", "flux"].includes(s.operation), "An exterior boundary applies to boundary operations only.");
         requireValue(s.kind === "Nodal", "Exterior boundaries read Nodal fields; Conditional values do not exist on faces that are not Conditions.");
@@ -144,9 +146,9 @@ export function emptyPlotRecipe(source?: PlotSource): PlotRecipe {
 export const PLOT_CAPABILITIES = {
   version: 1, families: PLOT_FAMILIES, sources: ["table", "inline", "mesh", "history", "probe", "region"],
   regionOperations: REGION_OPERATIONS,
-  presets: [{ id: "sectionComparison", label: "Section comparison over time" }, { id: "volumeTotal", label: "Measure-weighted total of an Elemental field" }, { id: "tensorComponents", label: "Components of a tensor/vector field over time" }, { id: "tensorInvariants", label: "Tensor invariants (von Mises, principal) from a supplied layout" }, { id: "heatFluxBalance", label: "Heat-flux balance through boundary sections" }, { id: "tableRelationship", label: "Table column relationship" }],
+  presets: [{ id: "fieldDistribution", label: "Distribution of a displayed field" }, { id: "sectionComparison", label: "Section comparison over time" }, { id: "volumeTotal", label: "Measure-weighted total of an Elemental field" }, { id: "tensorComponents", label: "Components of a tensor/vector field over time" }, { id: "tensorInvariants", label: "Tensor invariants (von Mises, principal) from a supplied layout" }, { id: "heatFluxBalance", label: "Heat-flux balance through boundary sections" }, { id: "tableRelationship", label: "Table column relationship" }],
   thresholdCheck: "plot_preset threshold: user-supplied limit and direction on an evaluated curve; equality is not a violation and gaps are counted separately, never passed or failed",
-  exteriorBoundary: "boundary: \"exterior\" integrates over faces owned by exactly one Element of the region (Nodal fields, outward normals); faces shared with an Element outside the region, faces shared by three or more Elements (non-manifold) and cells of unsupported type are excluded or flagged and reported (partial), never assigned to a side; higher-order Elements integrate and read Nodal values on their corner skeleton; outward normals use the centroid rule of the single owning Element",
+  exteriorBoundary: "boundary: \"exterior\" integrates over faces owned by exactly one Element of the region (Nodal fields, outward normals); faces shared with an Element outside the region, faces shared by three or more Elements (non-manifold) and cells of unsupported type are excluded or flagged and reported (partial), never assigned to a side (unless interface: \"region\" explicitly includes interface faces on the region's own side); owners that are non-convex about a face are excluded and reported; higher-order Elements integrate and read Nodal values on their corner skeleton; outward normals use the centroid rule of the single owning Element",
   transforms: ["smooth", "regression", "derivative", "integral", "normalize", "convert"] as PlotTransform["op"][],
   alignment: ["exact", "nearest", "linear"], gridding: ["regular", "nearest (explicit radius; convex-hull mask)"],
   lineModes: ["lines", "lines+markers"], barModes: ["group", "stack"], barOrientations: ["v", "h"],

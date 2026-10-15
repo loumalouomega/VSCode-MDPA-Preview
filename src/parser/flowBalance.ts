@@ -170,6 +170,8 @@ interface Facet {
 interface Adjacency {
   count: number;
   centroid: [number, number, number];
+  /** Node indices of the first owner's corners; lets the outward-normal rule check the owner is convex about the face. */
+  ownerCorners?: number[];
 }
 
 const IMBALANCE_NOTE = "net flux / max(total inflow, total outflow) over the sections given";
@@ -264,7 +266,7 @@ function adjacency(model: MdpaModel, wanted: Set<string>, category: "surface" | 
         }
         const hit = out.get(key);
         if (hit) hit.count++;
-        else out.set(key, { count: 1, centroid });
+        else out.set(key, { count: 1, centroid, ownerCorners: ci });
       }
     }
   }
@@ -347,6 +349,28 @@ export function boundaryQuadrature(model: MdpaModel, partPath: string, orientati
 
 type BoundaryQuadrature = ReturnType<typeof boundaryQuadrature>;
 
+/**
+ * True when the owner's corners (those not on the face) lie strictly on both sides of the face plane, so the
+ * owner is not convex about it and "the owner's centroid is on the inner side" is not a reliable orientation test.
+ * Tolerance is relative to the owner's extent; corners on the plane are neutral.
+ */
+function ownerStraddles(model: MdpaModel, ownerCorners: number[], faceCorners: number[], origin: number[], areaVector: number[], area: number): boolean {
+  const n = areaVector.map((v) => v / area);
+  let lo = Infinity, hi = -Infinity;
+  const min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
+  for (const i of ownerCorners) for (let d = 0; d < 3; d++) { const v = model.coords[3 * i + d]; if (v < min[d]) min[d] = v; if (v > max[d]) max[d] = v; }
+  const tol = 1e-9 * Math.hypot(max[0] - min[0], max[1] - min[1], max[2] - min[2]);
+  const face = new Set(faceCorners);
+  for (const i of ownerCorners) {
+    if (face.has(i)) continue;
+    let dist = 0;
+    for (let d = 0; d < 3; d++) dist += (model.coords[3 * i + d] - origin[d]) * n[d];
+    if (dist < lo) lo = dist;
+    if (dist > hi) hi = dist;
+  }
+  return lo < -tol && hi > tol;
+}
+
 /** The shared piece/normal/weight loop behind `boundaryQuadrature` and `exteriorQuadrature`. */
 function quadratureFromFacets(
   model: MdpaModel, facets: Facet[], dimension: 2 | 3, orientation: FlowOrientation | undefined,
@@ -373,6 +397,8 @@ function quadratureFromFacets(
       if (orientation === "outward") {
         const owner = adj?.get(facetKey(facet.corners));
         if (!owner || owner.count !== 1) { result.excludedMeasure += measure; result.warnings.push(`${name}: ${facet.sharedOutside ? "shared with an element outside the region (interface side is ambiguous)" : owner ? "internal interface" : "no adjacent volume/surface element"}; outward normal unavailable, excluded.`); continue; }
+        const reach = owner.ownerCorners ? ownerStraddles(model, owner.ownerCorners, facet.corners, a, vector, measure) : false;
+        if (reach) { result.excludedMeasure += measure; result.incomplete = true; result.warnings.push(`${name}: the owning element is non-convex about this face (its corners lie on both sides of the face plane); the centroid rule cannot choose the outward normal, excluded.`); continue; }
         const centre = [0,1,2].map(d=>p.reduce((sum,v)=>sum+v[d]/p.length,0));
         if (centre.reduce((sum,v,d)=>sum+(v-owner.centroid[d])*vector[d],0)<0) sign=-1;
       }
@@ -399,7 +425,8 @@ function quadratureFromFacets(
  * outward from the owning element (centroid rule, as `boundaryQuadrature`).
  * `partPath` undefined = every Element of the mesh.
  */
-export function exteriorQuadrature(model: MdpaModel, partPath?: string): BoundaryQuadrature {
+export function exteriorQuadrature(model: MdpaModel, partPath?: string, opts: { interface?: "exclude" | "region" } = {}): BoundaryQuadrature {
+  const includeInterface = opts.interface === "region";
   let region: Set<number> | undefined;
   if (partPath) {
     const part = findSubModelPart(model, partPath);
@@ -415,7 +442,7 @@ export function exteriorQuadrature(model: MdpaModel, partPath?: string): Boundar
   const want = volume ? "volume" : "surface";
   const category = volume ? "surface" : "line";
   const index = nodeIndexMap(model);
-  const inside = new Map<string, { count: number; corners: number[]; centroid: [number, number, number] }>();
+  const inside = new Map<string, { count: number; corners: number[]; centroid: [number, number, number]; owner: number[] }>();
   const outside = new Set<string>();
   let regionCells = 0;
   // Cells that cannot contribute faces (unsupported type, absent node ids) and
@@ -452,7 +479,7 @@ export function exteriorQuadrature(model: MdpaModel, partPath?: string): Boundar
           if (!pass) { if (inside.has(key)) outside.add(key); continue; }
           const hit = inside.get(key);
           if (hit) hit.count++;
-          else inside.set(key, { count: 1, corners: fc, centroid });
+          else inside.set(key, { count: 1, corners: fc, centroid, owner: ci });
         }
       }
     }
@@ -460,13 +487,14 @@ export function exteriorQuadrature(model: MdpaModel, partPath?: string): Boundar
   if (!regionCells) throw new Error(`The region has no ${want} Elements; exterior boundaries come from ${volume ? "volume" : "surface"} Elements.${skippedCells ? ` ${skippedCells} Element(s) of unsupported type or with unresolved nodes were skipped.` : ""}`);
   const facets: Facet[] = [];
   const adj = new Map<string, Adjacency>();
-  let interior = 0, nonManifold = 0;
+  let interior = 0, nonManifold = 0, interfaceFaces = 0;
   for (const [key, f] of inside) {
     if (f.count > 2) { nonManifold++; continue; }
     if (f.count > 1) { interior++; continue; }
     const shared = outside.has(key);
-    facets.push({ corners: f.corners, conditionId: -1, label: `Exterior ${category === "surface" ? "face" : "edge"} (nodes ${f.corners.map((i) => model.nodeIds[i]).join(",")})`, ...(shared ? { sharedOutside: true } : {}) });
-    adj.set(key, { count: shared ? 2 : 1, centroid: f.centroid });
+    if (shared) interfaceFaces++;
+    facets.push({ corners: f.corners, conditionId: -1, label: `Exterior ${category === "surface" ? "face" : "edge"} (nodes ${f.corners.map((i) => model.nodeIds[i]).join(",")})`, ...(shared && !includeInterface ? { sharedOutside: true } : {}) });
+    adj.set(key, { count: shared && !includeInterface ? 2 : 1, centroid: f.centroid, ownerCorners: f.owner });
   }
   if (!facets.length) throw new Error("The region has no exterior boundary (every face is shared between region elements).");
   const result = quadratureFromFacets(model, facets, volume ? 3 : 2, "outward", adj, [...higherOrder], 0);
@@ -479,6 +507,7 @@ export function exteriorQuadrature(model: MdpaModel, partPath?: string): Boundar
     result.incomplete = true;
     result.warnings.push(`${nonManifold} face(s) are shared by three or more region Elements (non-manifold) and were excluded.`);
   }
+  if (includeInterface && interfaceFaces) result.warnings.push(`${interfaceFaces} interface ${category === "surface" ? "faces" : "edges"} shared with an element outside the region were included on the region's own side (interface: "region"); the neighbour's side is not computed.`);
   // One summary line instead of one per facet: a real region can have thousands of interface faces.
   const excluded = result.warnings.filter((w) => w.startsWith("Exterior "));
   result.warnings = result.warnings.filter((w) => !w.startsWith("Exterior "));
