@@ -1,3 +1,4 @@
+import { applicationCheckPy } from "../problemtype/applications";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
@@ -198,7 +199,8 @@ test("structural dynamic: solver gains the implicit bossak scheme", async () => 
 test("structural: MainKratos.py emits versioned solve-step convergence evidence", async () => {
   const model = parseMdpa(MDPA_3D);
   const out = await generateCase(structural, model, structuralState(), "beam");
-  assert.equal(out.mainScript, STRUCTURAL_MAIN_KRATOS_PY);
+  assert.equal(out.mainScript, applicationCheckPy(out.applications) + STRUCTURAL_MAIN_KRATOS_PY);
+  assert.deepEqual(out.applications, ["StructuralMechanicsApplication"]);
   assert.ok(out.mainScript.includes('parameters["analysis_stage"].GetString()'));
   assert.ok(out.mainScript.includes('"adapter": "kkss.structural-convergence"'));
 });

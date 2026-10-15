@@ -1,0 +1,17 @@
+% Toolbar icon: ptResponse — Response function: a gauge reading one value of the design.
+% NOTE: the committed svg-ui/ptResponse.svg was drawn from this same picture
+% (24-unit grid, 1.6 stroke) without a LaTeX toolchain; regenerating via
+% `make ui` replaces it with the pdftocairo rendering of this source — same
+% glyph either way.
+\documentclass[tikz,border=0pt]{standalone}
+\begin{document}
+\begin{tikzpicture}[line width=1.6mm, line cap=round, line join=round, x=1mm,y=1mm]
+  \useasboundingbox (0,0) rectangle (24,24);
+  \draw (4,7) arc (180:0:8);
+  \draw (12,7) -- (16.5,13);
+  \draw (4,7) -- (6,7);
+  \draw (18,7) -- (20,7);
+  \draw (12,15) -- (12,13);
+  \fill (12,7) circle (1.6);
+\end{tikzpicture}
+\end{document}

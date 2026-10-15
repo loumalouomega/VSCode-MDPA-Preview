@@ -32,6 +32,8 @@ const EXPECTED_IDS: ToolbarIconId[] = [
   "ptBuoyancy", "ptCompressible", "ptConjugateHeat", "ptConstraint", "ptCoupling", "ptDem",
   "ptEmbedded", "ptFreeSurface", "ptFsi", "ptGravity", "ptInitial", "ptLoad", "ptMpm",
   "ptParallel", "ptParts", "ptSolver", "ptTime",
+  // the Structural Optimization and ROM problemtypes and their Setup collections
+  "ptControl", "ptOptimization", "ptResponse", "ptRom",
   "quadratic",
   "quality", "redo", "refine", "reload", "remesh", "renumber", "reorder", "reset", "results", "rotate", "runCase",
   "save", "saveAs", "scale", "screenshot", "sdf", "simplexify", "smooth",

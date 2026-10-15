@@ -1,0 +1,16 @@
+% Toolbar icon: ptControl — Design control: a design surface with its update pushing outward.
+% NOTE: the committed svg-ui/ptControl.svg was drawn from this same picture
+% (24-unit grid, 1.6 stroke) without a LaTeX toolchain; regenerating via
+% `make ui` replaces it with the pdftocairo rendering of this source — same
+% glyph either way.
+\documentclass[tikz,border=0pt]{standalone}
+\begin{document}
+\begin{tikzpicture}[line width=1.6mm, line cap=round, line join=round, x=1mm,y=1mm]
+  \useasboundingbox (0,0) rectangle (24,24);
+  \draw (3,5) .. controls (8,13) and (16,13) .. (21,5);
+  \draw (12,11) -- (12,20);
+  \draw (9.5,17.5) -- (12,20) -- (14.5,17.5);
+  \draw (6,9) -- (4.5,13);
+  \draw (18,9) -- (19.5,13);
+\end{tikzpicture}
+\end{document}

@@ -20,12 +20,17 @@ import {
   ProblemtypeRuntime,
   ProblemtypeSource,
 } from "./types";
-import { MAIN_KRATOS_PY } from "./mainKratosTemplate";
+import { DRIVER_TEMPLATES, driverTemplateScript } from "./mainKratosTemplate";
+import { applicationDeclarationProblems } from "./applications";
+import { couplingInterfaceDeclarationProblems } from "./interfaceCheck";
 
-const FIELD_TYPES = new Set(["number", "int", "string", "bool", "enum", "vector3"]);
+const FIELD_TYPES = new Set([
+  "number", "int", "string", "bool", "enum", "vector3",
+  "ref", "smp", "smpList", "numberList", "stringList", "caseValue",
+]);
 const TARGETS = new Set(["nodes", "surface", "volume", "any"]);
 const CATEGORIES = new Set(["initial", "constraints", "loads", "other"]);
-const FAMILIES = new Set(["solid", "fluid", "thermal", "coupled", "particles", "workflow"]);
+const FAMILIES = new Set(["solid", "fluid", "thermal", "coupled", "particles", "reduced", "optimization", "workflow"]);
 
 /** The GiD-standard process lists, always present in the generated document. */
 export const STANDARD_PROCESS_LISTS = [
@@ -51,12 +56,18 @@ export function validateDeclaration(decl: ProblemtypeDeclaration): string[] {
       errors.push(`${key} must be a plain file name ending in ${extension}`);
     }
   }
+  if (decl.driverTemplate !== undefined && !(DRIVER_TEMPLATES as readonly string[]).includes(decl.driverTemplate)) {
+    errors.push(`driverTemplate must be one of ${DRIVER_TEMPLATES.join(", ")}`);
+  }
   if (!Array.isArray(decl.domainSizes) || decl.domainSizes.length === 0 ||
     !decl.domainSizes.every((d) => d === 2 || d === 3)) {
     errors.push("domainSizes must be a non-empty array of 2 | 3");
   }
   const fieldIds = new Set<string>();
-  const checkFields = (fields: FieldSpec[], where: string, globalUnique: boolean): void => {
+  const collectionIds = new Set(
+    (Array.isArray(decl.collections) ? decl.collections : []).map((c) => c?.id).filter((id): id is string => typeof id === "string")
+  );
+  const checkFields = (fields: FieldSpec[], where: string, globalUnique: boolean, inCollection = false): void => {
     const local = new Set<string>();
     for (const f of Array.isArray(fields) ? fields : []) {
       if (!f || typeof f.id !== "string" || f.id.length === 0) {
@@ -69,6 +80,12 @@ export function validateDeclaration(decl: ProblemtypeDeclaration): string[] {
       }
       if (f.min !== undefined && f.max !== undefined && f.min > f.max) {
         errors.push(`${where}: field "${f.id}" has min above max`);
+      }
+      if (f.type === "ref" && (typeof f.refCollection !== "string" || !collectionIds.has(f.refCollection))) {
+        errors.push(`${where}: ref field "${f.id}" names unknown collection "${String(f.refCollection)}"`);
+      }
+      if (f.type === "caseValue" && !inCollection) {
+        errors.push(`${where}: caseValue field "${f.id}" is only valid inside a collection entry type`);
       }
       const seen = globalUnique ? fieldIds : local;
       if (seen.has(f.id)) errors.push(`${where}: duplicate field id "${f.id}"`);
@@ -185,6 +202,53 @@ export function validateDeclaration(decl: ProblemtypeDeclaration): string[] {
       }
     }
   }
+  errors.push(...applicationDeclarationProblems(decl.applications));
+  errors.push(...couplingInterfaceDeclarationProblems(decl));
+  if (decl.collections !== undefined) {
+    if (!Array.isArray(decl.collections)) {
+      errors.push("collections must be an array");
+    } else {
+      const seenCollections = new Set<string>();
+      for (const c of decl.collections) {
+        if (!c || typeof c.id !== "string" || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(c.id)) {
+          errors.push(`collection id "${String(c?.id)}" must be an identifier`);
+          continue;
+        }
+        if (seenCollections.has(c.id)) errors.push(`duplicate collection id "${c.id}"`);
+        seenCollections.add(c.id);
+        if (typeof c.label !== "string" || c.label.length === 0) errors.push(`collection "${c.id}": missing label`);
+        if (c.min !== undefined && c.max !== undefined && c.min > c.max) errors.push(`collection "${c.id}": min above max`);
+        const typeIds = new Set<string>();
+        if (!Array.isArray(c.entryTypes) || c.entryTypes.length === 0) {
+          errors.push(`collection "${c.id}": needs at least one entry type`);
+          continue;
+        }
+        for (const t of c.entryTypes) {
+          if (!t || typeof t.id !== "string" || t.id.length === 0) {
+            errors.push(`collection "${c.id}": entry type without id`);
+            continue;
+          }
+          if (typeIds.has(t.id)) errors.push(`collection "${c.id}": duplicate entry type "${t.id}"`);
+          typeIds.add(t.id);
+          checkFields(t.fields, `collection "${c.id}" type "${t.id}"`, false, true);
+          if (t.parts !== undefined) {
+            if (!TARGETS.has(t.parts.target)) errors.push(`collection "${c.id}" type "${t.id}": unknown parts target "${t.parts.target}"`);
+            if (t.parts.min !== undefined && t.parts.max !== undefined && t.parts.min > t.parts.max) {
+              errors.push(`collection "${c.id}" type "${t.id}": parts min above max`);
+            }
+          }
+        }
+        const defaultNames = new Set<string>();
+        for (const d of Array.isArray(c.defaults) ? c.defaults : []) {
+          if (!d || typeof d.name !== "string" || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(d.name)) {
+            errors.push(`collection "${c.id}": default entry name "${String(d?.name)}" must be an identifier`);
+          } else if (defaultNames.has(d.name)) errors.push(`collection "${c.id}": duplicate default "${d.name}"`);
+          else defaultNames.add(d.name);
+          if (d && !typeIds.has(d.type)) errors.push(`collection "${c.id}": default "${d.name}" has unknown type "${d.type}"`);
+        }
+      }
+    }
+  }
   if (decl.partsCondition !== undefined && !condIds.has(decl.partsCondition)) {
     errors.push(`partsCondition "${decl.partsCondition}" is not a condition id`);
   }
@@ -261,6 +325,10 @@ export function fieldDefault(f: FieldSpec): JsonValue {
       return [0, 0, 0];
     case "enum":
       return f.options && f.options.length > 0 ? f.options[0].value : "";
+    case "smpList":
+    case "numberList":
+    case "stringList":
+      return [];
     default:
       return "";
   }
@@ -288,7 +356,7 @@ export function defaultCaseState(decl: ProblemtypeDeclaration): CaseState {
     values[s.id] = {};
     for (const f of s.fields) values[s.id][f.id] = fieldDefault(f);
   }
-  return {
+  const state: CaseState = {
     version: 1,
     problemtypeId: decl.id,
     values,
@@ -301,6 +369,18 @@ export function defaultCaseState(decl: ProblemtypeDeclaration): CaseState {
       nodalVariables: [...decl.output.nodalDefaults],
     },
   };
+  if (decl.collections && decl.collections.length > 0) {
+    state.collections = {};
+    for (const c of decl.collections) {
+      state.collections[c.id] = (c.defaults ?? []).map((d) => {
+        const type = c.entryTypes.find((t) => t.id === d.type);
+        const entryValues: Record<string, JsonValue> = {};
+        for (const f of type?.fields ?? []) entryValues[f.id] = d.values?.[f.id] ?? fieldDefault(f);
+        return { name: d.name, type: d.type, parts: [], values: entryValues };
+      });
+    }
+  }
+  return state;
 }
 
 /**
@@ -362,7 +442,7 @@ export function defineProblemtype(
       return custom ?? resolveProcessTemplate(cond, a, ctx);
     },
     postProcess: async (pp, ctx) => (hooks.postProcess ? hooks.postProcess(pp, ctx) : pp),
-    mainScript: async (ctx) => (hooks.mainScript ? hooks.mainScript(ctx) : MAIN_KRATOS_PY),
+    mainScript: async (ctx) => (hooks.mainScript ? hooks.mainScript(ctx) : driverTemplateScript(decl)),
     extraFiles: async (ctx, materials) => (hooks.extraFiles ? hooks.extraFiles(ctx, materials) : []),
     validate: async (ctx) => (hooks.validate ? hooks.validate(ctx) : []),
   };

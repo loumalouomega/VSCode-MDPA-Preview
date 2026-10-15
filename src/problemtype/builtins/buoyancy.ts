@@ -61,6 +61,8 @@ const decl: ProblemtypeDeclaration = {
   icon: "ptBuoyancy",
   family: "coupled",
   analysisStage: "KratosMultiphysics.ConvectionDiffusionApplication.convection_diffusion_analysis",
+  // ThermallyCoupled solves the fluid with FluidDynamicsApplication.
+  applications: ["FluidDynamicsApplication"],
   modelPartName: MODEL_PART,
   materialsFileName: "FluidMaterials.json",
   sections: [

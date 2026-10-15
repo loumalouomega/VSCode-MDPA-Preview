@@ -79,7 +79,7 @@ define_problemtype(
 ```python
 field(id, label, type, default=None, options=None, visible_when=None,
       unit=None, help=None, group=None, min=None, max=None, step=None,
-      advanced=None)                      # unit: e.g. "kg/m³" — see below
+      advanced=None, ref_collection=None) # unit: e.g. "kg/m³" — see below
 field_group(id, label, icon=None, collapsed=None)
 section(id, label, *fields, groups=None, icon=None)
 condition(id, label, list="constraints_process_list", target="any",
@@ -91,6 +91,9 @@ domain(id, label, model_part_name, mdpa_suffix, parts_condition,
 process(python_module, process_name=None, kratos_module="KratosMultiphysics",
         parameters=None)                  # process_template sugar
 material_law(id, name, variables=(), domain_size=None, domain=None)
+entry_type(id, label, *fields, parts=None, icon=None, help=None)
+collection(id, label, *entry_types, min=None, max=None, defaults=None,
+           icon=None, help=None)          # a repeatable list of named entries
 INTERVAL_TOTAL                            # the [0.0, "End"] interval constant
 define_problemtype(id, name, analysis_stage, model_part_name,
                    materials_file_name, domain_sizes,
@@ -99,7 +102,11 @@ define_problemtype(id, name, analysis_stage, model_part_name,
                    description=None, icon=None, family=None,
                    solver_settings=None,   # required
                    build_process=None, post_process=None, main_script=None,
-                   domains=None, extra_files=None, validate=None)
+                   domains=None, extra_files=None, validate=None,
+                   collections=None, applications=None,
+                   coupling_interfaces=None, primary_document_name=None,
+                   driver_script_name=None, driver_template=None)
+application(name, when=None)              # a required Kratos application
 ```
 
 `mesh_naming` declares the element/condition block names the solver expects — when the mesh differs, Generate writes a renamed `<stem>_case.mdpa` copy (final name = `<base><dim>D<nnodes>N`):
@@ -112,7 +119,7 @@ mesh_naming={"elements": "$field:elementBase",           # or "Element"
 
 `unit` declares the unit a field's value is entered in (`field("DENSITY", "ρ", "number", default=1000, unit="kg/m³")`). It is what [material presets](./simulation#material-presets) convert into, so a row published in `g/cm³` fills a variable declared in `kg/m³`. Without it the unit is inferred from the brackets in `label` and then from a well-known Kratos variable name; a value whose unit cannot be established on either side is only accepted as an exact match, never passed through unconverted. See [Units and material presets](./problemtype-authoring#units-and-material-presets) for the recognised quantities.
 
-`visible_when` accepts one rule dict or a list of them (all must hold); a rule uses `"equals"` or `"one_of"`. Layout (`group`, `category`, `family`) and `domains` behave as described in [the JavaScript guide](./problemtype-authoring#layout-groups-categories-and-families). In a coupled problemtype the hooks receive `ctx["domains"][id]` with that domain's `model_part_name`, `mdpa_stem`, `assignments`, `materials` and `parts_model_parts`.
+`visible_when` accepts one rule dict or a list of them (all must hold); a rule uses `"equals"` or `"one_of"`. Layout (`group`, `category`, `family`) and `domains` behave as described in [the JavaScript guide](./problemtype-authoring#layout-groups-categories-and-families). [Collections](./problemtype-authoring#collections-named-repeatable-entries) are declared with `collection()` and `entry_type()`; a `ref` field names its collection with `ref_collection="responses"`, and a `caseValue` field may only appear inside an entry type (both are checked when the file loads). The hooks see `ctx["collections"][id]`, the entries with defaults merged and their parts as dotted `modelParts`. In a coupled problemtype the hooks receive `ctx["domains"][id]` with that domain's `model_part_name`, `mdpa_stem`, `assignments`, `materials` and `parts_model_parts`. `coupling_interfaces`, `primary_document_name`, `driver_script_name`, `driver_template` and `applications` mean what their JavaScript counterparts mean ([coupled problemtypes](./problemtype-authoring#coupled-problemtypes-domains), [required applications](./problemtype-authoring#required-kratos-applications)); `application("MeshMovingApplication", when={"field": "aleMesh", "equals": True})` adds a conditional one. An `extra_files` hook may return a file's `content` as a dict or list instead of a string: the host writes it as JSON formatted like the primary document, which is how `example/problemtypes/coupled.py` writes the CoSimulation participant documents byte-identical to the built-in's.
 
 Field types, `$path` / `$root` / `$field:<id>` template placeholders, process lists and the generated document shape are identical to the [JavaScript API](./problemtype-authoring). `options` accepts plain strings (`options=["a", "b"]`) or dicts (`{"value": "a", "label": "A"}`).
 
@@ -152,3 +159,4 @@ All hook arguments and return values are plain JSON data (dicts, lists, numbers,
 | `parts_model_parts` | dotted names of the Parts assignments |
 | `skin_model_parts` | dotted names of every non-Parts assignment |
 | `sub_model_parts` | all SubModelPart paths in the mesh |
+| `collections` | collection id → entries `{name, type, parts, values, modelParts}` (only when the problemtype declares collections) |

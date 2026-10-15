@@ -44,6 +44,8 @@ export const FAMILIES: { id: ProblemtypeFamily | "other"; label: string }[] = [
   { id: "thermal", label: "Thermal" },
   { id: "coupled", label: "Coupled physics" },
   { id: "particles", label: "Particles & granular" },
+  { id: "reduced", label: "Reduced-order models" },
+  { id: "optimization", label: "Optimization" },
   { id: "workflow", label: "Workflow" },
   { id: "other", label: "Other" },
 ];
@@ -199,16 +201,21 @@ export function catalogGroups(entries: { decl?: Pick<ProblemtypeDeclaration, "fa
  * the case is complete, which only generation can say.
  */
 export function summaryChips(
-  decl: Pick<ProblemtypeDeclaration, "conditions" | "partsCondition" | "domains">,
-  state: { assignments: Pick<Assignment, "conditionId">[]; materials: unknown[] }
+  decl: Pick<ProblemtypeDeclaration, "conditions" | "partsCondition" | "domains"> & Partial<Pick<ProblemtypeDeclaration, "collections">>,
+  state: { assignments: Pick<Assignment, "conditionId">[]; materials: unknown[]; collections?: Record<string, unknown[]> }
 ): string[] {
   const partIds = new Set(partsConditions(decl));
   const parts = state.assignments.filter((a) => partIds.has(a.conditionId)).length;
   const others = state.assignments.length - parts;
   const plural = (n: number, one: string, many: string): string => `${n} ${n === 1 ? one : many}`;
-  return [
+  const chips = [
     plural(parts, "domain part", "domain parts"),
     plural(others, "condition", "conditions"),
     plural(state.materials.length, "material", "materials"),
   ];
+  for (const c of decl.collections ?? []) {
+    const n = state.collections?.[c.id]?.length ?? 0;
+    chips.push(`${n} ${c.label.toLowerCase()}`);
+  }
+  return chips;
 }

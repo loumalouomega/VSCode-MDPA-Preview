@@ -19,7 +19,7 @@
 
 import * as vscode from "vscode";
 import { randomUUID } from "node:crypto";
-import { basename } from "node:path";
+import { basename, resolve as resolvePath } from "node:path";
 
 import { MdpaModel } from "./parser/types";
 import { OperationHistory } from "./opHistory";
@@ -35,12 +35,39 @@ import { LinkMember, previewLinks } from "./parser/previewLinkHub";
 import { comparePeerRel, loadCompareModel, resolveComparePeer } from "./parser/comparePeer";
 import { ExportContext, pickMergeMeshFile, saveMesh, saveMeshToPath } from "./meshExport";
 import { MmgRunOptions, OP_LABELS } from "./parser/operations";
+import { createOptimizationProgressHost, OptimizationHost } from "./optimizationProgressHost";
+import { openPlotBuilder } from "./plotController";
 import { VtkFileGroup } from "./parser/vtkFileGroup";
 import {
   bindSessionFileState,
   flagsForBind,
   sessionFileName,
 } from "./parser/previewSessionCore";
+
+/**
+ * Messages addressed to the preview of a given mesh file, delivered once that
+ * preview's webview is ready (now, if it already is). Used by actions outside a
+ * panel — the Kratos Runs "Show HROM elements" command — that may first have to
+ * open the preview they speak to: a message posted to a webview that has not
+ * loaded its script yet would be lost.
+ */
+const liveSessions = new Set<PreviewSession>();
+const pendingByPath = new Map<string, Record<string, unknown>[]>();
+const pathKey = (fsPath: string): string => {
+  const p = resolvePath(fsPath);
+  return process.platform === "win32" ? p.toLowerCase() : p;
+};
+
+export function deliverToPreview(fsPath: string, message: Record<string, unknown>): void {
+  const key = pathKey(fsPath);
+  for (const s of liveSessions) {
+    if (s.isReadyFor(key)) {
+      s.postRaw(message);
+      return;
+    }
+  }
+  pendingByPath.set(key, [...(pendingByPath.get(key) ?? []), message]);
+}
 
 /** What a session needs that it must not own. */
 export interface PreviewSessionDeps {
@@ -94,9 +121,51 @@ export class PreviewSession {
   /** This panel as a member of the preview link hub (see parser/previewLinkHub.ts). */
   private readonly linkMember: LinkMember;
   private readonly linkOff: () => void;
+  /** The Optimization progress panel's host half (see optimizationProgressHost.ts). */
+  private readonly optimization: OptimizationHost;
+
+  /** The webview posted `ready` (its script runs and its message handler is installed). */
+  private webviewReady = false;
+
+  public isReadyFor(key: string): boolean {
+    return !this.disposed && this.webviewReady && this.fsPath !== undefined && pathKey(this.fsPath) === key;
+  }
+
+  public postRaw(message: Record<string, unknown>): void {
+    if (!this.disposed) void this.deps.panel.webview.postMessage(message);
+  }
+
+  /** Posts whatever `deliverToPreview` queued for this session's file. */
+  private flushPending(): void {
+    if (!this.webviewReady || !this.fsPath) return;
+    const key = pathKey(this.fsPath);
+    const queued = pendingByPath.get(key);
+    if (!queued) return;
+    pendingByPath.delete(key);
+    for (const m of queued) this.postRaw(m);
+  }
 
   constructor(private readonly deps: PreviewSessionDeps) {
+    liveSessions.add(this);
+    this.disposables.push(deps.panel.webview.onDidReceiveMessage((m: { type?: unknown }) => {
+      if (m?.type === "ready") {
+        this.webviewReady = true;
+        this.flushPending();
+      }
+    }));
     this.engineOff = onEngineChange(() => this.postEngineStatus());
+    this.optimization = createOptimizationProgressHost({
+      fsPath: () => this.fsPath,
+      post: (m) => { if (!this.disposed) void deps.panel.webview.postMessage(m); },
+      runStatus: (caseDir) => deps.runs.list().find((r) => r.caseDir === caseDir)?.status,
+      openPlot: (recipe, title) => { openPlotBuilder(deps.context, undefined, recipe, title); },
+      openDesignFields: (caseDir, folder, excludeNewest) => {
+        void vscode.commands.executeCommand("kratos.vtk.openLatestResults", caseDir, { excludeNewest, outputFolder: folder });
+      },
+      info: (message) => { void vscode.window.showInformationMessage(message); },
+    });
+    // A run's progress refresh is also when its summary grew: follow it.
+    this.disposables.push(deps.runs.onDidChange(() => this.optimization.refreshIfWatched()));
     const session = this;
     this.linkMember = {
       id: randomUUID(),
@@ -107,6 +176,11 @@ export class PreviewSession {
       post: (m) => { if (!session.disposed) void deps.panel.webview.postMessage(m); },
     };
     this.linkOff = previewLinks.register(this.linkMember);
+  }
+
+  /** Routes one `optimization*` webview message (the Optimization progress panel); false for any other. */
+  public handleOptimizationMessage(msg: Record<string, unknown>): boolean {
+    return this.optimization.handle(msg);
   }
 
   /** Routes one `link*` webview message to the hub; false for any other message. */
@@ -211,6 +285,8 @@ export class PreviewSession {
     this.document = document;
     this.fsPath = nextFsPath;
     this.fileName = sessionFileName(nextFsPath);
+    // A late-bound shell (the empty preview) is already ready: deliver what waited for this file.
+    queueMicrotask(() => this.flushPending());
     void bindSessionFileState(nextFsPath);
     this.rerenderFn = ops.rerender;
     this.exportCtxFn = ops.exportCtx;
@@ -366,6 +442,7 @@ export class PreviewSession {
   public dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    liveSessions.delete(this);
     this.stopFlowgraph();
     this.ptController?.dispose();
     this.engineOff();

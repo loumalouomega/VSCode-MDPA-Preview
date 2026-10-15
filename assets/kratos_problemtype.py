@@ -29,8 +29,10 @@ Compact reference (mirrors the JavaScript API, spelled snake_case)::
         of field_group entries; icon a toolbar icon id for the header.
 
     condition(id, label, list="constraints_process_list", target="any",
-              fields=(), process_template=None, help=None, category=None, icon=None)
-        A condition / BC / load. category ("initial" | "constraints" | "loads" |
+              fields=(), process_template=None, help=None, category=None, icon=None,
+              no_process=None)
+        A condition / BC / load. no_process=True only marks a SubModelPart for
+        the hooks (an FSI interface) and emits no process. category ("initial" | "constraints" | "loads" |
         "other") picks the tree branch it is listed under (derived from list when
         absent); icon is a toolbar icon id drawn on its rows. list: "constraints_process_list" |
         "loads_process_list" | "list_other_processes". target (SubModelPart
@@ -46,8 +48,13 @@ Compact reference (mirrors the JavaScript API, spelled snake_case)::
         CamelCased python_module (assign_scalar_variable_process ->
         AssignScalarVariableProcess).
 
-    material_law(id, name, variables=(), domain_size=None)
-        A constitutive law. Empty name omits the constitutive_law block
+    domain(id, label, model_part_name, mdpa_suffix, parts_condition, condition_ids,
+           materials_file_name=None, required=None, mesh_naming=None)
+        A physics domain of a coupled problemtype: its own mesh slice
+        <stem>_<mdpa_suffix>.mdpa and materials file, owning condition_ids.
+
+    material_law(id, name, variables=(), domain_size=None, domain=None)
+        A constitutive law (domain = the domain id it belongs to, coupled only). Empty name omits the constitutive_law block
         (e.g. thermal materials). domain_size (2|3) restricts availability.
 
     INTERVAL_TOTAL
@@ -60,8 +67,20 @@ Compact reference (mirrors the JavaScript API, spelled snake_case)::
                        icon=None, family=None,   # family: solid|fluid|thermal|coupled|particles|workflow
                        solver_settings=None,     # required hook
                        build_process=None, post_process=None, main_script=None,
-                       domains=None, extra_files=None, validate=None)
-        Registers the problemtype. output = {"nodal_defaults": [...],
+                       domains=None, extra_files=None, validate=None,
+                       collections=None, applications=None,
+                       coupling_interfaces=None, primary_document_name=None,
+                       driver_script_name=None, driver_template=None)
+        Registers the problemtype. coupling_interfaces = [{"label", "sides":
+        [fluid-side condition, structure-side condition]}]: Generate checks the
+        two sides pair up one-to-one (by assignment order), carry boundary cells
+        and overlap. primary_document_name / driver_script_name rename the
+        primary JSON document and the driver script. driver_template ("standard",
+        "fsi" or "cosim") picks the shipped driver when there is no main_script
+        hook. applications = Kratos applications the
+        case needs beyond the analysis stage's and those its documents name
+        (names, or application(name, when=rule)); the generated driver checks
+        them before running. output = {"nodal_defaults": [...],
         "gauss_defaults": [...]}. parts_condition names the pseudo-condition
         whose assignments mark the computing domain (emits no process).
         mesh_naming = {"elements": <base>, "conditions": <base>} declares the
@@ -77,13 +96,17 @@ Hooks (plain JSON data in and out — no interpreter objects cross the boundary)
     post_process(project_parameters, ctx) -> dict
     validate(ctx) -> [str, ...]
         Problems that make the case ungeneratable; Generate refuses on any.
-    extra_files(ctx, materials) -> [{"name": str, "content": str}, ...]
-        Extra files written beside the case (e.g. a second materials file).
+    extra_files(ctx, materials) -> [{"name": str, "content": str | dict | list}, ...]
+        Extra files written beside the case (e.g. a second materials file). A
+        content given as a dict or list is written as JSON formatted like the
+        primary document (4-space indent).
     main_script(ctx) -> str
 
 ``ctx`` keys (snake_case): mdpa_stem, domain_size, model_part_name,
 materials_file_name, values (all form values flattened), assignments, materials,
-parts_model_parts, skin_model_parts, sub_model_parts.
+parts_model_parts, skin_model_parts, sub_model_parts, domains (coupled only) and
+collections (collection id -> entries with defaults merged and dotted
+``modelParts``, when the problemtype declares collections).
 
 Validation happens eagerly: malformed specs raise ``ValueError`` naming the
 offending id at definition time, so a broken problemtype fails at load with a
@@ -91,10 +114,14 @@ readable Python traceback instead of a cryptic error at generate time.
 """
 
 import json
+import re
 
-FIELD_TYPES = ("number", "int", "string", "bool", "enum", "vector3")
+FIELD_TYPES = ("number", "int", "string", "bool", "enum", "vector3",
+               "ref", "smp", "smpList", "numberList", "stringList", "caseValue")
+FAMILIES = ("solid", "fluid", "thermal", "coupled", "particles", "reduced", "optimization", "workflow")
 PROCESS_LISTS = ("constraints_process_list", "loads_process_list", "list_other_processes")
 TARGETS = ("nodes", "surface", "volume", "any")
+DRIVER_TEMPLATES = ("standard", "fsi", "cosim")
 
 #: The whole-simulation interval for process Parameters: ``[0.0, "End"]``.
 INTERVAL_TOTAL = [0.0, "End"]
@@ -114,7 +141,7 @@ def _require_str(value, what):
 
 
 def field(id, label, type, default=None, options=None, visible_when=None, unit=None, help=None,
-          group=None, min=None, max=None, step=None, advanced=None):
+          group=None, min=None, max=None, step=None, advanced=None, ref_collection=None):
     """A form field spec (mirrors the JS ``FieldSpec``). See the module docstring.
 
     ``unit`` is the unit the value is entered in (e.g. ``"kg/m³"``). Material
@@ -127,11 +154,20 @@ def field(id, label, type, default=None, options=None, visible_when=None, unit=N
     values keep the same ``values[section][field]`` address. ``min``/``max``/
     ``step`` are advisory bounds for number/int inputs, and ``advanced=True``
     files the field under the section's collapsed "Advanced" group.
+
+    ``type="ref"`` needs ``ref_collection``: the id of the collection whose entry
+    names are the choices. ``caseValue`` fields are only valid inside a
+    collection's ``entry_type``.
     """
     _require_str(id, "field id")
     if type not in FIELD_TYPES:
         raise ValueError(f'field "{id}": unknown type {type!r} (one of {", ".join(FIELD_TYPES)})')
     f = {"id": id, "label": label, "type": type}
+    if type == "ref":
+        _require_str(ref_collection, f'ref field "{id}": ref_collection')
+        f["refCollection"] = ref_collection
+    elif ref_collection is not None:
+        raise ValueError(f'field "{id}": ref_collection is only valid on type="ref"')
     if type == "enum":
         if not options:
             raise ValueError(f'field "{id}": enum fields need options')
@@ -181,6 +217,55 @@ def field_group(id, label, icon=None, collapsed=None):
     if collapsed is not None:
         g["collapsed"] = bool(collapsed)
     return g
+
+
+def entry_type(id, label, *fields, parts=None, icon=None, help=None):
+    """One kind of entry a collection accepts (mirrors the JS ``CollectionEntryTypeSpec``).
+
+    ``parts`` is ``{"label": str, "target": "nodes"|"surface"|"volume"|"any",
+    "min": int?, "max": int?}`` when the entry applies to SubModelParts.
+    """
+    _require_str(id, "entry type id")
+    _check_unique([f["id"] for f in fields], f'entry type "{id}" field')
+    t = {"id": id, "label": label, "fields": [dict(f) for f in fields]}
+    if parts is not None:
+        if not isinstance(parts, dict) or parts.get("target") not in TARGETS:
+            raise ValueError(f'entry type "{id}": parts needs a "target" in {TARGETS}')
+        t["parts"] = {"label": parts.get("label", "SubModelParts"), "target": parts["target"]}
+        for key in ("min", "max"):
+            if parts.get(key) is not None:
+                t["parts"][key] = int(parts[key])
+    if icon is not None:
+        t["icon"] = icon
+    if help is not None:
+        t["help"] = help
+    return t
+
+
+def collection(id, label, *entry_types, min=None, max=None, defaults=None, icon=None, help=None):
+    """A repeatable list of named entries (mirrors the JS ``CollectionSpec``).
+
+    ``defaults`` is a list of ``{"name", "type", "values"?}`` seeded into a fresh case.
+    """
+    _require_str(id, "collection id")
+    if not entry_types:
+        raise ValueError(f'collection "{id}": needs at least one entry_type')
+    _check_unique([t["id"] for t in entry_types], f'collection "{id}" entry type')
+    c = {"id": id, "label": label, "entryTypes": [dict(t) for t in entry_types]}
+    for key, value in (("min", min), ("max", max)):
+        if value is not None:
+            c[key] = int(value)
+    if defaults is not None:
+        type_ids = [t["id"] for t in entry_types]
+        for d in defaults:
+            if not isinstance(d, dict) or d.get("type") not in type_ids:
+                raise ValueError(f'collection "{id}": default {d!r} has an unknown type')
+        c["defaults"] = [dict(d) for d in defaults]
+    if icon is not None:
+        c["icon"] = icon
+    if help is not None:
+        c["help"] = help
+    return c
 
 
 def section(id, label, *fields, groups=None, icon=None):
@@ -338,6 +423,34 @@ def _normalize_mesh_naming(mesh_naming, ptid):
     return out or None
 
 
+def application(name, when=None):
+    """A required Kratos application, optionally only when a rule holds.
+
+    ``when`` uses the ``visible_when`` spelling (``{"field", "equals"}`` or
+    ``{"field", "one_of"}``, or a list of rules that must all hold) over the
+    section values. Applications named by the analysis stage or by any module
+    in the generated documents are found automatically; declare only the rest.
+    """
+    _require_str(name, "application name")
+    if not re.match(r"^[A-Z][A-Za-z0-9]*Application$", name):
+        raise ValueError(f'application {name!r}: expected a Kratos application name such as "FluidDynamicsApplication"')
+    if when is None:
+        return name
+    rules = when if isinstance(when, (list, tuple)) else [when]
+    out = []
+    for rule in rules:
+        if (not isinstance(rule, dict) or "field" not in rule
+                or ("equals" not in rule and "one_of" not in rule)):
+            raise ValueError(f'application {name!r}: when needs {{"field", "equals"}} or {{"field", "one_of"}}')
+        r = {"field": rule["field"]}
+        if "equals" in rule:
+            r["equals"] = rule["equals"]
+        else:
+            r["oneOf"] = list(rule["one_of"])
+        out.append(r)
+    return {"application": name, "when": out[0] if not isinstance(when, (list, tuple)) else out}
+
+
 def define_problemtype(id, name, analysis_stage, model_part_name,
                        materials_file_name, domain_sizes,
                        sections=(), conditions=(), material_laws=(),
@@ -345,7 +458,10 @@ def define_problemtype(id, name, analysis_stage, model_part_name,
                        description=None, icon=None, family=None,
                        solver_settings=None, build_process=None,
                        post_process=None, main_script=None,
-                       domains=None, extra_files=None, validate=None):
+                       domains=None, extra_files=None, validate=None, collections=None,
+                       applications=None, coupling_interfaces=None,
+                       primary_document_name=None, driver_script_name=None,
+                       driver_template=None):
     """Registers a problemtype; returns its handle (used internally).
 
     See the module docstring for every argument. Raises ``ValueError`` on a
@@ -371,6 +487,16 @@ def define_problemtype(id, name, analysis_stage, model_part_name,
     _check_unique([m["id"] for m in material_laws], "material law")
     if parts_condition is not None and parts_condition not in [c["id"] for c in conditions]:
         raise ValueError(f'problemtype "{id}": parts_condition "{parts_condition}" is not a condition id')
+    collections = [dict(c) for c in (collections or ())]
+    _check_unique([c["id"] for c in collections], "collection")
+    collection_ids = {c["id"] for c in collections}
+    for f in [f for s in sections for f in s["fields"]] + [
+            f for c in collections for t in c["entryTypes"] for f in t["fields"]]:
+        if f["type"] == "ref" and f.get("refCollection") not in collection_ids:
+            raise ValueError(f'problemtype "{id}": ref field "{f["id"]}" names unknown collection {f.get("refCollection")!r}')
+    for f in [f for s in sections for f in s["fields"]]:
+        if f["type"] == "caseValue":
+            raise ValueError(f'problemtype "{id}": caseValue field "{f["id"]}" is only valid inside a collection entry_type')
 
     out = output or {}
     decl = {
@@ -394,6 +520,37 @@ def define_problemtype(id, name, analysis_stage, model_part_name,
         decl["partsCondition"] = parts_condition
     if domains is not None:
         decl["domains"] = [dict(d) for d in domains]
+    if collections:
+        decl["collections"] = collections
+    if applications is not None:
+        apps = [application(a) if isinstance(a, str) else a for a in applications]
+        for a in apps:
+            if not isinstance(a, (str, dict)):
+                raise ValueError(f'problemtype "{id}": applications entries must be names or application(...)')
+        decl["applications"] = apps
+    if coupling_interfaces is not None:
+        condition_ids = {c["id"] for c in conditions}
+        interfaces = []
+        for spec in coupling_interfaces:
+            sides = list(spec.get("sides", ())) if isinstance(spec, dict) else []
+            if len(sides) != 2 or not isinstance(spec.get("label"), str):
+                raise ValueError(f'problemtype "{id}": coupling_interfaces entries are {{"label", "sides": [condition, condition]}}')
+            for side in sides:
+                if side not in condition_ids:
+                    raise ValueError(f'problemtype "{id}": coupling interface "{spec["label"]}" names unknown condition "{side}"')
+            interfaces.append({"label": spec["label"], "sides": sides})
+        decl["couplingInterfaces"] = interfaces
+    for key, value, extension in (("primaryDocumentName", primary_document_name, ".json"),
+                                  ("driverScriptName", driver_script_name, ".py")):
+        if value is None:
+            continue
+        if not isinstance(value, str) or not re.match(r"^[A-Za-z0-9_.-]+$", value) or not value.endswith(extension):
+            raise ValueError(f'problemtype "{id}": {key} must be a plain file name ending in {extension}')
+        decl[key] = value
+    if driver_template is not None:
+        if driver_template not in DRIVER_TEMPLATES:
+            raise ValueError(f'problemtype "{id}": unknown driver_template {driver_template!r} (one of {", ".join(DRIVER_TEMPLATES)})')
+        decl["driverTemplate"] = driver_template
     naming = _normalize_mesh_naming(mesh_naming, id)
     if naming is not None:
         decl["meshNaming"] = naming
@@ -404,7 +561,7 @@ def define_problemtype(id, name, analysis_stage, model_part_name,
         # unknown ids fall back to the generic glyph.
         decl["icon"] = icon
     if family is not None:
-        if family not in ("solid", "fluid", "thermal", "coupled", "particles", "workflow"):
+        if family not in FAMILIES:
             raise ValueError(f'problemtype "{id}": unknown family {family!r}')
         # Catalog grouping (the dropdown's <optgroup>).
         decl["family"] = family
@@ -437,6 +594,7 @@ _CTX_SNAKE = {
     "skinModelParts": "skin_model_parts",
     "subModelParts": "sub_model_parts",
     "domains": "domains",
+    "collections": "collections",
 }
 
 

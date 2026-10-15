@@ -16,6 +16,8 @@
 import {
   Assignment,
   CaseState,
+  CollectionEntry,
+  CollectionSpec,
   ConditionSpec,
   FieldSpec,
   JsonValue,
@@ -23,7 +25,19 @@ import {
   MaterialLawSpec,
   ProblemtypeDeclaration,
 } from "../src/problemtype/types";
-import { defaultCaseState, fieldDefault } from "../src/problemtype/api";
+import { defaultCaseState, fieldDefault, flattenValues } from "../src/problemtype/api";
+import {
+  collectionProblems,
+  entriesOf,
+  entryTypeOf,
+  formatListValue,
+  isValidEntryName,
+  newEntry,
+  parseListText,
+  renameEntry,
+  uniqueEntryName,
+} from "../src/problemtype/collections";
+import { caseValueAddresses } from "../src/problemtype/caseAddress";
 import {
   catalogGroups,
   countByCategory,
@@ -495,6 +509,7 @@ function render(): void {
   renderParts(decl);
   renderMaterials(decl);
   renderAssignments(decl);
+  renderCollections(decl);
   renderSections(decl);
   renderOutput(decl);
 }
@@ -562,6 +577,27 @@ function fieldInput(
       });
       wrap.appendChild(input);
     }
+  } else if (f.type === "ref") {
+    wrap.appendChild(refSelect(f, value, onChange));
+  } else if (f.type === "smp") {
+    wrap.appendChild(smpSelect(typeof value === "string" ? value : "", (v) => onChange(v)));
+  } else if (f.type === "smpList") {
+    wrap.className = "edit-field pt-field pt-field-list";
+    wrap.appendChild(smpChips(Array.isArray(value) ? value.filter((x): x is string => typeof x === "string") : [], (v) => onChange(v)));
+  } else if (f.type === "numberList" || f.type === "stringList") {
+    const input = document.createElement("input");
+    input.className = "edit-num edit-num-wide";
+    input.type = "text";
+    input.placeholder = f.type === "numberList" ? "e.g. 0.1, 0.2" : "e.g. A, B";
+    input.value = formatListValue(value);
+    input.addEventListener("change", () => {
+      const list = parseListText(input.value, f.type as "numberList" | "stringList");
+      input.value = formatListValue(list);
+      onChange(list);
+    });
+    wrap.appendChild(input);
+  } else if (f.type === "caseValue") {
+    wrap.appendChild(caseValueSelect(typeof value === "string" ? value : "", onChange));
   } else {
     const input = document.createElement("input");
     input.className = "edit-num edit-num-wide";
@@ -654,6 +690,346 @@ function renderSections(decl: ProblemtypeDeclaration): void {
     applyVisibility(body, s.fields, values);
     host.appendChild(form);
   });
+}
+
+/** An `<option>` with text set safely. */
+function optionEl(value: string, text: string): HTMLOptionElement {
+  const opt = document.createElement("option");
+  opt.value = value;
+  opt.textContent = text;
+  return opt;
+}
+
+/**
+ * A `ref` field: the names of the referenced collection's entries. A value that
+ * names no entry (deleted, or never chosen) stays selected and shows red, so
+ * the dangling reference is visible rather than silently replaced.
+ */
+function refSelect(f: FieldSpec, value: JsonValue, onChange: (v: JsonValue) => void): HTMLSelectElement {
+  const select = document.createElement("select");
+  select.className = "edit-sel edit-sel-grow";
+  const names = state ? entriesOf(state, f.refCollection ?? "").map((e) => e.name) : [];
+  const current = typeof value === "string" ? value : "";
+  if (!names.includes(current)) {
+    select.appendChild(optionEl(current, current ? `${current} (missing)` : "— choose —"));
+    select.classList.add("pt-invalid");
+  }
+  for (const n of names) select.appendChild(optionEl(n, n));
+  select.value = current;
+  select.addEventListener("change", () => {
+    onChange(select.value);
+    render();
+  });
+  return select;
+}
+
+/** One SubModelPart path; an unknown path stays visible and marked. */
+function smpSelect(value: string, onChange: (v: string) => void): HTMLSelectElement {
+  const select = document.createElement("select");
+  select.className = "edit-sel edit-sel-grow";
+  select.appendChild(optionEl("", "— none —"));
+  if (value && !smpPaths.includes(value)) {
+    select.appendChild(optionEl(value, `${value} (not in mesh)`));
+    select.classList.add("pt-invalid");
+  }
+  for (const p of smpPaths) select.appendChild(optionEl(p, p));
+  select.value = value;
+  select.addEventListener("change", () => onChange(select.value));
+  return select;
+}
+
+/** Several SubModelPart paths: removable chips plus an "add" dropdown. */
+function smpChips(paths: string[], onChange: (v: string[]) => void): HTMLElement {
+  const box = document.createElement("div");
+  box.className = "pt-chips";
+  const current = [...paths];
+  for (const p of current) {
+    const chip = document.createElement("span");
+    chip.className = "pt-chip";
+    if (smpPaths.length > 0 && !smpPaths.includes(p)) {
+      chip.classList.add("missing");
+      chip.title = `${p} — not in the current mesh`;
+    } else chip.title = p;
+    const text = document.createElement("span");
+    text.textContent = p;
+    const del = document.createElement("button");
+    del.type = "button";
+    del.className = "pt-chip-del";
+    del.textContent = "×";
+    del.title = `Remove ${p}`;
+    del.addEventListener("click", () => {
+      onChange(current.filter((x) => x !== p));
+      render();
+    });
+    chip.append(text, del);
+    box.appendChild(chip);
+  }
+  const add = document.createElement("select");
+  add.className = "edit-sel pt-chip-add";
+  add.appendChild(optionEl("", smpPaths.length === 0 ? "no SubModelParts" : "+ add SubModelPart"));
+  for (const p of smpPaths) if (!current.includes(p)) add.appendChild(optionEl(p, p));
+  add.disabled = smpPaths.length === 0;
+  add.addEventListener("change", () => {
+    if (!add.value) return;
+    onChange([...current, add.value]);
+    render();
+  });
+  box.appendChild(add);
+  return box;
+}
+
+/** A `caseValue` field: every numeric value of the case, grouped as the sidebar groups it. */
+function caseValueSelect(value: string, onChange: (v: JsonValue) => void): HTMLSelectElement {
+  const select = document.createElement("select");
+  select.className = "edit-sel edit-sel-grow";
+  const decl = currentDecl();
+  const options = decl && state ? caseValueAddresses(decl, state) : [];
+  if (!options.some((o) => o.address === value)) {
+    select.appendChild(optionEl(value, value ? `${value} (not in this case)` : "— choose a value —"));
+    select.classList.add("pt-invalid");
+  }
+  const groups = new Map<string, HTMLOptGroupElement>();
+  for (const o of options) {
+    let og = groups.get(o.group);
+    if (!og) {
+      og = document.createElement("optgroup");
+      og.label = o.group;
+      groups.set(o.group, og);
+      select.appendChild(og);
+    }
+    const opt = optionEl(o.address, `${o.label} = ${o.value}`);
+    opt.title = o.address;
+    og.appendChild(opt);
+  }
+  select.value = value;
+  select.addEventListener("change", () => {
+    onChange(select.value);
+    render();
+  });
+  return select;
+}
+
+/**
+ * The Setup stage: one card per declared collection (an optimization's
+ * responses, controls and constraints; a ROM's parameters). Each entry is a
+ * named box with its type, its SubModelParts and its own fields; renaming goes
+ * through `renameEntry`, so every reference follows the new name.
+ */
+function renderCollections(decl: ProblemtypeDeclaration): void {
+  const host = el("pt-collections");
+  if (!host || !state) return;
+  host.textContent = "";
+  const specs = decl.collections ?? [];
+  if (specs.length === 0) return;
+  host.appendChild(stageCaption("Setup", "problemtype"));
+  state.collections ??= {};
+  const problems = collectionProblems(decl, state, smpPaths.length > 0 ? smpPaths : undefined);
+  // Section values let an entry field's visibleWhen depend on the setup (an
+  // algorithm type) as well as on the entry's own fields.
+  const sectionValues = flattenValues(decl, state);
+  for (const spec of specs) {
+    const list = (state.collections[spec.id] ??= []);
+    const { form, body } = cardBlock({
+      key: `${decl.id}:collection:${spec.id}`,
+      title: spec.label,
+      icon: spec.icon ?? "problemtype",
+      count: list.length,
+    });
+    form.dataset.collection = spec.id;
+    if (spec.help) {
+      const hint = document.createElement("div");
+      hint.className = "pt-empty";
+      hint.textContent = spec.help;
+      body.appendChild(hint);
+    }
+    body.appendChild(collectionAddRow(spec));
+    const general = problems.filter((p) => p.collectionId === spec.id && p.entry === undefined);
+    if (general.length > 0) body.appendChild(issueLines(general.map((p) => p.message)));
+    list.forEach((entry, index) => {
+      body.appendChild(
+        entryBox(decl, spec, entry, index, problems.filter((p) => p.collectionId === spec.id && p.entry === entry.name), sectionValues)
+      );
+    });
+    if (list.length === 0) {
+      const hint = document.createElement("div");
+      hint.className = "pt-empty";
+      hint.textContent = `No ${spec.label.toLowerCase()} yet — pick a type above and add one.`;
+      body.appendChild(hint);
+    }
+    host.appendChild(form);
+  }
+}
+
+function issueLines(messages: string[]): HTMLElement {
+  const box = document.createElement("div");
+  box.className = "pt-issues";
+  for (const m of messages) {
+    const row = document.createElement("div");
+    row.className = "pt-issue error";
+    row.textContent = m;
+    box.appendChild(row);
+  }
+  return box;
+}
+
+/** Type × name × "+" for one collection; the name defaults to a free one derived from the type. */
+function collectionAddRow(spec: CollectionSpec): HTMLElement {
+  const row = document.createElement("div");
+  row.className = "pt-add-row";
+  const type = document.createElement("select");
+  type.className = "edit-sel pt-add-what";
+  for (const t of spec.entryTypes) type.appendChild(optionEl(t.id, t.label));
+  const name = document.createElement("input");
+  name.type = "text";
+  name.className = "edit-num pt-add-name";
+  name.placeholder = "name";
+  name.title = "Letters, digits and _ (not starting with a digit)";
+  const refreshPlaceholder = (): void => {
+    if (state) name.placeholder = uniqueEntryName(state, spec.id, type.value);
+  };
+  refreshPlaceholder();
+  type.addEventListener("change", refreshPlaceholder);
+  const add = document.createElement("button");
+  add.type = "button";
+  add.className = "edit-apply";
+  add.textContent = "+";
+  add.title = `Add to ${spec.label.toLowerCase()}`;
+  const commit = (): void => {
+    if (!state) return;
+    const wanted = name.value.trim() || uniqueEntryName(state, spec.id, type.value);
+    const list = (state.collections![spec.id] ??= []);
+    if (!isValidEntryName(wanted) || list.some((e) => e.name === wanted)) {
+      name.classList.add("pt-invalid");
+      name.title = !isValidEntryName(wanted)
+        ? `"${wanted}" is not a valid name (letters, digits and _; not starting with a digit)`
+        : `"${wanted}" is already used`;
+      return;
+    }
+    list.push(newEntry(spec, type.value, wanted));
+    scheduleSend();
+    render();
+  };
+  add.addEventListener("click", commit);
+  name.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") commit();
+  });
+  row.append(type, name, add);
+  return row;
+}
+
+/** One collection entry: head (icon · name · type · ✎ ↑ ↓ ×), issues, parts and fields. */
+function entryBox(
+  decl: ProblemtypeDeclaration,
+  spec: CollectionSpec,
+  entry: CollectionEntry,
+  index: number,
+  problems: { message: string }[],
+  sectionValues: Record<string, JsonValue>
+): HTMLElement {
+  const type = entryTypeOf(spec, entry.type);
+  const box = document.createElement("div");
+  box.className = "pt-assign pt-entry";
+  box.dataset.entry = entry.name;
+  const head = document.createElement("div");
+  head.className = "pt-assign-head";
+  const glyph = iconSpan(type?.icon ?? spec.icon, "toolbar-icon pt-assign-icon");
+  if (glyph) head.appendChild(glyph);
+  const label = document.createElement("span");
+  label.className = "pt-assign-label pt-entry-name";
+  label.textContent = entry.name;
+  label.title = "Double-click to rename";
+  const kind = document.createElement("span");
+  kind.className = "pt-assign-path";
+  kind.textContent = type?.label ?? `${entry.type} (unknown type)`;
+  if (!type) kind.classList.add("missing");
+  const button = (text: string, title: string, onClick: () => void, disabled = false): HTMLButtonElement => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "pt-assign-del";
+    b.textContent = text;
+    b.title = title;
+    b.disabled = disabled;
+    b.addEventListener("click", onClick);
+    return b;
+  };
+  const list = state!.collections![spec.id];
+  const startRename = (): void => {
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "edit-num pt-entry-rename";
+    input.value = entry.name;
+    let done = false;
+    const finish = (save: boolean): void => {
+      if (done) return;
+      done = true;
+      if (save && state) {
+        const next = renameEntry(decl, state, spec.id, entry.name, input.value.trim());
+        if (next && next !== state) {
+          state = next;
+          scheduleSend();
+        }
+      }
+      render();
+    };
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") finish(true);
+      else if (e.key === "Escape") finish(false);
+    });
+    input.addEventListener("blur", () => finish(true));
+    label.replaceWith(input);
+    input.focus();
+    input.select();
+  };
+  label.addEventListener("dblclick", startRename);
+  const move = (delta: number): void => {
+    const j = index + delta;
+    if (j < 0 || j >= list.length) return;
+    [list[index], list[j]] = [list[j], list[index]];
+    scheduleSend();
+    render();
+  };
+  head.append(
+    label,
+    kind,
+    button("✎", "Rename (references follow)", startRename),
+    button("↑", "Move up", () => move(-1), index === 0),
+    button("↓", "Move down", () => move(1), index === list.length - 1),
+    button("×", "Remove", () => {
+      list.splice(index, 1);
+      scheduleSend();
+      render();
+    })
+  );
+  box.appendChild(head);
+  if (problems.length > 0) box.appendChild(issueLines(problems.map((p) => p.message)));
+  if (type?.parts) {
+    const parts = document.createElement("label");
+    parts.className = "edit-field pt-field pt-field-list";
+    const caption = document.createElement("span");
+    caption.textContent = type.parts.label;
+    parts.appendChild(caption);
+    parts.appendChild(
+      smpChips(entry.parts, (v) => {
+        entry.parts = v;
+        scheduleSend();
+      })
+    );
+    box.appendChild(parts);
+  }
+  const fields = type?.fields ?? [];
+  const merged = (): Record<string, JsonValue> => ({ ...sectionValues, ...entry.values });
+  for (const f of fields) {
+    if (entry.values[f.id] === undefined) entry.values[f.id] = fieldDefault(f);
+    box.appendChild(
+      fieldInput(f, entry.values[f.id], (v) => {
+        entry.values[f.id] = v;
+        applyVisibility(box, fields, merged());
+        scheduleSend();
+      })
+    );
+  }
+  applyVisibility(box, fields, merged());
+  return box;
 }
 
 /** One entry of an add-row's first dropdown: a lone choice or a labelled group of them. */

@@ -1,6 +1,7 @@
 import { discoverOutputs } from './problemtype/outputDiscovery';
 import { solverArgv } from './problemtype/threadControl';
 import { readConvergenceSummary } from './problemtype/convergenceFile';
+import { readOptimizationSummary } from './problemtype/optimization/summaryLogFile';
 /**
  * The run registry: the one place that knows which Kratos solves are in flight.
  *
@@ -35,6 +36,9 @@ import { parseRunJson, reconcileStatus, serializeRun, sidecarFromRecord } from "
 import { RunHandle, isPidAlive, spawnRun, stopPid, stopRungFromOutcome } from "./problemtype/runProcess";
 import { PreparedStopSentinel, prepareStopSentinel, removeStopFile, writeStopFile } from "./problemtype/stopSentinel";
 import { RUN_SIDECAR_INDEX_KEY } from "./problemtype/runReceipt";
+import { preparedApplications } from "./problemtype/preparation";
+import { probeKratosApplications } from "./problemtype/kratosAppProbe";
+import { describeMissingApplications } from "./problemtype/applications";
 
 /** Keep a bounded tail of output in memory for the row tooltip. */
 const TAIL_LINES = 500;
@@ -133,6 +137,21 @@ export class RunManager implements vscode.Disposable {
       const reason = preflight.reason ?? "The configured simulation environment is unavailable.";
       vscode.window.showErrorMessage(`Run unavailable: ${reason}`);
       return undefined;
+    }
+    // The applications the case needs, recorded at generation; a probe that
+    // cannot answer lets the launch proceed to the driver's own check.
+    const applications = preparedApplications(req.caseDir);
+    if (applications) {
+      const probe = await probeKratosApplications({
+        python: req.python,
+        envDelta: req.envDelta,
+        applications,
+        cwd: req.caseDir,
+      });
+      if (probe.missing.length > 0) {
+        vscode.window.showErrorMessage(`Run unavailable: ${describeMissingApplications(probe.missing)}`);
+        return undefined;
+      }
     }
     const caseKey = caseKeyFor(meshFsPath, process.platform);
     const script = req.scriptName ?? "MainKratos.py";
@@ -460,8 +479,17 @@ export class RunManager implements vscode.Disposable {
     // Convergence comes from the script's own versioned records, never from
     // stdout; a case with no monitor file simply has no summary.
     const convergence = readConvergenceSummary(record.caseDir, record.status);
-    const { convergence: _stale, ...rest } = record.progress ?? {};
-    record.progress = { ...rest, fileCount: outputs.results.length, stepLabel: latest?.step, ...(convergence ? { convergence } : {}) };
+    // An optimization case reports its iterations through the summary file
+    // its optimization_parameters.json names; any other case has none.
+    const optimization = readOptimizationSummary(record.caseDir, record.status);
+    const { convergence: _stale, optimization: _staleOptimization, ...rest } = record.progress ?? {};
+    record.progress = {
+      ...rest,
+      fileCount: outputs.results.length,
+      stepLabel: latest?.step,
+      ...(convergence ? { convergence } : {}),
+      ...(optimization ? { optimization } : {}),
+    };
   }
 
   private disposeWatcher(id: string): void {

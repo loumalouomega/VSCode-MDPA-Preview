@@ -21,11 +21,12 @@
 import * as path from "node:path";
 import * as fs from "node:fs";
 import { validateDeclaration, resolveProcessTemplate } from "./api";
-import { MAIN_KRATOS_PY, monitoredMainScript, CONVERGENCE_ADAPTERS } from "./mainKratosTemplate";
+import { monitoredMainScript, CONVERGENCE_ADAPTERS, driverTemplateScript } from "./mainKratosTemplate";
 import { trackEngine } from "../engineActivity";
 import {
   GenContext,
   JsonObject,
+  JsonValue,
   ProblemtypeDeclaration,
   ProblemtypeRuntime,
 } from "./types";
@@ -139,14 +140,20 @@ function wrapRuntime(
     },
     extraFiles: async (ctx, materials) => {
       const result = call("extraFiles", { ctx, materials });
-      return result !== undefined ? (JSON.parse(result) as { name: string; content: string }[]) : [];
+      if (result === undefined) return [];
+      // A content given as a JSON value (a document) is written the way the
+      // primary document is, so a Python port matches a TypeScript built-in byte for byte.
+      return (JSON.parse(result) as { name: string; content: JsonValue }[]).map((f) => ({
+        name: f.name,
+        content: typeof f.content === "string" ? f.content : JSON.stringify(f.content, null, 4) + "\n",
+      }));
     },
     mainScript: async (ctx: GenContext) => {
       const result = call("mainScript", { ctx });
       // Shipped Python counterparts use the identical builtin monitor.
       const builtin = decl.id.replace(/_py$/, "");
       if (decl.id.endsWith("_py") && CONVERGENCE_ADAPTERS[builtin] && result === undefined) return monitoredMainScript(builtin);
-      return result !== undefined ? (JSON.parse(result) as string) : MAIN_KRATOS_PY;
+      return result !== undefined ? (JSON.parse(result) as string) : driverTemplateScript(decl);
     },
   };
 }

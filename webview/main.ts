@@ -27,6 +27,8 @@ import {
 } from "../src/parser/streamlineForm";
 import { buildStreamlineTubes } from "../src/parser/streamlineTubes";
 import { renderFlowBalancePanel, FlowBalancePanelState } from "./flowBalancePanel";
+import { emptyOptimizationPanelState, renderOptimizationPanel, OptimizationPanelState } from "./optimizationPanel";
+import { optimizationSummaryToCsv } from "../src/problemtype/optimization/summaryLog";
 import { buildFlowBalanceRequest, defaultFlowBalanceForm } from "../src/parser/flowBalanceForm";
 import type { FlowBalance } from "../src/parser/flowBalance";
 
@@ -514,6 +516,10 @@ const linkPanelEl = document.createElement("div");
 linkPanelEl.id = "link-panel";
 linkPanelEl.style.display = "none";
 vtkSub.appendChild(linkPanelEl);
+const optimizationPanelEl = document.createElement("div");
+optimizationPanelEl.id = "optimization-panel";
+optimizationPanelEl.style.display = "none";
+vtkSub.appendChild(optimizationPanelEl);
 
 const inspectPanelEl = document.createElement("div");
 inspectPanelEl.id = "inspect-panel";
@@ -1754,6 +1760,12 @@ function handleHostMessage(event: MessageEvent): void {
 
     case "linkState":
       onLinkState(msg as Record<string, unknown>);
+      break;
+    case "optimizationProgress":
+      applyOptimizationProgress(msg as Record<string, unknown>);
+      break;
+    case "selectionSeed":
+      applySelectionSeed(msg as Record<string, unknown>);
       break;
     case "linkApply":
       applyLink(msg.kind as LinkKind, msg.payload, typeof msg.from === "string" ? msg.from : "a linked preview");
@@ -3466,6 +3478,7 @@ function dispatchToolbarAction(action: string | undefined, _target?: HTMLElement
   else if (action === "streamlines") toggleStreamlinePanel();
   else if (action === "flowBalance") toggleFlowPanel();
   else if (action === "linkPreviews") toggleLinkPanel();
+  else if (action === "optimizationProgress") toggleOptimizationPanel();
   else if (action === "compareSplit") toggleCompare();
   else if (action === "dataTable") toggleDataTablePanel();
   else if (action === "plots") void plotPane.open();
@@ -3687,6 +3700,7 @@ const LEFT_DOCK: { action: string; dismiss: () => void }[] = [
   { action: "streamlines", dismiss: () => dismissStreamlinePanel() },
   { action: "flowBalance", dismiss: () => dismissFlowPanel() },
   { action: "linkPreviews", dismiss: () => dismissLinkPanel() },
+  { action: "optimizationProgress", dismiss: () => dismissOptimizationPanel() },
 ];
 
 function closeLeftDockExcept(action: string): void {
@@ -6552,6 +6566,31 @@ function toggleSelectionPanel(): void {
   else showSelectionPanel();
 }
 
+/**
+ * An explicit selection set pushed by the host (Kratos Runs ▸ Show HROM
+ * elements). A set of the same name is replaced. It may arrive before the
+ * mesh does: the set is kept, and the refresh that runs at the end of every
+ * scene build prunes it against the model like any explicit pick.
+ */
+function applySelectionSeed(msg: Record<string, unknown>): void {
+  const name = typeof msg.name === "string" && msg.name ? msg.name : "Host selection";
+  const kinds = (msg.kinds ?? {}) as Record<string, unknown>;
+  const ids = (k: string): number[] =>
+    Array.isArray(kinds[k]) ? [...new Set((kinds[k] as unknown[]).filter((v): v is number => typeof v === "number" && Number.isInteger(v)))].sort((a, b) => a - b) : [];
+  const set: SelectionSet = { name, seed: { kind: "explicit" }, kinds: { Elements: ids("Elements"), Conditions: ids("Conditions"), Geometries: ids("Geometries") } };
+  const at = selectionSets.findIndex((s) => s.name === name);
+  if (at >= 0) selectionSets[at] = set;
+  else selectionSets.push(set);
+  selectionActiveIndex = at >= 0 ? at : selectionSets.length - 1;
+  scheduleViewSave();
+  if (!model) return;
+  refreshAndApplySelection();
+  if (!selectionVisible) showSelectionPanel();
+  const n = set.kinds.Elements.length + set.kinds.Conditions.length;
+  toast(`Selection "${name}" — ${n} entit${n === 1 ? "y" : "ies"} from the host.`);
+  render();
+}
+
 function showSelectionPanel(): void {
   selectionVisible = true;
   scheduleViewSave();
@@ -7455,6 +7494,68 @@ function renderLinkUI(): void {
   });
 }
 
+// --- Optimization progress -------------------------------------------------
+// Reads nothing itself: the host finds the optimization case this preview
+// belongs to and posts `optimizationProgress` (see src/optimizationProgressHost.ts),
+// again whenever a run's progress refreshes while the panel follows it.
+let optimizationVisible = false;
+let optimizationState: OptimizationPanelState = emptyOptimizationPanelState();
+
+function toggleOptimizationPanel(): void {
+  if (optimizationVisible) hideOptimizationPanel();
+  else showOptimizationPanel();
+}
+
+function showOptimizationPanel(): void {
+  closeLeftDockExcept("optimizationProgress");
+  optimizationPanelEl.style.display = "";
+  optimizationVisible = true;
+  scheduleViewSave();
+  document.querySelector('[data-action="optimizationProgress"]')?.classList.add("active");
+  renderOptimization();
+  vscode.postMessage({ type: "optimizationProgressRequest" });
+}
+
+/** Off screen only — the host keeps following until the explicit close. */
+function dismissOptimizationPanel(): void {
+  optimizationPanelEl.style.display = "none";
+  optimizationVisible = false;
+  scheduleViewSave();
+  document.querySelector('[data-action="optimizationProgress"]')?.classList.remove("active");
+}
+
+function hideOptimizationPanel(): void {
+  dismissOptimizationPanel();
+  vscode.postMessage({ type: "optimizationProgressStop" });
+}
+
+function renderOptimization(): void {
+  renderOptimizationPanel(optimizationPanelEl, optimizationState, {
+    onClose: hideOptimizationPanel,
+    onRefresh: () => vscode.postMessage({ type: "optimizationProgressRequest" }),
+    onPlot: () => vscode.postMessage({ type: "optimizationPlot" }),
+    onDesignFields: () => vscode.postMessage({ type: "optimizationDesignFields" }),
+    onExport: () => postAnalysisCsv(optimizationSummaryToCsv(optimizationState), "optimization-summary"),
+  });
+}
+
+function applyOptimizationProgress(msg: Record<string, unknown>): void {
+  optimizationState = {
+    received: true,
+    available: msg.available === true,
+    caseName: typeof msg.caseName === "string" ? msg.caseName : undefined,
+    reason: typeof msg.reason === "string" ? msg.reason : undefined,
+    formulation: typeof msg.formulation === "string" ? msg.formulation : undefined,
+    designFields: msg.designFields === true,
+    summary: msg.summary as OptimizationPanelState["summary"],
+    columns: Array.isArray(msg.columns) ? (msg.columns as string[]) : [],
+    rows: Array.isArray(msg.rows) ? (msg.rows as OptimizationPanelState["rows"]) : [],
+    totalRows: typeof msg.totalRows === "number" ? msg.totalRows : 0,
+    warnings: Array.isArray(msg.warnings) ? (msg.warnings as string[]) : [],
+  };
+  if (optimizationVisible) renderOptimization();
+}
+
 function toggleLinkPanel(): void {
   if (linkPanelVisible) hideLinkPanel();
   else showLinkPanel();
@@ -7536,6 +7637,7 @@ function panelOpen(id: PanelId): boolean {
     case "bookmarks": return bookmarksVisible;
     case "record": return recordVisible;
     case "link": return linkPanelVisible;
+    case "optimization": return optimizationVisible;
   }
 }
 
@@ -7562,6 +7664,7 @@ function openPanel(id: PanelId): void {
     case "bookmarks": if (!bookmarksVisible) showBookmarksPanel(); break;
     case "record": if (!recordVisible) showRecordPanel(); break;
     case "link": if (!linkPanelVisible) showLinkPanel(); break;
+    case "optimization": if (!optimizationVisible) showOptimizationPanel(); break;
   }
 }
 
