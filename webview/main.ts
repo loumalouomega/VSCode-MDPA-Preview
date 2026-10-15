@@ -3407,7 +3407,7 @@ function highlightPlotRegion(path:string):void {
   if(!cells.length)for(const id of nodes)cells.push({nodeIds:[id]});
   if(cells.length){addLayer("plot:region",cells,[1,.75,.1],true);render();}
 }
-const plotPane=initPlotPane({postMessage:v=>vscode.postMessage(v),setState:()=>{}},()=>femPlotContext(plotSourcePath,model,currentFrameIndex,timelineFrameCount>1,fieldVisible?focusedPane().field.selectedKey:undefined),{onPickPoints:active=>{if(active)showInspectPanel();},onRegion:highlightPlotRegion});
+const plotPane=initPlotPane({postMessage:v=>vscode.postMessage(v),setState:()=>{}},()=>femPlotContext(plotSourcePath,model,currentFrameIndex,timelineFrameCount>1,fieldVisible?focusedPane().field.selectedKey:undefined),{onPickPoints:active=>{if(active)showInspectPanel();},onRegion:highlightPlotRegion,onShowField:(key,comp)=>{focusVariableField(key);const fs=focusedPane().field;fs.component=comp==="magnitude"?"mag":comp;renderFieldPanelUI();applyFieldMode(focusedPane());}});
 
 // --- Toolbar ------------------------------------------------------------
 // --- View + Advanced toolbar menus --------------------------------------
@@ -3482,6 +3482,7 @@ function dispatchToolbarAction(action: string | undefined, _target?: HTMLElement
   else if (action === "compareSplit") toggleCompare();
   else if (action === "dataTable") toggleDataTablePanel();
   else if (action === "plots") void plotPane.open();
+  else if (action === "plotField") plotDisplayedField(focusedPane());
   else if (action === "record") toggleRecordPanel();
   else if (action?.startsWith("layout:")) {
     const id = action.slice("layout:".length);
@@ -5055,6 +5056,20 @@ function focusVariableField(key: string): void {
   applyFieldMode(pane);
 }
 
+/** Open the Plots pane on a histogram of the pane's selected field and component (Field panel button and the `plotField` command). */
+function plotDisplayedField(pane: Pane): void {
+  const info = selectedFieldInfo(pane);
+  if (!info) {
+    toast("Pick a field in the Field panel first.");
+    return;
+  }
+  const comp = info.isVector ? currentComponent(pane) : 0;
+  vscode.postMessage({
+    type: "plotOpen",
+    preset: { type: "recipe", id: "fieldDistribution", params: { variable: info.field.variable, kind: info.field.kind, components: info.field.components, component: comp === "mag" ? "magnitude" : comp, timeStep: timelineFrameCount > 1 ? currentFrameIndex : undefined } },
+  });
+}
+
 function hideFieldPanel(): void {
   fieldPanelEl.style.display = "none";
   fieldVisible = false;
@@ -5217,6 +5232,7 @@ function renderFieldPanelUI(): void {
     onRevealVariable: (key) => {
       revealVariableRow(key);
     },
+    onPlotField: () => plotDisplayedField(pane),
     onExportDerived: (what) => {
       const info = selectedFieldInfo(pane);
       if (!info) return;

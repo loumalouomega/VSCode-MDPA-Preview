@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- **Field display combined with Plots** (roadmap item 9): the Field panel gains **Plot distribution**, which opens the Plots pane on a histogram of the selected field and component (magnitude for a vector) over the mesh entities at the current frame; entities the field does not cover are excluded and reported, never counted as 0. The Plots quick panel gains **Show on mesh**, which colours the focused pane by the chosen Quantity and Component. Both are also reachable from the command line (`plotField`), and the new `fieldDistribution` preset is available headlessly through `plot_preset`.
+
 ## [5.11.0] - 2026-10-15
 
 ### Added

@@ -6,6 +6,10 @@ The Plots quick panel carries a **Preset** selector that builds a complete, vali
 
 ## The five presets
 
+### Field distribution
+
+A histogram of one component (or the magnitude) of a Nodal, Elemental or Conditional field over the mesh entities, optionally within one SubModelPart, at the current frame. The Field panel's **Plot distribution** button opens it for the field you are looking at, and the quick panel's **Show on mesh** does the reverse. Entities the field does not cover are excluded and counted as gaps, never as 0.
+
 ### Section comparison over time
 
 One curve per SubModelPart for a field's mean over time — inlet against outlet pressure is the canonical case. The operation is the boundary mean by default (the faces owned by exactly one element of the part) or the entity mean; a vector field plots its magnitude or one X/Y/Z component. Supply explicit physical `times` (one per frame) with a `timeUnit` and the axis is time; without them it is a step label, honestly rather than by assumption. Differences are deliberately **not** derived here: read them off the curves or the exported table, or ask for them explicitly (see below). Needs at least two distinct SubModelParts.
