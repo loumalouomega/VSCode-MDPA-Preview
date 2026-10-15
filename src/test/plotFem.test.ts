@@ -338,3 +338,18 @@ test("a non-convex owner element is excluded where the centroid rule cannot orie
   sq.source={format:"mdpa",units:{coords:"m",fields:{PRESSURE:"Pa"}}};
   const q=sampleRegion(sq,exterior({operation:"boundaryIntegral"}));close(q.covered,4);assert.equal(q.partial,false);
 });
+
+// flowBalance (corner mean) and the region path (3-point rule) share the same fan pieces; both are exact for a
+// linear field, so they must agree to round-off until an integrand of degree >= 2 (a moment) exists in flowBalance.
+test("flowBalance's corner-mean flux equals the region path's 3-point flux for a linear velocity",async ()=>{
+  const { flowBalance } = await import("../parser/flowBalance");
+  const { flowDuct } = await import("./fixtures/shapes");
+  const m=flowDuct({ velocity: x => [1+2*x, 0.5*x, -x], pressure: x => 5+3*x });
+  m.source={format:"mdpa",units:{coords:"m",fields:{VELOCITY:"m/s",PRESSURE:"Pa"}}};
+  for (const part of ["Inlet","Outlet"]) {
+    const fb=flowBalance(m,{sections:[{part}],velocity:"VELOCITY",pressure:"PRESSURE"}).sections[0];
+    const flux=sampleRegion(m,{id:"f",type:"region",path:"d.mdpa",kind:"Nodal",variable:"VELOCITY",submodelpart:part,scope:"current",operation:"flux"});
+    const mean=sampleRegion(m,{id:"p",type:"region",path:"d.mdpa",kind:"Nodal",variable:"PRESSURE",submodelpart:part,scope:"current",operation:"boundaryMean"});
+    close(flux.values[0],fb.flux!);close(mean.values[0],fb.meanPressure!);close(flux.measure,fb.area);
+  }
+});

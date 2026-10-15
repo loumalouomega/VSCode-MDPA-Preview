@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- A test now pins that `flowBalance` and the region path agree to round-off on a linear field (they share the fan pieces and are both exact for degree 1).
 - **Exterior-boundary conventions** (roadmap item 9): exterior region sources accept `interface: "region"` to include faces shared with an Element outside the region on the region's own side (the neighbour's side is never computed; the default still excludes them), and the outward-normal rule now excludes and reports a face whose owning Element is non-convex about it (corners on both sides of the face plane) instead of orienting it from the centroid.
 - **Field display combined with Plots** (roadmap item 9): the Field panel gains **Plot distribution**, which opens the Plots pane on a histogram of the selected field and component (magnitude for a vector) over the mesh entities at the current frame; entities the field does not cover are excluded and reported, never counted as 0. The Plots quick panel gains **Show on mesh**, which colours the focused pane by the chosen Quantity and Component. Both are also reachable from the command line (`plotField`), and the new `fieldDistribution` preset is available headlessly through `plot_preset`.
 
