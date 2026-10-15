@@ -162,8 +162,28 @@ test("cosim: one coupling document, one document per participant, and the driver
     variable_name: "POINT_LOAD",
     dimension: 3,
   });
-  assert.deepEqual(settings.predictors, [{ type: "average_value_based", beta: 0.5 }]);
-  assert.equal(settings.data_transfer_operators.kratos_mapping.type, "kratos_mapping");
+  assert.deepEqual(settings.predictors, [
+    { type: "average_value_based", solver: "fluid", data_name: "fluid_interface_displacement", beta: 0.5 },
+  ]);
+  assert.deepEqual(settings.data_transfer_operators.kratos_mapping, { type: "kratos_mapping", mapper_settings: { mapper_type: "nearest_element" } });
+  // The Mok shape: the structure pulls the load (sign swapped) and pushes the
+  // displacement; the fluid's own lists stay empty. Weak coupling has no criteria.
+  assert.deepEqual(settings.coupling_sequence[0], { name: "fluid", input_data_list: [], output_data_list: [] });
+  assert.deepEqual(settings.coupling_sequence[1].input_data_list, [
+    {
+      data: "structure_interface_load",
+      from_solver: "fluid",
+      from_solver_data: "fluid_interface_load",
+      data_transfer_operator: "kratos_mapping",
+      data_transfer_operator_options: ["swap_sign"],
+    },
+  ]);
+  assert.equal(settings.convergence_criteria, undefined);
+  assert.equal(settings.solvers.fluid.data.fluid_interface_displacement.variable_name, "DISPLACEMENT");
+  for (const app of ["CoSimulationApplication", "FluidDynamicsApplication", "MappingApplication", "StructuralMechanicsApplication"]) {
+    assert.ok(out.applications.includes(app), app);
+  }
+  assert.ok(!out.applications.includes("MeshMovingApplication"));
 
   const cfd = documentOf(out, "ProjectParametersCFD.json");
   const csm = documentOf(out, "ProjectParametersCSM.json");
@@ -197,7 +217,7 @@ test("cosim: one coupling document, one document per participant, and the driver
   assert.ok(scriptHonoursStopSentinel(out.mainScript));
 });
 
-test("cosim: a missing or doubled interface refuses generation before anything is written", async () => {
+test("cosim: a missing or unbalanced interface refuses generation before anything is written", async () => {
   const model = parseMdpa(MDPA);
   const missing = cosimState();
   missing.assignments = missing.assignments.filter((a) => a.conditionId !== "fluidInterface");
@@ -206,7 +226,7 @@ test("cosim: a missing or doubled interface refuses generation before anything i
 
   const doubled = cosimState();
   doubled.assignments.push({ conditionId: "fluidInterface", smpPath: "Inlet", values: {} });
-  await assert.rejects(() => generateCase(cosim, model, doubled, "flap"), /couples one interface pair: .*\(2 fluid, 1 structure\)/);
+  await assert.rejects(() => generateCase(cosim, model, doubled, "flap"), /Coupling interface: 2 SubModelParts assigned as .* but 1 as/);
 });
 
 test("cosim: the source mesh is sliced into one mesh per physics", () => {
@@ -248,4 +268,141 @@ test("cosim: the generated driver is valid Python", { skip: !hasPython }, async 
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+/** The test mesh plus a second interface pair (the same faces under other names) and a far boundary. */
+const MDPA_TWO_PAIRS =
+  MDPA +
+  `
+Begin SubModelPart FluidWall2
+  Begin SubModelPartNodes
+  1
+  2
+  3
+  End SubModelPartNodes
+  Begin SubModelPartConditions
+  1
+  End SubModelPartConditions
+End SubModelPart
+
+Begin SubModelPart SolidWall2
+  Begin SubModelPartNodes
+  5
+  6
+  7
+  End SubModelPartNodes
+  Begin SubModelPartConditions
+  2
+  End SubModelPartConditions
+End SubModelPart
+`;
+
+function strongState(): CaseState {
+  const state = cosimState();
+  state.values.coupling = { ...state.values.coupling, couplingType: "strong", aleMesh: true, numCouplingIterations: 12 };
+  return state;
+}
+
+test("cosim: strong coupling with MVQN writes the Mok benchmark's criteria, accelerator and ALE fluid", async () => {
+  const state = strongState();
+  state.assignments.push({ conditionId: "aleMeshBC", smpPath: "Inlet", values: {} });
+  const out = await generateCase(cosim, parseMdpa(MDPA), state, "flap");
+  const settings = JSON.parse(out.projectParameters).solver_settings;
+  assert.equal(settings.type, "coupled_solvers.gauss_seidel_strong");
+  assert.equal(settings.num_coupling_iterations, 12);
+  assert.deepEqual(settings.convergence_accelerators, [
+    { type: "mvqn", solver: "fluid", data_name: "fluid_interface_displacement", alpha: 0.125 },
+  ]);
+  assert.deepEqual(settings.convergence_criteria, [
+    { type: "relative_norm_previous_residual", solver: "fluid", data_name: "fluid_interface_displacement", abs_tolerance: 1e-5, rel_tolerance: 1e-5 },
+  ]);
+  // The moving fluid takes the displacement as MESH_DISPLACEMENT.
+  assert.equal(settings.solvers.fluid.data.fluid_interface_displacement.variable_name, "MESH_DISPLACEMENT");
+  assert.ok(out.applications.includes("MeshMovingApplication"));
+
+  const cfd = documentOf(out, "ProjectParametersCFD.json");
+  assert.equal(cfd.solver_settings.solver_type, "ale_fluid");
+  assert.deepEqual(cfd.solver_settings.ale_boundary_parts, ["FluidWall"]);
+  assert.deepEqual(cfd.solver_settings.mesh_motion_solver_settings, { solver_type: "structural_similarity" });
+  assert.equal(cfd.solver_settings.fluid_solver_settings.model_part_name, "FluidModelPart");
+  assert.ok(cfd.solver_settings.fluid_solver_settings.skin_parts.includes("FluidModelPart.FluidWall"));
+  const ale = cfd.processes.ale_boundary_conditions;
+  assert.deepEqual(ale.map((p: { Parameters: { model_part_name: string } }) => p.Parameters.model_part_name), [
+    "FluidModelPart.FluidWall",
+    "FluidModelPart.Inlet",
+  ]);
+  assert.deepEqual(ale[0].Parameters, { model_part_name: "FluidModelPart.FluidWall", variable_name: "MESH_DISPLACEMENT", constrained: [true, true, true] });
+  assert.equal(ale[1].Parameters.variable_name, "MESH_DISPLACEMENT");
+  assert.ok(cfd.output_processes.vtk_output[0].Parameters.nodal_solution_step_data_variables.includes("MESH_DISPLACEMENT"));
+  // The ALE hold is not a process of the coupling document or of the plain fluid lists.
+  assert.ok(!JSON.stringify(cfd.processes.boundary_conditions_process_list ?? []).includes("MESH_DISPLACEMENT"));
+});
+
+test("cosim: Aitken, IQN-ILS and no accelerator write what each reads", async () => {
+  const model = parseMdpa(MDPA);
+  const withAccelerator = async (accelerator: string) => {
+    const state = strongState();
+    state.values.coupling = { ...state.values.coupling, accelerator, aitkenInitAlpha: 0.2 };
+    return JSON.parse((await generateCase(cosim, model, state, "flap")).projectParameters).solver_settings;
+  };
+  assert.deepEqual((await withAccelerator("aitken")).convergence_accelerators, [
+    { type: "aitken", solver: "fluid", data_name: "fluid_interface_displacement", init_alpha: 0.2, init_alpha_max: 0.45, alpha_max: 2, alpha_min: -2 },
+  ]);
+  assert.equal((await withAccelerator("iqnils")).convergence_accelerators[0].type, "iqnils");
+  const none = await withAccelerator("none");
+  assert.deepEqual(none.convergence_accelerators, []);
+  assert.equal(none.convergence_criteria.length, 1); // a strong coupling always has a criterion
+});
+
+test("cosim: predictors, mapper choice and the velocity data the linear predictor needs", async () => {
+  const model = parseMdpa(MDPA);
+  const state = cosimState();
+  state.values.coupling = { ...state.values.coupling, predictor: "linear_derivative_based", mapperType: "barycentric" };
+  const settings = JSON.parse((await generateCase(cosim, model, state, "flap")).projectParameters).solver_settings;
+  assert.deepEqual(settings.predictors, [
+    { type: "linear_derivative_based", solver: "fluid", data_name: "fluid_interface_displacement", derivative_data_name: "fluid_interface_velocity" },
+  ]);
+  assert.deepEqual(settings.solvers.fluid.data.fluid_interface_velocity, { model_part_name: "FluidModelPart.FluidWall", variable_name: "VELOCITY", dimension: 3 });
+  assert.deepEqual(settings.data_transfer_operators.kratos_mapping.mapper_settings, { mapper_type: "barycentric", interpolation_type: "triangle" });
+
+  state.values.coupling = { ...state.values.coupling, predictor: "none" };
+  const plain = JSON.parse((await generateCase(cosim, model, state, "flap")).projectParameters).solver_settings;
+  assert.deepEqual(plain.predictors, []);
+  assert.equal(plain.solvers.fluid.data.fluid_interface_velocity, undefined);
+});
+
+test("cosim: two interface pairs exchange separately named data", async () => {
+  const state = strongState();
+  state.assignments.push(
+    { conditionId: "fluidInterface", smpPath: "FluidWall2", values: {} },
+    { conditionId: "structureInterface", smpPath: "SolidWall2", values: {} }
+  );
+  const out = await generateCase(cosim, parseMdpa(MDPA_TWO_PAIRS), state, "flap");
+  const settings = JSON.parse(out.projectParameters).solver_settings;
+  assert.deepEqual(Object.keys(settings.solvers.fluid.data), [
+    "fluid_interface_load",
+    "fluid_interface_displacement",
+    "fluid_interface_load_2",
+    "fluid_interface_displacement_2",
+  ]);
+  assert.equal(settings.solvers.structure.data.structure_interface_load_2.model_part_name, "Structure.SolidWall2");
+  assert.deepEqual(
+    settings.coupling_sequence[1].output_data_list.map((d: { to_solver_data: string }) => d.to_solver_data),
+    ["fluid_interface_displacement", "fluid_interface_displacement_2"]
+  );
+  assert.deepEqual(settings.convergence_criteria.map((c: { data_name: string }) => c.data_name), ["fluid_interface_displacement", "fluid_interface_displacement_2"]);
+  assert.equal(settings.convergence_accelerators.length, 2);
+  assert.equal(settings.predictors.length, 2);
+  const cfd = documentOf(out, "ProjectParametersCFD.json");
+  assert.deepEqual(cfd.solver_settings.ale_boundary_parts, ["FluidWall", "FluidWall2"]);
+});
+
+test("cosim: strong coupling without ALE, or an ALE hold without ALE, is refused", async () => {
+  const model = parseMdpa(MDPA);
+  const strong = cosimState();
+  strong.values.coupling = { ...strong.values.coupling, couplingType: "strong" };
+  await assert.rejects(() => generateCase(cosim, model, strong, "flap"), /Strong coupling needs the fluid mesh to move/);
+  const held = cosimState();
+  held.assignments.push({ conditionId: "aleMeshBC", smpPath: "Inlet", values: {} });
+  await assert.rejects(() => generateCase(cosim, model, held, "flap"), /"ALE mesh displacement" is assigned to "Inlet" but the fluid mesh does not move/);
 });
