@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- **Roadmap item 9 closed** (scientific plotting): the item was removed from `doc/roadmap.md` and its unmet remainder (failing million-row memory and worker-stall budgets, packaged and Remote-SSH measurements, run-bound/table caches, legacy-run evidence import, native polyhedral faces) moved to new item 19. Documentation only.
 - **Plot ownership resolution** (roadmap item 9): `plot_run_resolve` (MCP) / `resolvePlotRun` classify a result path as `verified` (only through an existing execution receipt that still verifies), `unverified` (legacy output or a latest-run sidecar: a present-state snapshot labelled as not ownership, never usable as a run binding) or `unresolved` (reused, stale, live or unreadable evidence).
 - **Persistent plot cache stat shortcut**: lookups reuse the stored content revision when every file's size, mtime, ctime, inode and device and the directory listing are unchanged (files must be 2 s old when recorded; stores still rehash), about 30x faster than hashing on the benchmark. Run-bound and table sources stay uncached by design.
 - **`npm run bench:plot`**: Node-level budget benchmark for million-row tables, history extraction and cancellation. First results show a million-row plot peaking near 1.5 GB and the worker blocking the host about 3 s during result delivery; both are recorded as open work.
