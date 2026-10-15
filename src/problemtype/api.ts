@@ -20,7 +20,7 @@ import {
   ProblemtypeRuntime,
   ProblemtypeSource,
 } from "./types";
-import { MAIN_KRATOS_PY } from "./mainKratosTemplate";
+import { DRIVER_TEMPLATES, driverTemplateScript } from "./mainKratosTemplate";
 import { applicationDeclarationProblems } from "./applications";
 import { couplingInterfaceDeclarationProblems } from "./interfaceCheck";
 
@@ -55,6 +55,9 @@ export function validateDeclaration(decl: ProblemtypeDeclaration): string[] {
     if (name !== undefined && (typeof name !== "string" || !/^[A-Za-z0-9_.-]+$/.test(name) || !name.endsWith(extension))) {
       errors.push(`${key} must be a plain file name ending in ${extension}`);
     }
+  }
+  if (decl.driverTemplate !== undefined && !(DRIVER_TEMPLATES as readonly string[]).includes(decl.driverTemplate)) {
+    errors.push(`driverTemplate must be one of ${DRIVER_TEMPLATES.join(", ")}`);
   }
   if (!Array.isArray(decl.domainSizes) || decl.domainSizes.length === 0 ||
     !decl.domainSizes.every((d) => d === 2 || d === 3)) {
@@ -439,7 +442,7 @@ export function defineProblemtype(
       return custom ?? resolveProcessTemplate(cond, a, ctx);
     },
     postProcess: async (pp, ctx) => (hooks.postProcess ? hooks.postProcess(pp, ctx) : pp),
-    mainScript: async (ctx) => (hooks.mainScript ? hooks.mainScript(ctx) : MAIN_KRATOS_PY),
+    mainScript: async (ctx) => (hooks.mainScript ? hooks.mainScript(ctx) : driverTemplateScript(decl)),
     extraFiles: async (ctx, materials) => (hooks.extraFiles ? hooks.extraFiles(ctx, materials) : []),
     validate: async (ctx) => (hooks.validate ? hooks.validate(ctx) : []),
   };

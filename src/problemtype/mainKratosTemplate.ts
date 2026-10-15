@@ -95,20 +95,273 @@ export function scriptHonoursStopSentinel(scriptText: string): boolean {
   return scriptText.includes(STOP_SENTINEL_MARKER);
 }
 
+/** The driver text a declaration's `driverTemplate` names (absent: the standard MainKratos.py). */
+export function driverTemplateScript(decl: { driverTemplate?: string; primaryDocumentName?: string }): string {
+  switch (decl.driverTemplate) {
+    case "fsi":
+      return fsiMainKratosPy();
+    case "cosim":
+      return cosimMainKratosPy(decl.primaryDocumentName ?? "ProjectParameters.json");
+    default:
+      return MAIN_KRATOS_PY;
+  }
+}
+
+export const DRIVER_TEMPLATES = ["standard", "fsi", "cosim"] as const;
+
+/** The convergence adapters of the two coupled drivers (roadmap item 16). */
+export const FSI_CONVERGENCE_ADAPTER = "kkss.fsi-convergence";
+export const COSIM_CONVERGENCE_ADAPTER = "kkss.cosim-convergence";
+
+/**
+ * The record writer the coupled drivers share: the same v2 framing as the
+ * structural adapter, written next to the driver, finite values only.
+ */
+const COUPLING_MONITOR_PY = `KKSS_CONVERGENCE_FILE = "kkss-convergence-v2.jsonl"
+
+
+def KkssConvergencePath():
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), KKSS_CONVERGENCE_FILE)
+
+
+def KkssResetConvergence():
+    try:
+        os.remove(KkssConvergencePath())
+    except FileNotFoundError:
+        pass
+
+
+def KkssFinite(value):
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        return None
+    return value if math.isfinite(value) and value >= 0 else None
+
+
+def KkssRuntime():
+    try:
+        version = KratosMultiphysics.KratosGlobals.Kernel.Version()
+    except Exception:
+        version = "unavailable"
+    return {"kratosVersion": version, "pythonVersion": sys.version.split()[0]}
+
+
+def KkssWriteRecord(adapter, record):
+    record.update({"adapter": adapter, "version": 2})
+    with open(KkssConvergencePath(), "a", encoding="utf-8") as monitor:
+        monitor.write(json.dumps(record, sort_keys=True, allow_nan=False) + "\\n")
+        monitor.flush()
+
+
+def KkssCouplingRecord(step, time, converged, solver_result, criterion, residuals, iterations, parameters, definition, unavailable, error=None):
+    # One coupled solve step. \`converged\` is the coupled solver's own answer
+    # (None when no criterion was evaluated); \`residuals\` holds one value per
+    # coupling iteration, None where it could not be read.
+    record = {
+        "event": "step",
+        "iteration": int(step),
+        "time": float(time),
+        "converged": converged,
+        "solverStepResult": solver_result,
+        "analysisType": "coupled",
+        "criterion": criterion,
+        "residualDefinition": definition,
+        "runtime": KkssRuntime(),
+        "couplingResiduals": residuals,
+    }
+    if iterations is not None:
+        record["nonlinearIteration"] = int(iterations)
+    if parameters:
+        record["criterionParameters"] = parameters
+    last = residuals[-1] if residuals else None
+    if last is not None:
+        record["residual"] = last
+    else:
+        record["residualUnavailableReason"] = unavailable
+    if error is not None:
+        record["error"] = str(error)
+    KkssWriteRecord(KKSS_ADAPTER, record)
+
+`;
+
+/**
+ * Observes FSIApplication's coupling loop (PartitionedFSIBaseSolver at master):
+ * `_CheckFSIConvergence(nl_it, residual_norm)` is called once per coupling
+ * iteration and is the only place the interface residual is seen, so it is
+ * wrapped on the solver instance; the residual is normalised the way the
+ * solver logs it, |res|/sqrt(nDOFS).
+ */
+const FSI_OBSERVER_PY = `KKSS_ADAPTER = "${FSI_CONVERGENCE_ADAPTER}"
+
+
+class KkssFsiObserver:
+    def __init__(self, solver):
+        self.solver = solver
+        self.residuals = []
+        self.wrapped = False
+        original = getattr(solver, "_CheckFSIConvergence", None)
+        if callable(original):
+            def checked(nl_it, residual_norm, *args, **kwargs):
+                result = original(nl_it, residual_norm, *args, **kwargs)
+                self.residuals.append(self._normalised(residual_norm))
+                return result
+            solver._CheckFSIConvergence = checked
+            self.wrapped = True
+
+    def _normalised(self, residual_norm):
+        try:
+            dofs = self.solver._GetPartitionedFSIUtilities().GetInterfaceResidualSize(self.solver._GetStructureInterfaceSubmodelPart())
+            return KkssFinite(float(residual_norm) / math.sqrt(dofs)) if dofs > 0 else None
+        except Exception:
+            return None
+
+    def begin(self):
+        self.residuals = []
+
+    def parameters(self):
+        out = {}
+        try:
+            coupling = self.solver.settings["coupling_settings"]
+            if coupling.Has("nl_tol"):
+                out["nl_tol"] = coupling["nl_tol"].GetDouble()
+            if coupling.Has("nl_max_it"):
+                out["nl_max_it"] = coupling["nl_max_it"].GetInt()
+        except Exception:
+            pass
+        return out
+
+`;
+
+/**
+ * Observes CoSimulationApplication's coupled solver: a strong solver holds
+ * `convergence_criteria_list` (one wrapper per criterion, each calling its
+ * criterion's `IsConverged(residual, current_data)` once per coupling
+ * iteration); a weak solver has none and evaluates no criterion.
+ */
+const COSIM_OBSERVER_PY = `KKSS_ADAPTER = "${COSIM_CONVERGENCE_ADAPTER}"
+
+
+class KkssCoSimObserver:
+    def __init__(self, solver):
+        self.solver = solver
+        self.criteria = list(getattr(solver, "convergence_criteria_list", None) or [])
+        self.strong = len(self.criteria) > 0
+        self.begin()
+        for index, wrapper in enumerate(self.criteria):
+            outer = getattr(wrapper, "IsConverged", None)
+            if callable(outer):
+                def counted(*args, _index=index, _outer=outer, **kwargs):
+                    if _index == 0:
+                        self._close_iteration()
+                        self.iterations += 1
+                    return _outer(*args, **kwargs)
+                wrapper.IsConverged = counted
+            inner = getattr(wrapper, "conv_crit", None)
+            original = getattr(inner, "IsConverged", None)
+            if callable(original):
+                def checked(residual, current_data, *args, _index=index, _original=original, **kwargs):
+                    self._observe(_index, residual)
+                    return _original(residual, current_data, *args, **kwargs)
+                inner.IsConverged = checked
+
+    def begin(self):
+        self.iterations = 0
+        self.residuals = []
+        self.current = None
+
+    def _observe(self, index, residual):
+        try:
+            import numpy
+            values = numpy.asarray(residual, dtype=float)
+            norm = KkssFinite(float(numpy.linalg.norm(values)) / math.sqrt(values.size)) if values.size else None
+        except Exception:
+            norm = None
+        if norm is not None:
+            self.current = norm if self.current is None else max(self.current, norm)
+
+    def _close_iteration(self):
+        if self.iterations > 0:
+            self.residuals.append(self.current)
+        self.current = None
+
+    def collect(self):
+        self._close_iteration()
+        self.iterations, done = 0, self.iterations
+        return done
+
+    def parameters(self):
+        out = {}
+        count = getattr(self.solver, "num_coupling_iterations", None)
+        if isinstance(count, int):
+            out["num_coupling_iterations"] = count
+        if self.criteria:
+            inner = getattr(self.criteria[0], "conv_crit", None)
+            for name in ("abs_tolerance", "rel_tolerance"):
+                value = KkssFinite(getattr(inner, name, None))
+                if value is not None:
+                    out[name] = value
+        return out
+
+`;
+
+const FSI_RESIDUAL_DEFINITION =
+  "FSIApplication's interface displacement residual |res|/sqrt(nDOFS) at each coupling check (PartitionedFSIBaseSolver); residual is the last check. Physical units are undeclared.";
+const COSIM_RESIDUAL_DEFINITION =
+  "The largest |r|/sqrt(n) over the coupled solver's convergence criteria at each coupling iteration, r the change of the coupled interface data; residual is the last iteration. Physical units are undeclared.";
+
 /**
  * The driver for a CoSimulation case (roadmap item 16): CoSimulationAnalysis with
- * the same cooperative stop as MAIN_KRATOS_PY. The stop is checked after the base
- * loop condition, so the end time still comes from Kratos' own check.
- * `primaryDocumentName` is the CoSimulation settings file the driver reads.
+ * the same cooperative stop as MAIN_KRATOS_PY, and one kkss-convergence-v2.jsonl
+ * record per coupled step (adapter `kkss.cosim-convergence`). The stop is
+ * checked after the base loop condition, so the end time still comes from
+ * Kratos' own check. `primaryDocumentName` is the CoSimulation settings file the
+ * driver reads.
  */
 export function cosimMainKratosPy(primaryDocumentName: string): string {
   return `import sys
 import os
+import json
+import math
 
 import KratosMultiphysics
 from KratosMultiphysics.CoSimulationApplication.co_simulation_analysis import CoSimulationAnalysis
 
-${STOP_REQUESTED_PY}class CoSimulationAnalysisWithStop(CoSimulationAnalysis):
+${STOP_REQUESTED_PY}${COUPLING_MONITOR_PY}${COSIM_OBSERVER_PY}class CoSimulationAnalysisWithStop(CoSimulationAnalysis):
+
+    def Initialize(self):
+        super().Initialize()
+        self._kkss_observer = KkssCoSimObserver(self._GetSolver())
+
+    def SolveSolutionStep(self):
+        observer = self._kkss_observer
+        observer.begin()
+        try:
+            result = super().SolveSolutionStep()
+        except Exception as error:
+            self._kkss_write_step(observer, None, error)
+            raise
+        self._kkss_write_step(observer, result)
+        return result
+
+    def _kkss_write_step(self, observer, result, error=None):
+        iterations = observer.collect()
+        solver_result = result if isinstance(result, bool) else None
+        if observer.strong:
+            criterion = "relative_norm_previous_residual"
+            converged = solver_result if error is None else None
+            unavailable = "The coupled solver's criteria did not expose a readable residual."
+        else:
+            criterion = "none (weak coupling)"
+            converged = None
+            iterations = 1
+            unavailable = "Weak coupling exchanges the interface data once per step and evaluates no convergence criterion."
+        KkssCouplingRecord(self.step, self.time, converged, solver_result, criterion, observer.residuals, iterations,
+                           observer.parameters(), ${JSON.stringify(COSIM_RESIDUAL_DEFINITION)}, unavailable, error)
+
+    def Finalize(self):
+        super().Finalize()
+        KkssWriteRecord(KKSS_ADAPTER, {"event": "end", "completed": True})
 
     def KeepAdvancingSolutionLoop(self):
         if not super().KeepAdvancingSolutionLoop():
@@ -123,12 +376,70 @@ ${STOP_REQUESTED_PY}class CoSimulationAnalysisWithStop(CoSimulationAnalysis):
 
 if __name__ == "__main__":
 
+    KkssResetConvergence()
+
     with open(${JSON.stringify(primaryDocumentName)}, 'r') as parameter_file:
         parameters = KratosMultiphysics.Parameters(parameter_file.read())
 
     simulation = CoSimulationAnalysisWithStop(parameters)
     simulation.Run()
 `;
+}
+
+/**
+ * The driver for an FSI case (roadmap item 16): MAIN_KRATOS_PY over FsiAnalysis,
+ * plus one kkss-convergence-v2.jsonl record per coupled step (adapter
+ * `kkss.fsi-convergence`) carrying the coupling iterations and the interface
+ * residual of each.
+ */
+export function fsiMainKratosPy(): string {
+  return MAIN_KRATOS_PY.replace("import importlib", "import importlib\nimport json\nimport math")
+    .replace(`${STOP_REQUESTED_PY}`, `${STOP_REQUESTED_PY}${COUPLING_MONITOR_PY}${FSI_OBSERVER_PY}`)
+    .replace(
+      `        def Initialize(self):
+            super().Initialize()
+            sys.stdout.flush()`,
+      `        def Initialize(self):
+            super().Initialize()
+            self._kkss_observer = KkssFsiObserver(self._GetSolver())
+            self._kkss_steps = 0
+            sys.stdout.flush()
+
+        def SolveSolutionStep(self):
+            observer = self._kkss_observer
+            observer.begin()
+            self._kkss_steps += 1
+            try:
+                result = super().SolveSolutionStep()
+            except Exception as error:
+                self._kkss_write_step(observer, None, error)
+                raise
+            self._kkss_write_step(observer, result)
+            return result
+
+        def _kkss_write_step(self, observer, result, error=None):
+            try:
+                info = self._GetSolver().GetComputingModelPart().ProcessInfo
+                step, time = int(info[KratosMultiphysics.STEP]), float(info[KratosMultiphysics.TIME])
+            except Exception:
+                step, time = self._kkss_steps, float(getattr(self, "time", 0.0))
+            solver_result = result if isinstance(result, bool) else None
+            converged = solver_result if error is None else None
+            unavailable = ("The FSI solver did not expose a readable interface residual."
+                           if observer.wrapped else
+                           "This FSIApplication does not expose _CheckFSIConvergence, so the coupling residual cannot be observed.")
+            KkssCouplingRecord(step, time, converged, solver_result, "fsi_interface_residual", observer.residuals,
+                               len(observer.residuals) if observer.wrapped else None, observer.parameters(),
+                               ${JSON.stringify(FSI_RESIDUAL_DEFINITION)}, unavailable, error)
+
+        def Finalize(self):
+            super().Finalize()
+            KkssWriteRecord(KKSS_ADAPTER, {"event": "end", "completed": True})`
+    )
+    .replace(
+      'if __name__ == "__main__":\n',
+      'if __name__ == "__main__":\n\n    KkssResetConvergence()\n'
+    );
 }
 
 /** Structural adapter v2 observes the real AnalysisStage solve hook. Residual

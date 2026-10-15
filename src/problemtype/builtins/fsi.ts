@@ -182,6 +182,8 @@ const decl: ProblemtypeDeclaration = {
   icon: "ptFsi",
   family: "coupled",
   analysisStage: "KratosMultiphysics.FSIApplication.fsi_analysis",
+  // FsiAnalysis under the cooperative stop, recording the coupling iterations.
+  driverTemplate: "fsi",
   // What partitioned_fsi_base_solver.py imports (Kratos master, 2026-10-15).
   couplingInterfaces: [{ label: "FSI interface", sides: ["fluidInterface", "structureInterface"] }],
   applications: [

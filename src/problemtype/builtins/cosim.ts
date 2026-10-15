@@ -34,7 +34,6 @@
 
 import { asNum, asStr, defaultCaseState, defineProblemtype } from "../api";
 import { buildProcesses, buildSolverDocument } from "../generate";
-import { cosimMainKratosPy } from "../mainKratosTemplate";
 import { validateFluidTimeStepping } from "../timeStepEstimate";
 import type {
   Assignment,
@@ -284,6 +283,8 @@ const decl: ProblemtypeDeclaration = {
   materialsFileName: "FluidMaterials.json",
   primaryDocumentName: PRIMARY_DOCUMENT,
   driverScriptName: "MainKratosCoSim.py",
+  // CoSimulationAnalysis reading PRIMARY_DOCUMENT, recording the coupling iterations.
+  driverTemplate: "cosim",
   partsCondition: FLUID_PARTS,
   domainSizes: [2, 3],
   meshNaming: undefined,
@@ -560,7 +561,6 @@ export const cosim = defineProblemtype(decl, {
     },
     solver_settings: pp.solver_settings,
   }),
-  mainScript: () => cosimMainKratosPy(PRIMARY_DOCUMENT),
   extraFiles: async (ctx) => {
     const domains = ctx.domains!;
     const { fluid: fl } = interfaces(ctx);

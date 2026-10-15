@@ -29,8 +29,10 @@ Compact reference (mirrors the JavaScript API, spelled snake_case)::
         of field_group entries; icon a toolbar icon id for the header.
 
     condition(id, label, list="constraints_process_list", target="any",
-              fields=(), process_template=None, help=None, category=None, icon=None)
-        A condition / BC / load. category ("initial" | "constraints" | "loads" |
+              fields=(), process_template=None, help=None, category=None, icon=None,
+              no_process=None)
+        A condition / BC / load. no_process=True only marks a SubModelPart for
+        the hooks (an FSI interface) and emits no process. category ("initial" | "constraints" | "loads" |
         "other") picks the tree branch it is listed under (derived from list when
         absent); icon is a toolbar icon id drawn on its rows. list: "constraints_process_list" |
         "loads_process_list" | "list_other_processes". target (SubModelPart
@@ -46,8 +48,13 @@ Compact reference (mirrors the JavaScript API, spelled snake_case)::
         CamelCased python_module (assign_scalar_variable_process ->
         AssignScalarVariableProcess).
 
-    material_law(id, name, variables=(), domain_size=None)
-        A constitutive law. Empty name omits the constitutive_law block
+    domain(id, label, model_part_name, mdpa_suffix, parts_condition, condition_ids,
+           materials_file_name=None, required=None, mesh_naming=None)
+        A physics domain of a coupled problemtype: its own mesh slice
+        <stem>_<mdpa_suffix>.mdpa and materials file, owning condition_ids.
+
+    material_law(id, name, variables=(), domain_size=None, domain=None)
+        A constitutive law (domain = the domain id it belongs to, coupled only). Empty name omits the constitutive_law block
         (e.g. thermal materials). domain_size (2|3) restricts availability.
 
     INTERVAL_TOTAL
@@ -61,8 +68,16 @@ Compact reference (mirrors the JavaScript API, spelled snake_case)::
                        solver_settings=None,     # required hook
                        build_process=None, post_process=None, main_script=None,
                        domains=None, extra_files=None, validate=None,
-                       collections=None, applications=None)
-        Registers the problemtype. applications = Kratos applications the
+                       collections=None, applications=None,
+                       coupling_interfaces=None, primary_document_name=None,
+                       driver_script_name=None, driver_template=None)
+        Registers the problemtype. coupling_interfaces = [{"label", "sides":
+        [fluid-side condition, structure-side condition]}]: Generate checks the
+        two sides pair up one-to-one (by assignment order), carry boundary cells
+        and overlap. primary_document_name / driver_script_name rename the
+        primary JSON document and the driver script. driver_template ("standard",
+        "fsi" or "cosim") picks the shipped driver when there is no main_script
+        hook. applications = Kratos applications the
         case needs beyond the analysis stage's and those its documents name
         (names, or application(name, when=rule)); the generated driver checks
         them before running. output = {"nodal_defaults": [...],
@@ -81,8 +96,10 @@ Hooks (plain JSON data in and out — no interpreter objects cross the boundary)
     post_process(project_parameters, ctx) -> dict
     validate(ctx) -> [str, ...]
         Problems that make the case ungeneratable; Generate refuses on any.
-    extra_files(ctx, materials) -> [{"name": str, "content": str}, ...]
-        Extra files written beside the case (e.g. a second materials file).
+    extra_files(ctx, materials) -> [{"name": str, "content": str | dict | list}, ...]
+        Extra files written beside the case (e.g. a second materials file). A
+        content given as a dict or list is written as JSON formatted like the
+        primary document (4-space indent).
     main_script(ctx) -> str
 
 ``ctx`` keys (snake_case): mdpa_stem, domain_size, model_part_name,
@@ -104,6 +121,7 @@ FIELD_TYPES = ("number", "int", "string", "bool", "enum", "vector3",
 FAMILIES = ("solid", "fluid", "thermal", "coupled", "particles", "reduced", "optimization", "workflow")
 PROCESS_LISTS = ("constraints_process_list", "loads_process_list", "list_other_processes")
 TARGETS = ("nodes", "surface", "volume", "any")
+DRIVER_TEMPLATES = ("standard", "fsi", "cosim")
 
 #: The whole-simulation interval for process Parameters: ``[0.0, "End"]``.
 INTERVAL_TOTAL = [0.0, "End"]
@@ -441,7 +459,9 @@ def define_problemtype(id, name, analysis_stage, model_part_name,
                        solver_settings=None, build_process=None,
                        post_process=None, main_script=None,
                        domains=None, extra_files=None, validate=None, collections=None,
-                       applications=None):
+                       applications=None, coupling_interfaces=None,
+                       primary_document_name=None, driver_script_name=None,
+                       driver_template=None):
     """Registers a problemtype; returns its handle (used internally).
 
     See the module docstring for every argument. Raises ``ValueError`` on a
@@ -508,6 +528,29 @@ def define_problemtype(id, name, analysis_stage, model_part_name,
             if not isinstance(a, (str, dict)):
                 raise ValueError(f'problemtype "{id}": applications entries must be names or application(...)')
         decl["applications"] = apps
+    if coupling_interfaces is not None:
+        condition_ids = {c["id"] for c in conditions}
+        interfaces = []
+        for spec in coupling_interfaces:
+            sides = list(spec.get("sides", ())) if isinstance(spec, dict) else []
+            if len(sides) != 2 or not isinstance(spec.get("label"), str):
+                raise ValueError(f'problemtype "{id}": coupling_interfaces entries are {{"label", "sides": [condition, condition]}}')
+            for side in sides:
+                if side not in condition_ids:
+                    raise ValueError(f'problemtype "{id}": coupling interface "{spec["label"]}" names unknown condition "{side}"')
+            interfaces.append({"label": spec["label"], "sides": sides})
+        decl["couplingInterfaces"] = interfaces
+    for key, value, extension in (("primaryDocumentName", primary_document_name, ".json"),
+                                  ("driverScriptName", driver_script_name, ".py")):
+        if value is None:
+            continue
+        if not isinstance(value, str) or not re.match(r"^[A-Za-z0-9_.-]+$", value) or not value.endswith(extension):
+            raise ValueError(f'problemtype "{id}": {key} must be a plain file name ending in {extension}')
+        decl[key] = value
+    if driver_template is not None:
+        if driver_template not in DRIVER_TEMPLATES:
+            raise ValueError(f'problemtype "{id}": unknown driver_template {driver_template!r} (one of {", ".join(DRIVER_TEMPLATES)})')
+        decl["driverTemplate"] = driver_template
     naming = _normalize_mesh_naming(mesh_naming, id)
     if naming is not None:
         decl["meshNaming"] = naming

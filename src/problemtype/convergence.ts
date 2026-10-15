@@ -31,6 +31,9 @@ export const CONVERGENCE_VERSION = 2;
 
 const ADAPTER = /^kkss\.[a-z-]+-convergence$/;
 
+/** The adapters whose iterations are coupling iterations between solvers, not a solver's nonlinear ones. */
+export const COUPLING_ADAPTERS: ReadonlySet<string> = new Set(["kkss.fsi-convergence", "kkss.cosim-convergence"]);
+
 export interface ConvergenceStep {
   /** Solver STEP counter (ProcessInfo). */
   step: number;
@@ -48,6 +51,12 @@ export interface ConvergenceStep {
   residualUnavailableReason?: string;
   /** Set when the solve hook raised: an unknown outcome. */
   error?: string;
+  /**
+   * Coupled drivers only (roadmap item 16): the interface residual of each
+   * coupling iteration of this step, `null` where it could not be read. For
+   * them `nonlinearIteration` counts coupling iterations.
+   */
+  couplingResiduals?: (number | null)[];
   /** 0-based; increments whenever step or time goes backwards. */
   segment: number;
 }
@@ -142,6 +151,9 @@ export function parseConvergenceJsonl(text: string): ParsedConvergence {
     if (finite(rec.nonlinearIteration)) step.nonlinearIteration = rec.nonlinearIteration;
     if (typeof rec.residualUnavailableReason === "string") step.residualUnavailableReason = rec.residualUnavailableReason;
     if (typeof rec.error === "string") step.error = rec.error;
+    if (Array.isArray(rec.couplingResiduals)) {
+      step.couplingResiduals = rec.couplingResiduals.map((v) => (finite(v) && v >= 0 ? v : null));
+    }
     out.steps.push(step);
   }
 
@@ -331,6 +343,10 @@ export function convergenceRowText(s: ConvergenceSummary): string {
   const parts = [`step ${s.lastStep}`];
   if (s.last?.residual !== undefined) parts.push(`res ${sci(s.last.residual)}`);
   if (s.last?.convergenceRatio !== undefined) parts.push(`ratio ${sci(s.last.convergenceRatio)}`);
+  if (s.adapter && COUPLING_ADAPTERS.has(s.adapter) && s.last?.nonlinearIteration !== undefined) {
+    const n = s.last.nonlinearIteration;
+    parts.push(`${n} coupling iteration${n === 1 ? "" : "s"}`);
+  }
   parts.push(s.verdict);
   if (s.restarts) parts.push(`${s.restarts} restart${s.restarts === 1 ? "" : "s"}`);
   return `Convergence — ${parts.join(" · ")}`;

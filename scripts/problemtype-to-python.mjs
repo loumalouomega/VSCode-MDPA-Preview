@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Prints the DECLARATION half of a built-in problemtype as Python source for
 // the example ports in example/problemtypes/ (the sections, conditions,
-// material laws and the define_problemtype() arguments), so a port's
+// material laws, coupled domains and the define_problemtype() arguments), so a port's
 // declaration cannot drift from the TypeScript original. The hooks
 // (solver_settings / build_process / post_process) are not translated: they
 // are hand-ported, and src/test/problemtypeExamples.test.ts asserts the result
@@ -87,11 +87,12 @@ for (const c of decl.conditions) {
   const a = [JSON.stringify(c.id), JSON.stringify(c.label), `list=${JSON.stringify(c.list)}`, `target=${JSON.stringify(c.target)}`];
   out.push(`    condition(${a.join(", ")},`);
   out.push(`              fields=[${c.fields.map((f) => fieldSrc(f, 0)).join(",\n                      ")}],`);
-  out.push(`              process_template=${py(c.processTemplate, 14)}${c.help || c.category || c.icon ? "," : ")"}`);
+  out.push(`              process_template=${py(c.processTemplate, 14)}${c.help || c.category || c.icon || c.noProcess ? "," : ")"}`);
   const rest = [];
   if (c.help !== undefined) rest.push(`help=${JSON.stringify(c.help)}`);
   if (c.category !== undefined) rest.push(`category=${JSON.stringify(c.category)}`);
   if (c.icon !== undefined) rest.push(`icon=${JSON.stringify(c.icon)}`);
+  if (c.noProcess) rest.push("no_process=True");
   if (rest.length) out.push(`              ${rest.join(", ")}),`);
   else out.push("              ),");
 }
@@ -101,10 +102,25 @@ out.push("MATERIAL_LAWS = [");
 for (const l of decl.materialLaws) {
   const a = [JSON.stringify(l.id), JSON.stringify(l.name)];
   out.push(`    material_law(${a.join(", ")},`);
-  out.push(`                 variables=[${l.variables.map((f) => fieldSrc(f, 0)).join(",\n                            ")}]${l.domainSize ? `,\n                 domain_size=${l.domainSize}` : ""}),`);
+  out.push(`                 variables=[${l.variables.map((f) => fieldSrc(f, 0)).join(",\n                            ")}]${l.domainSize ? `,\n                 domain_size=${l.domainSize}` : ""}${l.domain ? `,\n                 domain=${JSON.stringify(l.domain)}` : ""}),`);
 }
 out.push("]");
 out.push("");
+if (decl.domains) {
+  out.push("DOMAINS = [");
+  for (const d of decl.domains) {
+    const a = [JSON.stringify(d.id), JSON.stringify(d.label), JSON.stringify(d.modelPartName), JSON.stringify(d.mdpaSuffix), JSON.stringify(d.partsCondition)];
+    out.push(`    domain(${a.join(", ")},`);
+    out.push(`           condition_ids=${py(d.conditionIds)},`);
+    const rest = [];
+    if (d.materialsFileName !== undefined) rest.push(`           materials_file_name=${JSON.stringify(d.materialsFileName)}`);
+    if (d.required) rest.push(`           required=${py(d.required, 11)}`);
+    if (d.meshNaming) rest.push(`           mesh_naming=${py(d.meshNaming, 11)}`);
+    out.push(`${rest.join(",\n")}),`);
+  }
+  out.push("]");
+  out.push("");
+}
 const meta = {
   description: decl.description,
   icon: decl.icon,
@@ -115,6 +131,11 @@ const meta = {
   domain_sizes: decl.domainSizes,
   parts_condition: decl.partsCondition,
   mesh_naming: decl.meshNaming,
+  applications: decl.applications,
+  coupling_interfaces: decl.couplingInterfaces,
+  primary_document_name: decl.primaryDocumentName,
+  driver_script_name: decl.driverScriptName,
+  driver_template: decl.driverTemplate,
   output: { nodal_defaults: decl.output.nodalDefaults, ...(decl.output.gaussDefaults ? { gauss_defaults: decl.output.gaussDefaults } : {}) },
 };
 out.push("# define_problemtype(...) arguments:");

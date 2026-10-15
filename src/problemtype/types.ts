@@ -344,6 +344,15 @@ export interface ProblemtypeDeclaration {
   /** The driver script the run launches. Absent means "MainKratos.py". */
   driverScriptName?: string;
   /**
+   * Which shipped driver a problemtype without a `mainScript` hook gets:
+   * `"standard"` (MainKratos.py with the cooperative stop, the default), `"fsi"`
+   * (FsiAnalysis, recording coupling iterations) or `"cosim"`
+   * (CoSimulationAnalysis reading `primaryDocumentName`, recording coupling
+   * iterations). Plain data, so a Python or JS problemtype can name the same
+   * driver text the built-in uses.
+   */
+  driverTemplate?: DriverTemplate;
+  /**
    * Kratos applications the case needs beyond what the generator can see: the
    * analysis stage's application and every application named in the generated
    * documents (`kratos_module`, `"LinearSolversApplication.sparse_lu"`…) are
@@ -396,6 +405,9 @@ export interface CouplingInterfaceSpec {
 }
 
 /** A required Kratos application, optionally only when a rule over the values holds. */
+/** The shipped drivers a declaration can name (see `ProblemtypeDeclaration.driverTemplate`). */
+export type DriverTemplate = "standard" | "fsi" | "cosim";
+
 export type RequiredApplication = string | { application: string; when?: VisibleRule | VisibleRule[] };
 
 /** One condition applied to one SubModelPart with its parameter values. */
