@@ -321,6 +321,7 @@ const PANELS: CommandSpec[] = [
   ui("inspect", "panel", "Click-to-probe Inspect mode", "inspect"),
   ui("selection", "panel", "Selection sets panel", "selection"),
   ui("plots", "panel", "Scientific Plots pane", "plots"),
+  ui("plotField", "panel", "Plot a histogram of the field shown in the Field panel", "plotField", { toggle: false }),
   ui("meshSize", "panel", "Mesh size panel", "meshSize"),
   ui("spheres", "panel", "Sphere/particle rendering panel", "spheres"),
   ui("beams", "panel", "Beam rendering panel", "beams"),

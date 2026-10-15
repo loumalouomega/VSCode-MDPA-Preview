@@ -108,6 +108,12 @@ What to expect, because a monitor is easy to over-read:
 - It reads the case's **current outputs** and does not prove they belong to a particular run: the run id shown is only a label from the latest-run record. To evaluate one isolated run, pass its binding from `plot_run_bind` and the bound result file to `case_monitors evaluate`: the receipt and the file revisions are then verified before and after the scan, and a changed run fails instead of being read.
 - A field, entity, SubModelPart or frame that cannot be read is a **gap** (blank in the CSV, `null` in MCP), never 0, with a diagnostic saying which. A unit is shown only when the result file declares one or you supply a label, and it is never converted.
 
+## Converting results to other formats
+
+The solver always writes VTK into `vtk_output/`. To get another format, type the extensions into **Output ▸ also export as** in the Problemtype section (for example `.xdmf, .exo`), or use **Convert Results to Other Formats…** on a run in Kratos Runs, which asks when nothing is saved. A run that finishes is converted automatically to the saved formats; a stopped or failed run is not, and nothing changes the run's status.
+
+`.xdmf` and `.pvd` pack the whole series into one file (an XDMF needs the same mesh at every step, and falls back to one file per step with a warning when it changes). Every other format gets one file per step. Files go to `converted/` beside the case (set another folder in the case file's `output.exportFolder`); the folder may not be inside the solver output. A format that cannot be written is reported as skipped with its reason and never stops the others. The same action is in the Command Palette as **Convert Results to Other Formats…**, the last conversion is recorded in the run's sidecar, and the headless equivalent is `case_export_results` (`case_status` reports the last conversion).
+
 ## Headless
 
 Agents drive the same runs through three [MCP tools](./mcp), which meet the editor on the filesystem: they read and write the same `<stem>.kratosrun.json` beside the mesh, so a run started on either side is visible from both.

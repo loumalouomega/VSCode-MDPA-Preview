@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- **Convert solver results to other formats**: Problemtype **Output ▸ also export as** (saved as `output.exportFormats`), the Kratos Runs action **Convert Results to Other Formats…** and the MCP tool `case_export_results` convert a case's `vtk_output/` frames through meshio++. `.xdmf`/`.pvd` pack the series into one file, other formats write one file per step into `converted/`; a finished run converts automatically to the saved formats.
+- **Roadmap item 9 closed** (scientific plotting): the item was removed from `doc/roadmap.md` and its unmet remainder (failing million-row memory and worker-stall budgets, packaged and Remote-SSH measurements, run-bound/table caches, legacy-run evidence import, native polyhedral faces) moved to new item 19. Documentation only.
+- **Plot ownership resolution** (roadmap item 9): `plot_run_resolve` (MCP) / `resolvePlotRun` classify a result path as `verified` (only through an existing execution receipt that still verifies), `unverified` (legacy output or a latest-run sidecar: a present-state snapshot labelled as not ownership, never usable as a run binding) or `unresolved` (reused, stale, live or unreadable evidence).
+- **Persistent plot cache stat shortcut**: lookups reuse the stored content revision when every file's size, mtime, ctime, inode and device and the directory listing are unchanged (files must be 2 s old when recorded; stores still rehash), about 30x faster than hashing on the benchmark. Run-bound and table sources stay uncached by design.
+- **`npm run bench:plot`**: Node-level budget benchmark for million-row tables, history extraction and cancellation. First results show a million-row plot peaking near 1.5 GB and the worker blocking the host about 3 s during result delivery; both are recorded as open work.
+- A test now pins that `flowBalance` and the region path agree to round-off on a linear field (they share the fan pieces and are both exact for degree 1).
+- **Exterior-boundary conventions** (roadmap item 9): exterior region sources accept `interface: "region"` to include faces shared with an Element outside the region on the region's own side (the neighbour's side is never computed; the default still excludes them), and the outward-normal rule now excludes and reports a face whose owning Element is non-convex about it (corners on both sides of the face plane) instead of orienting it from the centroid.
+- **Field display combined with Plots** (roadmap item 9): the Field panel gains **Plot distribution**, which opens the Plots pane on a histogram of the selected field and component (magnitude for a vector) over the mesh entities at the current frame; entities the field does not cover are excluded and reported, never counted as 0. The Plots quick panel gains **Show on mesh**, which colours the focused pane by the chosen Quantity and Component. Both are also reachable from the command line (`plotField`), and the new `fieldDistribution` preset is available headlessly through `plot_preset`.
+
 ## [5.11.0] - 2026-10-15
 
 ### Added

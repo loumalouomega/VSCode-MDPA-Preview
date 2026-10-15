@@ -118,6 +118,10 @@ function readOutput(raw: unknown): OutputState {
     nodalVariables: Array.isArray(o.nodalVariables)
       ? o.nodalVariables.filter((v): v is string => typeof v === "string")
       : [],
+    ...(Array.isArray(o.exportFormats) && o.exportFormats.some((v) => typeof v === "string")
+      ? { exportFormats: o.exportFormats.filter((v): v is string => typeof v === "string") }
+      : {}),
+    ...(typeof o.exportFolder === "string" && o.exportFolder.trim() ? { exportFolder: o.exportFolder.trim() } : {}),
   };
 }
 

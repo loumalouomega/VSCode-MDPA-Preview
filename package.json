@@ -638,6 +638,11 @@
         "icon": "$(debug-stop)"
       },
       {
+        "command": "kratos.case.exportResults",
+        "title": "%command.kratos.case.exportResults.title%",
+        "category": "%category.KratosCase%"
+      },
+      {
         "command": "kratos.case.openResults",
         "title": "%command.kratos.case.openResults.title%",
         "category": "%category.KratosCase%"
@@ -691,6 +696,11 @@
       {
         "command": "kratos.runs.packResults",
         "title": "%command.kratos.runs.packResults.title%",
+        "category": "%category.KratosRuns%"
+      },
+      {
+        "command": "kratos.runs.exportResults",
+        "title": "%command.kratos.runs.exportResults.title%",
         "category": "%category.KratosRuns%"
       },
       {
@@ -1033,6 +1043,10 @@
           "when": "(view == kratos.runs || view == kratos.runsSidebar) && viewItem =~ /^kratosRun\\.(finished|failed|cancelled|orphaned)$/"
         },
         {
+          "command": "kratos.runs.exportResults",
+          "when": "(view == kratos.runs || view == kratos.runsSidebar) && viewItem =~ /^kratosRun\\./"
+        },
+        {
           "command": "kratos.runs.exportConvergence",
           "when": "(view == kratos.runs || view == kratos.runsSidebar) && viewItem =~ /^kratosRun\\./"
         },
@@ -1116,6 +1130,10 @@
           "when": "false"
         },
         {
+          "command": "kratos.runs.exportResults",
+          "when": "false"
+        },
+        {
           "command": "kratos.runs.exportConvergence",
           "when": "false"
         },
@@ -1178,6 +1196,7 @@
     "test": "npm run build:tests && node --test out/test/",
     "mcp": "node dist/mcpServer.js",
     "bench:heartbeat": "node scripts/bench/host-heartbeat.mjs",
+    "bench:plot": "node scripts/bench/plot-budget.mjs",
     "install-ext": "bash install.sh",
     "reinstall": "bash scripts/reinstall-local.sh"
   },

@@ -8,7 +8,7 @@ import { CHART_CHOICES } from "./catalog";
 import { buildPlotPreset } from "../../src/parser/plot/presets";
 import { TENSOR_INVARIANTS } from "../../src/parser/plot/tensorInvariants";
 export interface PlotBridge { postMessage(v:unknown):void; setState(v:unknown):void }
-export function mountPlotWorkspace(root:HTMLElement,vscode:PlotBridge,options:{embedded?:boolean;onPickPoints?(active:boolean):void;onRegion?(path:string):void}={}) {
+export function mountPlotWorkspace(root:HTMLElement,vscode:PlotBridge,options:{embedded?:boolean;onPickPoints?(active:boolean):void;onRegion?(path:string):void;onShowField?(key:string,component:number|"magnitude"):void}={}) {
 const element=(id:string)=>root.querySelector<HTMLElement>(`#${id}`)!;
 const config=element("plot-config"),actions=element("plot-actions"),chart=element("plot-chart") as PlotElement,status=element("plot-status");
 let recipe=emptyPlotRecipe(),requestId=0,dataset:PlotDataset|undefined,timer:ReturnType<typeof setTimeout>|undefined;
@@ -129,6 +129,7 @@ function renderQuick(){
   const width=vectorOperation?3:target==="region"&&!["min","max","mean","sum"].includes(operation)?1:field.components;
   if(typeof component==="number"&&component>=width)component="magnitude";
   select(quick,"Component",String(width===1?0:component),[...(width>1?[{value:"magnitude",label:"Magnitude"}]:[]),...Array.from({length:width},(_,i)=>({value:String(i),label:width===1?"Scalar":"XYZ"[i]??`Component ${i+1}`}))],v=>{component=v==="magnitude"?v:Number(v);});
+  if(options.onShowField){const show=button(quick,"Show on mesh",()=>options.onShowField!(fieldKey,width>1?component:0));show.title="Colour the mesh by this Quantity and Component in the Field panel";}
   if(target==="point") {
     const entityInput=input(quick,"Entity ID",picked?String(picked.id):"",v=>{const id=Number(v);if(v.trim()&&Number.isSafeInteger(id)){picked={kind:field.kind,id};renderQuick();}},"number");
     entityInput.addEventListener("input",()=>{const id=Number(entityInput.value);if(entityInput.value.trim()&&Number.isSafeInteger(id))picked={kind:field.kind,id};});

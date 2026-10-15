@@ -1,3 +1,5 @@
+import { convertRunResults, savedExportSettings } from "./resultExportHost";
+import { describeResultExport, shouldAutoExport } from "./problemtype/resultExport";
 import { discoverOutputs } from './problemtype/outputDiscovery';
 import { solverArgv } from './problemtype/threadControl';
 import { readConvergenceSummary } from './problemtype/convergenceFile';
@@ -315,6 +317,22 @@ export class RunManager implements vscode.Disposable {
       this.writeSidecar(record);
       this.refreshProgress(record);
       this.changed();
+      this.autoConvertResults(record, channel);
+    });
+  }
+
+  /**
+   * A finished run is converted to the formats the case asked for (`output.exportFormats`).
+   * Fire-and-forget: a conversion problem is reported in the run's Output channel and never
+   * touches the run's status.
+   */
+  private autoConvertResults(record: RunRecord, channel: vscode.OutputChannel): void {
+    const saved = savedExportSettings(record.meshFsPath);
+    if (!shouldAutoExport(record.status, saved.formats)) return;
+    channel.appendLine(`[convert] ${saved.formats.join(", ")}…`);
+    void convertRunResults(record.meshFsPath, saved.formats, saved.folder).then(({ outcome, error }) => {
+      channel.appendLine(outcome ? `[convert] ${describeResultExport(outcome)}` : `[convert failed] ${error}`);
+      for (const w of outcome?.warnings ?? []) channel.appendLine(`[convert] warning: ${w}`);
     });
   }
 

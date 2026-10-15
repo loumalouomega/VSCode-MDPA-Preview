@@ -210,7 +210,41 @@ export function checkThreshold(series: Pick<PlotSeriesData, "id" | "points">, li
   return out;
 }
 
+export interface FieldDistributionParams {
+  path: string; variable: string;
+  /** Association of the displayed field; the mesh table row kind follows from it. */
+  kind?: FieldBlockKind;
+  /** Component count of the field (needed only for `magnitude`). */
+  components?: number;
+  component?: number | "magnitude";
+  submodelpart?: string; bins?: number; timeStep?: number;
+}
+const FIELD_TABLE_KIND = { Nodal: "Nodes", Elemental: "Elements", Conditional: "Conditions" } as const;
+/** Histogram of one displayed field over the mesh's own entities (or one SubModelPart). A row the field does not cover is a gap, excluded and counted by the histogram, never a zero. */
+export function fieldDistributionPreset(p: FieldDistributionParams): PlotRecipe {
+  const kind = p.kind ?? "Nodal";
+  const tableKind = FIELD_TABLE_KIND[kind];
+  if (!tableKind) throw new Error(`Field distribution supports Nodal, Elemental and Conditional fields, not ${kind}.`);
+  if (!p.variable) throw new Error("Choose a field to plot.");
+  if (p.bins !== undefined && (!Number.isInteger(p.bins) || p.bins < 1 || p.bins > 1000)) throw new Error("Histogram bins must be an integer between 1 and 1000.");
+  const col = (c: number) => `field:${kind}:${encodeURIComponent(p.variable)}:${c}`;
+  const width = p.components ?? 1;
+  const magnitude = p.component === "magnitude" && width > 1;
+  const component = typeof p.component === "number" ? p.component : 0;
+  const recipe = emptyPlotRecipe({ id: "mesh", type: "mesh", path: p.path, kind: tableKind, ...(p.submodelpart ? { submodelpart: p.submodelpart } : {}), ...(p.timeStep !== undefined ? { timeStep: p.timeStep } : {}) });
+  const name = `${p.variable}${magnitude ? " magnitude" : width > 1 ? `[${component}]` : ""}${p.submodelpart ? ` · ${p.submodelpart}` : ""}`;
+  recipe.series.push({
+    id: "distribution", source: "mesh", name, x: col(0), y: col(magnitude ? 0 : component),
+    ...(magnitude ? { component: "magnitude" as const, components: Array.from({ length: width }, (_, i) => col(i)) } : {}),
+    bins: p.bins ?? 20, color: COLORS[0],
+  });
+  recipe.presentation.family = "histogram";
+  recipe.presentation.title = `${name} distribution`;
+  return validatePlotRecipe(recipe);
+}
+
 export const PLOT_PRESETS = [
+  { id: "fieldDistribution", label: "Distribution of a displayed field", params: ["path", "variable", "kind?", "components?", "component?", "submodelpart?", "bins?", "timeStep?"] },
   { id: "sectionComparison", label: "Section comparison over time", params: ["path", "variable", "sections", "kind?", "operation?", "component?", "pressureDensity?", "times?", "timeUnit?"] },
   { id: "volumeTotal", label: "Measure-weighted total of an Elemental field", params: ["path", "variable", "regions?", "scope?", "times?", "timeUnit?"] },
   { id: "tensorComponents", label: "Components of a tensor/vector field over time", params: ["path", "variable", "submodelpart", "components?", "width?", "kind?", "operation?", "times?", "timeUnit?"] },
@@ -221,6 +255,7 @@ export const PLOT_PRESETS = [
 export type PlotPresetId = typeof PLOT_PRESETS[number]["id"];
 export function buildPlotPreset(id: string, params: any): PlotRecipe {
   if (id === "sectionComparison") return sectionComparisonPreset(params);
+  if (id === "fieldDistribution") return fieldDistributionPreset(params);
   if (id === "volumeTotal") return volumeTotalPreset(params);
   if (id === "tensorComponents") return tensorComponentsPreset(params);
   if (id === "heatFluxBalance") return heatFluxBalancePreset(params);

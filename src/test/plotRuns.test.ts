@@ -3,11 +3,11 @@ import test from "node:test";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as os from "node:os";
-import { bindPlotRun, discoverPlotRuns, resolvePlotTimeCursor, verifyPlotRun, type PlotTimeCursorRequest } from "../parser/plot/runs";
+import { bindPlotRun, resolvePlotRun, discoverPlotRuns, resolvePlotTimeCursor, verifyPlotRun, type PlotTimeCursorRequest } from "../parser/plot/runs";
 import { plotFileRevision, plotHash, plotSourceIdentity } from "../parser/plot/revision";
 import { emptyPlotRecipe, validatePlotRecipe } from "../parser/plot/recipe";
 import { collectPlot, loadPlotSource, resolvePlotPaths } from "../parser/plot/sources";
-import { plotDataset, plotRunBind, plotRuns, plotTimeCursor, plotRunTarget } from "../mcp/tools";
+import { plotDataset, plotRunResolve, plotRunBind, plotRuns, plotTimeCursor, plotRunTarget } from "../mcp/tools";
 import { resolvePlotRunTarget, navigatePlotPreview, PlotPreviewRegistry, type PlotRunTarget, type PlotPreviewNavigator } from "../parser/plot/navigation";
 import { parseExecutionReceipt, EXECUTION_FILE, type ExecutionReceipt } from "../problemtype/runReceipt";
 import { parseVtk } from "../parser/vtkLegacyParser";
@@ -253,4 +253,39 @@ test("provider registry waits only for its exact path and cleans cancellation/di
   assert.equal(await registry.wait("/saved/own.vtk",abort.signal),replacement);remove();
   const cancelled=registry.wait("/saved/own.vtk",abort.signal);abort.abort();await assert.rejects(()=>cancelled,/cancelled/);
   await assert.rejects(()=>registry.wait("/absent/own.vtk",new AbortController().signal,1),/no active preview/);
+});
+
+test("run resolution: verified only with a receipt that still verifies; legacy output is an unverified snapshot, never a binding",async()=>{
+  const f=await fixture();try {
+    const ok=await resolvePlotRun({path:f.files[0],recordPath:f.recordPath});
+    assert.equal(ok.status,"verified");assert.deepEqual(ok.binding,f.run);assert.equal(ok.snapshot,undefined);
+    assert.deepEqual(await plotRunResolve({path:f.files[0],recordPath:f.recordPath}),ok);
+    // Legacy: no record at all, then only a latest-run sidecar. Both are present-state snapshots, not ownership.
+    const sidecar=path.join(f.directory,"input.kratosrun.json");
+    await fs.writeFile(sidecar,JSON.stringify({version:1,runId:"run-a",status:"finished",meshFile:f.mesh}));
+    for(const recordPath of [undefined,sidecar]) {
+      const legacy=await resolvePlotRun({path:f.files[0],...(recordPath?{recordPath}:{})});
+      assert.equal(legacy.status,"unverified");assert.equal(legacy.binding,undefined);
+      assert.equal(legacy.snapshot?.revision,(await plotSourceIdentity(f.files[0])).revision);
+      assert.match(legacy.snapshot!.note,/not claimed/);
+    }
+    // The snapshot cannot stand in for a binding.
+    const snap=(await resolvePlotRun({path:f.files[0]})).snapshot!;
+    await assert.rejects(()=>verifyPlotRun({recordPath:f.recordPath,runId:"run-a",ownerId:"study-a",requestId:"request-a",receiptRevision:snap.revision,sourceRevision:snap.revision},f.files[0]),/Run receipt|identity changed|disagree|latest-run/);
+  }finally{await f.dispose();}
+});
+
+test("run resolution is unresolved for reused paths, replaced sidecars, live receipts and unreadable sources",async()=>{
+  const f=await fixture();try {
+    const stat=await fs.stat(f.files[1]);await fs.writeFile(f.files[1],vtk(7));await fs.utimes(f.files[1],stat.atime,stat.mtime);
+    const reused=await resolvePlotRun({path:f.files[1],recordPath:f.recordPath});
+    assert.equal(reused.status,"unresolved");assert.equal(reused.binding,undefined);assert.match(reused.diagnostics.join(" "),/stale or unresolved/);
+    await fs.writeFile(f.files[1],vtk(4));
+    await fs.writeFile(path.join(f.directory,"input.kratosrun.json"),JSON.stringify({version:1,runId:"other",status:"finished",meshFile:f.mesh}));
+    assert.equal((await resolvePlotRun({path:f.files[0],recordPath:f.recordPath})).status,"unresolved");
+    await fs.rm(path.join(f.directory,"input.kratosrun.json"));
+    f.receipt.state="running";await f.save();
+    assert.equal((await resolvePlotRun({path:f.files[0],recordPath:f.recordPath})).status,"unresolved");
+    assert.equal((await resolvePlotRun({path:path.join(f.directory,"absent.vtk")})).status,"unresolved");
+  }finally{await f.dispose();}
 });

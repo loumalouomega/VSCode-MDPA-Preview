@@ -3,7 +3,7 @@ import test from "node:test";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as os from "node:os";
-import { volumeTotalPreset, tensorComponentsPreset, heatFluxBalancePreset, sectionDifference, sectionComparisonPreset, tableRelationshipPreset, checkThreshold, buildPlotPreset, PLOT_PRESETS } from "../parser/plot/presets";
+import { fieldDistributionPreset, volumeTotalPreset, tensorComponentsPreset, heatFluxBalancePreset, sectionDifference, sectionComparisonPreset, tableRelationshipPreset, checkThreshold, buildPlotPreset, PLOT_PRESETS } from "../parser/plot/presets";
 import { validatePlotRecipe, PLOT_CAPABILITIES } from "../parser/plot/recipe";
 import { sampleRegion } from "../parser/plot/region";
 import { collectPlot } from "../parser/plot/sources";
@@ -206,4 +206,31 @@ test("heat-flux balance preset reports signed outward flux of a supplied vector 
   assert.throws(() => sampleRegion(scalar, { ...(s0.sources[0] as PlotRegionSource), scope: "current" }), /vector/);
   assert.deepEqual(buildPlotPreset("heatFluxBalance", { path: "d", variable: "Q", sections: ["Inlet"] }).sources.length, 1);
   assert.ok(PLOT_PRESETS.some(p => p.id === "tensorComponents") && PLOT_CAPABILITIES.presets.some(p => p.id === "heatFluxBalance"));
+});
+
+test("field distribution preset histograms a displayed field and counts uncovered rows as gaps", async () => {
+  const mdpa = "Begin Properties 1\nEnd Properties\nBegin Nodes\n1 0 0 0\n2 1 0 0\n3 0 1 0\n4 0 0 1\nEnd Nodes\n"
+    + "Begin Elements Element3D4N\n1 1 1 2 3 4\nEnd Elements\n"
+    + "Begin NodalData PRESSURE\n1 0 1.0\n2 0 2.0\n3 0 3.0\nEnd NodalData\n"
+    + "Begin NodalData VELOCITY\n1 0 [3] (3,4,0)\n2 0 [3] (0,0,2)\n3 0 [3] (1,0,0)\n4 0 [3] (0,0,0)\nEnd NodalData\n";
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "fdist-"));
+  try {
+    const file = path.join(dir, "m.mdpa");
+    await fs.writeFile(file, mdpa);
+    const r = buildPlotPreset("fieldDistribution", { path: file, variable: "PRESSURE", kind: "Nodal", bins: 2 });
+    assert.equal(r.presentation.family, "histogram");
+    assert.equal(r.series[0].bins, 2);
+    assert.deepEqual(validatePlotRecipe(JSON.parse(JSON.stringify(r))), r);
+    const data = await collectPlot(r);
+    const counts = data.series[0].points.map(p => p.y);
+    assert.equal(counts.reduce((a, b) => a! + b!, 0), 3, "node 4 has no PRESSURE and is excluded, not counted as 0");
+    const mag = fieldDistributionPreset({ path: file, variable: "VELOCITY", kind: "Nodal", components: 3, component: "magnitude", bins: 1 });
+    assert.equal(mag.series[0].component, "magnitude");
+    assert.equal(mag.series[0].components?.length, 3);
+    const m = await collectPlot(mag);
+    assert.equal(m.series[0].points.reduce((a, p) => a + (p.y ?? 0), 0), 4);
+    assert.throws(() => fieldDistributionPreset({ path: file, variable: "X", kind: "Geometries" as any }), /not Geometries/);
+    assert.throws(() => fieldDistributionPreset({ path: file, variable: "X", bins: 0 }), /bins/);
+    assert.ok(PLOT_PRESETS.some(p => p.id === "fieldDistribution"));
+  } finally { await removeScratchDir(dir); }
 });

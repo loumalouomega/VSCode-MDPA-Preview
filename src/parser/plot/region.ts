@@ -108,6 +108,7 @@ export function sampleRegion(model: MdpaModel, spec: PlotRegionSource): RegionSa
   }
   const exterior=spec.boundary==="exterior";
   if(!exterior&&!spec.submodelpart)throw new Error("Choose a boundary SubModelPart for integration.");
+  if(!exterior&&spec.interface!==undefined)throw new Error("The interface side applies to exterior boundaries only.");
   if(exterior&&spec.kind!=="Nodal")throw new Error("Exterior boundaries read Nodal fields; faces that are not Conditions carry no Conditional values.");
   if(exterior&&spec.orientation==="winding")throw new Error("Exterior boundaries are oriented outward from the owning element; winding has no meaning without Conditions.");
   if(spec.kind!=="Nodal" && spec.kind!=="Conditional")throw new Error("Boundary integration accepts Nodal or Conditional fields; Elemental values are not silently moved to the boundary.");
@@ -123,7 +124,7 @@ export function sampleRegion(model: MdpaModel, spec: PlotRegionSource): RegionSa
     scale=spec.pressureDensity;unit="Pa";dimensions=[1,-1,-2,0,0,0,0];diagnostics.push(`Kinematic pressure multiplied by supplied density ${scale} kg/m³.`);
   } else if(spec.pressureDensity!==undefined&&spec.operation!=="boundaryMean")throw new Error("Pressure density is only valid for recorded SI kinematic pressure, not an unknown or physical-pressure field.");
   const meanScale=spec.operation==="boundaryMean"?meanPressureScale():1;
-  const quadrature=exterior?exteriorQuadrature(model,spec.submodelpart):boundaryQuadrature(model,spec.submodelpart!,pressure||flux?spec.orientation??"outward":undefined);
+  const quadrature=exterior?exteriorQuadrature(model,spec.submodelpart,{interface:spec.interface}):boundaryQuadrature(model,spec.submodelpart!,pressure||flux?spec.orientation??"outward":undefined);
   if(spec.thickness!==undefined && quadrature.dimension!==2)throw new Error("Thickness is only used for 2D line boundaries.");
   diagnostics.push(...quadrature.warnings);
   const thickness=spec.thickness??1, vector=[0,0,0];let total=0,covered=0;
