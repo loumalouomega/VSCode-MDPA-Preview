@@ -3752,6 +3752,7 @@ export async function caseStatus(args: { meshPath?: string; requestId?: string; 
     ...(convergence ? { convergence } : {}),
     ...(optimization ? { optimization } : {}),
     ...(rom ? { rom } : {}),
+    ...(sidecar.resultExport ? { resultExport: sidecar.resultExport } : {}),
     ...(message ? { message } : {}),
     runId: sidecar.runId,
     launchMode: sidecar.launchMode,
@@ -3844,10 +3845,40 @@ export async function caseExportResults(
   }
   if (formats.length === 0) throw new Error("Pass `formats` (e.g. [\".xdmf\", \".exo\"]) or save exportFormats in the case's output settings.");
   throwIfCancelled(execution.signal);
-  return exportCaseResults(abs, { formats, folder }, {
+  const outcome = await exportCaseResults(abs, { formats, folder }, {
     convert: (a) => meshConvert(a, execution) as Promise<{ warnings?: string[] }>,
     pack: (a) => meshPackSeries(a, execution) as Promise<{ files?: string[]; companions?: string[]; steps?: number; warnings?: string[] }>,
   });
+  recordResultExport(abs, outcome);
+  return outcome;
+}
+
+/**
+ * Notes the conversion in the run sidecar, but only once the run has ended: a
+ * live run's sidecar belongs to the process that owns it.
+ */
+function recordResultExport(meshPath: string, outcome: Awaited<ReturnType<typeof exportCaseResults>>): void {
+  try {
+    const file = runFilePath(meshPath);
+    const { sidecar } = parseRunJson(fs.readFileSync(file, "utf8"));
+    if (!sidecar || sidecar.endedAt === undefined) return;
+    const { version: _v, ...rest } = sidecar;
+    fs.writeFileSync(
+      file,
+      serializeRun({
+        ...rest,
+        resultExport: {
+          at: Date.now(),
+          folder: outcome.folder,
+          frames: outcome.frames,
+          written: outcome.written.map((w) => ({ format: w.format, files: w.files.length, packed: w.packed })),
+          skipped: outcome.skipped,
+        },
+      })
+    );
+  } catch {
+    /* no sidecar, or unreadable: the conversion itself already succeeded */
+  }
 }
 
 /**

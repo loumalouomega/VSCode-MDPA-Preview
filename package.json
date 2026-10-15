@@ -638,6 +638,11 @@
         "icon": "$(debug-stop)"
       },
       {
+        "command": "kratos.case.exportResults",
+        "title": "%command.kratos.case.exportResults.title%",
+        "category": "%category.KratosCase%"
+      },
+      {
         "command": "kratos.case.openResults",
         "title": "%command.kratos.case.openResults.title%",
         "category": "%category.KratosCase%"

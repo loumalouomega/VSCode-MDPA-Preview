@@ -11,6 +11,7 @@
  */
 
 import * as vscode from "vscode";
+import { exportResultsInteractive } from "./resultExportHost";
 import * as path from "node:path";
 import { estimateTimeStep, describeEstimate, validateFluidTimeStepping } from "./problemtype/timeStepEstimate";
 import * as fs from "node:fs";
@@ -40,7 +41,7 @@ import { caseKeyFor, isLive, stopDialogCopy } from "./problemtype/runCore";
 import { STOP_SENTINEL_MS } from "./problemtype/runProcess";
 import { computeKratosEnv, defaultPythonPath, resolveKratosInstall } from "./problemtype/kratosEnv";
 
-export type PtAction = "generate" | "run" | "stop" | "openResults";
+export type PtAction = "generate" | "run" | "stop" | "openResults" | "exportResults";
 
 /** A catalog entry the webview can render (decl only; hooks stay host-side). */
 interface CatalogEntry {
@@ -417,6 +418,7 @@ export class PtController {
     if (action === "generate") void this.generate(true);
     else if (action === "run") void this.run();
     else if (action === "stop") void this.stopRun();
+    else if (action === "exportResults") void exportResultsInteractive(this.fsPath);
     else void this.openResults();
   }
 

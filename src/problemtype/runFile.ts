@@ -75,6 +75,33 @@ export interface RunSidecar {
   stopRung?: StopRung;
   /** Present only for a detached run, whose output is tee'd to a file. */
   logFile?: string;
+  /** The last result conversion (`case_export_results` / auto-convert), additive. */
+  resultExport?: ResultExportSummary;
+}
+
+/** What the last conversion of a run's output wrote and skipped. */
+export interface ResultExportSummary {
+  at: number;
+  folder: string;
+  frames: number;
+  written: { format: string; files: number; packed: boolean }[];
+  skipped: { format: string; reason: string }[];
+}
+
+function readResultExport(raw: unknown): ResultExportSummary | undefined {
+  if (!isRecordObject(raw) || typeof raw.at !== "number" || typeof raw.folder !== "string") return undefined;
+  const list = (v: unknown): Record<string, unknown>[] => (Array.isArray(v) ? v.filter(isRecordObject) : []);
+  return {
+    at: raw.at,
+    folder: raw.folder,
+    frames: typeof raw.frames === "number" ? raw.frames : 0,
+    written: list(raw.written).flatMap((w) =>
+      typeof w.format === "string" ? [{ format: w.format, files: Number(w.files) || 0, packed: w.packed === true }] : []
+    ),
+    skipped: list(raw.skipped).flatMap((s) =>
+      typeof s.format === "string" ? [{ format: s.format, reason: String(s.reason ?? "") }] : []
+    ),
+  };
 }
 
 export function serializeRun(sidecar: Omit<RunSidecar, "version">): string {
@@ -175,6 +202,7 @@ export function parseRunJson(text: string): { sidecar?: RunSidecar; warnings: st
         ? { stopRung: raw.stopRung as StopRung }
         : {}),
       ...(typeof raw.logFile === "string" ? { logFile: raw.logFile } : {}),
+      ...(readResultExport(raw.resultExport) ? { resultExport: readResultExport(raw.resultExport) } : {}),
     },
     warnings,
   };

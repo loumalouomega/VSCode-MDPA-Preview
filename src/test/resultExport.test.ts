@@ -79,3 +79,23 @@ test("formats default to the case's saved output.exportFormats", async () => {
   assert.equal(r.folder, path.join(dir, "stl_out"));
   assert.deepEqual(r.written.map((w) => w.format), [".stl"]);
 });
+
+test("a conversion is noted in an ended run's sidecar and case_status reports it", async () => {
+  const { dir, mesh } = makeCase();
+  const { serializeRun, parseRunJson } = await import("../problemtype/runFile");
+  const { runFilePath } = await import("../problemtype/caseFile");
+  const { caseStatus } = await import("../mcp/tools");
+  fs.writeFileSync(
+    runFilePath(mesh),
+    serializeRun({
+      runId: "r1", stem: "case", meshFile: mesh, status: "finished", launchMode: "spawn", argv: ["python"],
+      startedAt: 1, endedAt: 2, exitCode: 0, launchedBy: "extension",
+    } as never)
+  );
+  await caseExportResults({ meshPath: mesh, formats: [".stl"] });
+  const { sidecar } = parseRunJson(fs.readFileSync(runFilePath(mesh), "utf8"));
+  assert.equal(sidecar?.resultExport?.folder, path.join(dir, "converted"));
+  assert.deepEqual(sidecar?.resultExport?.written.map((w) => w.format), [".stl"]);
+  const status = (await caseStatus({ meshPath: mesh })) as { resultExport?: { frames: number } };
+  assert.equal(status.resultExport?.frames, 3);
+});

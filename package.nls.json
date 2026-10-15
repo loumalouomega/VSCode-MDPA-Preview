@@ -52,6 +52,7 @@
   "category.KratosCase": "Kratos Case",
   "command.kratos.case.run.title": "Run Case",
   "command.kratos.case.stop.title": "Stop Run",
+  "command.kratos.case.exportResults.title": "Convert Results to Other Formats…",
   "command.kratos.case.openResults.title": "Open Results (vtk_output)",
   "command.kratos.case.selectKratosPath.title": "Select Kratos Installation Folder…",
   "command.kratos.runs.stopAll.title": "Stop All Runs",

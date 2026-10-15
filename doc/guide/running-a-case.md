@@ -112,7 +112,7 @@ What to expect, because a monitor is easy to over-read:
 
 The solver always writes VTK into `vtk_output/`. To get another format, type the extensions into **Output ▸ also export as** in the Problemtype section (for example `.xdmf, .exo`), or use **Convert Results to Other Formats…** on a run in Kratos Runs, which asks when nothing is saved. A run that finishes is converted automatically to the saved formats; a stopped or failed run is not, and nothing changes the run's status.
 
-`.xdmf` and `.pvd` pack the whole series into one file (an XDMF needs the same mesh at every step, and falls back to one file per step with a warning when it changes). Every other format gets one file per step. Files go to `converted/` beside the case (set another folder in the case file's `output.exportFolder`); the folder may not be inside the solver output. A format that cannot be written is reported as skipped with its reason and never stops the others. The headless equivalent is `case_export_results`.
+`.xdmf` and `.pvd` pack the whole series into one file (an XDMF needs the same mesh at every step, and falls back to one file per step with a warning when it changes). Every other format gets one file per step. Files go to `converted/` beside the case (set another folder in the case file's `output.exportFolder`); the folder may not be inside the solver output. A format that cannot be written is reported as skipped with its reason and never stops the others. The same action is in the Command Palette as **Convert Results to Other Formats…**, the last conversion is recorded in the run's sidecar, and the headless equivalent is `case_export_results` (`case_status` reports the last conversion).
 
 ## Headless
 
