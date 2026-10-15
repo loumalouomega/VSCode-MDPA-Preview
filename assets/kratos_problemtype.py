@@ -344,12 +344,15 @@ def process(python_module, process_name=None, kratos_module="KratosMultiphysics"
 
 
 def domain(id, label, model_part_name, mdpa_suffix, parts_condition, condition_ids,
-           materials_file_name=None, required=None, mesh_naming=None):
+           materials_file_name=None, required=None, mesh_naming=None, point_load_interface=None):
     """A physics domain of a coupled problemtype (mirrors the JS ``DomainSpec``).
 
     Each domain owns some conditions and material laws and gets its own mesh file
     ``<stem>_<mdpa_suffix>.mdpa`` and materials file; ``required`` is a list of
     ``{"conditionId", "message"}`` entries Generate refuses without.
+    ``point_load_interface`` is ``{"conditionId": ...}`` for the interface that receives
+    a mapped POINT_LOAD: one 1-node point condition per interface node is emitted into a
+    sibling SubModelPart (mirrors ``DomainSpec.pointLoadInterface``).
     """
     _require_str(id, "domain id")
     d = {
@@ -367,6 +370,11 @@ def domain(id, label, model_part_name, mdpa_suffix, parts_condition, condition_i
     naming = _normalize_mesh_naming(mesh_naming, id)
     if naming is not None:
         d["meshNaming"] = naming
+    if point_load_interface is not None:
+        if not isinstance(point_load_interface, dict):
+            raise ValueError(f'domain "{id}": point_load_interface must be {{"conditionId": ...}}')
+        _require_str(point_load_interface.get("conditionId"), f'domain "{id}" point_load_interface conditionId')
+        d["pointLoadInterface"] = {"conditionId": point_load_interface["conditionId"]}
     return d
 
 

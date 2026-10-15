@@ -1382,6 +1382,9 @@ COSIM_DOMAINS = [
                    "2": "LineLoadCondition",
                    "3": "SurfaceLoadCondition",
                },
+           },
+           point_load_interface={
+               "conditionId": "structureInterface",
            }),
 ]
 
