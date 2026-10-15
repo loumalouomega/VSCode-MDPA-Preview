@@ -101,6 +101,11 @@ defineProblemtype({
 | `bool` | checkbox | `boolean` |
 | `enum` | dropdown (needs `options: [{value, label?}]`) | `string` |
 | `vector3` | three numeric inputs | `[number, number, number]` |
+| `numberList` / `stringList` | comma-separated text input | `number[]` / `string[]` |
+| `smp` | SubModelPart picker | a slash-separated SubModelPart path |
+| `smpList` | SubModelPart chips with an add picker | `string[]` of paths |
+| `ref` | dropdown of the entry names of the collection named by `refCollection` | an entry name |
+| `caseValue` | grouped dropdown of every numeric value of the case (only inside a [collection](#collections-named-repeatable-entries)) | a case-value address, see below |
 
 Fields also accept `help` (tooltip) and `visibleWhen: { field, equals }` (show only when another field of the same form has a value).
 
@@ -140,11 +145,62 @@ All of these are optional and purely presentational — they change how the side
 - A section may declare `groups: [{ id, label, icon?, collapsed? }]`; a field joins one with `group: "<id>"`. Fields with no group are drawn first, `advanced: true` fields without a group fold under one collapsed *Advanced* group, and a group whose fields are all hidden by `visibleWhen` is not drawn. Keep existing field ids when regrouping — saved cases are keyed by `values[sectionId][fieldId]`.
 - A field may carry `min`, `max` and `step` (numeric inputs) and a `visibleWhen` that is one rule `{ field, equals }` / `{ field, oneOf }` or an array of rules that must all hold.
 - A condition has a `category` — `"initial"`, `"constraints"`, `"loads"` or `"other"` — that decides the branch it is listed under; when omitted it is derived from its process `list`. `icon` names its toolbar icon, and `noProcess: true` marks a condition that only labels a SubModelPart for the hooks (an interface) and emits no process.
-- `family` (`"solid"`, `"fluid"`, `"thermal"`, `"coupled"`, `"particles"`, `"workflow"`) puts the problemtype in a dropdown group.
+- `family` (`"solid"`, `"fluid"`, `"thermal"`, `"coupled"`, `"reduced"`, `"optimization"`, `"particles"`, `"workflow"`) puts the problemtype in a dropdown group.
+
+## Collections: named, repeatable entries
+
+Sections hold one value per field and conditions hold one assignment per SubModelPart. Some setups need neither: an optimization has a list of *responses*, *controls* and *constraints*, and a constraint names one of the responses; a reduced-order model has a list of *parameters*, each naming a value elsewhere in the case. A collection is that shape:
+
+```js
+collections: [
+  {
+    id: "responses", label: "Responses", min: 1,
+    entryTypes: [
+      { id: "mass", label: "Mass", parts: { label: "Evaluated on", target: "any" },
+        fields: [{ id: "perturbationSize", label: "Perturbation size", type: "number", default: 1e-6 }] },
+    ],
+    defaults: [{ name: "mass", type: "mass" }],
+  },
+  {
+    id: "constraints", label: "Constraints",
+    entryTypes: [
+      { id: "limit", label: "Response limit",
+        fields: [{ id: "response", label: "Response", type: "ref", refCollection: "responses" }] },
+    ],
+  },
+],
+```
+
+- A collection has `id`, `label`, one or more `entryTypes`, optional `min` / `max` entry counts, `icon`, `help` and `defaults` (`{ name, type, values? }` seeded into a fresh case).
+- An entry type has its own `fields`, and `parts: { label, target, min?, max? }` when entries apply to SubModelParts (a design region).
+- Entry names are identifiers (`[A-Za-z_][A-Za-z0-9_]*`) and unique within the collection. Renaming an entry in the sidebar rewrites every `ref` field that named it, in sections and in other entries.
+- A `ref` field may live in a section or in an entry. A `ref` whose entry no longer exists is drawn red, and Generate refuses the case.
+- The case stores entries under `CaseState.collections[collectionId]` as `{ name, type, parts, values }` in `<stem>.kratoscase.json`.
+- Generate refuses a case with too few or too many entries, a duplicate or invalid name, an unknown entry type, a part count outside the entry type's bounds, a SubModelPart missing from the mesh, or a dangling `ref`. Preflight reports the same problems, with the SubModelPart framed where there is one.
+- Hooks receive `ctx.collections[collectionId]`: the entries with defaults merged into `values` and `modelParts`, the parts as Kratos dotted names under the root model part.
+- An entry field's `visibleWhen` may name another field of the same entry or a field of any section (`algorithmType`, for example).
+
+A `caseValue` field holds the address of one numeric value of the case:
+
+| Address | Names |
+|---|---|
+| `section:<sectionId>/<fieldId>` | a section field |
+| `assignment:<conditionId>@<smpPath>/<fieldId>` | a field of the first assignment of that condition on that SubModelPart |
+| `material:<smpPath>/<variable>` | a material variable of the assignment on that SubModelPart |
+
+A trailing `[0]`, `[1]` or `[2]` selects one component of a `vector3`. The sidebar offers every number and vector component the case currently holds, grouped by section, conditions and materials.
+
+The built-in [Structural Optimization](./optimization) and [reduced-order model](./reduced-order-models) problemtypes are written this way.
 
 ## Coupled problemtypes: domains
 
 `domains: [{ id, label, modelPartName, mdpaSuffix, materialsFileName?, partsCondition, conditionIds, required?, meshNaming? }]` declares one physics each; a material law joins a domain with `domain: "<id>"`. `GenContext.domains[id]` carries that domain's own `modelPartName`, `mdpaStem`, assignments, materials and parts, so `$path` resolves against the right model part. Optional hooks complete the picture: `validate(ctx)` returns messages that make Generate refuse the case, and `extraFiles(ctx, materials)` returns additional files to write beside the case. The built-in Buoyancy, Conjugate Heat Transfer and FSI problemtypes are compositions of the single-physics ones and are good starting points. A problemtype whose primary document is not a `ProjectParameters` document names its own with `primaryDocumentName`, and its driver with `driverScriptName` (both default to `ProjectParameters.json` and `MainKratos.py`). The generation, run, preparation record and problem archive all read those names. The built-in generic CoSimulation problemtype (`cosim`) writes a coupling config as its primary document, and its `extraFiles` hook writes each participant's own solver document by calling the physics problemtype's `buildProcesses` and `buildSolverDocument` over that participant's domain context.
+
+`couplingInterfaces: [{ label, sides: [fluidConditionId, structureConditionId] }]` names pairs of interface conditions (usually `noProcess` ones, one per domain). Generate then refuses a case whose two sides are assigned a different number of times (the n-th of one side pairs with the n-th of the other), whose side carries no line cells in 2D or face cells in 3D, or whose paired parts do not overlap in space, naming the SubModelPart. `driverTemplate` picks a shipped driver when there is no `mainScript` hook: `"standard"` (the default `MainKratos.py`), `"fsi"` (FsiAnalysis) or `"cosim"` (CoSimulationAnalysis reading `primaryDocumentName`); the last two record the coupling iterations of every step in the convergence history. See [Coupled Simulations](./coupled-simulations) for how the built-ins use them.
+
+## Required Kratos applications
+
+Generation works out which Kratos applications a case needs: the analysis stage's application and every application the written documents name (a `kratos_module`, a linear-solver factory key such as `"LinearSolversApplication.sparse_lu"`). Declare the rest with `applications`, a list of names or `{ application, when }` entries whose `when` rule (the `visibleWhen` spelling) is read against the section values — for example `{ application: "MeshMovingApplication", when: { field: "aleMesh", equals: true } }`. The union is recorded in `kkss-preparation-v1.json`, every driver starts by checking it can import them (exit code 3 naming what is missing), and Run asks the configured Python before launching.
 
 ## The hook context
 
@@ -160,6 +216,7 @@ Every hook receives a plain-JSON `ctx`:
 | `partsModelParts` | dotted names of the Parts assignments (e.g. `["FluidModelPart.Parts.Fluid"]`) |
 | `skinModelParts` | dotted names of every non-Parts assignment |
 | `subModelParts` | all SubModelPart paths available in the mesh |
+| `collections` | collection id → resolved entries (`name`, `type`, `parts`, `values` with defaults merged, dotted `modelParts`); present when the problemtype declares collections |
 
 ## Optional hooks
 

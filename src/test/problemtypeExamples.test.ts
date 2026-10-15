@@ -60,9 +60,56 @@ Begin SubModelPart Loaded
 End SubModelPart
 `;
 
+// Two tetrahedra (fluid above, solid below) sharing the interface triangle,
+// one interface face per side, an inlet node and a second pair for two-pair cases.
+const COUPLED_MDPA = `Begin Nodes
+1 0.0 0.0 0.0
+2 1.0 0.0 0.0
+3 0.0 1.0 0.0
+4 0.0 0.0 1.0
+5 0.0 0.0 0.0
+6 1.0 0.0 0.0
+7 0.0 1.0 0.0
+8 0.0 0.0 -1.0
+End Nodes
+
+Begin Elements Element3D4N
+1 0 1 2 3 4
+2 0 5 6 7 8
+End Elements
+
+Begin Conditions SurfaceCondition3D3N
+1 0 1 2 3
+2 0 5 6 7
+End Conditions
+${["Fluid:1,2,3,4:1:", "Solid:5,6,7,8:2:", "FluidWall:1,2,3::1", "SolidWall:5,6,7::2", "FluidWall2:1,2,3::1", "SolidWall2:5,6,7::2", "Inlet:4::"]
+  .map((spec) => {
+    const [name, nodes, elements, conditions] = spec.split(":");
+    const list = (kind: string, ids: string) =>
+      ids ? `  Begin SubModelPart${kind}\n${ids.split(",").map((i) => `  ${i}`).join("\n")}\n  End SubModelPart${kind}\n` : "";
+    return `\nBegin SubModelPart ${name}\n${list("Nodes", nodes)}${list("Elements", elements)}${list("Conditions", conditions)}End SubModelPart\n`;
+  })
+  .join("")}`;
+
+const COUPLED_ASSIGNMENTS: Assignment[] = [
+  { conditionId: "f_parts", smpPath: "Fluid", values: {} },
+  { conditionId: "f_inlet", smpPath: "Inlet", values: { modulus: 2, direction: "x" } },
+  { conditionId: "f_noSlip", smpPath: "FluidWall", values: {} },
+  { conditionId: "fluidInterface", smpPath: "FluidWall", values: {} },
+  { conditionId: "s_parts", smpPath: "Solid", values: {} },
+  { conditionId: "s_displacement", smpPath: "SolidWall", values: { value: [0, 0, 0], constrained: true } },
+  { conditionId: "structureInterface", smpPath: "SolidWall", values: {} },
+];
+const COUPLED_MATERIALS: MaterialAssignment[] = [
+  { smpPath: "Fluid", lawId: "newtonian_3d", values: {} },
+  { smpPath: "Solid", lawId: "linear_elastic_3d", values: {} },
+];
+
 interface ExampleCase {
   /** Distinguishes several cases that exercise different hook paths of one port. */
   label?: string;
+  /** The mesh the case is generated on (the single-tetrahedron one when absent). */
+  mdpa?: string;
   file: string;
   builtinId: string;
   assignments: Assignment[];
@@ -216,6 +263,64 @@ const CASES: ExampleCase[] = [
       problem: { solver: "boussinesq_solver", scheme: "Adams-Moulton", timeIntegrationOrder: 4, adaptiveStep: true, linearSolver: "cg" },
     },
   },
+  {
+    file: "coupled.py",
+    builtinId: "fsi",
+    mdpa: COUPLED_MDPA,
+    assignments: [...COUPLED_ASSIGNMENTS, { conditionId: "aleMeshBC", smpPath: "Inlet", values: { constrained: true } }],
+    materials: COUPLED_MATERIALS,
+  },
+  {
+    label: "MVQN recursive, fractional step fluid, gravity, two interface pairs",
+    file: "coupled.py",
+    builtinId: "fsi",
+    mdpa: COUPLED_MDPA,
+    assignments: [
+      ...COUPLED_ASSIGNMENTS,
+      { conditionId: "fluidInterface", smpPath: "FluidWall2", values: { mapperFace: "positive" } },
+      { conditionId: "structureInterface", smpPath: "SolidWall2", values: {} },
+    ],
+    materials: COUPLED_MATERIALS,
+    values: {
+      problem: { couplingStrategy: "MVQN_recursive", bufferSize: 5, meshSolver: "laplacian" },
+      fluid: { f_strategy: "fractional_step", f_gravityValue: 9.81 },
+      structure: { s_solverType: "dynamic", s_analysisType: "non_linear" },
+    },
+  },
+  {
+    file: "coupled.py",
+    builtinId: "cosim",
+    mdpa: COUPLED_MDPA,
+    assignments: COUPLED_ASSIGNMENTS,
+    materials: COUPLED_MATERIALS,
+  },
+  {
+    label: "strong, Aitken, linear predictor, barycentric, ALE, two pairs",
+    file: "coupled.py",
+    builtinId: "cosim",
+    mdpa: COUPLED_MDPA,
+    assignments: [
+      ...COUPLED_ASSIGNMENTS,
+      { conditionId: "fluidInterface", smpPath: "FluidWall2", values: {} },
+      { conditionId: "structureInterface", smpPath: "SolidWall2", values: {} },
+      { conditionId: "aleMeshBC", smpPath: "Inlet", values: {} },
+      { conditionId: "f_initialVelocity", smpPath: "Fluid", values: { value: [1, 0, 0] } },
+      { conditionId: "s_selfWeight", smpPath: "Solid", values: {} },
+    ],
+    materials: COUPLED_MATERIALS,
+    values: {
+      coupling: {
+        couplingType: "strong",
+        accelerator: "aitken",
+        aitkenInitAlpha: 0.2,
+        predictor: "linear_derivative_based",
+        mapperType: "barycentric",
+        aleMesh: true,
+        meshSolver: "laplacian",
+      },
+      fluid: { f_gravityValue: 9.81 },
+    },
+  },
 ];
 
 /** JSON round-trip (normalizes prototypes + drops undefined optionals). */
@@ -234,7 +339,9 @@ function stateFor(runtime: ProblemtypeRuntime, c: ExampleCase) {
 for (const c of CASES) {
   test(`example ${c.file}${c.label ? ` [${c.label}]` : ""} ≡ built-in ${c.builtinId}`, { skip: !pyodideAvailable }, async () => {
     const code = fs.readFileSync(path.join(EXAMPLES_DIR, c.file), "utf8");
-    const [pyRt] = await loadPyProblemtypes(code, c.file);
+    const runtimes = await loadPyProblemtypes(code, c.file);
+    // A file may define several problemtypes (coupled.py defines fsi_py and cosim_py).
+    const pyRt = runtimes.find((r) => r.decl.id === `${c.builtinId}_py`) ?? runtimes[0];
     const tsRt = BUILTIN_PROBLEMTYPES.find((b) => b.decl.id === c.builtinId);
     assert.ok(tsRt, `built-in ${c.builtinId} exists`);
 
@@ -247,7 +354,7 @@ for (const c of CASES) {
     assert.deepEqual(normalized, j(tsRt!.decl));
 
     // Generated case files are byte-identical.
-    const model = parseMdpa(MDPA);
+    const model = parseMdpa(c.mdpa ?? MDPA);
     const pyOut = await generateCase(pyRt, model, stateFor(pyRt, c), "case");
     const tsOut = await generateCase(tsRt!, model, stateFor(tsRt!, c), "case");
     // Warnings must match too (e.g. shallow water's domain-size clamp on 3D);
@@ -259,5 +366,9 @@ for (const c of CASES) {
     assert.equal(pyOut.projectParameters, tsOut.projectParameters);
     assert.equal(pyOut.materials, tsOut.materials);
     assert.equal(pyOut.mainScript, tsOut.mainScript);
+    assert.deepEqual(pyOut.applications, tsOut.applications);
+    // Extra files too (the CoSimulation participant documents, the per-domain materials).
+    assert.deepEqual(pyOut.extraFiles.map((f) => f.name), tsOut.extraFiles.map((f) => f.name));
+    for (const [i, f] of tsOut.extraFiles.entries()) assert.equal(pyOut.extraFiles[i].content, f.content, f.name);
   });
 }

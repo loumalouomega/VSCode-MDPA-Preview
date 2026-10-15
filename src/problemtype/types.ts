@@ -15,7 +15,31 @@ import type { MaterialPresetSnapshot } from "./materialCatalog";
 export type JsonValue = string | number | boolean | null | JsonValue[] | { [k: string]: JsonValue };
 export type JsonObject = { [k: string]: JsonValue };
 
-export type FieldType = "number" | "int" | "string" | "bool" | "enum" | "vector3";
+/**
+ * Field kinds. The first six are scalar form inputs. The rest exist for
+ * collections (see `CollectionSpec`) and the setups built on them:
+ * - `ref`: the name of an entry of the collection `refCollection` (an
+ *   objective naming a response). Stored as the entry's name string.
+ * - `smp` / `smpList`: one / several SubModelPart paths (slash-separated, as the
+ *   outline names them). Stored as a string / string array.
+ * - `numberList` / `stringList`: a free-length list, typed as comma-separated text.
+ * - `caseValue`: the ADDRESS of one numeric value elsewhere in the case (a
+ *   section field, an assignment field, a material variable; see `caseAddress.ts`).
+ *   Stored as the address string. Only valid inside a collection entry type.
+ */
+export type FieldType =
+  | "number"
+  | "int"
+  | "string"
+  | "bool"
+  | "enum"
+  | "vector3"
+  | "ref"
+  | "smp"
+  | "smpList"
+  | "numberList"
+  | "stringList"
+  | "caseValue";
 
 /** One `visibleWhen` condition on another field of the same form. */
 export interface VisibleRule {
@@ -80,6 +104,8 @@ export interface FieldSpec {
   step?: number;
   /** Draw the field under the section's collapsed "Advanced" group. */
   advanced?: boolean;
+  /** For `type: "ref"`: the id of the collection whose entry names are the choices. */
+  refCollection?: string;
 }
 
 /** A presentational sub-group of a section's fields (GiD's nested containers). */
@@ -139,7 +165,76 @@ export type ConditionTarget = "nodes" | "surface" | "volume" | "any";
 export type ConditionCategory = "initial" | "constraints" | "loads" | "other";
 
 /** The catalog's grouping of problemtypes in the dropdown. */
-export type ProblemtypeFamily = "solid" | "fluid" | "thermal" | "coupled" | "particles" | "workflow";
+export type ProblemtypeFamily =
+  | "solid"
+  | "fluid"
+  | "thermal"
+  | "coupled"
+  | "particles"
+  | "reduced"
+  | "optimization"
+  | "workflow";
+
+/**
+ * One kind of entry a collection accepts: an optimization response may be a
+ * mass or a strain energy, each with its own settings.
+ */
+export interface CollectionEntryTypeSpec {
+  id: string;
+  label: string;
+  /** A toolbar icon id; unknown ids draw no icon. */
+  icon?: string;
+  help?: string;
+  /** The entry's own settings. Ids are unique within the entry type. */
+  fields: FieldSpec[];
+  /**
+   * The entry applies to SubModelParts (a control's design region). Absent
+   * means the entry takes no parts. `min` defaults to 0, `max` to unlimited.
+   */
+  parts?: { label: string; target: ConditionTarget; min?: number; max?: number };
+}
+
+/** A default entry seeded into a fresh case (parts are never seeded: a default cannot know the mesh). */
+export interface CollectionDefault {
+  name: string;
+  type: string;
+  values?: Record<string, JsonValue>;
+}
+
+/**
+ * A repeatable list of NAMED entries, each of one of several types. This is the
+ * shape optimization setups (responses, controls, constraints) and ROM
+ * parameter spaces have, and that sections and conditions cannot express: the
+ * entries are referred to by name from elsewhere (`FieldSpec.refCollection`).
+ */
+export interface CollectionSpec {
+  id: string;
+  label: string;
+  icon?: string;
+  help?: string;
+  entryTypes: CollectionEntryTypeSpec[];
+  /** Fewest / most entries Generate accepts. */
+  min?: number;
+  max?: number;
+  defaults?: CollectionDefault[];
+}
+
+/** One entry of a collection as the case stores it. */
+export interface CollectionEntry {
+  /** Unique within the collection; a valid identifier (`isValidEntryName`). */
+  name: string;
+  /** One of the collection's `entryTypes` ids. */
+  type: string;
+  /** Slash-separated SubModelPart paths. */
+  parts: string[];
+  values: Record<string, JsonValue>;
+}
+
+/** A collection entry as hooks see it: defaults merged in, parts also dotted. */
+export interface ResolvedCollectionEntry extends CollectionEntry {
+  /** `parts` as Kratos dotted model-part names under the root model part. */
+  modelParts: string[];
+}
 
 export interface ConditionSpec {
   id: string;
@@ -248,6 +343,24 @@ export interface ProblemtypeDeclaration {
   primaryDocumentName?: string;
   /** The driver script the run launches. Absent means "MainKratos.py". */
   driverScriptName?: string;
+  /**
+   * Which shipped driver a problemtype without a `mainScript` hook gets:
+   * `"standard"` (MainKratos.py with the cooperative stop, the default), `"fsi"`
+   * (FsiAnalysis, recording coupling iterations) or `"cosim"`
+   * (CoSimulationAnalysis reading `primaryDocumentName`, recording coupling
+   * iterations). Plain data, so a Python or JS problemtype can name the same
+   * driver text the built-in uses.
+   */
+  driverTemplate?: DriverTemplate;
+  /**
+   * Kratos applications the case needs beyond what the generator can see: the
+   * analysis stage's application and every application named in the generated
+   * documents (`kratos_module`, `"LinearSolversApplication.sparse_lu"`…) are
+   * found automatically. An entry may carry a `when` rule over the section
+   * values (MeshMovingApplication only when ALE is on). The driver checks the
+   * union before running and the run path probes it before launching.
+   */
+  applications?: RequiredApplication[];
   domainSizes: (2 | 3)[];
   /** Problem-data + solver-settings forms. Field ids must be unique across sections. */
   sections: SectionSpec[];
@@ -268,6 +381,15 @@ export interface ProblemtypeDeclaration {
    */
   domains?: DomainSpec[];
   /**
+   * Coupling interfaces of a coupled problemtype: pairs of `noProcess`
+   * conditions, one per domain (fluid side, structure side). Generate pairs
+   * their assignments by order and refuses a count mismatch, a side without
+   * boundary cells of the right dimension, or a pair that does not overlap.
+   */
+  couplingInterfaces?: CouplingInterfaceSpec[];
+  /** Repeatable named-entry lists (see `CollectionSpec`), drawn as the "Setup" stage. */
+  collections?: CollectionSpec[];
+  /**
    * The element/condition block names this solver expects in the mdpa. When
    * set, Generate writes an adapted `<stem>_case.mdpa` copy whenever the
    * mesh's names differ and points input_filename at it.
@@ -275,6 +397,18 @@ export interface ProblemtypeDeclaration {
   meshNaming?: MeshNamingSpec;
   output: OutputSpec;
 }
+
+/** One coupling interface: the label refusals use and its two side conditions. */
+export interface CouplingInterfaceSpec {
+  label: string;
+  sides: [string, string];
+}
+
+/** A required Kratos application, optionally only when a rule over the values holds. */
+/** The shipped drivers a declaration can name (see `ProblemtypeDeclaration.driverTemplate`). */
+export type DriverTemplate = "standard" | "fsi" | "cosim";
+
+export type RequiredApplication = string | { application: string; when?: VisibleRule | VisibleRule[] };
 
 /** One condition applied to one SubModelPart with its parameter values. */
 export interface Assignment {
@@ -316,6 +450,8 @@ export interface CaseState {
   assignments: Assignment[];
   materials: MaterialAssignment[];
   output: OutputState;
+  /** collectionId → entries, for a problemtype that declares `collections`. */
+  collections?: Record<string, CollectionEntry[]>;
 }
 
 /**
@@ -351,6 +487,8 @@ export interface GenContext {
    * Absent for a single-physics problemtype.
    */
   domains?: Record<string, DomainContext>;
+  /** collectionId → entries with defaults merged in; `{}` when none are declared. */
+  collections?: Record<string, ResolvedCollectionEntry[]>;
 }
 
 /** A `GenContext` narrowed to one physics domain (no nesting). */
@@ -419,4 +557,6 @@ export interface GeneratedCase {
   primaryDocumentName: string;
   /** The file name `mainScript` is written under and the run launches (else MainKratos.py). */
   driverScriptName: string;
+  /** The Kratos applications the case needs (sorted); the driver checks them first. */
+  applications: string[];
 }

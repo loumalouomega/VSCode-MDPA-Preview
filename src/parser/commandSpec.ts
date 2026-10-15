@@ -245,6 +245,7 @@ const OPERATIONS: CommandSpec[] = [
   // Smoothing, quality, surface repair
   op("smooth", "Taubin / Laplacian / ODT smoothing", "method(laplacian|taubin|odt) iterations:int lambda:number mu:number fixBoundary:bool preserveFeatures:bool featureAngle:number guardInversion:bool", "smooth method=taubin iterations=10"),
   op("repairSurface", "Fix winding, fill holes, weld a surface mesh", "fixOrientation:bool orientOutward:bool fillHoles:bool splitNonManifold:bool maxHoleEdges:int weldTolerance:number", "repairSurface fillHoles=true"),
+  op("tessellate", "Split curved (quadratic) cells into linear triangles/tetrahedra", "levels:int", "tessellate levels=2"),
   op("curvature", "Surface curvature fields (mean, gaussian, principal)", "mean:bool gaussian:bool principal:bool area:bool includeBoundary:bool dualArea(mixed-voronoi|barycentric) outputPrefix", "curvature mean=true gaussian=true"),
   op("shrinkwrap", "Project nodes onto a target surface (file, SubModelPart or skin)", "path part:part skin:bool offset:number blend:number maxDistance:number movePart:part pinPart:part normalWeight(angle|area) recordDistance:bool", "shrinkwrap part=Wall"),
   op("sobolevDeform", "Smooth deformation of the mesh from a displacement field", "variable:field! lengthScale:number! fixedPart:part fixBoundary:bool maxIterations:int tolerance:number", "sobolevDeform variable=DISPLACEMENT lengthScale=0.1"),
@@ -338,13 +339,13 @@ const PANELS: CommandSpec[] = [
 ];
 
 const FILES: CommandSpec[] = [
-  post("open", "file", "Open a mesh (host file dialog)", "menuOpen"),
+  post("open", "file", "Open a mesh (host file dialog, or a path)", "menuOpen", "file:string", "open meshes/a.vtu", { positional: ["file"] }),
   post("save", "file", "Save to the source format", "menuSave"),
-  post("saveAs", "file", "Save As (host file dialog)", "menuSaveAs"),
+  post("saveAs", "file", "Save As (host file dialog, or a path)", "menuSaveAs", "to:string overwrite:bool", "saveAs to=copy.vtu"),
   post("reload", "file", "Reload from disk and replay the operations", "menuReload"),
-  post("export", "file", "Export to a format (host save dialog)", "menuExport", "format:ext! outputFormat", "export vtu", { positional: ["format"] }),
-  post("exportPart", "file", "Export one SubModelPart", "menuExportPart", "format:ext! path:part!", "exportPart vtu Inlet", { positional: ["format", "path"] }),
-  post("exportSkin", "file", "Export the boundary skin", "menuExportSkin"),
+  post("export", "file", "Export to a format (host save dialog)", "menuExport", "format:ext! to:string overwrite:bool outputFormat", "export vtu to=out/a.vtu", { positional: ["format"] }),
+  post("exportPart", "file", "Export one SubModelPart", "menuExportPart", "format:ext! path:part! to:string overwrite:bool", "exportPart vtu Inlet to=inlet.vtu", { positional: ["format", "path"] }),
+  post("exportSkin", "file", "Export the boundary skin", "menuExportSkin", "format:ext to:string overwrite:bool", "exportSkin stl to=skin.stl", { positional: ["format"] }),
   post("exportPartitions", "file", "Export one file per partition", "menuExportPartitions"),
   post("splitMesh", "file", "Split into components/types/fields", "menuSplitMesh"),
   post("simplify", "file", "Export a simplified surface copy", "menuExportSimplified"),
@@ -357,8 +358,8 @@ const FILES: CommandSpec[] = [
       nest: { key: "opts", args: ["membership", "submodelpart", "nodeColumns"] },
     },
   },
-  post("saveProblem", "file", "Save the problem archive (.kratosproblem.zip)", "menuSaveProblem"),
-  post("loadProblem", "file", "Load a problem archive", "menuLoadProblem"),
+  post("saveProblem", "file", "Save the problem archive (.kratosproblem.zip)", "menuSaveProblem", "to:string overwrite:bool", "saveProblem to=case.kratosproblem.zip"),
+  post("loadProblem", "file", "Load a problem archive", "menuLoadProblem", "file:string into:string", "loadProblem case.kratosproblem.zip into=unpacked", { positional: ["file"] }),
 ];
 
 const CASES: CommandSpec[] = [

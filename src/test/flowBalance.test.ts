@@ -312,3 +312,17 @@ test("series CSV carries the converted drop only when a conversion was asked for
   assert.match(csv[0], /pressure_drop_Pa$/);
   assert.match(csv[1], /4$/); // drop 2 × density 2
 });
+
+test("a facet shared by three Elements is non-manifold: excluded, counted apart from internal", () => {
+  const m = duct({ velocity: () => [1, 0, 0] });
+  const el = m.blocks.find((x) => x.kind === "Elements")!;
+  // A third hexahedron duplicating element 2 puts three Elements on the x = 1 plane.
+  const third = { ...el, count: el.count + 1, entityIds: Int32Array.from([...el.entityIds, 99]), connectivity: Int32Array.from([...el.connectivity, ...el.connectivity.slice(el.stride)]) };
+  const mm = { ...m, blocks: m.blocks.map((x) => (x === el ? third : x)) };
+  const r = flowBalance(mm, { sections: [{ name: "mid", part: "Mid" }] });
+  assert.equal(r.sections[0].nonManifold, 1);
+  assert.equal(r.sections[0].internal, 0);
+  assert.equal(r.sections[0].flux, null);
+  assert.match(r.warnings.join("\n"), /non-manifold/);
+  assert.match(flowBalanceToCsv(r).split("\n")[0], /non_manifold$/);
+});

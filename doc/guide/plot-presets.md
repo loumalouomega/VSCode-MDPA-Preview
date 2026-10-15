@@ -18,6 +18,10 @@ The sum of a scalar **Elemental** field times each element's length, area or vol
 
 One curve per component index of a tensor or vector field over time for a SubModelPart — give the component indices or just the field width (plots 0 through width−1). Components are named by index only: the file states no Voigt order, so no stress, strain or invariant meaning is inferred. The mean is over the part's entities by default, or its boundary.
 
+### Tensor invariants
+
+Von Mises, hydrostatic (trace/3), trace, J2, deviatoric norm, principal maximum/middle/minimum and maximum shear (half the largest principal difference) of a tensor field over time for a SubModelPart, as the mean (or min/max) over its entities. **You supply the component layout; it is never guessed**: `full3x3` (row-major xx, xy, xz, yx, yy, yz, zx, zy, zz), `full2x2`, or explicit indices `{xx, yy, zz, xy, yz, xz}` for a Voigt-style order (e.g. `{xx:0, yy:1, zz:2, xy:3, yz:4, xz:5}`). Leave out zz/yz/xz for a plane problem — they are taken as zero and the result says so. Choose *engineering shear* when the off-diagonals are stored as γ = 2ε; they are halved. A row with a non-finite component is a gap, never zero, and a layout that does not fit the field's width is refused by name. Units follow the source field (J2 is a squared unit, so none is claimed).
+
 ### Heat-flux balance
 
 The flux of a supplied nodal heat-flux vector through boundary SubModelParts over time, positive out of the domain. The field is taken as given — no conductivity or temperature gradient is used or inferred — with the same outward-or-winding orientation choice and optional 2D thickness as the [Flow Balance](./flow-balance) panel.

@@ -69,6 +69,12 @@ The inverse of Convert Linear → Quadratic: drops the mid-side nodes and restor
 
 Converts non-simplex cells to simplices: hexahedra → 6 tetrahedra, wedges → 3, pyramids → 2, quadrilaterals → 2 triangles. The first child keeps the parent's id and its siblings get fresh ones, with elemental/conditional fields and SubModelPart membership replicated to each. A mesh that is already all-simplex is a no-op.
 
+#### Tessellate curved cells
+
+Replaces every **curved** cell — 6-node triangles, 8- and 9-node quadrilaterals, 10-node tetrahedra and 27-node hexahedra — with straight linear triangles or tetrahedra, as one undoable step (meshio++ 16.42.0). Each cell is sampled on a reference lattice and mapped through its own shape functions, so the cluster of children follows the element's curvature instead of the straight skeleton the viewer draws. Other cells (including 20-node hexahedra, 15-node wedges and 13-node pyramids) pass through unchanged, and a mesh with no curved cell is a no-op that says why.
+
+**levels** (0–5, default 2) is the number of divisions per axis for quads and hexahedra and the number of recursive splits for triangles and tetrahedra (`2^levels` per edge), so tetrahedra multiply by `8^levels`; a request that would exceed 5 million cells is refused before it runs. The first child keeps its parent's id and its siblings take fresh ones; every child keeps the parent's property, SubModelPart membership and element-field values; Nodal fields are interpolated onto the new nodes; and the blocks are renamed to real Kratos types (`Element3D4N`, `SurfaceCondition3D3N`). The message reports the cell and node counts before and after and whether the tessellation is conforming. Command line: `tessellate levels=2`; MCP: `{"op":"tessellate","levels":2}` in `mesh_transform`.
+
 #### Repair surface
 
 Repairs a **surface** mesh (triangles and quadrilaterals) in place, through meshio++'s `repair`, as one undoable step. Each fix has its own switch:

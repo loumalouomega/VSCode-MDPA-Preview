@@ -296,6 +296,7 @@ const ASYNC_BUILDERS: Record<string, () => Record<string, unknown> | undefined> 
   remesh: buildRemeshMsg,
   levelset: buildLevelsetMsg,
   repairSurface: buildRepairSurfaceMsg,
+  tessellate: buildTessellateMsg,
   surfaceRemesh: buildSurfaceRemeshMsg,
   volumeMesh: buildVolumeMeshMsg,
   optimizeVolume: buildOptimizeVolumeMsg,
@@ -1460,6 +1461,14 @@ function buildRepairSurfaceMsg(): Record<string, unknown> | undefined {
     maxHoleEdges: Math.floor(maxHoleEdges),
     weldTolerance,
   };
+}
+
+// --- tessellate (meshio++ result, adopted) -----------------------------------
+
+function buildTessellateMsg(): Record<string, unknown> | undefined {
+  const levels = optNum("tess-levels") ?? 2;
+  if (!Number.isInteger(levels) || levels < 0 || levels > 5) return undefined;
+  return { type: "applyOp", op: "tessellate", levels };
 }
 
 // --- smooth / reorder / partition (meshio++ oracle ops) ---------------------

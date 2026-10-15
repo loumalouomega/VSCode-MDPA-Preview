@@ -9,7 +9,7 @@
 import * as path from "node:path";
 
 import { meshStem } from "../parser/meshFormats";
-import { Assignment, CaseState, JsonValue, MaterialAssignment, OutputState } from "./types";
+import { Assignment, CaseState, CollectionEntry, JsonValue, MaterialAssignment, OutputState } from "./types";
 import type { MaterialPresetSnapshot, MaterialReference, MaterialSource } from "./materialCatalog";
 
 const CASE_VERSION = 1;
@@ -121,6 +121,42 @@ function readOutput(raw: unknown): OutputState {
   };
 }
 
+/**
+ * `collections`: collectionId → entries. A malformed entry is dropped with a
+ * warning (the rest survive); names and types are NOT checked against a
+ * declaration here — the case file is read before one is chosen, and
+ * `collectionProblems` reports them by name at Generate time.
+ */
+function readCollections(raw: unknown, warnings: string[]): Record<string, CollectionEntry[]> | undefined {
+  if (raw === undefined) return undefined;
+  if (!isRecord(raw)) {
+    warnings.push(`"collections" is not an object — ignored.`);
+    return undefined;
+  }
+  const out: Record<string, CollectionEntry[]> = {};
+  for (const [id, list] of Object.entries(raw)) {
+    if (!Array.isArray(list)) {
+      warnings.push(`Collection "${id}" is not an array — ignored.`);
+      continue;
+    }
+    out[id] = [];
+    for (const entry of list) {
+      const e = entry as { name?: unknown; type?: unknown; parts?: unknown; values?: unknown };
+      if (typeof e?.name !== "string" || typeof e?.type !== "string") {
+        warnings.push(`Skipped a malformed entry in collection "${id}".`);
+        continue;
+      }
+      out[id].push({
+        name: e.name,
+        type: e.type,
+        parts: Array.isArray(e.parts) ? e.parts.filter((p): p is string => typeof p === "string") : [],
+        values: isRecord(e.values) ? ({ ...e.values } as Record<string, JsonValue>) : {},
+      });
+    }
+  }
+  return out;
+}
+
 /** Parses a case file; returns undefined state when nothing usable is inside. */
 export function parseCaseJson(text: string): { state?: CaseState; warnings: string[] } {
   const warnings: string[] = [];
@@ -146,6 +182,10 @@ export function parseCaseJson(text: string): { state?: CaseState; warnings: stri
       materials: readMaterials(raw.materials, warnings),
       output: readOutput(raw.output),
       ...(isRecord(raw.outputProcesses) ? { outputProcesses: raw.outputProcesses as import("./types").JsonObject } : {}),
+      ...(() => {
+        const collections = readCollections(raw.collections, warnings);
+        return collections ? { collections } : {};
+      })(),
     },
     warnings,
   };

@@ -1,6 +1,10 @@
 import { discoverOutputs } from '../problemtype/outputDiscovery';
 import { boundSteps, convergenceToCsv, summarizeConvergence, type ConvergenceStep } from '../problemtype/convergence';
 import { readConvergence } from '../problemtype/convergenceFile';
+import { optimizationFormulation, optimizationSummaryToCsv, summarizeOptimization } from "../problemtype/optimization/summaryLog";
+import { readOptimization } from "../problemtype/optimization/summaryLogFile";
+import { romStatus } from "../problemtype/rom/romResults";
+import { isRomCase, readRomResults } from "../problemtype/rom/romResultsFile";
 import { MonitorDefinition, monitorsToCsv, upsertMonitor, validateMonitor } from '../problemtype/monitors';
 import { evaluateMonitors, readMonitors, writeMonitors } from '../problemtype/monitorsFile';
 import { runPlotWorker } from "../plotWorkerClient";
@@ -149,7 +153,9 @@ import { CaseState, JsonValue, MaterialAssignment, ProblemtypeRuntime, Problemty
 import { BUILTIN_PROBLEMTYPES } from "../problemtype/builtins";
 import { generateCase, subModelPartPaths } from "../problemtype/generate";
 import { preflightCase } from "../problemtype/preflight";
-import { PREPARATION_FILE, preparedNames, writePreparedCase, isRunIdentity, type PreparationRun } from "../problemtype/preparation";
+import { PREPARATION_FILE, preparedNames, preparedApplications, writePreparedCase, isRunIdentity, type PreparationRun } from "../problemtype/preparation";
+import { probeKratosApplications } from "../problemtype/kratosAppProbe";
+import { describeMissingApplications } from "../problemtype/applications";
 import { defaultCaseState } from "../problemtype/api";
 import { planCaseMesh } from "../problemtype/caseMesh";
 import {
@@ -2679,6 +2685,11 @@ export async function caseValidate(args: {
   quality?: boolean;
   /** Skip the quality checks above this many cells (default 200 000). */
   qualityMaxElements?: number;
+  /** Also ask the configured Python which required Kratos applications it cannot import. */
+  checkInstall?: boolean;
+  python?: string;
+  installPath?: string;
+  extraEnv?: Record<string, string>;
 }, execution: PlotExecution = {}): Promise<object> {
   const { model } = await loadMesh(args.meshPath, undefined, undefined, undefined, undefined, undefined, execution.signal);
   const { state, warnings, from } = readState(args);
@@ -2697,11 +2708,35 @@ export async function caseValidate(args: {
     quality: args.quality,
     qualityMaxElements: args.qualityMaxElements,
   });
+  let install: object | undefined;
+  if (args.checkInstall && report.applications) {
+    let installPath = args.installPath ?? "";
+    if (installPath) installPath = resolveKratosInstall(installPath, fs.existsSync, process.platform).root ?? installPath;
+    const envDelta = computeKratosEnv({
+      platform: process.platform,
+      installPath,
+      extraEnv: args.extraEnv ?? {},
+      base: process.env as Record<string, string>,
+    });
+    const probe = await probeKratosApplications({
+      python: args.python || defaultPythonPath(process.platform),
+      envDelta,
+      applications: report.applications,
+    });
+    install = {
+      checked: probe.unavailable === undefined,
+      missingApplications: probe.missing,
+      ...(probe.unavailable ? { unavailable: probe.unavailable } : {}),
+      ...(probe.missing.length > 0 ? { message: describeMissingApplications(probe.missing) } : {}),
+    };
+  }
   return {
     ok: report.ok,
     problemtype: ptId,
     source: from,
     warnings,
+    ...(report.applications ? { applications: report.applications } : {}),
+    ...(install ? { install } : {}),
     // Errors only: a case with none generates. Warnings and info are advisories.
     issues: report.findings.filter((f) => f.severity === "error").map((f) => f.message),
     advisories: report.findings.filter((f) => f.severity !== "error").map((f) => f.message),
@@ -3345,6 +3380,19 @@ export async function caseRun(args: {
     base: process.env as Record<string, string>,
   });
 
+  // The Kratos applications the case needs, recorded at generation. A probe
+  // that cannot answer lets the launch proceed to the driver's own check.
+  const applications = preparedApplications(caseDir);
+  if (applications) {
+    const probe = await probeKratosApplications({ python, envDelta, applications, cwd: caseDir });
+    if (probe.missing.length > 0) {
+      const message = describeMissingApplications(probe.missing);
+      if (owned) updateExecution(owned, { state: "failed", message });
+      throw new Error(message);
+    }
+    if (probe.unavailable) warnings.push(`The Kratos application check could not run (${probe.unavailable}); the driver checks them itself.`);
+  }
+
   const logFile = runLogPath(abs);
   const argv = solverArgv(python, script, args.threads);
   const record: RunRecord = {
@@ -3671,6 +3719,11 @@ export async function caseStatus(args: { meshPath?: string; requestId?: string; 
       message: "No run has been recorded for this mesh.",
       sidecar: sidecarPath,
       output,
+      ...(() => {
+        const optimization = briefOptimization(path.dirname(abs));
+        const rom = briefRom(path.dirname(abs));
+        return { ...(optimization ? { optimization } : {}), ...(rom ? { rom } : {}) };
+      })(),
       ...(receipt ? { executionReceipt: receipt } : request ? { executionReceipt: request } : {}),
     };
   }
@@ -3687,10 +3740,14 @@ export async function caseStatus(args: { meshPath?: string; requestId?: string; 
   const receipt = owned ? executionReceiptForRun(owned, abs, status, sidecar.runId, await collectExecutionArtifacts(request!, undefined, request!.artifacts)) : undefined;
   const convergenceRead = readConvergence(path.dirname(abs));
   const convergence = convergenceRead.parsed ? briefConvergence(convergenceRead.parsed, status) : undefined;
+  const optimization = briefOptimization(path.dirname(abs), status);
+  const rom = briefRom(path.dirname(abs));
   return {
     meshPath: abs,
     status,
     ...(convergence ? { convergence } : {}),
+    ...(optimization ? { optimization } : {}),
+    ...(rom ? { rom } : {}),
     ...(message ? { message } : {}),
     runId: sidecar.runId,
     launchMode: sidecar.launchMode,
@@ -3714,6 +3771,37 @@ function briefConvergence(parsed: Parameters<typeof summarizeConvergence>[0], st
     completed: s.completed, restarts: s.restarts,
     lastResidual: s.last?.residual ?? null, lastConvergenceRatio: s.last?.convergenceRatio ?? null,
     note: "Details and the full history: case_convergence.",
+  };
+}
+
+/** case_status's compact optimization field: only for a folder holding an optimization case with a summary. */
+function briefOptimization(caseDir: string, status?: string): object | undefined {
+  const read = readOptimization(caseDir);
+  if (!read.parsed || !read.info) return undefined;
+  const s = summarizeOptimization(read.parsed, read.info, status);
+  return {
+    verdict: s.verdict,
+    iterations: s.iterations,
+    maxIter: s.maxIter ?? null,
+    objective: s.objective ? { response: s.objective.response, current: s.objective.current ?? null, changePercent: s.objective.changePercent ?? null } : null,
+    constraintsSatisfied: s.constraints.length === 0 ? null : s.constraints.every((c) => c.satisfied === true),
+    note: "Details and the full history: case_optimization.",
+  };
+}
+
+/** case_status's compact ROM field: only for a folder holding a generated ROM case. */
+function briefRom(caseDir: string): object | undefined {
+  if (!isRomCase(caseDir)) return undefined;
+  const s = romStatus(readRomResults(caseDir));
+  return {
+    modes: s.modes ?? null,
+    hromElements: s.hromElements ?? null,
+    hromConditions: s.hromConditions ?? null,
+    runsFinished: s.runsFinished,
+    current: s.current ?? null,
+    stopped: s.stopped,
+    done: s.done,
+    note: "Details: case_rom.",
   };
 }
 
@@ -3767,6 +3855,88 @@ export async function caseConvergence(args: { meshPath: string; limit?: number; 
     ...(read.tailOnly ? { tailOnly: true } : {}),
     warnings: read.parsed.warnings,
     ...(written ? { csv: written } : {}),
+  };
+}
+
+/**
+ * The progress of an OptimizationApplication case: the summary file the
+ * optimizer's ascii output process writes (its name read from the case's
+ * optimization_parameters.json), parsed with the same reader the Kratos Runs
+ * row and the Optimization progress panel use (problemtype/optimization/summaryLog.ts).
+ * Columns are classified by the case's own response names; a constraint is met
+ * when its standardized value is <= 0 and unknown when that column is absent;
+ * no end-of-file marker means the run did not finalize.
+ */
+export async function caseOptimization(args: { meshPath: string; limit?: number; outputPath?: string }): Promise<object> {
+  const abs = path.resolve(args.meshPath);
+  if (!fs.existsSync(abs)) throw new Error(`File not found: ${abs}`);
+  const caseDir = path.dirname(abs);
+  const { status } = readRun(abs);
+  const read = readOptimization(caseDir);
+  if (!read.parsed || !read.info) {
+    return { meshPath: abs, status: status ?? "none", available: false, reason: read.reason, ...(read.info ? { formulation: optimizationFormulation(read.info) } : {}) };
+  }
+  const summary = summarizeOptimization(read.parsed, read.info, status);
+  const limit = Math.min(10000, Math.max(2, Math.floor(args.limit ?? 200)));
+  const bounded = thinRows(read.parsed.rows, limit);
+  let written: string | undefined;
+  if (args.outputPath) {
+    const out = path.resolve(args.outputPath);
+    if (!out.toLowerCase().endsWith(".csv")) throw new Error("outputPath must end in .csv.");
+    fs.writeFileSync(out, optimizationSummaryToCsv(read.parsed));
+    written = out;
+  }
+  return {
+    meshPath: abs,
+    status: status ?? "none",
+    available: true,
+    summaryFile: read.summaryFile,
+    formulation: optimizationFormulation(read.info),
+    case: read.info,
+    summary,
+    ...(read.parsed.kratosVersion ? { kratosVersion: read.parsed.kratosVersion } : {}),
+    initialValues: read.parsed.initialValues,
+    columns: ["STEP", ...read.parsed.columns],
+    rows: bounded.rows.map((r) => [r.step, ...r.cells]),
+    rowsTotal: read.parsed.rows.length,
+    decimated: bounded.decimated,
+    warnings: read.parsed.warnings,
+    ...(written ? { csv: written } : {}),
+  };
+}
+
+/**
+ * The results of a ROM case: what RomApplication left in rom_data/ (the number
+ * of modes from RomParameters.json, the singular values, the HROM element and
+ * condition ids) and what the generated driver recorded (per-analysis progress,
+ * the end summary, the sampled parameters). Read-only.
+ */
+export async function caseRom(args: { meshPath: string; limit?: number }): Promise<object> {
+  const abs = path.resolve(args.meshPath);
+  if (!fs.existsSync(abs)) throw new Error(`File not found: ${abs}`);
+  const caseDir = path.dirname(abs);
+  if (!isRomCase(caseDir)) {
+    return { meshPath: abs, available: false, reason: "No RomSamples.json beside the mesh: generate a case with one of the ROM problemtypes first." };
+  }
+  const results = readRomResults(caseDir);
+  const status = romStatus(results);
+  const limit = Math.min(10000, Math.max(2, Math.floor(args.limit ?? 200)));
+  const sv = results.singularValues;
+  return {
+    meshPath: abs,
+    status: readRun(abs).status ?? "none",
+    available: true,
+    rom: status,
+    projectionStrategy: results.projectionStrategy ?? null,
+    samples: results.samples ?? null,
+    singularValues: sv ? sv.slice(0, limit) : null,
+    singularValuesTotal: sv?.length ?? 0,
+    hromElementIds: results.hromElements ? results.hromElements.slice(0, limit) : null,
+    hromConditionIds: results.hromConditions ? results.hromConditions.slice(0, limit) : null,
+    progress: results.progress.slice(-limit),
+    malformedProgress: results.malformedProgress,
+    summary: results.summary ?? null,
+    warnings: results.warnings,
   };
 }
 

@@ -1,4 +1,5 @@
 /** Read-only regional FEM quantities. No viewport, mutations or implicit association conversion. */
+import { tensorFromTuple, invariantOf, layoutIndices, layoutWidth, invariantUnitPower } from "./tensorInvariants";
 import { boundaryQuadrature, exteriorQuadrature } from "../flowBalance";
 import { dimensionsEqual, exponentsForUnitName, fieldUnitLabel, KINEMATIC_PRESSURE, PRESSURE } from "../fieldDimensions";
 import { findSubModelPart } from "../subModelPartExtract";
@@ -71,7 +72,16 @@ export function sampleRegion(model: MdpaModel, spec: PlotRegionSource): RegionSa
     const component=spec.component??(field.components>1?"magnitude":0);
     if(spec.operation==="mean"&&field.components!==1&&spec.pressureDensity!==undefined)throw new Error("Pressure density conversion needs a scalar field.");
     const pScale=spec.operation==="mean"?meanPressureScale():1;
-    if (typeof component === "number" && component>=field.components) throw new Error("Selected component is not present in this field.");
+    if (typeof component === "number" && component>=field.components && !spec.tensor) throw new Error("Selected component is not present in this field.");
+    if (spec.tensor) {
+      const L=spec.tensor.layout, w=layoutWidth(L);
+      if (w!==undefined&&field.components!==w) throw new Error(`Tensor layout ${L} needs a ${w}-component field; "${spec.variable}" has ${field.components}.`);
+      const ix=layoutIndices(L); for(const k of Object.values(ix)) if(k!==undefined&&k>=field.components) throw new Error(`Tensor component index ${k} is outside the ${field.components}-component field "${spec.variable}".`);
+      const plane=ix.zz===undefined||ix.yz===undefined||ix.xz===undefined;
+      diagnostics.push(`Tensor invariant ${spec.tensor.invariant} from the caller-supplied layout ${typeof L==="string"?L:JSON.stringify(L)} with ${spec.tensor.shear??"tensor"} shear components; no component order or stress/strain meaning is inferred from the file.${plane?" Missing zz/yz/xz components are taken as zero (plane problem).":""}`);
+      if (spec.tensor.shear==="engineering") diagnostics.push("Off-diagonal components were halved (engineering shear gamma = 2 epsilon), as supplied.");
+      if (invariantUnitPower(spec.tensor.invariant)!==1) { unit = undefined; dimensions = undefined; diagnostics.push("The invariant's unit is a power of the field unit; no unit is claimed."); }
+    }
     let covered=0, sum=0, best:number|null=null, bestId:number|undefined;
     const vector=new Array(spec.operation==="reactionMoment"?3:field.components).fill(0) as number[], index=spec.operation==="reactionMoment"?nodeIndexMap(model):undefined;
     for(const id of ids){
@@ -81,7 +91,10 @@ export function sampleRegion(model: MdpaModel, spec: PlotRegionSource): RegionSa
         const r=[0,1,2].map(d=>model.coords[3*at+d]-spec.referencePoint![d]);
         const moment=cross(r,[tuple[0],tuple[1],tuple[2]??0]);for(let d=0;d<3;d++)vector[d]+=moment[d];covered++;continue;
       }
-      const value=component==="magnitude"?Math.hypot(...tuple):tuple[component]; covered++;sum+=value;
+      let value:number;
+      if(spec.tensor){const t=tensorFromTuple(tuple,spec.tensor.layout,spec.tensor.shear);if(!t)continue;value=invariantOf(t,spec.tensor.invariant);}
+      else value=component==="magnitude"?Math.hypot(...tuple):tuple[component];
+      covered++;sum+=value;
       if(best===null || (spec.operation==="min"?value<best:value>best)){best=value;bestId=id;}
       if(spec.operation==="sum")for(let d=0;d<tuple.length;d++)vector[d]+=tuple[d];
     }
@@ -91,7 +104,7 @@ export function sampleRegion(model: MdpaModel, spec: PlotRegionSource): RegionSa
     if(moment||vectorSum) return {values:vector.map(v=>covered&&Number.isFinite(v)?v:null),columns:vector.map((_,i)=>column(`${spec.variable} ${moment?"moment":"sum"} ${"XYZ"[i]??i}`,i)),origin,diagnostics,partial:!covered||covered<ids.size||vector.some(v=>!Number.isFinite(v)),covered,measure:ids.size};
     const value=covered?(spec.operation==="mean"?sum/covered*pScale:spec.operation==="sum"?sum:best):null;
     if (["min","max"].includes(spec.operation) && bestId!==undefined) {origin.entityKind=spec.kind==="Nodal"?"Nodes":spec.kind==="Elemental"?"Elements":"Conditions";origin.entityId=bestId;}
-    return {values:[value!==null&&Number.isFinite(value)?value:null],columns:[column(`${spec.operation} ${spec.variable}${component==="magnitude"?" magnitude":field.components>1?` ${"XYZ"[component]??component}`:""}`,0)],origin,diagnostics,partial:!covered||covered<ids.size||value!==null&&!Number.isFinite(value),covered,measure:ids.size};
+    return {values:[value!==null&&Number.isFinite(value)?value:null],columns:[column(`${spec.operation} ${spec.variable}${spec.tensor?` ${spec.tensor.invariant}`:component==="magnitude"?" magnitude":field.components>1?` ${"XYZ"[component]??component}`:""}`,0)],origin,diagnostics,partial:!covered||covered<ids.size||value!==null&&!Number.isFinite(value),covered,measure:ids.size};
   }
   const exterior=spec.boundary==="exterior";
   if(!exterior&&!spec.submodelpart)throw new Error("Choose a boundary SubModelPart for integration.");

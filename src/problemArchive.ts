@@ -7,6 +7,8 @@
  * opens the extracted mesh.
  */
 
+import { resolveDestination } from "./meshExport";
+import { resolveCommandPath } from "./parser/commandPath";
 import * as vscode from "vscode";
 import * as path from "node:path";
 import * as fs from "node:fs";
@@ -58,7 +60,7 @@ export interface ProblemContext {
  * case files exist next to the mesh (ProjectParameters.json, the materials
  * file(s) it references, MainKratos.py, `<stem>_case.mdpa`).
  */
-export async function saveProblem(ctx: ProblemContext): Promise<void> {
+export async function saveProblem(ctx: ProblemContext, to?: string, overwrite?: boolean): Promise<void> {
   const dir = path.dirname(ctx.fsPath);
   const meshName = path.basename(ctx.fsPath);
   const stem = path.basename(ctx.fsPath, path.extname(ctx.fsPath));
@@ -74,11 +76,18 @@ export async function saveProblem(ctx: ProblemContext): Promise<void> {
     return;
   }
 
-  const dest = await vscode.window.showSaveDialog({
-    defaultUri: vscode.Uri.file(path.join(dir, `${stem}.kratosproblem.zip`)),
-    filters: { "Problem archive": ["zip"] },
-    title: "Save Problem",
-  });
+  let dest: { fsPath: string } | undefined;
+  if (to) {
+    const file = resolveDestination(to, dir, ".zip", overwrite);
+    if (!file) return;
+    dest = { fsPath: file };
+  } else {
+    dest = await vscode.window.showSaveDialog({
+      defaultUri: vscode.Uri.file(path.join(dir, `${stem}.kratosproblem.zip`)),
+      filters: { "Problem archive": ["zip"] },
+      title: "Save Problem",
+    });
+  }
   if (!dest) return;
   try {
     await fs.promises.writeFile(dest.fsPath, buildProblemZip(manifest, files));
@@ -112,14 +121,23 @@ export async function saveProblem(ctx: ProblemContext): Promise<void> {
  * still registered as pending, but no second tab opens — the caller binds the
  * returned uri itself and consumes the pending recipe on its first parse.
  */
-export async function loadProblem(opts?: { open?: boolean }): Promise<vscode.Uri | undefined> {
-  const picks = await vscode.window.showOpenDialog({
-    canSelectMany: false,
-    filters: { "Problem archive": ["zip"], "All files": ["*"] },
-    title: "Load Problem",
-  });
-  if (!picks || picks.length === 0) return;
-  const zipPath = picks[0].fsPath;
+export async function loadProblem(opts?: { open?: boolean; file?: string; into?: string }): Promise<vscode.Uri | undefined> {
+  const base = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
+  let zipPath: string;
+  if (opts?.file) {
+    const r = resolveCommandPath(opts.file, base, { ext: ".zip" });
+    if (!r.ok) { vscode.window.showWarningMessage(r.reason); return; }
+    if (!fs.existsSync(r.path)) { vscode.window.showWarningMessage(`${r.path} does not exist.`); return; }
+    zipPath = r.path;
+  } else {
+    const picks = await vscode.window.showOpenDialog({
+      canSelectMany: false,
+      filters: { "Problem archive": ["zip"], "All files": ["*"] },
+      title: "Load Problem",
+    });
+    if (!picks || picks.length === 0) return;
+    zipPath = picks[0].fsPath;
+  }
 
   let parsed;
   try {
@@ -136,16 +154,23 @@ export async function loadProblem(opts?: { open?: boolean }): Promise<vscode.Uri
     return;
   }
 
-  const destPick = await vscode.window.showOpenDialog({
-    canSelectMany: false,
-    canSelectFiles: false,
-    canSelectFolders: true,
-    defaultUri: vscode.Uri.file(path.dirname(zipPath)),
-    openLabel: "Extract Here",
-    title: "Choose the Folder to Extract the Problem Into",
-  });
-  if (!destPick || destPick.length === 0) return;
-  const destDir = destPick[0].fsPath;
+  let destDir: string;
+  if (opts?.into) {
+    const r = resolveCommandPath(opts.into.replace(/[\\/]+$/, "") || ".", path.dirname(zipPath));
+    if (!r.ok) { vscode.window.showWarningMessage(r.reason); return; }
+    destDir = r.path;
+  } else {
+    const destPick = await vscode.window.showOpenDialog({
+      canSelectMany: false,
+      canSelectFiles: false,
+      canSelectFolders: true,
+      defaultUri: vscode.Uri.file(path.dirname(zipPath)),
+      openLabel: "Extract Here",
+      title: "Choose the Folder to Extract the Problem Into",
+    });
+    if (!destPick || destPick.length === 0) return;
+    destDir = destPick[0].fsPath;
+  }
 
   // The manifest is archive metadata, not a problem file — don't extract it.
   const toWrite = parsed.entries.filter(

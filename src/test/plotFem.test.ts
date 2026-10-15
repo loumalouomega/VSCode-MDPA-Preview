@@ -253,3 +253,57 @@ test("a 2D region's exterior is its edges",()=>{
   const perimeter=2+1+Math.hypot(2,1);
   close(sampleRegion(m,exterior({operation:"boundaryIntegral"})).values[0],3*perimeter);
 });
+
+// Geometry conventions: what an exterior region discloses instead of choosing silently.
+test("a face shared by three region elements is non-manifold: excluded, disclosed, partial",()=>{
+  const m=parseMdpa(`Begin Nodes
+1 0 0 0
+2 1 0 0
+3 0 1 0
+4 0 0 1
+5 1 1 1
+6 -1 -1 -1
+End Nodes
+Begin Elements Element3D4N
+1 0 1 2 3 4
+2 0 1 2 3 5
+3 0 1 2 3 6
+End Elements
+Begin NodalData PRESSURE
+${[1,2,3,4,5,6].map(i=>`${i} 0 12`).join("\n")}
+End NodalData
+`);
+  m.source={format:"mdpa",units:{coords:"m",fields:{PRESSURE:"Pa"}}};
+  const r=sampleRegion(m,exterior({operation:"boundaryIntegral"}));
+  assert.match(r.diagnostics.join(" "),/three or more region Elements \(non-manifold\)/);
+  assert.equal(r.partial,true);
+  // Nine outer faces remain; the triple face is in none of them.
+  const ext=[[1,2,4],[1,3,4],[2,3,4],[1,2,5],[1,3,5],[2,3,5],[1,2,6],[1,3,6],[2,3,6]];
+  const pts=[[0,0,0],[1,0,0],[0,1,0],[0,0,1],[1,1,1],[-1,-1,-1]];
+  const area=ext.map(f=>triArea(pts[f[0]-1],pts[f[1]-1],pts[f[2]-1])).reduce((a,b)=>a+b,0);
+  close(r.values[0],12*area);
+});
+
+test("elements of unsupported type are skipped loudly, not treated as absent neighbours",()=>{
+  const m=twoTets();
+  const second=m.blocks.find(b=>b.kind==="Elements")!;
+  // Re-label the block as a type the face tables cannot expand (VTK_POLYHEDRON).
+  const poly={...second,vtkCellType:42,name:"Poly"};
+  const bad={...m,blocks:m.blocks.map(b=>b===second?poly:b)};
+  assert.throws(()=>sampleRegion(bad,exterior({operation:"boundaryIntegral"})),/unsupported type/);
+  // One supported and one unsupported block: the unsupported cells are counted.
+  const mixed={...m,blocks:[...m.blocks.filter(b=>b.kind!=="Elements"),{...second,count:1,entityIds:second.entityIds.slice(0,1),connectivity:second.connectivity.slice(0,4)},{...second,entityIds:Int32Array.from([9]),count:1,connectivity:second.connectivity.slice(4,8),vtkCellType:42,name:"Poly"}]};
+  const r=sampleRegion(mixed as typeof m,exterior({operation:"boundaryIntegral"}));
+  assert.match(r.diagnostics.join(" "),/unsupported type/);
+  assert.equal(r.partial,true);
+});
+
+test("higher-order region elements are disclosed as corner skeletons",()=>{
+  const m=twoTets();
+  const el=m.blocks.find(b=>b.kind==="Elements")!;
+  // Pretend the block is quadratic by declaring a 10-node stride over the corner nodes.
+  const quad={...el,vtkCellType:24,stride:10,name:"Quadratic",count:1,entityIds:el.entityIds.slice(0,1),connectivity:Int32Array.from([1,2,3,4,1,2,3,4,1,2])};
+  const mq={...m,blocks:[...m.blocks.filter(b=>b.kind!=="Elements"),quad]};
+  const r=sampleRegion(mq as typeof m,exterior({operation:"boundaryIntegral"}));
+  assert.match(r.diagnostics.join(" "),/higher-order: faces and Nodal field values use the corner skeleton/);
+});

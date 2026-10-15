@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import type { CaseState, GeneratedCase, ProblemtypeRuntime } from "./types";
+import { APPLICATION_NAME } from "./applications";
 
 export const PREPARATION_FILE = "kkss-preparation-v1.json";
 const hash = (value: string | Buffer): string => createHash("sha256").update(value).digest("hex");
@@ -25,6 +26,12 @@ export interface PreparationReport {
    */
   primaryDocument?: string;
   driverScript?: string;
+  /**
+   * The Kratos applications the driver checks before running (roadmap item 16).
+   * Absent in a report from before the check existed, which means "unknown":
+   * the run path then skips its pre-launch probe.
+   */
+  applications?: string[];
   /**
    * Which run of which study produced this case, when it was prepared inside an
    * isolated run workspace. `runId` is the execution receipt's `requestId` (no
@@ -53,6 +60,8 @@ export function parsePreparationReport(text: string): PreparationReport {
       !file(value.sourceMesh) || !file(value.solverMesh) || !Array.isArray(value.inputs) || !value.inputs.every(file) ||
       new Set(value.inputs.map((v: any) => v.name)).size !== value.inputs.length ||
       !plainName(primary) || !plainName(driver) ||
+      (value.applications !== undefined && !(Array.isArray(value.applications) &&
+        value.applications.every((a: unknown) => typeof a === "string" && APPLICATION_NAME.test(a)))) ||
       !value.inputs.some((v: any) => v.name === driver && v.revision === value.producer.scriptRevision) ||
       !value.inputs.some((v: any) => v.name === primary) ||
       !value.settings || value.settings.problemtypeId !== value.problemtype ||
@@ -85,6 +94,18 @@ export function preparedNames(directory: string): { primaryDocument: string; dri
   }
 }
 
+/**
+ * The Kratos applications a prepared case needs, from its preparation record;
+ * undefined when the record is missing, unreadable or predates the field.
+ */
+export function preparedApplications(directory: string): string[] | undefined {
+  try {
+    return parsePreparationReport(fs.readFileSync(path.join(directory, PREPARATION_FILE), "utf8")).applications;
+  } catch {
+    return undefined;
+  }
+}
+
 export function writePreparedCase(options: {
   directory: string; sourcePath: string; solverMeshPath: string;
   runtime: ProblemtypeRuntime; state: CaseState; generated: GeneratedCase; warnings: string[];
@@ -108,6 +129,7 @@ export function writePreparedCase(options: {
     version: 1, producer: { name: "vscode-mdpa.case-generator", source: runtime.source, scriptRevision: hash(generated.mainScript) },
     problemtype: runtime.decl.id, sourceMesh: mesh(options.sourcePath), solverMesh: mesh(options.solverMeshPath),
     primaryDocument: generated.primaryDocumentName, driverScript: generated.driverScriptName,
+    ...(generated.applications ? { applications: [...generated.applications] } : {}),
     ...(options.run ? { run: { ...options.run } } : {}),
     settings: structuredClone(state), settingsRevision: hash(JSON.stringify(state)),
     effectiveParameters: JSON.parse(generated.projectParameters),

@@ -23,6 +23,9 @@ import {
 import { asNum, dottedModelPart, fieldDefault, flattenValues } from "./api";
 import { validateMaterialAssignment } from "./materialCatalog";
 import { validateFluidTimeStepping } from "./timeStepEstimate";
+import { collectionProblems, resolveCollections } from "./collections";
+import { applicationCheckPy, requiredApplications } from "./applications";
+import { interfacePairProblems } from "./interfaceCheck";
 
 /** Flattens the SubModelPart tree into slash-separated paths (depth-first). */
 export function subModelPartPaths(parts: SubModelPart[]): string[] {
@@ -127,6 +130,9 @@ export function buildGenContext(
     subModelParts: paths,
     output: state.output,
   };
+  if (decl.collections && decl.collections.length > 0) {
+    ctx.collections = resolveCollections(decl, state, decl.modelPartName);
+  }
   if (decl.domains && decl.domains.length > 0) {
     const domains: Record<string, DomainContext> = {};
     for (const d of decl.domains) {
@@ -325,7 +331,15 @@ export async function generateCase(
   const ctx = buildGenContext(runtime, model, state, mdpaStem, warnings);
   const values = ctx.values;
   const processes = await buildProcesses(runtime, ctx, state, warnings);
-  const missing = [...domainProblems(decl, state.assignments), ...(await runtime.validate(ctx))];
+  // Collection problems come first and gate the hook: a validate hook may then
+  // assume every ref resolves and every entry has a known type.
+  const collectionIssues = collectionProblems(decl, state, ctx.subModelParts).map((p) => p.message);
+  const missing = [
+    ...domainProblems(decl, state.assignments),
+    ...interfacePairProblems(decl, model, state.assignments, ctx.domainSize),
+    ...collectionIssues,
+    ...(collectionIssues.length === 0 ? await runtime.validate(ctx) : []),
+  ];
   if (missing.length > 0) {
     throw new Error(`The case is incomplete, so no case files were written:\n- ${missing.join("\n- ")}`);
   }
@@ -372,7 +386,12 @@ export async function generateCase(
     materialsText = materialJson(materials, runtime);
   }
   extraFiles.push(...(await runtime.extraFiles(ctx, materials)));
-  const mainScript = await runtime.mainScript(ctx);
+  const applications = requiredApplications(decl, values, [
+    projectParameters,
+    ...extraFiles.filter((f) => f.name.toLowerCase().endsWith(".json")).map((f) => parseJsonOrNull(f.content)),
+  ]);
+  // The prelude checks the applications before the driver reads or writes anything.
+  const mainScript = applicationCheckPy(applications) + (await runtime.mainScript(ctx));
 
   return {
     projectParameters: JSON.stringify(projectParameters, null, 4) + "\n",
@@ -383,5 +402,14 @@ export async function generateCase(
     warnings,
     primaryDocumentName: decl.primaryDocumentName ?? DEFAULT_PRIMARY_DOCUMENT,
     driverScriptName: decl.driverScriptName ?? DEFAULT_DRIVER_SCRIPT,
+    applications,
   };
+}
+
+function parseJsonOrNull(text: string): JsonValue {
+  try {
+    return JSON.parse(text) as JsonValue;
+  } catch {
+    return null;
+  }
 }

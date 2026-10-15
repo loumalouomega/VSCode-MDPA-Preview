@@ -75,6 +75,9 @@ export default defineConfig({
         items: [
           { text: 'Running Kratos Simulations', link: '/guide/simulation' },
           { text: 'Running a Case', link: '/guide/running-a-case' },
+          { text: 'Coupled Simulations', link: '/guide/coupled-simulations' },
+          { text: 'Structural Optimization', link: '/guide/optimization' },
+          { text: 'Reduced-Order Models', link: '/guide/reduced-order-models' },
           { text: 'MCP Server', link: '/guide/mcp' },
           { text: 'Flowgraph Node Editor', link: '/guide/flowgraph' },
           { text: 'Authoring Problemtypes (JS)', link: '/guide/problemtype-authoring' },
@@ -155,6 +158,9 @@ export default defineConfig({
           items: [
             { text: 'Running Kratos Simulations', link: '/guide/simulation' },
             { text: 'Running a Case', link: '/guide/running-a-case' },
+            { text: 'Coupled Simulations', link: '/guide/coupled-simulations' },
+            { text: 'Structural Optimization', link: '/guide/optimization' },
+            { text: 'Reduced-Order Models', link: '/guide/reduced-order-models' },
             { text: 'MCP Server', link: '/guide/mcp' },
             { text: 'Flowgraph Node Editor', link: '/guide/flowgraph' },
             { text: 'Authoring Problemtypes (JS)', link: '/guide/problemtype-authoring' },

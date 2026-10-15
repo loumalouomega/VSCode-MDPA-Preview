@@ -78,6 +78,9 @@ export const EXPORT_FORMAT_LABELS: Record<ExportableExtension, string> = {
   ".fem": "Nastran (.fem)",
   ".foam": "OpenFOAM polyMesh",
   ".post.msh": "GiD postprocess (.post.msh + .post.res)",
+  ".fil": "Abaqus results (.fil)",
+  ".op2": "Nastran results (.op2)",
+  ".cad.json": "Kratos CAD JSON (quads and lines)",
   ".h5m": "MOAB H5M",
   ".hmf": "HMF",
   ".ip": "IP (fields only)",
@@ -145,8 +148,14 @@ export const EXPORT_MENU_GROUPS: readonly ExportGroup[] = [
       // companion exactly like XDMF's .h5. The one COMPOUND extension in this
       // registry — see meshExtname in meshioFormats.ts for why that needs care.
       ".post.msh",
+      // Solver result-file writers (meshio++ >= 16.42.0): geometry plus the
+      // fields each format has a slot for.
+      ".fil", ".op2",
     ],
   },
+  // Kratos CAD JSON (meshio++ >= 16.42.0): quads become bilinear NURBS faces and
+  // lines edges. A COMPOUND extension, because a bare `.json` is far too generic.
+  { label: "CAD", extensions: [".cad.json"] },
   // HDF5/netCDF-backed containers (meshio++ >= 8.0.0 wasm builds only). `.med`
   // is writable since meshio++ 9.9.0 and carries SubModelParts as families;
   // `.exo` writes lossily (block names survive as SubModelParts, but genuine

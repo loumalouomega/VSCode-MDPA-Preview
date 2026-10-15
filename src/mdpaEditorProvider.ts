@@ -931,6 +931,8 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
         void runFlowSeries(msg as Record<string, unknown>);
       } else if (session.handleLinkMessage(msg as Record<string, unknown>)) {
         // Linked previews: relayed by the hub (parser/previewLinkHub.ts).
+      } else if (session.handleOptimizationMessage(msg as Record<string, unknown>)) {
+        // handled by the session (Optimization progress panel)
       } else if (session.handleCompareMessage(msg as Record<string, unknown>)) {
         // In-preview comparison: the peer file is picked and parsed here
         // (pure core in parser/comparePeer.ts); the model lives in the webview.

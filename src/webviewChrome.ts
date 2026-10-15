@@ -165,6 +165,7 @@ export const MENU_ACTION_COMMANDS: Readonly<Record<string, string>> = {
   streamlines: "kratos.mdpa.streamlines",
   flowBalance: "kratos.mdpa.flowBalance",
   linkPreviews: "kratos.mdpa.linkPreviews",
+  optimizationProgress: "kratos.mdpa.optimizationProgress",
   compareSplit: "kratos.mdpa.compareInSplit",
   exportReport: "kratos.mdpa.exportReport",
   dataTable: "kratos.mdpa.dataTable",
@@ -195,6 +196,7 @@ export const ADVANCED_MENU_HTML = `<div id="advanced-popup" class="hidden" role=
         <button type="button" class="file-menu-item" data-action="integrals" role="menuitem" title="Cell-measure-weighted total and mean of every cell field, per mesh and per region">${ic("average")}<span>Field integrals…</span></button>
         <button type="button" class="file-menu-item" data-action="streamlines" role="menuitem" title="Trace steady streamlines of a nodal vector field from seed points, a line, a plane or a SubModelPart, and export them as line cells">${ic("fieldQuiver")}<span>Streamlines…</span></button>
         <button type="button" class="file-menu-item" data-action="flowBalance" role="menuitem" title="Signed flux and area-weighted pressure through named SubModelPart boundaries: net flux, imbalance and pressure drop">${ic("average")}<span>Flow balance…</span></button>
+        <button type="button" class="file-menu-item" data-action="optimizationProgress" role="menuitem" title="Follow an optimization run: objective and constraints per iteration, read from the optimizer's summary file">${ic("results")}<span>Optimization progress…</span></button>
         <button type="button" class="file-menu-item" data-action="linkPreviews" role="menuitem" title="Link this preview with another open mesh or run so their camera, field, colour range, clip plane and physical time follow each other">${ic("merge")}<span>Link previews…</span></button>
         <button type="button" class="file-menu-item" data-action="compareSplit" role="menuitem" title="Show a second mesh file in one split pane next to this one, coloured by the same field where it has it — a read-only reference, never edited">${ic("grid")}<span>Compare in split…</span></button>
         <button type="button" class="file-menu-item" data-action="exportReport" role="menuitem" title="Inspect the latest export's fidelity and provenance">${ic("info")}<span>Export report…</span></button>
@@ -513,6 +515,17 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
                   <button type="button" class="edit-apply edit-apply-mmg" data-op="repairSurface" title="Repair the surface mesh (see Advanced ▸ Face normals to preview the defects)" data-run-title="Repair the surface mesh"><span class="apply-play">${ic("play")}</span><span class="apply-stop">${ic("stop")}</span></button>
                 </div>
                 <div class="edit-progress hidden" id="repair-progress">
+                  <div class="edit-progress-track"><div class="edit-progress-bar"></div></div>
+                  <div class="edit-progress-msg"></div>
+                </div>
+              </div>
+              <div class="edit-form collapsed" id="tess-form">
+                <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("simplexify")}<span>Tessellate curved cells</span></button>
+                <div class="edit-form-row">
+                  <label class="edit-field" title="Divisions per axis for quads/hexahedra and recursive splits (2^levels per edge) for triangles/tetrahedra. Tetrahedra multiply by 8^levels."><span>levels</span><input type="number" id="tess-levels" class="edit-num edit-num-wide" value="2" min="0" max="5" step="1"></label>
+                  <button type="button" class="edit-apply edit-apply-mmg" data-op="tessellate" title="Split 6-node triangles, 8/9-node quads, 10-node tetrahedra and 27-node hexahedra into linear triangles/tetrahedra" data-run-title="Tessellate curved cells"><span class="apply-play">${ic("play")}</span><span class="apply-stop">${ic("stop")}</span></button>
+                </div>
+                <div class="edit-progress hidden" id="tess-progress">
                   <div class="edit-progress-track"><div class="edit-progress-bar"></div></div>
                   <div class="edit-progress-msg"></div>
                 </div>
@@ -1236,6 +1249,7 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
             <div id="pt-parts"></div>
             <div id="pt-materials"></div>
             <div id="pt-assignments"></div>
+            <div id="pt-collections"></div>
             <div id="pt-forms"></div>
             <div id="pt-output"></div>
             <div class="pt-sep" role="separator"><span class="pt-sep-label">Run</span></div>

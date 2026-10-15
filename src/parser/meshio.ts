@@ -726,6 +726,33 @@ export interface MeshioModule {
     minQualityAfter: number;
   };
 
+  /**
+   * Isoparametric tessellation of curved cells (meshio++ >= 16.42.0):
+   * `triangle6`/`quad8`/`quad9` become one `triangle` block, `tetra10` and
+   * `hexahedron27` one `tetra` block, everything else passes through. The
+   * result carries `tessellate:source_cell`/`sub_index` (cell data) and
+   * `tessellate:source_point` (point data, -1 for a new point); it drops cell
+   * regions, so membership has to be rebuilt by the caller.
+   */
+  tessellate(
+    mesh: MeshioMesh,
+    levels?: number,
+    curved?: boolean,
+    fields?: boolean,
+    recordStencil?: boolean
+  ): {
+    mesh: MeshioMesh;
+    numSourcePoints: number;
+    numSourceCells: number;
+    numCurvedSourceCells: number;
+    numPassThroughSourceCells: number;
+    numPoints: number;
+    numCells: number;
+    numBoundaryFacets: number;
+    numInteriorFacets: number;
+    numFacetsWithBadCount: number;
+  };
+
   grid(dims: number[], origin?: number[] | null, spacing?: number[] | null, maxCells?: number): MeshioMesh;
 
   voxelize(
