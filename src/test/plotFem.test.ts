@@ -307,3 +307,34 @@ test("higher-order region elements are disclosed as corner skeletons",()=>{
   const r=sampleRegion(mq as typeof m,exterior({operation:"boundaryIntegral"}));
   assert.match(r.diagnostics.join(" "),/higher-order: faces and Nodal field values use the corner skeleton/);
 });
+
+// Interface side and owner convexity (roadmap item 9, exterior conventions).
+test("interface:\"region\" includes shared faces on the region's own side and closes the load",()=>{
+  const m=twoTets();
+  const own=[[1,2,3],[1,2,4],[1,3,4]].map(f=>triArea(P[f[0]-1],P[f[1]-1],P[f[2]-1])).reduce((a,b)=>a+b,0);
+  const shared=triArea(P[1],P[2],P[3]);
+  const r=sampleRegion(m,exterior({submodelpart:"A",operation:"boundaryIntegral",interface:"region"}));
+  close(r.covered,own+shared);close(r.measure,own+shared);close(r.values[0],12*(own+shared));assert.equal(r.partial,false);
+  assert.match(r.diagnostics.join(" "),/included on the region's own side/);
+  sampleRegion(m,exterior({submodelpart:"A",interface:"region"})).values.forEach(v=>close(v,0)); // closed surface, constant pressure
+  assert.equal(sampleRegion(m,exterior({submodelpart:"A",interface:"exclude",operation:"boundaryIntegral"})).partial,true);
+});
+
+test("interface side validates only with exterior boundaries",()=>{
+  const r=emptyPlotRecipe(exterior({operation:"boundaryIntegral",interface:"region"}));
+  assert.deepEqual(validatePlotRecipe(JSON.parse(JSON.stringify(r))),r);
+  assert.throws(()=>validatePlotRecipe({...r,sources:[{...exterior({operation:"boundaryIntegral"}),interface:"both"}]}),/interface side/);
+  assert.throws(()=>validatePlotRecipe({...r,sources:[{...spec({operation:"boundaryIntegral"}),interface:"region"}]}),/exterior boundaries only/);
+});
+
+test("a non-convex owner element is excluded where the centroid rule cannot orient it",()=>{
+  // Arrowhead quad A(0,0) B(2,1) C(1,0) D(2,-1): C is reflex, so edges BC and CD have the owner on both sides.
+  const dart=()=>{const m=parseMdpa("Begin Nodes\n1 0 0 0\n2 2 1 0\n3 1 0 0\n4 2 -1 0\nEnd Nodes\nBegin Elements Element2D4N\n1 0 1 2 3 4\nEnd Elements\nBegin NodalData PRESSURE\n1 0 3\n2 0 3\n3 0 3\n4 0 3\nEnd NodalData\n");m.source={format:"mdpa",units:{coords:"m",fields:{PRESSURE:"Pa"}}};return m;};
+  const r=sampleRegion(dart(),exterior({operation:"boundaryIntegral"}));
+  close(r.covered,2*Math.sqrt(5));close(r.measure,2*Math.sqrt(5)+2*Math.SQRT2);assert.equal(r.partial,true);
+  assert.match(r.diagnostics.join(" "),/non-convex/);
+  // A convex quad is untouched.
+  const sq=parseMdpa("Begin Nodes\n1 0 0 0\n2 1 0 0\n3 1 1 0\n4 0 1 0\nEnd Nodes\nBegin Elements Element2D4N\n1 0 1 2 3 4\nEnd Elements\nBegin NodalData PRESSURE\n1 0 3\n2 0 3\n3 0 3\n4 0 3\nEnd NodalData\n");
+  sq.source={format:"mdpa",units:{coords:"m",fields:{PRESSURE:"Pa"}}};
+  const q=sampleRegion(sq,exterior({operation:"boundaryIntegral"}));close(q.covered,4);assert.equal(q.partial,false);
+});

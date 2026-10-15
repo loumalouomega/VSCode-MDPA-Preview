@@ -78,6 +78,12 @@ export interface PlotRegionSource {
    * region (`submodelpart`'s Elements, or the whole mesh when absent). Exterior reads Nodal fields only.
    */
   boundary?: "conditions" | "exterior";
+  /**
+   * Exterior boundaries only. "exclude" (default, absent in older recipes) leaves out faces also owned by an Element
+   * outside the region, because their side is ambiguous. "region" includes them on the region's OWN side (normal out
+   * of the region's Element); the neighbour's side is never computed.
+   */
+  interface?: "exclude" | "region";
   referencePoint?: [number, number, number];
   /** 2D boundary thickness in the supplied coordinate unit; absent = per depth. */
   thickness?: number;
