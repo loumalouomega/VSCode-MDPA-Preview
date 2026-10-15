@@ -142,6 +142,54 @@ export async function bindPlotRun(recordPath: string, sourcePath: string, signal
   return (await checkedRun(recordPath,sourcePath,signal)).binding;
 }
 
+export type PlotRunResolutionStatus = "verified" | "unverified" | "unresolved";
+export interface PlotRunResolution {
+  status: PlotRunResolutionStatus;
+  /** Present only when `status` is "verified": the same binding `bindPlotRun` returns. */
+  binding?: PlotRunBinding;
+  /** Present only when `status` is "unverified": what the files are NOW. It is not a claim about who produced them and cannot be passed to `verifyPlotRun`. */
+  snapshot?: { revision: string; files: number; observedAt: string; note: string };
+  evidence: string[];
+  diagnostics: string[];
+}
+/**
+ * Explicit, read-only ownership resolution for one result path. "verified" requires an existing isolated-run
+ * receipt whose recorded revisions and IDs still match (the exact `bindPlotRun` contract). With no receipt (a
+ * legacy run, or only a latest-run sidecar) the result is "unverified": an honest present-state snapshot, never
+ * ownership. A receipt that exists but fails verification, or a source that cannot be read, is "unresolved".
+ * Past ownership is never inferred by hashing current bytes or by matching paths, frame indices or entity IDs.
+ */
+export async function resolvePlotRun(request: { path: string; recordPath?: string }, signal?: AbortSignal): Promise<PlotRunResolution> {
+  const sourcePath = path.resolve(request.path);
+  const record = request.recordPath ? path.resolve(request.recordPath) : undefined;
+  if (record && path.basename(record) === EXECUTION_FILE) {
+    try {
+      const binding = await bindPlotRun(record, sourcePath, signal);
+      return { status: "verified", binding, evidence: [`Receipt ${record}: job ${binding.runId}, receipt revision ${binding.receiptRevision}, source revision ${binding.sourceRevision}.`], diagnostics: [] };
+    } catch (e) {
+      if (signal?.aborted) throw e;
+      return { status: "unresolved", evidence: [`Receipt ${record} exists but did not verify.`], diagnostics: [e instanceof Error ? e.message : String(e)] };
+    }
+  }
+  const diagnostics = [record
+    ? "A latest-run sidecar identifies no result bytes and is not an execution receipt; ownership is not established."
+    : "No execution receipt was supplied; ownership is not established."];
+  try {
+    const identity = await plotSourceIdentity(sourcePath, signal);
+    const missing = identity.files.filter((f) => !f.revision).map((f) => f.path);
+    if (missing.length) return { status: "unresolved", evidence: [], diagnostics: [...diagnostics, `Source or companion file(s) missing or unreadable: ${missing.slice(0, 5).join(", ")}${missing.length > 5 ? ", …" : ""}.`] };
+    return {
+      status: "unverified",
+      snapshot: { revision: identity.revision, files: identity.files.length, observedAt: new Date().toISOString(), note: "Observed now; the producing run, study and request are not claimed. Never grants a run binding." },
+      evidence: record ? [`Sidecar ${record} present (not evidence of result bytes).`] : [],
+      diagnostics,
+    };
+  } catch (e) {
+    if (signal?.aborted) throw e;
+    return { status: "unresolved", evidence: [], diagnostics: [...diagnostics, e instanceof Error ? e.message : String(e)] };
+  }
+}
+
 export async function verifyPlotRun(binding: PlotRunBinding, sourcePath: string, signal?: AbortSignal): Promise<PlotSourceIdentity> {
   const {binding:current,identity}=await checkedRun(binding.recordPath,sourcePath,signal);
   if((Object.keys(current) as (keyof PlotRunBinding)[]).some(key=>current[key]!== (key==="recordPath"?path.resolve(binding[key]):binding[key])))throw new Error("The selected run/source identity changed. Rebind explicitly; matching filenames or entity IDs are not ownership.");

@@ -12,7 +12,7 @@ import { PLOT_CAPABILITIES, emptyPlotRecipe, validatePlotRecipe } from "../parse
 import { buildPlotPreset, checkThreshold, sectionDifference, type SectionDifference, type ThresholdCheck } from "../parser/plot/presets";
 import { writePlotCsv } from "../parser/plot/files";
 import type { ImportOptions, PlotDataset, PlotExecution, PlotTable, PlotRunBinding } from "../parser/plot/types";
-import type { PlotTimeCursorRequest } from "../parser/plot/runs";
+import type { PlotTimeCursorRequest, PlotRunResolution } from "../parser/plot/runs";
 import type { PlotRunTargetRequest, PlotRunTarget } from "../parser/plot/navigation";
 import { solverArgv, THREAD_RECEIPT } from '../problemtype/threadControl';
 import { estimateTimeStep } from "../problemtype/timeStepEstimate";
@@ -2499,6 +2499,9 @@ export async function plotRuns(args:{paths:string[]},execution:PlotExecution={})
 }
 export async function plotRunBind(args:{recordPath:string;path:string},execution:PlotExecution={}):Promise<PlotRunBinding> {
   return await runPlotWorker({bindRun:{recordPath:path.resolve(args.recordPath),path:path.resolve(args.path)}},execution) as PlotRunBinding;
+}
+export async function plotRunResolve(args:{path:string;recordPath?:string},execution:PlotExecution={}):Promise<PlotRunResolution> {
+  return await runPlotWorker({resolveRun:{path:path.resolve(args.path),...(args.recordPath?{recordPath:path.resolve(args.recordPath)}:{})}},execution) as PlotRunResolution;
 }
 export async function plotTimeCursor(args:PlotTimeCursorRequest,execution:PlotExecution={}):Promise<object> {
   validatePlotRecipe(emptyPlotRecipe({id:"cursor",type:"mesh",kind:"Nodes",path:args.path,run:args.run}));

@@ -15,6 +15,7 @@ import {
   plotPreset,
   plotRuns,
   plotRunBind,
+  plotRunResolve,
   plotTimeCursor,
   plotRunTarget,
   meshQuality,
@@ -167,6 +168,13 @@ export function registerAllTools(server: McpServer): void {
     inputSchema: {recordPath:z.string(),path:z.string()},
   }, async(args,extra)=>{
     try{return {content:[{type:"text",text:JSON.stringify(await plotRunBind(args,plottingExecution(extra)))}]};}
+    catch(e){return {content:[{type:"text",text:e instanceof Error?e.message:String(e)}],isError:true};}
+  });
+  server.registerTool("plot_run_resolve", {
+    description: "Explicit ownership resolution for one result path. status \"verified\" only with a recordPath naming an existing .kkss-execution.json receipt whose recorded job/request/owner IDs, source mesh and result/companion revisions still verify (returns the same binding as plot_run_bind). status \"unverified\" for a legacy run, a latest-run .kratosrun.json sidecar or no record: returns only a present-state snapshot revision, explicitly NOT ownership, which cannot be used as a run binding. status \"unresolved\" when a receipt exists but is stale, reused, non-terminal or lacks revisions, or the source cannot be read. Read-only; never scans for receipts and never infers past ownership from current bytes, paths, frame indices or entity IDs.",
+    inputSchema: {path:z.string(),recordPath:z.string().optional()},
+  }, async(args,extra)=>{
+    try{return {content:[{type:"text",text:JSON.stringify(await plotRunResolve(args,plottingExecution(extra)))}]};}
     catch(e){return {content:[{type:"text",text:e instanceof Error?e.message:String(e)}],isError:true};}
   });
   server.registerTool("plot_time_cursor", {

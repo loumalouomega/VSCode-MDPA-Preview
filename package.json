@@ -1178,6 +1178,7 @@
     "test": "npm run build:tests && node --test out/test/",
     "mcp": "node dist/mcpServer.js",
     "bench:heartbeat": "node scripts/bench/host-heartbeat.mjs",
+    "bench:plot": "node scripts/bench/plot-budget.mjs",
     "install-ext": "bash install.sh",
     "reinstall": "bash scripts/reinstall-local.sh"
   },

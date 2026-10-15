@@ -11,7 +11,11 @@ import type { SeriesStep } from "../fieldSeries";
 import { plotDirectoryInventory, plotDirectorySource } from "./directoryInventory";
 
 export const plotHash = (value: string | Uint8Array): string => `sha256:${createHash("sha256").update(value).digest("hex")}`;
-export interface PlotFileRevision { path: string; realPath?: string; revision?: string; bytes: number }
+export interface PlotFileRevision {
+  path: string; realPath?: string; revision?: string; bytes: number;
+  /** Stat tuple observed (and verified stable) while the content was hashed; lets the persistent cache skip rehashing an untouched file. */
+  stat?: { mtimeMs: number; ctimeMs: number; ino: number; dev: number };
+}
 export interface PlotSourceIdentity {
   revision: string;
   files: PlotFileRevision[];
@@ -43,7 +47,7 @@ export async function plotFileRevision(file: string, signal?: AbortSignal): Prom
         before.ino !== named.ino || after.size !== named.size || after.ctimeMs !== named.ctimeMs) {
       throw new Error(`Source changed while its revision was being checked: ${file}`);
     }
-    return {path:file,realPath:await fs.realpath(file),bytes:after.size,revision:`sha256:${hash.digest("hex")}`};
+    return {path:file,realPath:await fs.realpath(file),bytes:after.size,revision:`sha256:${hash.digest("hex")}`,stat:{mtimeMs:after.mtimeMs,ctimeMs:after.ctimeMs,ino:after.ino,dev:after.dev}};
   } finally { await handle.close(); }
 }
 
@@ -102,6 +106,6 @@ export async function plotSourceIdentity(sourcePath: string, signal?: AbortSigna
     closureFiles,caseInventory.directories.map(relative).sort(),
   ])) : undefined;
   return {files:inventory,steps:discovered.steps,timeline:discovered.source,...(inventoryRevision?{inventoryRevision}:{}),revision:plotHash(JSON.stringify([
-    abs,discovered.source,discovered.steps.map(s=>[s.label,s.frameIndex]),inventory,...(caseInventory?[caseInventory.directories]:[]),
+    abs,discovered.source,discovered.steps.map(s=>[s.label,s.frameIndex]),inventory.map(({stat:_stat,...file})=>file),...(caseInventory?[caseInventory.directories]:[]),
   ]))};
 }
