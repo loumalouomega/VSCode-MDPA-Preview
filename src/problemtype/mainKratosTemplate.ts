@@ -647,7 +647,7 @@ export const ROM_SUMMARY = "kkss-rom-summary-v1.json";
  * - UpdateProjectParameters writes each path into the Parameters copy the
  *   manager hands it; UpdateMaterialParametersFile rewrites the materials file
  *   IN PLACE (that is the manager's contract), so the driver keeps the original
- *   text and restores it when the run ends, stopped or not.
+ *   bytes and restores them when the run ends, stopped or not.
  * - CustomizeSimulation (the four-argument form RomManager calls at master)
  *   adds the cooperative stop (KRATOS_PREVIEW_STOP_FILE / KRATOS_PREVIEW_RUN_ID)
  *   and one kkss-rom-progress.jsonl line per analysis start and end.
@@ -711,7 +711,9 @@ def UpdateMaterialParametersFile(materials_file_name=None, mu=None):
     if not targets:
         return
     if materials_file_name not in materials_original:
-        with open(materials_file_name, "r") as handle:
+        # Bytes, not text: text mode writes a carriage return before each
+        # newline on Windows, so a restored file would no longer match the original.
+        with open(materials_file_name, "rb") as handle:
             materials_original[materials_file_name] = handle.read()
     data = json.loads(materials_original[materials_file_name])
     values = dict((id(p), SampleValue(p, x)) for p, x in zip(samples["parameters"], mu))
@@ -727,9 +729,9 @@ def UpdateMaterialParametersFile(materials_file_name=None, mu=None):
 
 
 def RestoreMaterials():
-    for name, text in materials_original.items():
-        with open(name, "w") as handle:
-            handle.write(text)
+    for name, original in materials_original.items():
+        with open(name, "wb") as handle:
+            handle.write(original)
 
 
 def RunLabel(cls, parameters):

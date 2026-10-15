@@ -265,14 +265,14 @@ test("the ROM driver is valid Python", { skip: !hasPython }, async () => {
   assert.equal(check.status, 0, String(check.stderr));
 });
 
-test("the ROM driver's callbacks write the sampled values, under a stub Kratos and RomManager", { skip: !hasPython }, async () => {
+async function driverWritesAndRestoresMaterials(lineEndings: string): Promise<void> {
   let state = withParameter(CASES[0].state(), "young", "material:Solid/YOUNG_MODULUS", 1e11, 3e11);
   state = withParameter(state, "load", "assignment:surfacePressure@Load/value", -50, 50);
   const { out } = await generate(romStructural, state);
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "kratos-rom-run-"));
   for (const f of out.extraFiles) fs.writeFileSync(path.join(dir, f.name), f.content);
   fs.writeFileSync(path.join(dir, "ProjectParameters.json"), out.projectParameters);
-  fs.writeFileSync(path.join(dir, out.materialsFileName), out.materials);
+  fs.writeFileSync(path.join(dir, out.materialsFileName), out.materials.replace(/\n/g, lineEndings));
   fs.writeFileSync(path.join(dir, "MainKratosROM.py"), out.mainScript);
   // A stub Kratos: Parameters over plain JSON with the accessors the driver uses.
   fs.mkdirSync(path.join(dir, "KratosMultiphysics", "RomApplication"), { recursive: true });
@@ -326,4 +326,12 @@ class RomManager:
   const summary = JSON.parse(fs.readFileSync(path.join(dir, "kkss-rom-summary-v1.json"), "utf8"));
   assert.equal(summary.stopped, false);
   assert.equal(summary.train, 6);
-});
+}
+
+// The restore must reproduce the original bytes on every platform. Text-mode
+// I/O rewrites line endings on Windows, so an LF file and a CRLF file are both
+// checked here, and on Linux the CRLF case catches a text-mode restore too.
+test("the ROM driver's callbacks write the sampled values, under a stub Kratos and RomManager", { skip: !hasPython }, () =>
+  driverWritesAndRestoresMaterials("\n"));
+test("the ROM driver's callbacks write the sampled values into a CRLF materials file and restore it byte for byte", { skip: !hasPython }, () =>
+  driverWritesAndRestoresMaterials("\r\n"));
