@@ -386,6 +386,7 @@ export function romProblemtype(base: ProblemtypeRuntime, opts: RomOptions): Prob
     icon: "ptRom",
     family: "reduced",
     driverScriptName: "MainKratosROM.py",
+    applications: [...(base.decl.applications ?? []), "RomApplication"],
     sections: [
       ...base.decl.sections,
       {

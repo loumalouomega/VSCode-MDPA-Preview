@@ -153,7 +153,9 @@ import { CaseState, JsonValue, MaterialAssignment, ProblemtypeRuntime, Problemty
 import { BUILTIN_PROBLEMTYPES } from "../problemtype/builtins";
 import { generateCase, subModelPartPaths } from "../problemtype/generate";
 import { preflightCase } from "../problemtype/preflight";
-import { PREPARATION_FILE, preparedNames, writePreparedCase, isRunIdentity, type PreparationRun } from "../problemtype/preparation";
+import { PREPARATION_FILE, preparedNames, preparedApplications, writePreparedCase, isRunIdentity, type PreparationRun } from "../problemtype/preparation";
+import { probeKratosApplications } from "../problemtype/kratosAppProbe";
+import { describeMissingApplications } from "../problemtype/applications";
 import { defaultCaseState } from "../problemtype/api";
 import { planCaseMesh } from "../problemtype/caseMesh";
 import {
@@ -2683,6 +2685,11 @@ export async function caseValidate(args: {
   quality?: boolean;
   /** Skip the quality checks above this many cells (default 200 000). */
   qualityMaxElements?: number;
+  /** Also ask the configured Python which required Kratos applications it cannot import. */
+  checkInstall?: boolean;
+  python?: string;
+  installPath?: string;
+  extraEnv?: Record<string, string>;
 }, execution: PlotExecution = {}): Promise<object> {
   const { model } = await loadMesh(args.meshPath, undefined, undefined, undefined, undefined, undefined, execution.signal);
   const { state, warnings, from } = readState(args);
@@ -2701,11 +2708,35 @@ export async function caseValidate(args: {
     quality: args.quality,
     qualityMaxElements: args.qualityMaxElements,
   });
+  let install: object | undefined;
+  if (args.checkInstall && report.applications) {
+    let installPath = args.installPath ?? "";
+    if (installPath) installPath = resolveKratosInstall(installPath, fs.existsSync, process.platform).root ?? installPath;
+    const envDelta = computeKratosEnv({
+      platform: process.platform,
+      installPath,
+      extraEnv: args.extraEnv ?? {},
+      base: process.env as Record<string, string>,
+    });
+    const probe = await probeKratosApplications({
+      python: args.python || defaultPythonPath(process.platform),
+      envDelta,
+      applications: report.applications,
+    });
+    install = {
+      checked: probe.unavailable === undefined,
+      missingApplications: probe.missing,
+      ...(probe.unavailable ? { unavailable: probe.unavailable } : {}),
+      ...(probe.missing.length > 0 ? { message: describeMissingApplications(probe.missing) } : {}),
+    };
+  }
   return {
     ok: report.ok,
     problemtype: ptId,
     source: from,
     warnings,
+    ...(report.applications ? { applications: report.applications } : {}),
+    ...(install ? { install } : {}),
     // Errors only: a case with none generates. Warnings and info are advisories.
     issues: report.findings.filter((f) => f.severity === "error").map((f) => f.message),
     advisories: report.findings.filter((f) => f.severity !== "error").map((f) => f.message),
@@ -3348,6 +3379,19 @@ export async function caseRun(args: {
     extraEnv: args.extraEnv ?? {},
     base: process.env as Record<string, string>,
   });
+
+  // The Kratos applications the case needs, recorded at generation. A probe
+  // that cannot answer lets the launch proceed to the driver's own check.
+  const applications = preparedApplications(caseDir);
+  if (applications) {
+    const probe = await probeKratosApplications({ python, envDelta, applications, cwd: caseDir });
+    if (probe.missing.length > 0) {
+      const message = describeMissingApplications(probe.missing);
+      if (owned) updateExecution(owned, { state: "failed", message });
+      throw new Error(message);
+    }
+    if (probe.unavailable) warnings.push(`The Kratos application check could not run (${probe.unavailable}); the driver checks them itself.`);
+  }
 
   const logFile = runLogPath(abs);
   const argv = solverArgv(python, script, args.threads);

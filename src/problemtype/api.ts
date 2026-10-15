@@ -21,6 +21,8 @@ import {
   ProblemtypeSource,
 } from "./types";
 import { MAIN_KRATOS_PY } from "./mainKratosTemplate";
+import { applicationDeclarationProblems } from "./applications";
+import { couplingInterfaceDeclarationProblems } from "./interfaceCheck";
 
 const FIELD_TYPES = new Set([
   "number", "int", "string", "bool", "enum", "vector3",
@@ -197,6 +199,8 @@ export function validateDeclaration(decl: ProblemtypeDeclaration): string[] {
       }
     }
   }
+  errors.push(...applicationDeclarationProblems(decl.applications));
+  errors.push(...couplingInterfaceDeclarationProblems(decl));
   if (decl.collections !== undefined) {
     if (!Array.isArray(decl.collections)) {
       errors.push("collections must be an array");

@@ -293,6 +293,12 @@ class Parameters:
     def Clone(self): return Parameters(json.dumps(self.node))
 `);
   fs.writeFileSync(path.join(dir, "KratosMultiphysics", "RomApplication", "__init__.py"), "");
+  // The driver's prelude checks every required application before running.
+  for (const app of out.applications) {
+    fs.mkdirSync(path.join(dir, "KratosMultiphysics", app), { recursive: true });
+    const init = path.join(dir, "KratosMultiphysics", app, "__init__.py");
+    if (!fs.existsSync(init)) fs.writeFileSync(init, "");
+  }
   fs.writeFileSync(path.join(dir, "KratosMultiphysics", "RomApplication", "rom_manager.py"), `
 import json, KratosMultiphysics
 class RomManager:

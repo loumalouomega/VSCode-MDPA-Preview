@@ -846,7 +846,7 @@ export function registerAllTools(server: McpServer): void {
     "case_validate",
     {
       description:
-        "Preflight a case setup against a mesh and its problemtype declaration, as structured findings (severity error|warning|info, a stable code, and a target naming the SubModelPart/condition/law/Properties id/entities concerned). The core is a dry run of case_generate (nothing is written), so a report with no error — `ok: true` — is a case that generates; the converse does not hold, because preflight is stricter than Generate for a SubModelPart that is not in the mesh and a condition the problemtype does not declare (Generate skips both). On top of what Generate refuses on (material values, time stepping, coupled-domain interfaces, the problemtype's own checks) it reports computing parts without a material, materials off the computing parts, empty / wrong-kind / unused SubModelParts, Properties ids the mesh does not define or never uses, and mesh-wide quality concerns (bad-band metrics, isolated nodes, inconsistently wound or zero-area surface faces; open shell boundaries are not reported). `issues` lists error messages only, `advisories` the warnings and info. Reads <stem>.kratoscase.json next to the mesh unless `state`/`casePath` is given.",
+        "Preflight a case setup against a mesh and its problemtype declaration, as structured findings (severity error|warning|info, a stable code, and a target naming the SubModelPart/condition/law/Properties id/entities concerned). The core is a dry run of case_generate (nothing is written), so a report with no error — `ok: true` — is a case that generates; the converse does not hold, because preflight is stricter than Generate for a SubModelPart that is not in the mesh and a condition the problemtype does not declare (Generate skips both). On top of what Generate refuses on (material values, time stepping, coupled-domain interfaces, the problemtype's own checks) it reports computing parts without a material, materials off the computing parts, empty / wrong-kind / unused SubModelParts, Properties ids the mesh does not define or never uses, and mesh-wide quality concerns (bad-band metrics, isolated nodes, inconsistently wound or zero-area surface faces; open shell boundaries are not reported). `issues` lists error messages only, `advisories` the warnings and info. `applications` lists the Kratos applications the case needs (the generated driver checks them before running); `checkInstall` asks the configured Python which of them it cannot import. Reads <stem>.kratoscase.json next to the mesh unless `state`/`casePath` is given.",
       inputSchema: {
         meshPath: z.string().describe("Path to the mesh (any supported format)"),
         problemtype: z.string().optional().describe("Problemtype id (default: the state's problemtypeId)"),
@@ -854,6 +854,10 @@ export function registerAllTools(server: McpServer): void {
         casePath: z.string().optional().describe("Path to a .kratoscase.json file"),
         quality: z.boolean().optional().describe("Run the mesh-quality checks (default true)"),
         qualityMaxElements: z.number().int().positive().optional().describe("Skip the quality checks above this many cells (default 200000)"),
+        checkInstall: z.boolean().optional().describe("Also ask the configured Python which of the case's Kratos applications (reported as `applications`) it cannot import; the answer is `install.missingApplications`"),
+        python: z.string().optional().describe("Python executable for checkInstall (default python3 / python)"),
+        installPath: z.string().optional().describe("Compiled Kratos build root for checkInstall (empty = pip-installed Kratos)"),
+        extraEnv: z.record(z.string(), z.string()).optional().describe("Extra environment variables for checkInstall"),
         workspaceDirs: WORKSPACE_DIRS,
       },
     },
@@ -964,6 +968,7 @@ export function registerAllTools(server: McpServer): void {
     {
       description:
         "Start a Kratos solve for a mesh (generates the case files first unless generate:false). " +
+        "Before launching it asks the configured Python whether it can import every Kratos application the case needs and refuses naming the missing ones; when that check cannot run the launch proceeds and the driver checks them itself (exit code 3). " +
         "The server never OWNS the run: its stdout is the JSON-RPC transport and it exits with its client, so the solver is always spawned DETACHED, with stdout and stderr appended to <stem>.kratosrun.log, and it survives this process by construction. " +
         "waitSeconds (default 10, 0 = return at once) is how long to block for the exit — one knob, not a wait flag plus a timeout. " +
         "Expiry is NOT a failure: it returns status \"running\" with the pid and the log path and the run continues, because there is no server-side timeout and the client's own request timeout is a number this process cannot observe. The absence of exitCode is what says the run has not ended. " +

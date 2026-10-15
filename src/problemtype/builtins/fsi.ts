@@ -16,8 +16,10 @@
  *
  * One source mesh is sliced into `<stem>_Fluid.mdpa` and `<stem>_Structural.mdpa`
  * by the SubModelParts assigned in each domain. The interface is marked by one
- * fluid and one structure SubModelPart (paired in the order assigned); Generate
- * refuses a case missing either, or with unequal counts.
+ * fluid and one structure SubModelPart per pair (paired in the order assigned);
+ * Generate refuses a case missing either, with unequal counts, with a side that
+ * has no boundary cells of the right dimension, or with a pair that does not
+ * overlap (see interfaceCheck.ts).
  *
  * Not solver-verified in this repository: the shape follows GiDInterface's writer.
  */
@@ -36,6 +38,7 @@ import type {
 import { fluid } from "./fluid";
 import { structural } from "./structural";
 import { prefixFields, unprefixValues, vectorConstraint } from "./common";
+import { validateFluidTimeStepping } from "../timeStepEstimate";
 
 const F = "f_";
 const S = "s_";
@@ -179,6 +182,14 @@ const decl: ProblemtypeDeclaration = {
   icon: "ptFsi",
   family: "coupled",
   analysisStage: "KratosMultiphysics.FSIApplication.fsi_analysis",
+  // What partitioned_fsi_base_solver.py imports (Kratos master, 2026-10-15).
+  couplingInterfaces: [{ label: "FSI interface", sides: ["fluidInterface", "structureInterface"] }],
+  applications: [
+    "FluidDynamicsApplication",
+    "StructuralMechanicsApplication",
+    "MeshMovingApplication",
+    "MappingApplication",
+  ],
   modelPartName: "FluidModelPart",
   materialsFileName: "FluidMaterials.json",
   partsCondition: FLUID_PARTS,
@@ -258,16 +269,13 @@ function interfaces(ctx: GenContext): { fluid: string[]; structure: string[] } {
 }
 
 export const fsi = defineProblemtype(decl, {
-  validate: (ctx) => {
-    const { fluid: fl, structure: st } = interfaces(ctx);
-    if (fl.length > 0 && st.length > 0 && fl.length !== st.length) {
-      return [
-        `The interface needs one structure SubModelPart per fluid SubModelPart (they are paired in the order assigned): ` +
-          `${fl.length} fluid vs ${st.length} structure.`,
-      ];
-    }
-    return [];
-  },
+  // Interface pairing, dimension and overlap are checked by the generator from
+  // `couplingInterfaces`; the fluid's time stepping is checked here because its
+  // values carry the `f_` prefix the generator's own check does not look for.
+  validate: (ctx) =>
+    validateFluidTimeStepping(unprefixValues(ctx.values, F))
+      .filter((issue) => issue.severity === "error")
+      .map((issue) => issue.message),
   buildProcess: (cond, a, ctx) =>
     cond.id.startsWith(F)
       ? fluid.buildProcess(own(cond, F, fluid.decl.conditions), a, ctx)

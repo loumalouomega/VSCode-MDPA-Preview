@@ -252,9 +252,12 @@ test("fsi: a missing or unbalanced interface refuses generation, naming what to 
 
   const unbalanced = fsiState();
   unbalanced.assignments.push({ conditionId: "fluidInterface", smpPath: "Inlet", values: {} });
-  await assert.rejects(() => generateCase(fsi, model, unbalanced, "flap"), /2 fluid vs 1 structure/);
+  await assert.rejects(() => generateCase(fsi, model, unbalanced, "flap"), /FSI interface: 2 SubModelParts assigned as "FSI fluid interface" but 1 as/);
+  // The node-only part is refused too: a mapper needs faces.
+  await assert.rejects(() => generateCase(fsi, model, unbalanced, "flap"), /"Inlet" \(FSI fluid interface\) has no surface/);
+  // The pairing is the generator's job now; the hook checks only the fluid time stepping.
   const ctx = buildGenContext(fsi, model, unbalanced, "flap", []);
-  assert.equal((await fsi.validate(ctx)).length, 1);
+  assert.deepEqual(await fsi.validate(ctx), []);
 
   const noParts = fsiState();
   noParts.assignments = noParts.assignments.filter((a) => a.conditionId !== "s_parts");

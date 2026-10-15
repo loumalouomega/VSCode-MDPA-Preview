@@ -698,6 +698,7 @@ const decl: ProblemtypeDeclaration = {
   family: "optimization",
   primaryDocumentName: OPTIMIZATION_DOCUMENT,
   driverScriptName: "MainKratosOpt.py",
+  applications: ["OptimizationApplication"],
   sections: [
     ...structural.decl.sections.map((s) => (s.id === "problem" ? { ...s, label: "Primal analysis" } : s)),
     {

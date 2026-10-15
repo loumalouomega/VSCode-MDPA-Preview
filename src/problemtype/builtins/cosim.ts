@@ -143,6 +143,9 @@ const decl: ProblemtypeDeclaration = {
   icon: "ptCoupling",
   family: "coupled",
   analysisStage: "KratosMultiphysics.CoSimulationApplication.co_simulation_analysis",
+  // The two Kratos wrappers and the kratos_mapping data transfer operator.
+  applications: ["FluidDynamicsApplication", "StructuralMechanicsApplication", "MappingApplication"],
+  couplingInterfaces: [{ label: "Coupling interface", sides: ["fluidInterface", "structureInterface"] }],
   modelPartName: "FluidModelPart",
   materialsFileName: "FluidMaterials.json",
   primaryDocumentName: PRIMARY_DOCUMENT,

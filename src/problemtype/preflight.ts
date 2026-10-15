@@ -65,6 +65,8 @@ export interface PreflightReport {
   counts: Record<FindingSeverity, number>;
   /** Most severe first; stable within a severity. */
   findings: Finding[];
+  /** The Kratos applications the case needs (from the dry run); absent when it was refused. */
+  applications?: string[];
 }
 
 export interface PreflightOptions {
@@ -188,11 +190,13 @@ export async function preflightCase(
   const knownPaths = new Set(subModelPartPaths(model.subModelParts));
   const partIds = new Set(partsConditionIds(decl));
 
+  let applications: string[] | undefined;
   // --- 1. Dry run of the generator: everything it refuses on is an error. ---
   try {
     const plan = planCaseMesh(runtime, model, state, stem, opts.isMdpaSource ?? true);
     for (const w of plan.warnings) add("warning", "plan-warning", w);
     const out = await generateCase(runtime, plan.caseModel, state, plan.caseStem);
+    applications = out.applications;
     for (const w of out.warnings) {
       if (COVERED_GENERATOR_WARNING.some((re) => re.test(w))) continue;
       add("warning", "generate-warning", w);
@@ -395,5 +399,5 @@ export async function preflightCase(
     .map((x) => x.f);
   const counts: Record<FindingSeverity, number> = { error: 0, warning: 0, info: 0 };
   for (const f of ordered) counts[f.severity]++;
-  return { ok: counts.error === 0, counts, findings: ordered };
+  return { ok: counts.error === 0, counts, findings: ordered, ...(applications ? { applications } : {}) };
 }

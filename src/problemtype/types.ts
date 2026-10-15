@@ -343,6 +343,15 @@ export interface ProblemtypeDeclaration {
   primaryDocumentName?: string;
   /** The driver script the run launches. Absent means "MainKratos.py". */
   driverScriptName?: string;
+  /**
+   * Kratos applications the case needs beyond what the generator can see: the
+   * analysis stage's application and every application named in the generated
+   * documents (`kratos_module`, `"LinearSolversApplication.sparse_lu"`…) are
+   * found automatically. An entry may carry a `when` rule over the section
+   * values (MeshMovingApplication only when ALE is on). The driver checks the
+   * union before running and the run path probes it before launching.
+   */
+  applications?: RequiredApplication[];
   domainSizes: (2 | 3)[];
   /** Problem-data + solver-settings forms. Field ids must be unique across sections. */
   sections: SectionSpec[];
@@ -362,6 +371,13 @@ export interface ProblemtypeDeclaration {
    * domain's, kept for callers that know one domain.
    */
   domains?: DomainSpec[];
+  /**
+   * Coupling interfaces of a coupled problemtype: pairs of `noProcess`
+   * conditions, one per domain (fluid side, structure side). Generate pairs
+   * their assignments by order and refuses a count mismatch, a side without
+   * boundary cells of the right dimension, or a pair that does not overlap.
+   */
+  couplingInterfaces?: CouplingInterfaceSpec[];
   /** Repeatable named-entry lists (see `CollectionSpec`), drawn as the "Setup" stage. */
   collections?: CollectionSpec[];
   /**
@@ -372,6 +388,15 @@ export interface ProblemtypeDeclaration {
   meshNaming?: MeshNamingSpec;
   output: OutputSpec;
 }
+
+/** One coupling interface: the label refusals use and its two side conditions. */
+export interface CouplingInterfaceSpec {
+  label: string;
+  sides: [string, string];
+}
+
+/** A required Kratos application, optionally only when a rule over the values holds. */
+export type RequiredApplication = string | { application: string; when?: VisibleRule | VisibleRule[] };
 
 /** One condition applied to one SubModelPart with its parameter values. */
 export interface Assignment {
@@ -520,4 +545,6 @@ export interface GeneratedCase {
   primaryDocumentName: string;
   /** The file name `mainScript` is written under and the run launches (else MainKratos.py). */
   driverScriptName: string;
+  /** The Kratos applications the case needs (sorted); the driver checks them first. */
+  applications: string[];
 }

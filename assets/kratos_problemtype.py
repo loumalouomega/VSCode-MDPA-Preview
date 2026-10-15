@@ -60,8 +60,12 @@ Compact reference (mirrors the JavaScript API, spelled snake_case)::
                        icon=None, family=None,   # family: solid|fluid|thermal|coupled|particles|workflow
                        solver_settings=None,     # required hook
                        build_process=None, post_process=None, main_script=None,
-                       domains=None, extra_files=None, validate=None)
-        Registers the problemtype. output = {"nodal_defaults": [...],
+                       domains=None, extra_files=None, validate=None,
+                       collections=None, applications=None)
+        Registers the problemtype. applications = Kratos applications the
+        case needs beyond the analysis stage's and those its documents name
+        (names, or application(name, when=rule)); the generated driver checks
+        them before running. output = {"nodal_defaults": [...],
         "gauss_defaults": [...]}. parts_condition names the pseudo-condition
         whose assignments mark the computing domain (emits no process).
         mesh_naming = {"elements": <base>, "conditions": <base>} declares the
@@ -93,6 +97,7 @@ readable Python traceback instead of a cryptic error at generate time.
 """
 
 import json
+import re
 
 FIELD_TYPES = ("number", "int", "string", "bool", "enum", "vector3",
                "ref", "smp", "smpList", "numberList", "stringList", "caseValue")
@@ -400,6 +405,34 @@ def _normalize_mesh_naming(mesh_naming, ptid):
     return out or None
 
 
+def application(name, when=None):
+    """A required Kratos application, optionally only when a rule holds.
+
+    ``when`` uses the ``visible_when`` spelling (``{"field", "equals"}`` or
+    ``{"field", "one_of"}``, or a list of rules that must all hold) over the
+    section values. Applications named by the analysis stage or by any module
+    in the generated documents are found automatically; declare only the rest.
+    """
+    _require_str(name, "application name")
+    if not re.match(r"^[A-Z][A-Za-z0-9]*Application$", name):
+        raise ValueError(f'application {name!r}: expected a Kratos application name such as "FluidDynamicsApplication"')
+    if when is None:
+        return name
+    rules = when if isinstance(when, (list, tuple)) else [when]
+    out = []
+    for rule in rules:
+        if (not isinstance(rule, dict) or "field" not in rule
+                or ("equals" not in rule and "one_of" not in rule)):
+            raise ValueError(f'application {name!r}: when needs {{"field", "equals"}} or {{"field", "one_of"}}')
+        r = {"field": rule["field"]}
+        if "equals" in rule:
+            r["equals"] = rule["equals"]
+        else:
+            r["oneOf"] = list(rule["one_of"])
+        out.append(r)
+    return {"application": name, "when": out[0] if not isinstance(when, (list, tuple)) else out}
+
+
 def define_problemtype(id, name, analysis_stage, model_part_name,
                        materials_file_name, domain_sizes,
                        sections=(), conditions=(), material_laws=(),
@@ -407,7 +440,8 @@ def define_problemtype(id, name, analysis_stage, model_part_name,
                        description=None, icon=None, family=None,
                        solver_settings=None, build_process=None,
                        post_process=None, main_script=None,
-                       domains=None, extra_files=None, validate=None, collections=None):
+                       domains=None, extra_files=None, validate=None, collections=None,
+                       applications=None):
     """Registers a problemtype; returns its handle (used internally).
 
     See the module docstring for every argument. Raises ``ValueError`` on a
@@ -468,6 +502,12 @@ def define_problemtype(id, name, analysis_stage, model_part_name,
         decl["domains"] = [dict(d) for d in domains]
     if collections:
         decl["collections"] = collections
+    if applications is not None:
+        apps = [application(a) if isinstance(a, str) else a for a in applications]
+        for a in apps:
+            if not isinstance(a, (str, dict)):
+                raise ValueError(f'problemtype "{id}": applications entries must be names or application(...)')
+        decl["applications"] = apps
     naming = _normalize_mesh_naming(mesh_naming, id)
     if naming is not None:
         decl["meshNaming"] = naming

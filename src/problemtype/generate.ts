@@ -24,6 +24,8 @@ import { asNum, dottedModelPart, fieldDefault, flattenValues } from "./api";
 import { validateMaterialAssignment } from "./materialCatalog";
 import { validateFluidTimeStepping } from "./timeStepEstimate";
 import { collectionProblems, resolveCollections } from "./collections";
+import { applicationCheckPy, requiredApplications } from "./applications";
+import { interfacePairProblems } from "./interfaceCheck";
 
 /** Flattens the SubModelPart tree into slash-separated paths (depth-first). */
 export function subModelPartPaths(parts: SubModelPart[]): string[] {
@@ -334,6 +336,7 @@ export async function generateCase(
   const collectionIssues = collectionProblems(decl, state, ctx.subModelParts).map((p) => p.message);
   const missing = [
     ...domainProblems(decl, state.assignments),
+    ...interfacePairProblems(decl, model, state.assignments, ctx.domainSize),
     ...collectionIssues,
     ...(collectionIssues.length === 0 ? await runtime.validate(ctx) : []),
   ];
@@ -383,7 +386,12 @@ export async function generateCase(
     materialsText = materialJson(materials, runtime);
   }
   extraFiles.push(...(await runtime.extraFiles(ctx, materials)));
-  const mainScript = await runtime.mainScript(ctx);
+  const applications = requiredApplications(decl, values, [
+    projectParameters,
+    ...extraFiles.filter((f) => f.name.toLowerCase().endsWith(".json")).map((f) => parseJsonOrNull(f.content)),
+  ]);
+  // The prelude checks the applications before the driver reads or writes anything.
+  const mainScript = applicationCheckPy(applications) + (await runtime.mainScript(ctx));
 
   return {
     projectParameters: JSON.stringify(projectParameters, null, 4) + "\n",
@@ -394,5 +402,14 @@ export async function generateCase(
     warnings,
     primaryDocumentName: decl.primaryDocumentName ?? DEFAULT_PRIMARY_DOCUMENT,
     driverScriptName: decl.driverScriptName ?? DEFAULT_DRIVER_SCRIPT,
+    applications,
   };
+}
+
+function parseJsonOrNull(text: string): JsonValue {
+  try {
+    return JSON.parse(text) as JsonValue;
+  } catch {
+    return null;
+  }
 }
