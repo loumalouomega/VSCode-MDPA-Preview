@@ -195,7 +195,11 @@ test("cosim: one coupling document, one document per participant, and the driver
   assert.ok(cfd.solver_settings.skin_parts.includes("FluidModelPart.FluidWall"));
   assert.ok(cfd.solver_settings.skin_parts.includes("FluidModelPart.Inlet"));
   assert.ok(JSON.stringify(cfd.processes).includes("FluidModelPart.Inlet"));
-  assert.ok(!JSON.stringify(cfd.processes).includes("FluidModelPart.FluidWall"));
+  // The interface appears in the fluid's processes exactly once: as the no-slip
+  // constraint that makes the solver export its reaction as the structure's load.
+  assert.equal((JSON.stringify(cfd.processes).match(/FluidModelPart\.FluidWall/g) ?? []).length, 1);
+  const noSlip = cfd.processes.constraints_process_list.filter((p: { python_module: string }) => p.python_module === "apply_noslip_process");
+  assert.deepEqual(noSlip.map((p: { Parameters: { model_part_name: string } }) => p.Parameters.model_part_name), ["FluidModelPart.FluidWall"]);
 
   assert.equal(csm.analysis_stage, structural.decl.analysisStage);
   assert.equal(csm.problem_data.problem_name, "flap_Structural");
@@ -430,6 +434,10 @@ test("cosim: strong coupling with MVQN writes the Mok benchmark's criteria, acce
     "FluidModelPart.FluidWall",
     "FluidModelPart.Inlet",
   ]);
+  // The ALE hold keeps the mesh on the interface; the no-slip constraint keeps
+  // the velocity, which is what the ale_fluid solver's mesh-velocity copy needs.
+  const noSlip = cfd.processes.constraints_process_list.filter((p: { python_module: string }) => p.python_module === "apply_noslip_process");
+  assert.deepEqual(noSlip.map((p: { Parameters: { model_part_name: string } }) => p.Parameters.model_part_name), ["FluidModelPart.FluidWall"]);
   assert.deepEqual(ale[0].Parameters, { model_part_name: "FluidModelPart.FluidWall", variable_name: "MESH_DISPLACEMENT", constrained: [true, true, true] });
   assert.equal(ale[1].Parameters.variable_name, "MESH_DISPLACEMENT");
   assert.ok(cfd.output_processes.vtk_output[0].Parameters.nodal_solution_step_data_variables.includes("MESH_DISPLACEMENT"));

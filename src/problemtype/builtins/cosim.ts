@@ -527,6 +527,17 @@ const fixMeshDisplacement = (modelPart: string): JsonObject => ({
 const withMeshDisplacement = (vars: string[], ale: boolean): string[] =>
   ale && !vars.includes("MESH_DISPLACEMENT") ? [...vars, "MESH_DISPLACEMENT"] : vars;
 
+/** A coupling interface is a no-slip wall. Constraining its velocity is what
+ * makes the fluid's REACTION carry the wall load: the ALE solver copies the
+ * mesh velocity onto the interface before each solve, but only a constrained
+ * (fixed) velocity turns that copy into an exported reaction. */
+const noSlipInterface = (modelPart: string): JsonObject => ({
+  python_module: "apply_noslip_process",
+  kratos_module: "KratosMultiphysics.FluidDynamicsApplication",
+  process_name: "ApplyNoSlipProcess",
+  Parameters: { model_part_name: modelPart },
+});
+
 export const cosim = defineProblemtype(decl, {
   // Interface pairing, dimension and overlap are checked by the generator from
   // `couplingInterfaces`.
@@ -583,6 +594,14 @@ export const cosim = defineProblemtype(decl, {
     fluidSettings.skin_parts = [
       ...((fluidSettings.skin_parts as JsonValue[] | undefined) ?? []),
       ...fl.map((smp) => `${domains.fluid.modelPartName}.${dotted(smp)}`),
+    ];
+    // A skin wall that nothing constrains carries no reaction out of the fluid
+    // solve, so the structure would receive an empty load: constrain the
+    // interface velocity (the AleFluidSolver then sets it from the mesh).
+    const fluidProcesses = fluidDocument.processes as JsonObject;
+    fluidProcesses.constraints_process_list = [
+      ...((fluidProcesses.constraints_process_list as JsonValue[] | undefined) ?? []),
+      ...fl.map((smp) => noSlipInterface(`${domains.fluid.modelPartName}.${dotted(smp)}`)),
     ];
     const structureDocument = await participantDocument(
       structural,
