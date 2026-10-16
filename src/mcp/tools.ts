@@ -4,6 +4,7 @@ import { boundSteps, convergenceToCsv, summarizeConvergence, type ConvergenceSte
 import { readConvergence } from '../problemtype/convergenceFile';
 import { optimizationFormulation, optimizationSummaryToCsv, summarizeOptimization } from "../problemtype/optimization/summaryLog";
 import { readOptimization } from "../problemtype/optimization/summaryLogFile";
+import { buildOptimizedCad } from "../problemtype/optimization/cadExport";
 import { romStatus } from "../problemtype/rom/romResults";
 import { isRomCase, readRomResults } from "../problemtype/rom/romResultsFile";
 import { MonitorDefinition, monitorsToCsv, upsertMonitor, validateMonitor } from '../problemtype/monitors';
@@ -4063,6 +4064,69 @@ export async function caseOptimization(args: { meshPath: string; limit?: number;
     decimated: bounded.decimated,
     warnings: read.parsed.warnings,
     ...(written ? { csv: written } : {}),
+  };
+}
+
+/**
+ * The optimized geometry of an OptimizationApplication case as CAD (STEP):
+ * the latest finished design-field frame written through the `.step` pipeline
+ * (`problemtype/optimization/cadExport.ts` — the same core the Runs command
+ * and the Optimization progress panel share, so the same fit semantics, the
+ * `.cad.json` companion and the same refusals).
+ *
+ * `shape` writes the frame mesh (vertex morphing moves the nodes, so the frame
+ * IS the optimized geometry); `topology` contours `densityField` at
+ * `threshold` first (an Elemental field is averaged to the nodes; the
+ * threshold is always reported because it defines the solid).
+ */
+export async function caseOptimizationCad(args: {
+  meshPath: string;
+  mode?: "shape" | "topology";
+  densityField?: string;
+  threshold?: number;
+  /** The `.step` fit controls (see StepFitOptions); `false` writes the faceted solid only. */
+  fitCad?: StepFitOptions | false;
+  outputPath?: string;
+  excludeNewest?: boolean;
+}): Promise<object> {
+  const abs = path.resolve(args.meshPath);
+  if (!fs.existsSync(abs)) throw new Error(`File not found: ${abs}`);
+  const caseDir = path.dirname(abs);
+  const { status } = readRun(abs);
+  if (args.mode !== undefined && args.mode !== "shape" && args.mode !== "topology") {
+    throw new Error(`mode must be "shape" or "topology" (got ${JSON.stringify(args.mode)}).`);
+  }
+  const out = await buildOptimizedCad(caseDir, {
+    mode: args.mode,
+    densityField: args.densityField,
+    threshold: args.threshold,
+    fitCad: args.fitCad,
+    excludeNewest: args.excludeNewest,
+  });
+  const dest = args.outputPath ? path.resolve(args.outputPath) : path.join(caseDir, `${path.basename(caseDir)}_optimized.step`);
+  if (!dest.toLowerCase().endsWith(".step")) throw new Error("outputPath must end in .step.");
+  fs.mkdirSync(path.dirname(dest), { recursive: true });
+  fs.writeFileSync(dest, out.data);
+  const companions: string[] = [];
+  for (const c of out.companions) {
+    const companionPath = path.join(path.dirname(dest), c.name);
+    fs.mkdirSync(path.dirname(companionPath), { recursive: true });
+    fs.writeFileSync(companionPath, c.data);
+    companions.push(companionPath);
+  }
+  return {
+    meshPath: abs,
+    status: status ?? "none",
+    step: dest,
+    companions,
+    frame: out.frame.fileName,
+    frameStep: out.frame.step,
+    mode: out.mode,
+    ...(out.densityField !== undefined ? { densityField: out.densityField } : {}),
+    ...(out.threshold !== undefined ? { threshold: out.threshold } : {}),
+    ...(out.averagedToNodal ? { averagedToNodal: true } : {}),
+    notes: out.notes,
+    warnings: out.diagnostics.map((d) => d.message),
   };
 }
 

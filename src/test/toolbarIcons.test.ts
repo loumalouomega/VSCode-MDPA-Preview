@@ -10,6 +10,9 @@ const EXPECTED_IDS: ToolbarIconId[] = [
   "advanced", "average",
   "beam",
   "bookmark",
+  // the mesh → CAD solid glyph (File ▸ Export ▸ CAD group header, the
+  // optimization panel's CAD button) — faceted patch into a fitted cylinder
+  "cad",
   // the Mesh Modification sidebar's subcategory glyphs (src/webviewChrome.ts's
   // .sb-subsection-header rows), one per collapsible group
   "catFields", "catRemeshing", "catSelection", "catSmoothing", "catSpheres", "catTopology",

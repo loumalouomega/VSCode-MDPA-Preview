@@ -275,6 +275,14 @@ test("MESHIO_WRITER_KEYS is readers minus the read-only keys, plus the two figur
   }
   assert.ok(!MESHIO_READ_ONLY_KEYS.includes("frd"), "frd has a writer since 16.41.0");
   assert.ok(MESHIO_WRITER_KEYS.includes("frd"));
+  // 17.3.0 gives six more readers a writer: the MAPDL result file, the
+  // LS-DYNA state database, the Marc post file, the Nastran HDF5 database,
+  // the Radioss animation files and the FEBio plot file. `ansys_rst_cyclic`
+  // and `iges` stay read-only: no writer exists upstream for either.
+  for (const key of ["ansys_rst", "lsdyna_d3plot", "marc_t19", "nastran_h5", "radioss_anim", "xplt"]) {
+    assert.ok(!MESHIO_READ_ONLY_KEYS.includes(key), `${key} has a writer since 17.3.0`);
+    assert.ok(MESHIO_WRITER_KEYS.includes(key), `${key} is a valid outputFormat key`);
+  }
   // `gltf` was write-only until 17.0.0 gave it a reader; 17.2.0 routes the
   // reads (.glb/.gltf), so the key is a reader AND a writer now — its writer
   // stays without an extension route (no consumer emits glTF), reachable only
@@ -285,10 +293,10 @@ test("MESHIO_WRITER_KEYS is readers minus the read-only keys, plus the two figur
 });
 
 test("the keys we never route stay out of both tables, on purpose", () => {
-  // These three ARE in the live artifact's availableFormats(), so their absence
+  // These four ARE in the live artifact's availableFormats(), so their absence
   // is a decision rather than drift — see MESHIO_READER_KEYS' docblock. The
   // tables are a superset of what we route, never a mirror of the registry.
-  for (const key of ["mdpa", "gmsh22", "vti"]) {
+  for (const key of ["mdpa", "gmsh22", "vti", "neuroglancer"]) {
     assert.ok(!MESHIO_READER_KEYS.includes(key), `${key} is not a reader key here`);
   }
   // `vti` arrived upstream in the 9.22.0 -> 10.14.0 jump and is the one that
@@ -299,6 +307,12 @@ test("the keys we never route stay out of both tables, on purpose", () => {
   assert.ok(!MESHIO_WRITER_KEYS.includes("vti"), "vti is not a writer key here");
   assert.ok(!(".vti" in MESHIO_WRITE_FORMAT), "no extension routes to it either");
   assert.ok(!(".vti" in MESHIO_READ_CANDIDATES), "vtkXmlParser.ts owns .vti on read");
+  // `neuroglancer` is native in the 17.3.0 registry (both directions) but the
+  // precomputed format is a directory of shards, not a file — nothing routes
+  // to it, and the single-file read staging and single-path write contract
+  // cannot express it. Its reason lives in UNROUTED_READER_REASONS.
+  assert.ok(!MESHIO_READER_KEYS.includes("neuroglancer"), "neuroglancer is not a reader key here");
+  assert.ok(!MESHIO_WRITER_KEYS.includes("neuroglancer"), "neuroglancer is not a writer key here");
 });
 
 test("openfoam both writes AND reads, and stays out of the header-only path", () => {

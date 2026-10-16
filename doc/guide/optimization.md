@@ -84,12 +84,14 @@ Run the case with **Run case** as for any other problemtype. **Stop** asks the o
 - each constraint's standardized value against the iteration, with a dashed zero line (at or below zero is satisfied);
 - the last iterations as a table.
 
-Its buttons open the full history in the [Plots workspace](./scientific-plots), open the design fields, and export the summary as CSV. The panel refreshes as the optimizer writes new iterations.
+Its buttons open the full history in the [Plots workspace](./scientific-plots), open the design fields, export the summary as CSV, and export the final optimized geometry as STEP. The panel refreshes as the optimizer writes new iterations.
 
-**Kratos Runs.** A run of an optimization case shows a row such as *iter 7/10 · objective −10.7% · 1/1 constraints satisfied*. Its context menu has **Plot Optimization History** and **Open Design Fields**.
+**Kratos Runs.** A run of an optimization case shows a row such as *iter 7/10 · objective −10.7% · 1/1 constraints satisfied*. Its context menu has **Plot Optimization History**, **Open Design Fields** and **Export Optimized Geometry as CAD…**.
 
 **Design fields.** With *Write design fields* on, the optimizer writes the controls, their updates and the response gradients per iteration under `Optimization_Results/`. **Open design fields** opens them in the mesh preview with a timeline, one step per iteration; colour by a field such as `YOUNG_MODULUS`, `PHYSICAL_THICKNESS` or a gradient in the Field panel.
 
-**MCP.** `case_optimization` returns the same summary, verdict and rows, and `case_status` carries a compact copy. See [MCP Server](./mcp).
+**Optimized geometry as CAD.** The final design-field frame goes through the [STEP export](./cad-import-export#exporting-an-optimization-result-as-cad): shape runs write the frame mesh (vertex morphing moved the nodes), SIMP runs contour a density field at a threshold first. The fit ask, the `<stem>.cad.json` companion and every refusal are the STEP export's own.
+
+**MCP.** `case_optimization` returns the same summary, verdict and rows, `case_optimization_cad` writes the optimized solid as STEP, and `case_status` carries a compact copy. See [MCP Server](./mcp).
 
 The summary is classified by the response names in the case's own `optimization_parameters.json`, never guessed from column names. A cell that is not a number is a gap, never 0.

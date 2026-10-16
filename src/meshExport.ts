@@ -701,7 +701,12 @@ function exportTitle(ext: ExportableExtension, flavour?: string): string {
  * convention every other prompt on this path follows — while the recommended
  * choice answers `{}`, the kernel's own defaults.
  */
-async function pickStepFit(): Promise<FitCadOptions | false | undefined> {
+/**
+ * Exported for the optimization CAD export, which asks the same fit question
+ * for the same `.step` pipeline (writeStepModel) rather than inventing its
+ * own wording for it.
+ */
+export async function pickStepFit(): Promise<FitCadOptions | false | undefined> {
   const pick = await vscode.window.showQuickPick(
     [
       {

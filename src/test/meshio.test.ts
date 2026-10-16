@@ -59,6 +59,41 @@ test("round-trips through a text format (medit)", async () => {
   assert.equal(back.nodeCount, m.nodeCount);
 });
 
+// --- the 17.3.0 writer batch ------------------------------------------------
+// Medit binary plus the three solver-result writers the bump newly routes:
+// Marc post (.t19), FEBio plot (.xplt) and MAPDL results (.rst). Each writes
+// and reads back through meshio++ itself; the triangle is enough for the
+// binary Medit dispatch (the `b` suffix), while the result writers get a tet.
+const TET_MDPA =
+  "Begin Nodes\n1 0 0 0\n2 1 0 0\n3 0 1 0\n4 0 0 1\nEnd Nodes\n" +
+  "Begin Elements Tetrahedra3D4N\n1 0 1 2 3 4\nEnd Elements\n";
+
+async function tetModel(): Promise<MdpaModel> {
+  const dir = tmpDir();
+  const p = path.join(dir, "tet.mdpa");
+  fs.writeFileSync(p, TET_MDPA);
+  const { parseMeshFile } = await import("../parser/meshFileParser");
+  return parseMeshFile(p);
+}
+
+test("meshio++ 17.3.0: .meshb writes Medit binary and reads it back", async () => {
+  const m = await sampleModel();
+  const { data: bytes } = await writeMeshioBytes(m, ".meshb");
+  assert.ok(bytes.includes(0), "medit binary output is binary");
+  const back = await readMeshioModel("r.meshb", [{ name: "r.meshb", data: bytes }], ".meshb");
+  assert.equal(back.nodeCount, m.nodeCount);
+});
+
+for (const ext of [".t19", ".xplt", ".rst"] as const) {
+  test(`meshio++ 17.3.0: ${ext} writes a solver result file and reads it back`, async () => {
+    const m = await tetModel();
+    const { data: bytes } = await writeMeshioBytes(m, ext);
+    assert.ok(bytes.length > 0, `${ext} writes bytes`);
+    const back = await readMeshioModel(`r${ext}`, [{ name: `r${ext}`, data: bytes }], ext);
+    assert.equal(back.nodeCount, m.nodeCount, `${ext} reads back whole`);
+  });
+}
+
 test("an unreadable .msh names every candidate it tried", async () => {
   await assert.rejects(
     readMeshioModel("x.msh", [{ name: "x.msh", data: Buffer.from("garbage") }], ".msh"),

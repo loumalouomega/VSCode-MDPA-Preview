@@ -21,17 +21,18 @@
  * SET, not merely a count) to be written — a scan proven correct is worth
  * nothing against a field that only partly covers it.
  *
- * What is NOT written, each named in its own diagnostic rather than silently
- * dropped: a Nodal or Conditional field (OpenFOAM's `volField` grammar is
- * cell-centred; a boundary-only Conditional field already has its own
- * export path via `foamBoundaryFields`'s READ-side counterpart, but nothing
- * writes one back — writing a genuine `boundaryField` per-patch VALUE, as
- * opposed to the `zeroGradient` every written field gets, is future work);
- * an Elemental field that does not cover every volume cell (a boundary-only
- * or block-partial one); a field whose component count is not 1 (scalar), 3
- * (vector) or 9 (tensor) — OpenFOAM's three `volField` classes; and a
- * variable name colliding with another qualifying field of the same name
- * (kept: the first, named: the rest).
+ * What is NOT written. A Nodal field is point-centred and meshio++ writes it
+ * itself (a `pointScalarField`), which this writer leaves alone. A Conditional
+ * field has no `volField` home here (writing a genuine `boundaryField` per-patch
+ * VALUE, as opposed to the `zeroGradient` every written field gets, is future
+ * work), so it is skipped silently, as it always was. An Elemental field that
+ * does not cover every volume cell (a boundary-only or block-partial one), a
+ * field whose component count is not 1 (scalar), 3 (vector) or 9 (tensor) —
+ * OpenFOAM's three `volField` classes — and a variable name colliding with
+ * another qualifying field (kept: the first, named: the rest) are each named in
+ * a diagnostic. meshio++'s own cell-centred copies of these fields are dropped
+ * too (see `isCellCentredTimeZeroFile`), so nothing zero-filled stands in for a
+ * field that was refused.
  *
  * `dimensions` is written from the field's own recorded exponents (former roadmap item 12) and
  * is `[0 0 0 0 0 0 0]` only for a field whose dimensions are UNKNOWN — inventing
@@ -235,18 +236,45 @@ export interface OpenFoamFieldWriteResult {
 }
 
 /**
+ * Whether a companion is a time-zero file for a CELL-centred field, i.e. a
+ * `volScalarField`/`volVectorField`/`volTensorField` under `0/`. meshio++
+ * 17.3.0 writes every field of the model into the time directory itself, so
+ * an export would carry its own copy beside ours, and that copy is wrong in
+ * ways this writer does not reproduce: an Elemental field that covers every
+ * cell comes out twice (ours with the recorded dimensions, its own with zeros),
+ * a partial one is zero-filled where it has no value, and a Conditional one is
+ * a single zero-valued cell. `writeOpenFoamFields` drops them, so the only
+ * cell-centred time-zero files in an export are ours. A point-centred copy
+ * (`pointScalarField`, a Nodal field) is upstream's and is kept as written.
+ */
+export function isCellCentredTimeZeroFile(companion: MeshioCompanionFile): boolean {
+  if (!companion.name.startsWith("0/")) return false;
+  const head = new TextDecoder().decode(companion.data.subarray(0, 4096));
+  return /\bclass\s+vol\w+Field\s*;/.test(head);
+}
+
+/** `companions` without meshio++'s cell-centred time-zero copies — the same array when there are none. */
+function withoutCellCentredCopies(companions: MeshioCompanionFile[]): MeshioCompanionFile[] {
+  const kept = companions.filter((c) => !isCellCentredTimeZeroFile(c));
+  return kept.length === companions.length ? companions : kept;
+}
+
+/**
  * Writes every qualifying Elemental field as `0/<VAR>`, appended to
  * `companions` (the writer's own output plus whatever `rewriteOpenFoamPatches`
- * already added/changed). A model with no volume cells or no qualifying
- * field returns `companions` unchanged and `diagnostics` empty — silent,
- * since "nothing to write" is the ordinary case for a mesh-only export.
+ * already added/changed), after dropping meshio++'s own cell-centred time-zero
+ * copies (see `isCellCentredTimeZeroFile`). A model with no volume cells or no
+ * qualifying field gets those copies dropped and nothing appended, with
+ * `diagnostics` left empty — silent, since "nothing to write" is the ordinary
+ * case for a mesh-only export.
  */
 export function writeOpenFoamFields(
   companions: MeshioCompanionFile[],
   model: MdpaModel,
   diagnostics: MdpaDiagnostic[]
 ): OpenFoamFieldWriteResult {
-  if (volumeCellIdsInWriteOrder(model).length === 0) return { companions, diagnostics };
+  const kept = withoutCellCentredCopies(companions);
+  if (volumeCellIdsInWriteOrder(model).length === 0) return { companions: kept, diagnostics };
 
   const boundaryCompanion = companions.find(
     (c) => c.name === "constant/polyMesh/boundary" || c.name.endsWith("/boundary")
@@ -276,6 +304,6 @@ export function writeOpenFoamFields(
     extra.push({ name: `0/${f.variable}`, data: new TextEncoder().encode(text) });
   }
 
-  if (extra.length === 0) return { companions, diagnostics };
-  return { companions: [...companions, ...extra], diagnostics };
+  if (extra.length === 0) return { companions: kept, diagnostics };
+  return { companions: [...kept, ...extra], diagnostics };
 }

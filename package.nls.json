@@ -71,6 +71,7 @@
   "command.kratos.runs.plotMonitors.title": "Plot Monitors",
   "command.kratos.runs.plotOptimization.title": "Plot Optimization History",
   "command.kratos.runs.openDesignFields.title": "Open Design Fields",
+  "command.kratos.runs.exportOptimizedCad.title": "Export Optimized Geometry as CAD…",
   "command.kratos.runs.plotSingularValues.title": "Plot ROM Singular Values",
   "command.kratos.runs.showHromElements.title": "Show HROM Elements",
   "command.kratos.runs.revealCase.title": "Reveal Case Folder",

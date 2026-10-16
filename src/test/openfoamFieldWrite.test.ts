@@ -11,7 +11,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { MeshioCompanionFile } from "../parser/meshio";
-import { volumeCellIdsInWriteOrder, writeOpenFoamFields } from "../parser/openfoamFieldWrite";
+import {
+  isCellCentredTimeZeroFile,
+  volumeCellIdsInWriteOrder,
+  writeOpenFoamFields,
+} from "../parser/openfoamFieldWrite";
 import type { EntityBlock, FieldData, MdpaModel } from "../parser/types";
 
 function hexBlock(name: string, entityId: number, connStart: number): EntityBlock {
@@ -222,6 +226,79 @@ test("no boundary companion: the boundaryField block is empty, not a throw", () 
   );
   const text = Buffer.from(companions.find((c) => c.name === "0/T")!.data).toString("utf8");
   assert.match(text, /boundaryField\n\{\n\}\n/);
+});
+
+/** A time-zero file of the kind meshio++ 17.3.0 writes for a field of its own. */
+function upstreamTimeZero(variable: string, cls: string, marker: string): MeshioCompanionFile {
+  const text =
+    `FoamFile\n{\n    version     2.0;\n    format      ascii;\n    class       ${cls};\n    object      ${variable};\n}\n` +
+    `// ${marker}\ndimensions      [0 0 0 0 0 0 0];\n`;
+  return { name: `0/${variable}`, data: new TextEncoder().encode(text) };
+}
+
+test("isCellCentredTimeZeroFile picks out volField copies under 0/ and nothing else", () => {
+  assert.equal(isCellCentredTimeZeroFile(upstreamTimeZero("A", "volVectorField", "x")), true);
+  assert.equal(isCellCentredTimeZeroFile(upstreamTimeZero("A", "pointScalarField", "x")), false);
+  assert.equal(
+    isCellCentredTimeZeroFile({ name: "constant/polyMesh/owner", data: new TextEncoder().encode("class volScalarField;") }),
+    false,
+    "only time-zero files"
+  );
+});
+
+test("the writer's own copy replaces meshio++'s cell-centred copy; a point-centred copy is kept", () => {
+  const model = baseModel(
+    [hexBlock("HexA", 1, 1), hexBlock("HexB", 2, 5)],
+    [{ kind: "Elemental", variable: "TEMP", components: 1, ids: new Int32Array([1, 2]), values: new Float64Array([111, 222]) }]
+  );
+  const { companions, diagnostics } = writeOpenFoamFields(
+    [
+      ...baseCompanions(),
+      upstreamTimeZero("TEMP", "volScalarField", "upstream-copy"),
+      upstreamTimeZero("NODAL", "pointScalarField", "upstream-point"),
+    ],
+    model,
+    []
+  );
+  assert.deepEqual(diagnostics, []);
+  const temp = companions.filter((c) => c.name === "0/TEMP");
+  assert.equal(temp.length, 1, "one time-zero file per field name");
+  const tempText = Buffer.from(temp[0].data).toString("utf8");
+  assert.doesNotMatch(tempText, /upstream-copy/);
+  assert.match(tempText, /nonuniform List<scalar>\n2\n\(\n111\n222\n\)/);
+  const nodal = companions.find((c) => c.name === "0/NODAL");
+  assert.ok(nodal && /upstream-point/.test(Buffer.from(nodal.data).toString("utf8")), "point-centred copy kept as written");
+});
+
+test("a refused cell-centred field leaves no zero-filled copy of meshio++'s behind", () => {
+  const model = baseModel(
+    [hexBlock("HexA", 1, 1), hexBlock("HexB", 2, 5)],
+    [{ kind: "Elemental", variable: "Q", components: 1, ids: new Int32Array([1]), values: new Float64Array([7]) }]
+  );
+  const { companions, diagnostics } = writeOpenFoamFields(
+    [...baseCompanions(), upstreamTimeZero("Q", "volScalarField", "upstream-copy")],
+    model,
+    []
+  );
+  assert.equal(companions.some((c) => c.name === "0/Q"), false);
+  assert.ok(
+    diagnostics.some((d) => /"Q" does not cover every volume cell \(1 of 2\)/.test(d.message)),
+    JSON.stringify(diagnostics)
+  );
+});
+
+test("a Conditional field's meshio++ copy (one zero-valued cell) is dropped, and the field is skipped silently", () => {
+  const model = baseModel(
+    [hexBlock("HexA", 1, 1), quadBlock("Bottom", 1, 1)],
+    [{ kind: "Conditional", variable: "C", components: 1, ids: new Int32Array([1]), values: new Float64Array([5]) }]
+  );
+  const { companions, diagnostics } = writeOpenFoamFields(
+    [...baseCompanions(), upstreamTimeZero("C", "volScalarField", "upstream-copy")],
+    model,
+    []
+  );
+  assert.equal(companions.some((c) => c.name === "0/C"), false);
+  assert.deepEqual(diagnostics, []);
 });
 
 import { patchBoundaryEntry } from "../parser/openfoamFieldWrite";

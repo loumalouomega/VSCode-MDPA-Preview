@@ -4,12 +4,14 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import { caseGenerate, caseOptimization, caseRom, caseStatus, caseValidate, caseWriteState, problemtypeList } from "../mcp/tools";
+import { caseGenerate, caseOptimization, caseOptimizationCad, caseRom, caseStatus, caseValidate, caseWriteState, problemtypeList } from "../mcp/tools";
 import { defaultCaseState } from "../problemtype/api";
 import { newEntry } from "../problemtype/collections";
 import { optimization, OPTIMIZATION_COLLECTIONS } from "../problemtype/builtins/optimization";
 import { ROM_PARAMETERS, romStructural } from "../problemtype/builtins/rom";
 import { encodeNpy } from "../parser/npyReader";
+import { parseMeshFile } from "../parser/meshFileParser";
+import { writeMeshFile } from "../parser/writers/meshWriter";
 import type { CaseState } from "../problemtype/types";
 
 const MDPA = `Begin Properties 0
@@ -61,6 +63,34 @@ End SubModelPart
 `;
 
 const FIX = path.join(__dirname, "..", "..", "src", "test", "fixtures", "optimization");
+
+/** A unit cube's closed triangle skin — what a shape run's final frame looks like. */
+const CUBE_SKIN_MDPA = `Begin Nodes
+1 0 0 0
+2 1 0 0
+3 1 1 0
+4 0 1 0
+5 0 0 1
+6 1 0 1
+7 1 1 1
+8 0 1 1
+End Nodes
+
+Begin Conditions SurfaceCondition3D3N
+1 0 1 3 2
+2 0 1 4 3
+3 0 5 6 7
+4 0 5 7 8
+5 0 1 2 6
+6 0 1 6 5
+7 0 2 3 7
+8 0 2 7 6
+9 0 3 4 8
+10 0 3 8 7
+11 0 4 1 5
+12 0 4 5 8
+End Conditions
+`;
 
 function meshIn(dir: string): string {
   const file = path.join(dir, "bracket.mdpa");
@@ -146,6 +176,32 @@ test("case_optimization reads the summary the case names; case_status gives the 
   assert.equal(status.status, "none");
   assert.equal(status.optimization.iterations, 11);
   await assert.rejects(caseOptimization({ meshPath: mesh, outputPath: path.join(dir, "x.txt") }), /\.csv/);
+});
+
+test("case_optimization_cad writes the final frame as STEP with the B-rep companion", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "mcp-opt-cad-"));
+  const mesh = meshIn(dir);
+  await caseGenerate({ meshPath: mesh, state: optimizationState() });
+  // A shape run's final iteration looks like this: a closed cube skin (the
+  // design-field frame, not the case mesh).
+  const skinFile = path.join(dir, "skin.mdpa");
+  fs.writeFileSync(skinFile, CUBE_SKIN_MDPA);
+  const skin = await parseMeshFile(skinFile);
+  const frames = path.join(dir, "Optimization_Results");
+  fs.mkdirSync(frames, { recursive: true });
+  fs.writeFileSync(path.join(frames, "Structure_0_4.vtu"), writeMeshFile(skin, ".vtu"));
+  const res = (await caseOptimizationCad({ meshPath: mesh })) as {
+    step: string; companions: string[]; frame: string; mode: string; notes: string[];
+  };
+  assert.equal(res.mode, "shape");
+  assert.equal(res.frame, "Structure_0_4.vtu");
+  assert.ok(res.step.endsWith(".step") && fs.existsSync(res.step), res.step);
+  assert.ok(res.companions.some((c) => c.endsWith(".cad.json")), JSON.stringify(res.companions));
+  assert.ok(res.notes.some((n) => n.includes("fitted CAD B-rep via fitCad")), res.notes.join(" | "));
+  assert.deepEqual(JSON.parse(JSON.stringify(res)), res);
+  // Topology without a density field names the refusal; a non-.step output is refused.
+  await assert.rejects(caseOptimizationCad({ meshPath: mesh, mode: "topology" }), /needs the density field/);
+  await assert.rejects(caseOptimizationCad({ meshPath: mesh, outputPath: path.join(dir, "x.txt") }), /\.step/);
 });
 
 test("case_generate writes a ROM case; case_rom reports its results", async () => {

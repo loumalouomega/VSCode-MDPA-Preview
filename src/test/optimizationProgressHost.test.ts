@@ -43,6 +43,7 @@ function harness(fsPath: string | undefined, status?: string) {
     runStatus: () => status,
     openPlot: (recipe, title) => opened.push({ kind: "plot", title, series: recipe.series.length }),
     openDesignFields: (caseDir, folder, excludeNewest) => opened.push({ kind: "fields", caseDir, folder, excludeNewest }),
+    exportCad: (caseDir, excludeNewest) => opened.push({ kind: "cad", caseDir, excludeNewest }),
     info: (m) => infos.push(m),
   });
   return { host, posts, opened, infos };
@@ -88,9 +89,11 @@ test("plot and design-field requests open what the case names, and explain when 
   fs.writeFileSync(path.join(dir, "summary.csv"), fs.readFileSync(path.join(FIX, "steepest_descent.csv")));
   host.handle({ type: "optimizationPlot" });
   host.handle({ type: "optimizationDesignFields" });
+  host.handle({ type: "optimizationExportCad" });
   assert.deepEqual(opened, [
     { kind: "plot", title: `Optimization — ${path.basename(dir)}`, series: 1 },
     { kind: "fields", caseDir: dir, folder: "Optimization_Results", excludeNewest: false },
+    { kind: "cad", caseDir: dir, excludeNewest: false },
   ]);
   const outside = harness(path.join(os.tmpdir(), "nope.mdpa"));
   outside.host.handle({ type: "optimizationProgressRequest" });

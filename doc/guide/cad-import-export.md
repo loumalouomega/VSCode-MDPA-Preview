@@ -40,6 +40,15 @@ export step to=solid.step          # the fit ask appears, then the save dialog
 export step to=solid.step overwrite=true
 ```
 
+## Exporting an optimization result as CAD
+
+An optimization run's final geometry goes through the same STEP pipeline: the Kratos Runs context menu (**Export Optimized Geometry as CAD…**) and the Optimization progress panel's **Export CAD** button build the solid from the latest finished design-field frame and ask the same fit question. Two modes, because the two control families leave different geometry behind:
+
+- **Shape** writes the frame mesh: vertex morphing moves the nodes, so the frame *is* the optimized geometry.
+- **Topology** contours a density field at a threshold first (an Elemental field is averaged to the nodes; a threshold the field never crosses is a refusal, not an empty solid). The threshold is always reported because it defines the solid.
+
+MCP: `{ "tool": "case_optimization_cad", "args": { "meshPath": "case.mdpa", "mode": "topology", "densityField": "DENSITY", "threshold": 0.5 } }` — same core, `outputPath` defaulting to `<case>_optimized.step`, `fitCad` as in `mesh_convert`, `excludeNewest` dropping a possibly half-written newest frame.
+
 ## IGA: refining and sampling NURBS
 
 A read of a format whose side channel is a NURBS payload — a `.cad.json`, a `.step`/`.igs` file, or an MFEM NURBS `.mesh` — **keeps the patches on the model**. `mesh_info` reports them: `nurbs: {format, patches, faces}`. Two `mesh_derive` kinds run the IGA kernel (the lean build — no OpenCASCADE needed) on that channel:

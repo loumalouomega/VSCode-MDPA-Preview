@@ -80,6 +80,10 @@ export const EXPORT_FORMAT_LABELS: Record<ExportableExtension, string> = {
   ".post.msh": "GiD postprocess (.post.msh + .post.res)",
   ".fil": "Abaqus results (.fil)",
   ".op2": "Nastran results (.op2)",
+  ".t19": "Marc post (.t19)",
+  ".xplt": "FEBio plot (.xplt)",
+  ".rst": "Ansys results (.rst)",
+  ".meshb": "Medit binary (.meshb)",
   ".cad.json": "Kratos CAD JSON (quads and lines)",
   ".h5m": "MOAB H5M",
   ".hmf": "HMF",
@@ -134,7 +138,7 @@ export const EXPORT_MENU_GROUPS: readonly ExportGroup[] = [
   {
     label: "Solvers",
     extensions: [
-      ".msh", ".mesh", ".inp", ".bdf", ".unv", ".vol", ".su2", ".dat",
+      ".msh", ".mesh", ".meshb", ".inp", ".bdf", ".unv", ".vol", ".su2", ".dat",
       ".avs", ".f3grid", ".pf3", ".mfm", ".mphtxt", ".post", ".ugrid", ".poly",
       ".k", ".xml",
       // Each writes a SECOND file (.node / .geo), returned as a companion by
@@ -150,8 +154,9 @@ export const EXPORT_MENU_GROUPS: readonly ExportGroup[] = [
       // registry — see meshExtname in meshioFormats.ts for why that needs care.
       ".post.msh",
       // Solver result-file writers (meshio++ >= 16.42.0): geometry plus the
-      // fields each format has a slot for.
-      ".fil", ".op2",
+      // fields each format has a slot for. 17.3.0 adds the Marc post file
+      // (.t19), the FEBio plot file (.xplt) and the MAPDL result file (.rst).
+      ".fil", ".op2", ".t19", ".xplt", ".rst",
     ],
   },
   // Kratos CAD JSON (meshio++ >= 16.42.0): quads become bilinear NURBS faces and

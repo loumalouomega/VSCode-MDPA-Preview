@@ -7552,6 +7552,7 @@ function renderOptimization(): void {
     onPlot: () => vscode.postMessage({ type: "optimizationPlot" }),
     onDesignFields: () => vscode.postMessage({ type: "optimizationDesignFields" }),
     onExport: () => postAnalysisCsv(optimizationSummaryToCsv(optimizationState), "optimization-summary"),
+    onExportCad: () => vscode.postMessage({ type: "optimizationExportCad" }),
   });
 }
 

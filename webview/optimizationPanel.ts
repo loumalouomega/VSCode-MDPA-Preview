@@ -37,6 +37,7 @@ export interface OptimizationPanelHandlers {
   onPlot(): void;
   onDesignFields(): void;
   onExport(): void;
+  onExportCad(): void;
 }
 
 export function emptyOptimizationPanelState(): OptimizationPanelState {
@@ -199,6 +200,7 @@ export function renderOptimizationPanel(container: HTMLElement, state: Optimizat
   button("Open in Plots", "Objective and constraints in the plotting workspace", handlers.onPlot, noRows);
   button("Design fields", "Open the per-iteration controls and gradients in the timeline viewer", handlers.onDesignFields, !state.designFields);
   button("Export CSV", "Save the summary rows shown as CSV", handlers.onExport, noRows);
+  button("Export CAD", "Write the final optimized geometry as STEP (shape as-is, or a density level set)", handlers.onExportCad, !state.designFields);
   container.appendChild(actions);
 
   const summary = state.summary;
