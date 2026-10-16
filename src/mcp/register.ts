@@ -636,7 +636,7 @@ export function registerAllTools(server: McpServer): void {
     "mesh_convert",
     {
       description:
-        `Convert a mesh between formats: read any supported format, write by output extension (${EXPORTABLE_EXTENSIONS.join(", ")}). Surface formats (.stl/.obj/.ply) receive the boundary triangles of volume meshes. Ambiguous input extensions (.msh, .inp) are resolved by trying the default format and then the alternatives; pass inputFormat/outputFormat to be explicit.`,
+        `Convert a mesh between formats: read any supported format, write by output extension (${EXPORTABLE_EXTENSIONS.join(", ")}). Surface formats (.stl/.obj/.ply and the solid-only .step) receive the boundary skin of volume meshes. Ambiguous input extensions (.msh, .inp) are resolved by trying the default format and then the alternatives; pass inputFormat/outputFormat to be explicit. A .step output auto-fits: when the model's boundary is a closed, all-triangle skin it is fitted with the full artifact's fitCad into a real B-rep (the B-rep also written beside it as <stem>.cad.json); otherwise — or with fitCad=false, or when the fit fails — the faceted writer writes the closed solid directly.`,
       inputSchema: {
         path: meshPath,
         outputPath: z.string().describe("Output file; its extension selects the target format"),
@@ -646,6 +646,12 @@ export function registerAllTools(server: McpServer): void {
           .optional()
           .describe(
             `Force a meshio++ writer instead of inferring from the output extension (${MESHIO_WRITER_KEYS.join(", ")}).`
+          ),
+        fitCad: z
+          .union([z.boolean(), z.record(z.string(), z.unknown())])
+          .optional()
+          .describe(
+            "STEP targets only. false = skip fitting, write the faceted solid. An object carries fitCad options: tolerance (number; <=0 automatic), exactEdges (bool), types (array of plane/sphere/cylinder/cone/torus), meshDeflection (number), maxDemotionRounds (int), freeform (bool), freeformDegree (3-8), freeformMaxControl (int), freeformSplit (bool), fillets (bool), threads (bool); unknown keys are refused by the kernel."
           ),
         timeStep,
         piece,

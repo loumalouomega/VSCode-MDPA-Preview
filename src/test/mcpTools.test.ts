@@ -76,6 +76,34 @@ import { CaseState } from "../problemtype/types";
 
 // Same shape as problemtypeGenerate.test.ts: one tetrahedron (3D) with a
 // volume part and two boundary parts.
+/** A unit cube's closed, consistently wound triangle skin (SurfaceCondition3D3N) — the fitCad showcase. */
+const CUBE_SKIN_MDPA = `Begin Nodes
+1 0 0 0
+2 1 0 0
+3 1 1 0
+4 0 1 0
+5 0 0 1
+6 1 0 1
+7 1 1 1
+8 0 1 1
+End Nodes
+
+Begin Conditions SurfaceCondition3D3N
+1 0 1 3 2
+2 0 1 4 3
+3 0 5 6 7
+4 0 5 7 8
+5 0 1 2 6
+6 0 1 6 5
+7 0 2 3 7
+8 0 2 7 6
+9 0 3 4 8
+10 0 3 8 7
+11 0 4 1 5
+12 0 4 5 8
+End Conditions
+`;
+
 const MDPA_3D = `Begin Properties 0
 End Properties
 
@@ -1232,6 +1260,30 @@ test("mesh_convert round-trips a mesh through an extended text format", async ()
   const model = await parseMeshFile(out);
   assert.equal(model.nodeCount, 4);
   assert.equal(model.blocks.reduce((n, b) => n + b.count, 0), 2);
+});
+
+test("mesh_convert to .step auto-fits the closed skin and writes the B-rep companion", async () => {
+  // A unit cube's closed triangle skin (MDPA Conditions, outward wound) is
+  // exactly what fitCad wants: six plane faces. The companion makes the fit
+  // observable, and `fitCad: false` must produce none.
+  const dir = tmpDir();
+  const mdpa = path.join(dir, "cube.mdpa");
+  fs.writeFileSync(mdpa, CUBE_SKIN_MDPA);
+  const out = path.join(dir, "box.step");
+  const converted = (await meshConvert({ path: mdpa, outputPath: out })) as {
+    warnings: string[];
+  };
+  assert.ok(fs.existsSync(out), "the STEP itself is written");
+  assert.ok(fs.existsSync(path.join(dir, "box.cad.json")), "the fitted B-rep rides beside it");
+  assert.ok(
+    converted.warnings.some((w) => w.includes("fitted CAD B-rep via fitCad")),
+    "the report says which export ran: " + converted.warnings.join(" | ")
+  );
+
+  const faceted = path.join(dir, "faceted.step");
+  await meshConvert({ path: mdpa, outputPath: faceted, fitCad: false });
+  assert.ok(fs.existsSync(faceted));
+  assert.ok(!fs.existsSync(path.join(dir, "faceted.cad.json")), "no companion without the fit");
 });
 
 test("mesh_capabilities reports the live build next to the routing tables", async () => {

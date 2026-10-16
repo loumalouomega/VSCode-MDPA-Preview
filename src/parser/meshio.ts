@@ -1,4 +1,10 @@
-import type { RegionSelector, RegionEdit, AgglomerateOptions } from "@meshioplusplus/wasm";
+import type {
+  AgglomerateOptions,
+  FitCadOptions,
+  FitCadResult,
+  RegionEdit,
+  RegionSelector,
+} from "@meshioplusplus/wasm";
 /**
  * Loader + virtual-filesystem I/O for `@meshioplusplus/wasm` (meshio++'s C++
  * core as WebAssembly), which backs the extended mesh formats — everything
@@ -59,6 +65,11 @@ import {
   MESHIO_READ_CANDIDATES,
   MESHIO_WRITE_FORMAT,
 } from "./meshioFormats";
+// The `.step` export fits the model's boundary skin (see writeStepModel);
+// extractSkin is pure (types + writerCommon only), so this back-reference
+// creates no cycle.
+import { extractSkinModel } from "./extractSkin";
+import { cellCategory, closedTriangleSkin } from "./writers/writerCommon";
 // The same relative-path guard the problem-archive extractor applies to a zip
 // entry: a companion's name is likewise joined onto a real destination folder.
 import { isSafeEntryName } from "./problemZip";
@@ -172,6 +183,23 @@ export interface MeshioModule {
     }>;
     summary: string;
   };
+
+  /**
+   * The FULL artifact's CAD fitter (meshio++ >= 17.0.0; needs OpenCASCADE, so
+   * the lean module throws a `{full: true}` refusal by name). Segments the
+   * closed triangle skin itself and fits each patch: an analytic primitive
+   * where one fits (plane/sphere/cylinder/cone/torus, fillets, blends,
+   * threads), a freeform B-spline patch where none does, and a faceted patch
+   * as the last demotion. `stepPath` writes the solid as AP214 STEP into the
+   * virtual filesystem; the return carries the re-meshed solid (with
+   * `fit_cad:*` cell data), the fit counters, and `info` — the solid's B-rep
+   * in `CadJsonInfo` shape, which `writeMesh(..., "cad_json", {info})` writes
+   * back out. Used by the `.step` export's auto-fit (writeStepModel).
+   *
+   * @throws {Error} on a mesh that is not a closed, consistently wound
+   *   triangle surface, or an unknown options key.
+   */
+  fitCad(mesh: MeshioMesh, options?: FitCadOptions): FitCadResult;
 
   /**
    * The sharp, open, non-manifold and inconsistently wound edges of a surface
@@ -1709,6 +1737,138 @@ function writeMeshToBytes(
 }
 
 /**
+ * The `.step` export: ONE target with auto-fit behaviour (the 17.2.0 "Skin to
+ * CAD" decision), reached through `writeMeshioBytes`'s `fmt === "step"`
+ * intercept — so the UI Export menu, Save As and every MCP write share it.
+ *
+ * Both behaviours write the model's BOUNDARY SKIN (`extractSkinModel`), for
+ * two measured reasons: the faceted `step` writer treats every cell it is
+ * handed as surface (a tetra's first three nodes would be misread as a
+ * triangle and the write refused as inconsistently wound), and `fitCad` wants
+ * exactly the skin. A volume model therefore exports its boundary as the
+ * solid — stated in a diagnostic, never silent.
+ *
+ *  - A closed, consistently wound, all-triangle skin attempts the FULL
+ *    artifact's `fitCad`: analytic faces where primitives fit, demoted
+ *    patches where they do not. The AP214 STEP comes back from `stepPath`,
+ *    and the solid's B-rep also rides beside it as a `<stem>.cad.json`
+ *    companion (via `writeMesh(..., "cad_json", {info})`). The diagnostic
+ *    names the fitted face types so the report says WHICH export ran.
+ *  - Anything else — quad skins, open surfaces, `fitCad: false`, a fit that
+ *    failed or a full artifact that would not load — falls through to the
+ *    faceted `step` writer, WITHOUT `info` (the writer refuses it: "STEP
+ *    writes faceted solids"). Its own refusal of a non-solid surface
+ *    (open edges, bad winding) propagates verbatim rather than being caught:
+ *    it names the exact defect, which is the useful part.
+ *
+ * `opts.fitCad` is the fit controls: an object rides `fitCad` verbatim
+ * (upstream validates keys and values), `false` skips fitting entirely, and
+ * undefined takes the kernel's own defaults. `stepPath` is NOT caller-settable
+ * here — the write always targets its own scratch path (`mio_out/<stem>.step`),
+ * and the caller's object is spread FIRST so it cannot move it.
+ */
+async function writeStepModel(
+  model: MdpaModel,
+  e: string,
+  opts: {
+    diagnostics?: MdpaDiagnostic[];
+    stem?: string;
+    onWarning?: (message: string) => void;
+    provenance?: ProvenanceRequest;
+    fitCad?: FitCadOptions | false;
+  }
+): Promise<MeshioWriteResult> {
+  const note = (message: string) => {
+    opts.diagnostics?.push({ line: 0, message });
+    opts.onWarning?.(message);
+  };
+  const { model: skin, faces } = extractSkinModel(model);
+  if (faces === 0) {
+    throw new Error(
+      "STEP writes a solid's surface, and this mesh has no surface or volume cells to skin."
+    );
+  }
+  // Surface cells survive extractSkin verbatim; only VOLUME cells were
+  // collapsed into boundary faces, and that deserves its own line.
+  if (model.blocks.some((b) => cellCategory(b.vtkCellType) === "volume")) {
+    note(`STEP: volume interiors are not representable — wrote the boundary skin (${faces} faces).`);
+  }
+  const mesh = modelToMeshio(skin, opts.diagnostics ?? [], { dim: 3 });
+
+  if (opts.fitCad !== false && closedTriangleSkin(skin)) {
+    try {
+      const m = await loadMeshioFull();
+      const stem = memfsStem(opts.stem);
+      const name = `${stem}.step`;
+      // fitCad writes `stepPath` itself (AP214, from OpenCASCADE) — it does
+      // not create directories, so the scratch dir is made first, the same
+      // convention writeMeshToBytes uses.
+      const root = "/mio_out";
+      m.FS.mkdir(root);
+      const fit = m.fitCad(mesh, { ...(opts.fitCad ?? {}), stepPath: `${root}/${name}` });
+      if (!fit.valid) {
+        throw new Error(`the fitted B-rep failed OpenCASCADE's validity check`);
+      }
+      let companions: MeshioCompanionFile[] = [];
+      try {
+        // The B-rep, portably: cad_json takes the fit's own mesh + info and
+        // writes the solid back out (measured: reads back with its faces).
+        m.writeMesh(`${root}/${stem}.cad.json`, fit.mesh, "cad_json", { info: fit.info });
+        companions = harvest(m, root, name);
+      } catch (err) {
+        note(
+          `STEP: the ${stem}.cad.json B-rep companion failed (${errText(err)}) — ` +
+            `the .step itself is written.`
+        );
+      }
+      if (opts.provenance) {
+        note("A fitted STEP has no provenance slot; the export report sidecar carries it.");
+      }
+      note(
+        `STEP: fitted CAD B-rep via fitCad — ${describeFitCad(fit)}; ` +
+          `the B-rep also rides beside it as ${stem}.cad.json.`
+      );
+      return { data: m.FS.readFile(`${root}/${name}`) as Uint8Array, companions };
+    } catch (err) {
+      note(
+        `STEP: fitCad did not produce a solid (${errText(err)}) — wrote a faceted solid instead.`
+      );
+    }
+  } else if (opts.fitCad !== false) {
+    note(
+      "STEP: no closed, consistently wound all-triangle skin to fit — wrote a faceted solid " +
+        "(fitCad needs one; Extract Skin gives a volume mesh its boundary, Repair closes a leaky one)."
+    );
+  }
+  const m = await loadMeshio();
+  return writeMeshToBytes(m, mesh, e, "step", opts.stem, opts.provenance);
+}
+
+/** The fitted-face census a fitCad diagnostic reports: which types ran, and what was demoted. */
+function describeFitCad(fit: FitCadResult): string {
+  const named: [string, number][] = [
+    ["plane", fit.numPlane],
+    ["sphere", fit.numSphere],
+    ["cylinder", fit.numCylinder],
+    ["cone", fit.numCone],
+    ["torus", fit.numTorus],
+    ["B-spline patch", fit.numBspline],
+    ["fillet", fit.numFillet],
+    ["thread", fit.numHelical],
+    ["chamfer", fit.numChamfer],
+    ["blend", fit.numBlend],
+  ];
+  const parts = named.filter(([, n]) => n > 0).map(([name, n]) => `${n} ${name}${n === 1 ? "" : "s"}`);
+  if (fit.numFacetedFaces > 0) {
+    parts.push(`${fit.numFacetedFaces} demoted to faceted`);
+  }
+  const faces = parts.length > 0 ? parts.join(", ") : `${fit.numFaces} faceted`;
+  return fit.maxDeviation > 0
+    ? `${faces} (max deviation ${fit.maxDeviation.toPrecision(3)})`
+    : faces;
+}
+
+/**
  * Writes a meshio++ mesh WITHOUT going through an `MdpaModel`. Needed for the
  * one thing our own writers deliberately cannot do: a structured `.vti` lattice
  * (an unstructured model cannot reconstruct the implicit topology), which is
@@ -1769,11 +1929,22 @@ export async function writeMeshioBytes(
     onWarning?: (message: string) => void;
     /** Ask the kernel to embed a provenance block where the format has a slot. */
     provenance?: ProvenanceRequest;
+    /**
+     * The `.step` export's fit controls (writeStepModel): an options object
+     * rides `fitCad` verbatim, `false` skips fitting and writes the faceted
+     * solid directly, and undefined asks the kernel's own defaults. Ignored
+     * by every other format.
+     */
+    fitCad?: FitCadOptions | false;
   } = {}
 ): Promise<MeshioWriteResult> {
   const e = ext.toLowerCase();
   const fmt = opts.format ?? MESHIO_WRITE_FORMAT[e];
   if (!fmt) throw new Error(`meshio++ cannot write "${ext}".`);
+
+  // The `.step` export is NOT a plain writer call: its auto-fit intercept
+  // (fitCad, or the faceted fallback) owns the whole write. See writeStepModel.
+  if (fmt === "step") return writeStepModel(model, e, opts);
 
   const m = await loadMeshio();
   // Capability-driven export (roadmap item 3): MESHIO_WRITE_FORMAT is a

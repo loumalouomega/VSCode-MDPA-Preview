@@ -634,6 +634,18 @@ export const MESHIO_WRITE_FORMAT: Readonly<Record<string, string>> = {
   ".pf3": "flux",
   ".poly": "triangle", // single-file Triangle PSLG
   ".post": "permas",
+  // STEP (meshio++ >= 16.40.0): ONE export target with auto-fit behaviour —
+  // see meshio.ts's writeStepModel. When the model is (or has) a closed
+  // all-triangle skin, the FULL artifact's `fitCad` turns it into a real
+  // B-rep (analytic faces where primitives fit, demoting to faceted patches
+  // where they do not) and the B-rep also rides beside the file as a
+  // `<stem>.cad.json` companion; otherwise — and whenever the fit fails — the
+  // faceted `step` writer (in BOTH artifacts) writes the closed solid's
+  // triangles as planar faces. Either way the input is the model's BOUNDARY
+  // SKIN: the faceted writer treats every cell as surface and refuses an open
+  // or inconsistently wound one by name, so volume interiors are never
+  // misread as faces.
+  ".step": "step",
   // Result-file writers added in meshio++ 16.42.0. Geometry and the fields the
   // format has a place for survive; the rest is reported by the kernel itself
   // ("arrays without a place in the file are not written").
@@ -687,7 +699,8 @@ export const MESHIO_READ_EXTENSIONS: readonly string[] =
 export const MESHIO_LENIENT_RETRY_FORMATS: readonly string[] = ["med"];
 
 /**
- * Extensions meshio++ writes for us (37).  `as const` because
+ * Extensions meshio++ writes for us (38; `.step` is the auto-fit CAD target —
+ * see MESHIO_WRITE_FORMAT).  `as const` because
  * writers/exportFormats.ts spreads this into EXPORTABLE_EXTENSIONS, which is
  * the source of the ExportableExtension union.
  *
@@ -717,7 +730,7 @@ export const MESHIO_EXPORT_EXTENSIONS = [
   ".dat", ".dato", ".dex", ".ele", ".f3grid", ".fem", ".foam", ".h5m",
   ".hmf", ".ip", ".k", ".med", ".mesh", ".mff", ".mfm", ".mphtxt", ".nas",
   ".off", ".pcd", ".pf3", ".poly", ".post", ".post.msh", ".fil", ".op2", ".cad.json", ".su2", ".svg",
-  ".tec", ".tikz", ".ugrid", ".unv", ".vol", ".vtkhdf", ".wkt", ".xdmf",
+  ".step", ".tec", ".tikz", ".ugrid", ".unv", ".vol", ".vtkhdf", ".wkt", ".xdmf",
   ".xml", ".xmf", ".xyz",
 ] as const;
 

@@ -14,6 +14,7 @@ import { resolveCommandPath, overwriteRefusal } from "./parser/commandPath";
 import { once } from "node:events";
 import { MdpaModel } from "./parser/types";
 import { meshExtname, meshStem, SUPPORTED_MESH_EXTENSIONS } from "./parser/meshFormats";
+import type { FitCadOptions } from "@meshioplusplus/wasm";
 import { wouldOverwriteOpenFoamCase } from "./parser/openfoamCase";
 import {
   applyInPlacePlan,
@@ -214,6 +215,12 @@ interface ExportInfo {
   reportSink?: ExportContext["reportSink"];
   /** Cancels the meshio++ write (honoured by the write worker; see `configureMeshioWriteRunner`). */
   signal?: AbortSignal;
+  /**
+   * The `.step` export's fit controls (see `pickStepFit`): an options object
+   * rides `fitCad` verbatim, `false` skips fitting, undefined takes the
+   * kernel's own defaults. Every other format ignores it.
+   */
+  fitCad?: FitCadOptions | false;
 }
 
 export function announceReports(reports: ExportReport[], message: string, sink?: ExportContext["reportSink"]): void {
@@ -271,6 +278,7 @@ async function writeModelFile(
     sourceText,
     format,
     signal: info.signal,
+    fitCad: info.fitCad,
     onWarning: (m) => warnings.push(m),
     provenance: provenanceRequest(mode, {
       sourceFile: info.sourceFile ? path.basename(info.sourceFile) : undefined,
@@ -383,7 +391,9 @@ async function serializeToPath(
   ctx: ExportContext,
   destFsPath: string,
   ext: ExportableExtension,
-  format?: string
+  format?: string,
+  /** The `.step` auto-fit controls (see `pickStepFit`); other formats ignore it. */
+  fitCad?: ExportInfo["fitCad"]
 ): Promise<boolean> {
   // The backstop for every write path — Save, Save As, Export, Export
   // SubModelPart, Export skin — and the only place holding both the source and
@@ -409,10 +419,10 @@ async function serializeToPath(
     );
     return false;
   }
-  // DOLFIN/TetGen/EnSight eligibility (a mesh with no representable cells,
+  // DOLFIN/TetGen/EnSight/STEP eligibility (a mesh with no representable cells,
   // etc.) is checked inside serializeModelToPath, the common denominator for
   // this path and the direct SubModelPart/skin/derived-mesh export calls.
-  return serializeModelToPath(ctx.model, destFsPath, ext, ctx.sourceText, format, { ops: ctx.ops, sourceFile: ctx.fsPath, reportSink: ctx.reportSink });
+  return serializeModelToPath(ctx.model, destFsPath, ext, ctx.sourceText, format, { ops: ctx.ops, sourceFile: ctx.fsPath, reportSink: ctx.reportSink, fitCad });
 }
 
 /**
@@ -681,6 +691,44 @@ function exportTitle(ext: ExportableExtension, flavour?: string): string {
   return `Export as ${what} (${ext})`;
 }
 
+/**
+ * The `.step` export's fit ask. ONE target with auto-fit behaviour
+ * (meshio.ts's writeStepModel), so this is a level, not a writer flavour: the
+ * kernel defaults attempt fitCad on a closed triangle skin and fall back to
+ * the faceted solid anywhere else, and the two non-default picks pin that
+ * behaviour down (analytic-only fits, or no fitting at all). `undefined`
+ * means the dialog was CANCELLED — the same nothing-should-be-written
+ * convention every other prompt on this path follows — while the recommended
+ * choice answers `{}`, the kernel's own defaults.
+ */
+async function pickStepFit(): Promise<FitCadOptions | false | undefined> {
+  const pick = await vscode.window.showQuickPick(
+    [
+      {
+        label: "Fit CAD surfaces — kernel defaults (recommended)",
+        fit: {} as FitCadOptions,
+        detail:
+          "Analytic faces where a primitive fits (plane/sphere/cylinder/cone/torus, fillets, threads); " +
+          "freeform patches or facets where none does. Needs a closed, consistently wound triangle skin.",
+      },
+      {
+        label: "Fit — analytic primitives only",
+        fit: { freeform: false, threads: false } as FitCadOptions,
+        detail:
+          "No freeform B-spline patches or thread faces; everything they would have covered stays faceted. " +
+          "Faster, and portable where a receiver accepts only analytic surfaces.",
+      },
+      {
+        label: "Skip fitting — faceted solid (fast)",
+        fit: false as const,
+        detail: "Writes the skin's triangles as planar faces directly, with no surface fitting pass.",
+      },
+    ],
+    { title: "Export .step — fit CAD surfaces?", placeHolder: "fitCad" }
+  );
+  return pick?.fit;
+}
+
 /** Export — write the mesh to a chosen target format. */
 export async function exportMesh(
   ctx: ExportContext,
@@ -696,9 +744,14 @@ export async function exportMesh(
   }
   const flavour = await pickExportFlavour(ext, outputFormat);
   if (EXPORT_FORMAT_FLAVOURS[ext] && !flavour) return;
+  let fitCad: ExportInfo["fitCad"];
+  if (ext === ".step") {
+    fitCad = await pickStepFit();
+    if (fitCad === undefined) return; // cancelled dialog: write nothing
+  }
   if (to) {
     const file = resolveDestination(to, path.dirname(ctx.fsPath), ext, overwrite);
-    if (file) await serializeToPath(ctx, file, ext, flavour);
+    if (file) await serializeToPath(ctx, file, ext, flavour, fitCad);
     return;
   }
   const stem = path.basename(ctx.fsPath, path.extname(ctx.fsPath));
@@ -708,7 +761,7 @@ export async function exportMesh(
     title: exportTitle(ext, flavour),
   });
   if (!dest) return;
-  await serializeToPath(ctx, dest.fsPath, ext, flavour);
+  await serializeToPath(ctx, dest.fsPath, ext, flavour, fitCad);
 }
 
 /** Export one SubModelPart (and its subtree) as an independent mesh file. */

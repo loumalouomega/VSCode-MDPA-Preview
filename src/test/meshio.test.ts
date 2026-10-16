@@ -12,7 +12,8 @@ import test from "node:test";
 
 import { parseMeshFile } from "../parser/meshFileParser";
 import { loadMeshio, readMeshioModel, writeMeshioBytes } from "../parser/meshio";
-import { MdpaModel } from "../parser/types";
+import { exportEligibility } from "../parser/writers/exportEligibility";
+import { MdpaDiagnostic, MdpaModel } from "../parser/types";
 
 function tmpDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "meshio-"));
@@ -791,6 +792,91 @@ test("meshio++ 17.2.0: an explicit inputFormat routes a CAD read to the full art
   );
   const back = await readMeshioModel("box.step", [{ name: "box.step", data }], ".step", "step");
   assert.equal(back.nodeCount, 8);
+});
+
+// --- the .step export: Skin to CAD (17.2.0) ---------------------------------
+//
+// ONE export target with auto-fit behaviour. A closed, consistently wound
+// all-triangle skin is fitted by the FULL artifact's fitCad — analytic faces
+// where a primitive fits — and the solid's B-rep also rides beside the file
+// as a <stem>.cad.json companion; anything else writes the faceted solid
+// instead, without info (the faceted writer refuses it). The message says
+// which of the two ran, and the companion is what makes the difference
+// observable: a faceted export has none.
+
+const CUBE_SKIN_MDPA =
+  "Begin Nodes\n" +
+  "1 0 0 0\n2 1 0 0\n3 1 1 0\n4 0 1 0\n5 0 0 1\n6 1 0 1\n7 1 1 1\n8 0 1 1\n" +
+  "End Nodes\n" +
+  "Begin Conditions SurfaceCondition3D3N\n" +
+  "1 0 1 3 2\n2 0 1 4 3\n3 0 5 6 7\n4 0 5 7 8\n" +
+  "5 0 1 2 6\n6 0 1 6 5\n7 0 2 3 7\n8 0 2 7 6\n" +
+  "9 0 3 4 8\n10 0 3 8 7\n11 0 4 1 5\n12 0 4 5 8\n" +
+  "End Conditions\n";
+
+const HEXA_MDPA =
+  "Begin Nodes\n" +
+  "1 0 0 0\n2 1 0 0\n3 1 1 0\n4 0 1 0\n5 0 0 1\n6 1 0 1\n7 1 1 1\n8 0 1 1\n" +
+  "End Nodes\n" +
+  "Begin Elements Hexahedron3D8N\n1 0 1 2 3 4 5 6 7 8\nEnd Elements\n";
+
+async function cubeSkinModel(text: string): Promise<MdpaModel> {
+  const dir = tmpDir();
+  const p = path.join(dir, "skin.mdpa");
+  fs.writeFileSync(p, text);
+  return parseMeshFile(p);
+}
+
+test("meshio++ 17.2.0: a closed triangle skin exports as a FITTED STEP with a .cad.json B-rep companion", async () => {
+  const cube = await cubeSkinModel(CUBE_SKIN_MDPA);
+  const diagnostics: MdpaDiagnostic[] = [];
+  const { data, companions } = await writeMeshioBytes(cube, ".step", { stem: "box", diagnostics });
+  assert.ok(Buffer.from(data).toString("utf8", 0, 14) === "ISO-10303-21;\n", "a real AP214 STEP file");
+  assert.ok(
+    companions.some((c) => c.name === "box.cad.json"),
+    `the B-rep rides beside the file: ${companions.map((c) => c.name).join(", ")}`
+  );
+  // The message names which export ran, and at unit scale the whole box fits
+  // analytically: six plane faces, nothing demoted.
+  assert.ok(diagnostics.some((d) => d.message.includes("fitted CAD B-rep via fitCad")));
+  assert.ok(diagnostics.some((d) => d.message.includes("6 planes")));
+  // The companion is a real, readable CAD JSON of the SAME solid.
+  const cad = companions.find((c) => c.name === "box.cad.json")!;
+  const back = await readMeshioModel("box.cad.json", [{ name: "box.cad.json", data: cad.data }], ".cad.json");
+  assert.ok(back.nodeCount > 0, "the companion parses back as a model");
+  // And the STEP itself re-opens through the CAD reader (stage 2's route).
+  const reopened = await readMeshioModel("box.step", [{ name: "box.step", data }], ".step");
+  assert.equal(reopened.nodeCount, 8);
+});
+
+test("meshio++ 17.2.0: fitCad:false writes the faceted solid only", async () => {
+  const cube = await cubeSkinModel(CUBE_SKIN_MDPA);
+  const diagnostics: MdpaDiagnostic[] = [];
+  const { data, companions } = await writeMeshioBytes(cube, ".step", { stem: "box", fitCad: false, diagnostics });
+  assert.ok(Buffer.from(data).toString("utf8", 0, 14) === "ISO-10303-21;\n");
+  assert.deepEqual(companions, [], "no B-rep companion without the fit");
+  assert.ok(!diagnostics.some((d) => d.message.includes("fitCad")), "the message says nothing about fitting");
+});
+
+test("meshio++ 17.2.0: a volume model exports its boundary skin, and an open surface is refused", async () => {
+  const hex = await cubeSkinModel(HEXA_MDPA);
+  const diagnostics: MdpaDiagnostic[] = [];
+  const { data, companions } = await writeMeshioBytes(hex, ".step", { stem: "hex", fitCad: false, diagnostics });
+  assert.ok(Buffer.from(data).toString("utf8", 0, 14) === "ISO-10303-21;\n", "the quad skin writes as a faceted solid");
+  assert.ok(
+    diagnostics.some((d) => d.message.includes("boundary skin (6 faces)")),
+    "the interior drop is stated: " + diagnostics.map((d) => d.message).join(" | ")
+  );
+  // A lone triangle is not a solid: refused up front, and the writer's own
+  // refusal (which names the open edges) propagates to direct callers.
+  const open = await sampleModel();
+  const eligibility = exportEligibility(open, ".step");
+  assert.equal(eligibility?.ok, false);
+  assert.ok((eligibility?.reason ?? "").includes("closed, consistently wound solid surface"));
+  await assert.rejects(
+    writeMeshioBytes(open, ".step", { fitCad: false }),
+    /not a closed, consistently wound solid/
+  );
 });
 
 // --- meshio++ 10.14.0: what the 9.22.0 -> 10.14.0 jump actually changes -------
