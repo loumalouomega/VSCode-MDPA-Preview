@@ -11,6 +11,9 @@ inside ``solver_settings`` — a static template cannot express that — and the
 wall law nests its model settings per wall model in ``build_process``.
 """
 
+import math
+import re
+
 from kratos_problemtype import (define_problemtype, section, field, field_group,
                                 condition, material_law)
 
@@ -68,10 +71,42 @@ def _linear_solver(values):
     return None
 
 
+_JS_DECIMAL = re.compile(r"[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?")
+_JS_RADIX = re.compile(r"0[xX][0-9a-fA-F]+|0[oO][0-7]+|0[bB][01]+")
+
+
+def _str(value, default):
+    return value if isinstance(value, str) else default
+
+
+def _js_number(text):
+    """Number(text) for a trimmed string: the finite number it spells, else None."""
+    if _JS_RADIX.fullmatch(text):
+        return int(text, 0)
+    if _JS_DECIMAL.fullmatch(text):
+        number = float(text)
+        return number if math.isfinite(number) else None
+    return None
+
+
+def _interval_end(value):
+    """The inlet's intervalEnd: "End" (blank or in any case), a finite number, or the text."""
+    text = _str(value, "End").strip()
+    if text == "" or text.lower() == "end":
+        return "End"
+    number = _js_number(text)
+    return text if number is None else number
+
+
 def build_process(cond, assignment, ctx):
     values = assignment["values"]
     if cond["id"] == "inlet":
         process = _resolve(cond["processTemplate"], assignment, ctx)
+        # The optional symbolic modulus and activation window (fluid.ts's inlet hook).
+        expression = _str(values.get("modulusExpression"), "").strip()
+        if expression:
+            process["Parameters"]["modulus"] = expression
+        process["Parameters"]["interval"] = [values.get("intervalStart", 0), _interval_end(values.get("intervalEnd"))]
         direction = values.get("direction", "automatic_inwards_normal")
         process["Parameters"]["direction"] = {
             "x": [1, 0, 0], "y": [0, 1, 0], "z": [0, 0, 1],
@@ -250,6 +285,12 @@ CONDITIONS = [
               category="initial", icon="ptInitial"),
     condition("inlet", "Inlet velocity", list="constraints_process_list", target="surface",
               fields=[field("modulus", "|v| [m/s]", "number", default=1),
+                      field("modulusExpression", "|v| expression", "string", default="", advanced=True,
+                            help="A Kratos expression in the inlet's own coordinates and the current time t, e.g. 0.1214*(1-cos(0.1*pi*t))*y*(1-y). When set it replaces the numeric |v| above."),
+                      field("intervalStart", "Active from [s]", "number", default=0, advanced=True,
+                            help="The process applies from this time on. Two inlet assignments on one surface with disjoint windows write a two-phase inlet (the fsi_mok benchmark ramps up until 10 s, then holds)."),
+                      field("intervalEnd", "Active until [s]", "string", default="End", advanced=True,
+                            help='"End" keeps the process active to the end of the simulation; a number deactivates it there.'),
                       field("direction", "Direction", "enum", default="automatic_inwards_normal", options=[{"value": "automatic_inwards_normal", "label": "Inwards normal"}, {"value": "automatic_outwards_normal", "label": "Outwards normal"}, {"value": "x", "label": "+X"}, {"value": "y", "label": "+Y"}, {"value": "z", "label": "+Z"}])],
               process_template={
                   "python_module": "apply_inlet_process",
