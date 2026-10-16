@@ -1118,8 +1118,19 @@ export async function applyOpAsync(
   rec: OpRecord,
   opts?: MmgRunOptions
 ): Promise<OpOutcome> {
-  if (isOracleOp(rec.op)) return runOracle(model, rec, opts);
-  return applyAsyncOpInProcess(model, rec, opts);
+  const out = isOracleOp(rec.op) ? await runOracle(model, rec, opts) : await applyAsyncOpInProcess(model, rec, opts);
+  // The NURBS side channel (`model.nurbs`) describes the patches the SOURCE
+  // file was sampled from; a mesh an operation changed is no longer their
+  // sampling, so any applied non-oracle op drops it — the one funnel every
+  // edit (UI history, replay, MCP mesh_transform) goes through, which is what
+  // makes "never carried through ops" enforceable in one place. It matches
+  // upstream's own contract: the side-channel writer "refuses a mesh moved or
+  // edited since". Oracle ops only produce reports and a noop changed
+  // nothing, so both keep the channel.
+  if (out.model.nurbs && !isOracleOp(rec.op) && !out.noop) {
+    delete out.model.nurbs;
+  }
+  return out;
 }
 
 /**

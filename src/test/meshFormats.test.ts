@@ -25,6 +25,8 @@ import {
   contentWatchGlob,
 } from "../parser/meshFormats";
 import {
+  FULL_ONLY_READ_EXTENSIONS,
+  FULL_ONLY_READER_KEYS,
   MESHIO_EXPORT_EXTENSIONS,
   MESHIO_LENIENT_RETRY_FORMATS,
   MESHIO_READ_CANDIDATES,
@@ -165,6 +167,26 @@ test("every read candidate is a real reader key, default first", () => {
   assert.equal(MESHIO_READ_CANDIDATES[".inp"][0], "abaqus");
 });
 
+test("full-only reads are exactly the CAD candidates, and the two lists agree", () => {
+  // FULL_ONLY_READ_EXTENSIONS / FULL_ONLY_READER_KEYS drive meshio.ts's
+  // loadMeshioForRead dispatch. An extension here without a candidate (or a
+  // full-only candidate without an extension entry) would read from the wrong
+  // artifact and fail with the lean build's "no reader" error.
+  const fromCandidates = Object.entries(MESHIO_READ_CANDIDATES)
+    .filter(([, keys]) => keys.some((k) => FULL_ONLY_READER_KEYS.includes(k)))
+    .map(([ext]) => ext);
+  assert.deepEqual(sorted(FULL_ONLY_READ_EXTENSIONS), sorted(fromCandidates));
+  for (const ext of FULL_ONLY_READ_EXTENSIONS) {
+    for (const key of MESHIO_READ_CANDIDATES[ext]) {
+      assert.ok(FULL_ONLY_READER_KEYS.includes(key), `${ext} -> "${key}" is a full-only read`);
+    }
+  }
+  assert.deepEqual(sorted(FULL_ONLY_READER_KEYS), ["iges", "step"]);
+  // `step` keeps a writer (faceted, in BOTH artifacts) and `iges` has none.
+  assert.ok(MESHIO_WRITER_KEYS.includes("step"));
+  assert.ok(!MESHIO_WRITER_KEYS.includes("iges"));
+});
+
 test("dolfin/tetgen/ensight write through their canonical extension only, eligibility checked separately", () => {
   // Roadmap item 3: these three used to be excluded outright (the writer
   // raises on an ineligible mesh, and tetgen/ensight each write a PAIR of
@@ -253,7 +275,13 @@ test("MESHIO_WRITER_KEYS is readers minus the read-only keys, plus the two figur
   }
   assert.ok(!MESHIO_READ_ONLY_KEYS.includes("frd"), "frd has a writer since 16.41.0");
   assert.ok(MESHIO_WRITER_KEYS.includes("frd"));
-  assert.ok(!MESHIO_WRITER_KEYS.includes("gltf"), "gltf is write-only upstream");
+  // `gltf` was write-only until 17.0.0 gave it a reader; 17.2.0 routes the
+  // reads (.glb/.gltf), so the key is a reader AND a writer now — its writer
+  // stays without an extension route (no consumer emits glTF), reachable only
+  // through an explicit outputFormat.
+  assert.ok(MESHIO_READER_KEYS.includes("gltf"), "gltf is a reader since 17.0.0");
+  assert.ok(MESHIO_WRITER_KEYS.includes("gltf"), "gltf keeps its writer key");
+  assert.ok(!(".glb" in MESHIO_WRITE_FORMAT) && !(".gltf" in MESHIO_WRITE_FORMAT), "no extension routes a glTF write");
 });
 
 test("the keys we never route stay out of both tables, on purpose", () => {

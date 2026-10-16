@@ -19,6 +19,7 @@
 
 import { EntityBlock, MdpaModel } from "../types";
 import { VtkCellType as C } from "../geometryMap";
+import { closedTriangleSkin } from "./writerCommon";
 
 export interface ExportEligibility {
   ok: boolean;
@@ -175,6 +176,44 @@ export function cadJsonEligibility(model: MdpaModel): ExportEligibility {
   return { ok: true, warnings };
 }
 
+/**
+ * STEP (`formats/step.cpp` + `step.cpp`'s faceted writer): the write target is
+ * a solid's surface, and the faceted writer REFUSES anything else by name —
+ * "the surface is not a closed, consistently wound solid: N open, M
+ * non-manifold and K inconsistently wound edge(s) … run repair first"
+ * (measured against the live 17.2.0 wasm). An open surface is therefore
+ * refused here, with the same reason, BEFORE the wasm runs; the closed case
+ * proceeds and the auto-fit intercept (meshio.ts's writeStepModel) decides
+ * between fitCad and the faceted writer from there. Volume cells are never
+ * handed to the writer at all — the export writes the boundary skin and says
+ * so — because the faceted writer would misread a tetra's first three nodes
+ * as a triangle.
+ */
+export function stepEligibility(model: MdpaModel): ExportEligibility {
+  const warnings: string[] = [];
+  if (model.blocks.length === 0) {
+    return { ok: false, warnings, reason: "STEP writes a solid's surface, and this mesh has no cells." };
+  }
+  const closed = closedTriangleSkin(model);
+  if (!closed) {
+    // Not the fit gate — the faceted writer accepts consistently wound quads
+    // too — but the write will refuse anything the surface check finds. Name
+    // the likely state instead of predicting the writer's exact count.
+    return {
+      ok: false,
+      warnings,
+      reason:
+        "STEP writes a closed, consistently wound solid surface, and this mesh is not one " +
+        "(open edges, inconsistently wound faces, or non-triangle surface cells). " +
+        "Extract Skin gives a volume mesh its boundary; Repair closes a leaky surface.",
+    };
+  }
+  if (model.fields.length > 0) {
+    warnings.push("Only geometry is written; no point or cell data crosses to STEP.");
+  }
+  return { ok: true, warnings };
+}
+
 /** Dispatches on the write extension; `undefined` for every other format (nothing to check here). */
 export function exportEligibility(model: MdpaModel, ext: string): ExportEligibility | undefined {
   switch (ext.toLowerCase()) {
@@ -188,6 +227,8 @@ export function exportEligibility(model: MdpaModel, ext: string): ExportEligibil
       return ensightEligibility(model);
     case ".cad.json":
       return cadJsonEligibility(model);
+    case ".step":
+      return stepEligibility(model);
     default:
       return undefined;
   }

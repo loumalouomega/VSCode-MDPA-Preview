@@ -1,4 +1,13 @@
-import type { RegionSelector, RegionEdit, AgglomerateOptions } from "@meshioplusplus/wasm";
+import type {
+  AgglomerateOptions,
+  CadJsonInfo,
+  FitCadOptions,
+  FitCadResult,
+  IgaOptions,
+  MfemInfo,
+  RegionEdit,
+  RegionSelector,
+} from "@meshioplusplus/wasm";
 /**
  * Loader + virtual-filesystem I/O for `@meshioplusplus/wasm` (meshio++'s C++
  * core as WebAssembly), which backs the extended mesh formats — everything
@@ -25,14 +34,15 @@ import type { RegionSelector, RegionEdit, AgglomerateOptions } from "@meshioplus
  *     loader already knows the resolved package dir it passes one
  *     unconditionally, in both the dev and packaged layouts.
  *
- * Since 8.8.0 the package ships TWO native artifacts — the sequential
- * `meshioplusplus_wasm.{mjs,wasm}` and the OpenMP/pthreads
- * `meshioplusplus_wasm_mt.{mjs,wasm}` — and `loadMeshioPlusPlus` picks between
- * them itself: its `resolveVariant` returns "mt" whenever `crossOriginIsolated`
- * is undefined, which is exactly the case under Node, hence in the extension
- * host.  So `locateFile` MUST honour the filename it is handed rather than
- * returning a fixed path: hand the mt glue the sequential binary and every
- * meshio format dies with
+ * Since 8.8.0 the package ships TWO native variants of each artifact — the
+ * sequential `meshioplusplus_wasm.{mjs,wasm}` and the OpenMP/pthreads
+ * `meshioplusplus_wasm_mt.{mjs,wasm}`, and since 17.0.0 the same pair again
+ * with a `_full` infix behind `{full: true}` — and `loadMeshioPlusPlus` picks
+ * between the variants itself: its `resolveVariant` returns "mt" whenever
+ * `crossOriginIsolated` is undefined, which is exactly the case under Node,
+ * hence in the extension host.  So `locateFile` MUST honour the filename it is
+ * handed rather than returning a fixed path: hand the mt glue the sequential
+ * binary and every meshio format dies with
  *   Aborted(LinkError: WebAssembly.instantiate(): Import #0 module="a"
  *           function="a" error: function import requires a callable)
  * — an error that names neither the file nor the variant.  meshio.test.ts pins
@@ -52,10 +62,17 @@ import {
   modelToMeshio,
 } from "./meshioConvert";
 import {
+  FULL_ONLY_READ_EXTENSIONS,
+  FULL_ONLY_READER_KEYS,
   MESHIO_LENIENT_RETRY_FORMATS,
   MESHIO_READ_CANDIDATES,
   MESHIO_WRITE_FORMAT,
 } from "./meshioFormats";
+// The `.step` export fits the model's boundary skin (see writeStepModel);
+// extractSkin is pure (types + writerCommon only), so this back-reference
+// creates no cycle.
+import { extractSkinModel } from "./extractSkin";
+import { cellCategory, closedTriangleSkin } from "./writers/writerCommon";
 // The same relative-path guard the problem-archive extractor applies to a zip
 // entry: a companion's name is likewise joined onto a real destination folder.
 import { isSafeEntryName } from "./problemZip";
@@ -168,6 +185,47 @@ export interface MeshioModule {
       passed: boolean;
     }>;
     summary: string;
+  };
+
+  /**
+   * The FULL artifact's CAD fitter (meshio++ >= 17.0.0; needs OpenCASCADE, so
+   * the lean module throws a `{full: true}` refusal by name). Segments the
+   * closed triangle skin itself and fits each patch: an analytic primitive
+   * where one fits (plane/sphere/cylinder/cone/torus, fillets, blends,
+   * threads), a freeform B-spline patch where none does, and a faceted patch
+   * as the last demotion. `stepPath` writes the solid as AP214 STEP into the
+   * virtual filesystem; the return carries the re-meshed solid (with
+   * `fit_cad:*` cell data), the fit counters, and `info` — the solid's B-rep
+   * in `CadJsonInfo` shape, which `writeMesh(..., "cad_json", {info})` writes
+   * back out. Used by the `.step` export's auto-fit (writeStepModel).
+   *
+   * @throws {Error} on a mesh that is not a closed, consistently wound
+   *   triangle surface, or an unknown options key.
+   */
+  fitCad(mesh: MeshioMesh, options?: FitCadOptions): FitCadResult;
+
+  /**
+   * The IGA ops over a NURBS side channel (meshio++ >= 16.42.0's mfem info,
+   * 17.x's cad_json — both LEAN-build features, no OpenCASCADE needed).
+   * `igaRefine` h/p-refines the patches (subdivisions per direction, degree
+   * elevation, B-rep edge/trim controls) and `igaSample` samples them into
+   * Lagrange cells; both return the mesh AND the refined side channel, which
+   * writes back through `writeMesh(..., "cad_json", {info})` / the MFEM
+   * writer while the mesh still is its sampling. The info is PLAIN data
+   * (measured: it survives a structured clone and works on a different
+   * instance than the one that read it) but holds typed arrays, so it must
+   * never be JSON-serialized.
+   *
+   * @throws {Error} when the info is not a NURBS side channel or an option is
+   *   out of range.
+   */
+  igaRefine(
+    info: MfemInfo | CadJsonInfo,
+    options?: IgaOptions & { subdivisions?: number | number[]; elevate?: number | number[] }
+  ): { mesh: MeshioMesh; info: MfemInfo | CadJsonInfo };
+  igaSample(info: MfemInfo | CadJsonInfo, options?: IgaOptions): {
+    mesh: MeshioMesh;
+    info: MfemInfo | CadJsonInfo;
   };
 
   /**
@@ -337,8 +395,16 @@ export interface MeshioModule {
      * `{info}` writes the format's side channel back (or, with no explicit
      * `info`, reuses `mesh.info` when its own `format` matches the write
      * target). Throws naming the format for one with no Info-bearing writer.
+     * The other keys are upstream's own WriteOptions — the tests use
+     * `encoding`/`codec` to author zstd/lz4 `.vtu` fixtures (full artifact
+     * only); the extension's own write paths use none of them.
      */
-    options?: { info?: MeshioMeshInfo }
+    options?: {
+      info?: MeshioMeshInfo;
+      encoding?: "ascii" | "binary";
+      /** Block codec for VTK XML: "zlib" (both artifacts), "zstd"/"lz4" (full only). */
+      codec?: string;
+    }
   ): void;
   /**
    * A transient-XDMF writer. Stateful and handle-shaped: `writePointsCells`
@@ -379,6 +445,31 @@ export interface MeshioModule {
    * the regression would only surface on a user's ADF file.
    */
   hasCgnslib(): boolean;
+
+  /**
+   * meshio++ >= 17.0.0 ships the same API as two artifacts: this "lean" one
+   * (MIT) and a "full" one (OpenCASCADE, zstd, lz4, bzip2; mixed licence —
+   * see the package's THIRD_PARTY_NOTICES.md) that `loadMeshioFull` loads.
+   * `buildFlavour` names which one THIS instance is; `hasOcct`/`hasZstd`/
+   * `hasLz4`/`hasBzip2` say which optional native libraries it links (all
+   * four are false on lean, true on full, measured against 17.2.0).
+   *
+   * Nothing here branches on them — the routing tables decide what runs and
+   * meshFileParser retries locally — but `mesh_capabilities` reports them and
+   * meshio.test.ts asserts them, so a loader that handed back the wrong
+   * flavour, or a rebuild that dropped a dependency, fails a test rather than
+   * a user's file.
+   */
+  buildFlavour(): "lean" | "full";
+  /** Whether OpenCASCADE is linked (step/iges reads, fitCad): full artifact only. */
+  hasOcct(): boolean;
+  /** Whether the VTK XML readers accept zstd-deflated data: full artifact only. */
+  hasZstd(): boolean;
+  /** Whether the VTK XML readers accept lz4-deflated data: full artifact only. */
+  hasLz4(): boolean;
+  /** Whether libMesh readers inflate .bz2 containers: full artifact only. */
+  hasBzip2(): boolean;
+
   /**
    * Provenance (former roadmap item 6): with a scope open, a writer records the richer
    * header block (source, target, notes, timestamp) into the target format's
@@ -966,7 +1057,19 @@ type MeshioVariant = "auto" | "mt" | "seq";
 interface MeshioNamespace {
   loadMeshioPlusPlus(
     overrides?: Record<string, unknown>,
-    options?: { variant?: MeshioVariant }
+    options?: {
+      variant?: MeshioVariant;
+      /**
+       * meshio++ >= 17.0.0: instantiate the FULL artifact
+       * (`meshioplusplus_wasm_full{,_mt}.{mjs,wasm}`) instead of the lean one.
+       * With no `fullGlue` it imports the full glue relative to the package's
+       * own index.mjs, so the packaged `dist/meshio/` tree — which preserves
+       * the src/ + dist/ layout — needs neither.
+       */
+      full?: boolean;
+      /** Where the full artifact's glue module lives; see `full` above. */
+      fullGlue?: string | URL;
+    }
   ): Promise<MeshioModule>;
 }
 
@@ -1014,16 +1117,7 @@ function packageDir(): string {
  * copy esbuild's copy-meshio plugin ships) without importing the module.
  */
 export function meshioPackageVersion(): string | undefined {
-  for (const dir of (() => {
-    const dirs: string[] = [];
-    try {
-      dirs.push(path.dirname(require.resolve("@meshioplusplus/wasm/package.json")));
-    } catch {
-      /* dev package absent — try the packaged layout */
-    }
-    dirs.push(path.join(__dirname, "meshio"));
-    return dirs;
-  })()) {
+  for (const dir of packageDirs()) {
     try {
       const pkg = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8")) as {
         version?: unknown;
@@ -1034,6 +1128,31 @@ export function meshioPackageVersion(): string | undefined {
     }
   }
   return undefined;
+}
+
+/** The two layouts `packageDir()` resolves, in the same order: dev first. */
+function packageDirs(): string[] {
+  const dirs: string[] = [];
+  try {
+    dirs.push(path.dirname(require.resolve("@meshioplusplus/wasm/package.json")));
+  } catch {
+    /* dev package absent — try the packaged layout */
+  }
+  dirs.push(path.join(__dirname, "meshio"));
+  return dirs;
+}
+
+/**
+ * Whether the installed/packaged tree carries the FULL artifact
+ * (`dist/meshioplusplus_wasm_full.wasm`, the OpenCASCADE build of meshio++
+ * >= 17.0.0). A file-system fact, deliberately not a load: `mesh_capabilities`
+ * reports it before paying for a second ~27 MB instantiation, and
+ * `loadMeshioFull()` is what fails loudly when the pair is missing.
+ */
+export function meshioFullInstalled(): boolean {
+  return packageDirs().some((dir) =>
+    fs.existsSync(path.join(dir, "dist", "meshioplusplus_wasm_full.wasm"))
+  );
 }
 
 // Hidden from esbuild AND from tsc's CommonJS downlevelling, both of which
@@ -1070,10 +1189,30 @@ function namespace(): Promise<MeshioNamespace> {
 export function loadMeshio(): Promise<MeshioModule> {
   // Reported to the status bar's engine line (engineActivity.ts): the one place
   // every meshio++ read, write and oracle op instantiates the module.
-  return trackEngine("meshio", loadMeshioUntracked);
+  return trackEngine("meshio", () => loadMeshioFlavour(false));
 }
 
-async function loadMeshioUntracked(): Promise<MeshioModule> {
+/**
+ * The FULL artifact of the same release (meshio++ >= 17.0.0): the same C++
+ * core plus OpenCASCADE, zstd, lz4 and bzip2, under a mixed licence. It is a
+ * DIFFERENT artifact rather than a feature flag on the lean one: the lean
+ * build keeps serving every format and operation it already covers, and this
+ * one is loaded lazily, only where the lean build cannot serve — the
+ * step/iges reads, `fitCad` and the zstd/lz4 `.vtu` and bzip2 libMesh
+ * fallbacks (see meshFileParser.ts).
+ *
+ * Same contracts as `loadMeshio` — a fresh instance per call (the docblock
+ * above explains why dropping it matters, and this artifact is twice the
+ * size), the name-aware `locateFile` for whichever variant the loader picks,
+ * and the one-off mt -> seq fallback. The full glue resolves its own
+ * `../dist/` siblings relative to the packaged `src/index.mjs`, so no
+ * `fullGlue` override is needed in either layout.
+ */
+export function loadMeshioFull(): Promise<MeshioModule> {
+  return trackEngine("meshio", () => loadMeshioFlavour(true));
+}
+
+async function loadMeshioFlavour(full: boolean): Promise<MeshioModule> {
   const ns = await namespace();
   const dist = path.join(packageDir(), "dist");
   const overrides = {
@@ -1083,21 +1222,46 @@ async function loadMeshioUntracked(): Promise<MeshioModule> {
     locateFile: (name: string) => path.join(dist, path.basename(name)),
     ...extraOverrides,
   };
-  if (forceSequential) return ns.loadMeshioPlusPlus(overrides, { variant: "seq" });
+  const flavour = full ? { full: true as const } : {};
+  if (forceSequential) return ns.loadMeshioPlusPlus(overrides, { ...flavour, variant: "seq" });
   try {
-    return await ns.loadMeshioPlusPlus(overrides);
+    return await ns.loadMeshioPlusPlus(overrides, full ? { full: true } : undefined);
   } catch (e) {
     // An environment that cannot host Wasm threads (no SharedArrayBuffer, a
     // locked-down container) aborts inside the mt glue.  Fall back once and
     // remember the DECISION — never the instance, see the docblock above.
     forceSequential = true;
     try {
-      return await ns.loadMeshioPlusPlus(overrides, { variant: "seq" });
+      return await ns.loadMeshioPlusPlus(overrides, { ...flavour, variant: "seq" });
     } catch {
       forceSequential = false; // do not poison future loads with a transient failure
       throw e; // the original error is the informative one
     }
   }
+}
+
+/**
+ * The module a meshio++ READ needs: the full artifact for a format the lean
+ * build cannot serve AT ALL — the OpenCASCADE CAD readers and their four
+ * spellings (FULL_ONLY_READ_EXTENSIONS / FULL_ONLY_READER_KEYS) — the lean one
+ * everywhere else, which is every other read in the extension.
+ *
+ * A direct dispatch rather than attempt-then-retry, because there is nothing
+ * to retry with on the lean side: its registry has no entry for these keys, so
+ * the attempt fails before it can name the missing dependency. The codec
+ * fallbacks (zstd/lz4 `.vtu`, bzip2 libMesh) are the OPPOSITE shape — the
+ * reader exists in the lean build and only the codec is missing — and stay in
+ * meshFileParser.ts's error-allowlisted retry.
+ *
+ * `format` (an explicit MCP `inputFormat`) can override the extension's own
+ * candidates, so both are consulted: asking for "step" on a `.cad` path must
+ * reach the full build exactly as a `.step` file does.
+ */
+function loadMeshioForRead(ext: string, candidates: readonly string[]): Promise<MeshioModule> {
+  const fullOnly =
+    FULL_ONLY_READ_EXTENSIONS.includes(ext.toLowerCase()) ||
+    candidates.some((key) => FULL_ONLY_READER_KEYS.includes(key));
+  return fullOnly ? loadMeshioFull() : loadMeshio();
 }
 
 /** Set once if the auto-selected (threaded) build fails to instantiate. */
@@ -1356,6 +1520,9 @@ export async function readMeshioModel(
   );
 }
 
+/** The reader keys whose `{info: true}` side channel is a NURBS payload (see readModelWith). */
+const NURBS_INFO_FORMATS: readonly string[] = ["cad_json", "step", "iges", "mfem"];
+
 async function readMeshioModelInProcess(
   mainName: string,
   files: MeshioInputFile[],
@@ -1376,7 +1543,37 @@ async function readMeshioModelInProcess(
     if (MESHIO_LENIENT_RETRY_FORMATS.includes(fmt)) attempts.push({ fmt, lenient: true });
   }
 
-  const m = await loadMeshio();
+  const m = await loadMeshioForRead(ext, candidates);
+  try {
+    return await readModelWith(m, mainName, files, candidates, attempts, timeStep, augment, opts);
+  } catch (e) {
+    // The codec fallback (meshio++ >= 17.0.0's full artifact): a file whose
+    // VTK XML blocks are zstd/lz4-deflated, or whose libMesh bytes are
+    // bzip2-compressed, is readable only where the codec is linked. The lean
+    // refusal names its own missing flag (measured verbatim), so the retry
+    // fires ONLY on that — an ordinary read failure propagates untouched.
+    if (!isCodecFallbackError(e) || !meshioFullInstalled()) throw e;
+    const fm = await loadMeshioFull();
+    const model = await readModelWith(fm, mainName, files, candidates, attempts, timeStep, augment, opts);
+    model.diagnostics.push({
+      line: 0,
+      message: `Read via the full artifact — the lean build cannot inflate this file: ${errText(e)}`,
+    });
+    return model;
+  }
+}
+
+/** The candidate walk itself, run against whichever module the caller resolved. */
+async function readModelWith(
+  m: MeshioModule,
+  mainName: string,
+  files: MeshioInputFile[],
+  candidates: readonly string[],
+  attempts: readonly { fmt: string; lenient: boolean }[],
+  timeStep: number | undefined,
+  augment: ((mesh: MeshioMesh, diagnostics: MdpaDiagnostic[]) => void) | undefined,
+  opts: MeshioReadOptions | undefined
+): Promise<MdpaModel> {
   const mainPath = stageFiles(m, mainName, files);
 
   const diagnostics: MdpaDiagnostic[] = [];
@@ -1386,10 +1583,14 @@ async function readMeshioModelInProcess(
       // MED's own info side channel (mesh name/description/units, and —
       // lenient-only — exactly which constructs a lenient read could not
       // represent) needs `readMeshSelective(..., {info: true})`, which
-      // `readMesh`'s fast path cannot request. Requesting it for every
-      // other format is a silent noop upstream, so this widens ONLY med's
-      // path off the fast one rather than slowing every reader down.
-      const wantInfo = fmt === "med";
+      // `readMesh`'s fast path cannot request. The NURBS side channels need
+      // the same switch: a cad_json B-rep, a full artifact's step/iges read
+      // and an MFEM NURBS mesh all carry their patches in `mesh.info`, and
+      // the IGA derive kinds consume that (see deriveMesh.ts). Requesting it
+      // for every other format is a silent noop upstream, so this widens
+      // ONLY these formats off the fast one rather than slowing every reader
+      // down.
+      const wantInfo = fmt === "med" || NURBS_INFO_FORMATS.includes(fmt);
       const wantSelective =
         timeStep !== undefined ||
         lenient ||
@@ -1432,6 +1633,23 @@ async function readMeshioModelInProcess(
         model.source = medInfoToSource(medInfo);
         applyMedDimensions(model, medInfo.fieldUnits);
       }
+      // The NURBS side channel: kept ON the model for the IGA derive kinds,
+      // dropped by every applied edit (operations.ts's applyOpAsync — a mesh
+      // an op changed is no longer the patches' sampling). The info object is
+      // plain data (measured: it crosses a worker by structured clone and
+      // runs on another instance) but holds typed arrays, so it must never be
+      // JSON-serialized; summaries read `format`/`patches`/`faces` only.
+      const info = mesh.info;
+      const infoFormat = info?.format;
+      if (info && (infoFormat === "cad_json" || infoFormat === "mfem")) {
+        const raw = info as { patches?: unknown[]; faces?: unknown[] };
+        model.nurbs = {
+          format: infoFormat,
+          patches: Array.isArray(raw.patches) ? raw.patches.length : 0,
+          faces: infoFormat === "cad_json" && Array.isArray(raw.faces) ? raw.faces.length : 0,
+          info,
+        };
+      }
       return model;
     } catch (e) {
       errors.push(errText(e));
@@ -1442,6 +1660,20 @@ async function readMeshioModelInProcess(
     .map((a, i) => `  ${a.fmt}${a.lenient ? " (lenient)" : ""}: ${errors[i]}`)
     .join("\n");
   throw new Error(`Could not read "${mainName}" as ${candidates.join(" / ")}:\n${detail}`);
+}
+
+/**
+ * The lean build's own refusals for a codec only the full artifact links.
+ * Measured verbatim against 17.2.0 — the three messages a lean read gives for
+ * a zstd/lz4 VTK XML file and a bzip2 libMesh file (`VTK XML zstd
+ * decompression requires a build with -DMESHIOPLUSPLUS_WITH_ZSTD=ON`, the lz4
+ * twin, and `libMesh: <path> is bzip2-compressed and this build has no
+ * bzip2 (MESHIOPLUSPLUS_WITH_BZIP2; the Python reader inflates it)`). Note
+ * they do NOT say `{full: true}` — that phrasing is the CAD refusals' — so
+ * the allowlist is keyed on the flag name the kernel actually prints.
+ */
+function isCodecFallbackError(e: unknown): boolean {
+  return /MESHIOPLUSPLUS_WITH_(ZSTD|LZ4|BZIP2)/.test(errText(e));
 }
 
 /**
@@ -1462,7 +1694,26 @@ async function readMetadataWith<T>(
     throw new Error(`No meshio++ reader is registered for "${ext}".`);
   }
 
-  const m = await loadMeshio();
+  const m = await loadMeshioForRead(ext, candidates);
+  try {
+    return await readMetadataFrom(m, mainName, files, candidates, pick);
+  } catch (e) {
+    // The same codec fallback readMeshioModelInProcess applies: a summary of
+    // a zstd/lz4 VTK XML file or a bzip2 libMesh file needs the full
+    // artifact's inflator, and the lean refusal names the missing flag.
+    if (!isCodecFallbackError(e) || !meshioFullInstalled()) throw e;
+    return await readMetadataFrom(await loadMeshioFull(), mainName, files, candidates, pick);
+  }
+}
+
+/** The metadata walk itself, run against whichever module the caller resolved. */
+async function readMetadataFrom<T>(
+  m: MeshioModule,
+  mainName: string,
+  files: MeshioInputFile[],
+  candidates: readonly string[],
+  pick: (md: MeshioMetadata) => T
+): Promise<T> {
   const mainPath = stageFiles(m, mainName, files);
 
   const errors: string[] = [];
@@ -1608,6 +1859,138 @@ function writeMeshToBytes(
 }
 
 /**
+ * The `.step` export: ONE target with auto-fit behaviour (the 17.2.0 "Skin to
+ * CAD" decision), reached through `writeMeshioBytes`'s `fmt === "step"`
+ * intercept — so the UI Export menu, Save As and every MCP write share it.
+ *
+ * Both behaviours write the model's BOUNDARY SKIN (`extractSkinModel`), for
+ * two measured reasons: the faceted `step` writer treats every cell it is
+ * handed as surface (a tetra's first three nodes would be misread as a
+ * triangle and the write refused as inconsistently wound), and `fitCad` wants
+ * exactly the skin. A volume model therefore exports its boundary as the
+ * solid — stated in a diagnostic, never silent.
+ *
+ *  - A closed, consistently wound, all-triangle skin attempts the FULL
+ *    artifact's `fitCad`: analytic faces where primitives fit, demoted
+ *    patches where they do not. The AP214 STEP comes back from `stepPath`,
+ *    and the solid's B-rep also rides beside it as a `<stem>.cad.json`
+ *    companion (via `writeMesh(..., "cad_json", {info})`). The diagnostic
+ *    names the fitted face types so the report says WHICH export ran.
+ *  - Anything else — quad skins, open surfaces, `fitCad: false`, a fit that
+ *    failed or a full artifact that would not load — falls through to the
+ *    faceted `step` writer, WITHOUT `info` (the writer refuses it: "STEP
+ *    writes faceted solids"). Its own refusal of a non-solid surface
+ *    (open edges, bad winding) propagates verbatim rather than being caught:
+ *    it names the exact defect, which is the useful part.
+ *
+ * `opts.fitCad` is the fit controls: an object rides `fitCad` verbatim
+ * (upstream validates keys and values), `false` skips fitting entirely, and
+ * undefined takes the kernel's own defaults. `stepPath` is NOT caller-settable
+ * here — the write always targets its own scratch path (`mio_out/<stem>.step`),
+ * and the caller's object is spread FIRST so it cannot move it.
+ */
+async function writeStepModel(
+  model: MdpaModel,
+  e: string,
+  opts: {
+    diagnostics?: MdpaDiagnostic[];
+    stem?: string;
+    onWarning?: (message: string) => void;
+    provenance?: ProvenanceRequest;
+    fitCad?: FitCadOptions | false;
+  }
+): Promise<MeshioWriteResult> {
+  const note = (message: string) => {
+    opts.diagnostics?.push({ line: 0, message });
+    opts.onWarning?.(message);
+  };
+  const { model: skin, faces } = extractSkinModel(model);
+  if (faces === 0) {
+    throw new Error(
+      "STEP writes a solid's surface, and this mesh has no surface or volume cells to skin."
+    );
+  }
+  // Surface cells survive extractSkin verbatim; only VOLUME cells were
+  // collapsed into boundary faces, and that deserves its own line.
+  if (model.blocks.some((b) => cellCategory(b.vtkCellType) === "volume")) {
+    note(`STEP: volume interiors are not representable — wrote the boundary skin (${faces} faces).`);
+  }
+  const mesh = modelToMeshio(skin, opts.diagnostics ?? [], { dim: 3 });
+
+  if (opts.fitCad !== false && closedTriangleSkin(skin)) {
+    try {
+      const m = await loadMeshioFull();
+      const stem = memfsStem(opts.stem);
+      const name = `${stem}.step`;
+      // fitCad writes `stepPath` itself (AP214, from OpenCASCADE) — it does
+      // not create directories, so the scratch dir is made first, the same
+      // convention writeMeshToBytes uses.
+      const root = "/mio_out";
+      m.FS.mkdir(root);
+      const fit = m.fitCad(mesh, { ...(opts.fitCad ?? {}), stepPath: `${root}/${name}` });
+      if (!fit.valid) {
+        throw new Error(`the fitted B-rep failed OpenCASCADE's validity check`);
+      }
+      let companions: MeshioCompanionFile[] = [];
+      try {
+        // The B-rep, portably: cad_json takes the fit's own mesh + info and
+        // writes the solid back out (measured: reads back with its faces).
+        m.writeMesh(`${root}/${stem}.cad.json`, fit.mesh, "cad_json", { info: fit.info });
+        companions = harvest(m, root, name);
+      } catch (err) {
+        note(
+          `STEP: the ${stem}.cad.json B-rep companion failed (${errText(err)}) — ` +
+            `the .step itself is written.`
+        );
+      }
+      if (opts.provenance) {
+        note("A fitted STEP has no provenance slot; the export report sidecar carries it.");
+      }
+      note(
+        `STEP: fitted CAD B-rep via fitCad — ${describeFitCad(fit)}; ` +
+          `the B-rep also rides beside it as ${stem}.cad.json.`
+      );
+      return { data: m.FS.readFile(`${root}/${name}`) as Uint8Array, companions };
+    } catch (err) {
+      note(
+        `STEP: fitCad did not produce a solid (${errText(err)}) — wrote a faceted solid instead.`
+      );
+    }
+  } else if (opts.fitCad !== false) {
+    note(
+      "STEP: no closed, consistently wound all-triangle skin to fit — wrote a faceted solid " +
+        "(fitCad needs one; Extract Skin gives a volume mesh its boundary, Repair closes a leaky one)."
+    );
+  }
+  const m = await loadMeshio();
+  return writeMeshToBytes(m, mesh, e, "step", opts.stem, opts.provenance);
+}
+
+/** The fitted-face census a fitCad diagnostic reports: which types ran, and what was demoted. */
+function describeFitCad(fit: FitCadResult): string {
+  const named: [string, number][] = [
+    ["plane", fit.numPlane],
+    ["sphere", fit.numSphere],
+    ["cylinder", fit.numCylinder],
+    ["cone", fit.numCone],
+    ["torus", fit.numTorus],
+    ["B-spline patch", fit.numBspline],
+    ["fillet", fit.numFillet],
+    ["thread", fit.numHelical],
+    ["chamfer", fit.numChamfer],
+    ["blend", fit.numBlend],
+  ];
+  const parts = named.filter(([, n]) => n > 0).map(([name, n]) => `${n} ${name}${n === 1 ? "" : "s"}`);
+  if (fit.numFacetedFaces > 0) {
+    parts.push(`${fit.numFacetedFaces} demoted to faceted`);
+  }
+  const faces = parts.length > 0 ? parts.join(", ") : `${fit.numFaces} faceted`;
+  return fit.maxDeviation > 0
+    ? `${faces} (max deviation ${fit.maxDeviation.toPrecision(3)})`
+    : faces;
+}
+
+/**
  * Writes a meshio++ mesh WITHOUT going through an `MdpaModel`. Needed for the
  * one thing our own writers deliberately cannot do: a structured `.vti` lattice
  * (an unstructured model cannot reconstruct the implicit topology), which is
@@ -1668,11 +2051,22 @@ export async function writeMeshioBytes(
     onWarning?: (message: string) => void;
     /** Ask the kernel to embed a provenance block where the format has a slot. */
     provenance?: ProvenanceRequest;
+    /**
+     * The `.step` export's fit controls (writeStepModel): an options object
+     * rides `fitCad` verbatim, `false` skips fitting and writes the faceted
+     * solid directly, and undefined asks the kernel's own defaults. Ignored
+     * by every other format.
+     */
+    fitCad?: FitCadOptions | false;
   } = {}
 ): Promise<MeshioWriteResult> {
   const e = ext.toLowerCase();
   const fmt = opts.format ?? MESHIO_WRITE_FORMAT[e];
   if (!fmt) throw new Error(`meshio++ cannot write "${ext}".`);
+
+  // The `.step` export is NOT a plain writer call: its auto-fit intercept
+  // (fitCad, or the faceted fallback) owns the whole write. See writeStepModel.
+  if (fmt === "step") return writeStepModel(model, e, opts);
 
   const m = await loadMeshio();
   // Capability-driven export (roadmap item 3): MESHIO_WRITE_FORMAT is a

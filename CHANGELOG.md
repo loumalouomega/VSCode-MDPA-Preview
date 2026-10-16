@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [5.13.0] - 2026-10-16
+
+### Added
+
+- **The FULL meshio++ artifact ships beside the lean one** (meshio++ 17.2.0's second build: OpenCASCADE, zstd, lz4, bzip2; MIT AND (LGPL-2.1-only WITH OCCT-exception-1.0) — the package's own `THIRD_PARTY_NOTICES.md` ships with it). `dist/meshio/` grows ~27 → ~80 MB raw and the packaged `.vsix` from ~31.5 to **50.2 MB** (+~19 MB compressed). `mesh_capabilities` reports both live builds: the lean one's flavour and optional libraries, plus the full artifact's own backend, flags and reader/writer lists (82/75 vs the lean 80/75). The full build is loaded lazily, only where the lean build cannot serve.
+- **STEP and IGES reads** (`.step`/`.stp`/`.igs`/`.iges`): the OpenCASCADE-backed CAD readers exist only in the full artifact, so those extensions dispatch straight to it and return the solid's own triangulation. They are deliberately the first static extensions — a directory of CAD parts is not a `<prefix>_<rank>_<step>` series — and an explicit `inputFormat` naming `step`/`iges` routes there too.
+- **`.step` export auto-fits** (Skin to CAD): a closed, consistently wound all-triangle skin is fitted with `fitCad` into a real B-rep — analytic faces where a primitive fits (plane/sphere/cylinder/cone/torus, fillets, threads), freeform patches where none does, faceted patches as the last demotion — and the solid's B-rep also rides beside the file as a `<stem>.cad.json` companion. A quad skin, an open surface, a failed fit or a missing full artifact falls back to the faceted STEP writer (which refuses `{info}`: it writes faceted solids), and the export's diagnostic names which ran and what it fitted. Volume models export their boundary skin and say so. The Export menu asks once (kernel defaults / analytic-only / skip fitting); MCP `mesh_convert` takes `fitCad`, and `outputFormat: "step"` is now a valid writer key.
+- **glTF/GLB reads** (`.glb`/`.gltf`, meshio++ 17.0.0's reader, lean build): static scenes with no timeline. The JSON spelling stages the external files its `buffers[].uri` names beside it (meshio++'s own writer emits `<stem>.bin`); a self-contained (data-URI) scene reads alone. The writer stays reachable through an explicit `outputFormat` but no extension routes to it.
+- **IGA refine/sample** (`mesh_derive` kinds `igaRefine`/`igaSample`, lean build — no OpenCASCADE): a read of a `.cad.json`, a `.step`/`.igs` file or an MFEM NURBS `.mesh` keeps its NURBS patches on the model (`mesh_info` reports format and patch/face counts); `igaRefine` h/p-refines them (subdivisions per knot span/direction, degree elevation, B-rep edge/trim controls) and `igaSample` tessellates them into Lagrange cells. Any applied edit drops the channel — a moved mesh is no longer the patches' sampling, upstream's own "refuses a mesh moved or edited since" — and derived results never carry it: write `.cad.json`/`.mesh` and reopen to refine again. `igaEvaluate` stays unadopted (on request only).
+- **Codec fallbacks through the full artifact**: a zstd/lz4-deflated VTK XML file or a bzip2 libMesh file fails on the lean build with its own flag-named refusal, and the read retries there, stating the fallback in a diagnostic. The extension-known `.xda.bz2`/`.xdr.bz2` path is unchanged (our own JS decoder inflates it before staging); the fallback only ever sees content-known bzip2. zlib-tagged VTK XML still parses natively first.
+
 ## [5.12.0] - 2026-10-16
 
 ### Changed

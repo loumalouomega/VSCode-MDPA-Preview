@@ -166,8 +166,43 @@ export interface MdpaModel {
    * Plain JSON, never a `Map`, for the reason stated on `properties`.
    */
   source?: SourceMetadata;
+  /**
+   * The NURBS side channel the source file carried (meshio++ >= 16.42.0's
+   * mfem info, 17.x's cad_json): the patches a NURBS mesh or CAD B-rep was
+   * built from, kept beside the model so the IGA derive kinds
+   * (`igaRefine`/`igaSample`, deriveMesh.ts) can run without re-reading the
+   * file. Set only by the read (meshio.ts's `readModelWith`, which requests
+   * `{info: true}` for the formats that carry one — `.cad.json`, `.step`/
+   * `.igs` and an MFEM NURBS `.mesh`).
+   *
+   * LIVE DATA with a sharp rule, the inverse of `properties`' trap: it must be
+   * DROPPED by every applied edit, never carried — a mesh an operation changed
+   * is no longer the patches' sampling, which is exactly upstream's "refuses a
+   * mesh moved or edited since" (the drop happens in one place,
+   * operations.ts's `applyOpAsync`). The info itself holds typed arrays
+   * (BigInt64Array control-point ids among them), so it survives a worker
+   * crossing by structured clone but must NEVER reach `JSON.stringify` —
+   * summaries report `format`/`patches`/`faces` only.
+   */
+  nurbs?: NurbsSideChannel;
   /** Optional derived/auxiliary data (mesh size, …); never serialized. */
   derived?: DerivedMeshData;
+}
+
+/** See `MdpaModel.nurbs`. */
+export interface NurbsSideChannel {
+  /** The side channel's own format: an MFEM NURBS mesh or a CAD JSON B-rep. */
+  format: "mfem" | "cad_json";
+  /** Patch count (both formats), for summaries that must not stringify the info. */
+  patches: number;
+  /** B-rep face count (cad_json only; an MFEM NURBS mesh has none). */
+  faces: number;
+  /**
+   * The live meshio++ info object (upstream `MfemInfo | CadJsonInfo` shape).
+   * Opaque here on purpose: meshio.ts's IGA ops consume it, nothing else
+   * touches it.
+   */
+  info: object;
 }
 
 /** See `MdpaModel.source`. */

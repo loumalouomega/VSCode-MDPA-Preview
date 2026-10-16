@@ -11,6 +11,7 @@
  */
 
 import { MdpaModel } from "../types";
+import type { FitCadOptions } from "@meshioplusplus/wasm";
 import { writeMdpa, MdpaWriteOptions } from "./mdpaWriter";
 import { writeVtkLegacy } from "./vtkLegacyWriter";
 import { writeVtu, writeVtp } from "./vtkXmlWriter";
@@ -69,6 +70,13 @@ export interface MeshWriteOptions extends MdpaWriteOptions {
    * interrupted. Rejects with "cancelled".
    */
   signal?: AbortSignal;
+  /**
+   * The `.step` export's fit controls (see meshio.ts's writeStepModel): an
+   * options object rides `fitCad` verbatim, `false` skips fitting and writes
+   * the faceted solid directly, undefined takes the kernel's own defaults.
+   * Ignored by every other format.
+   */
+  fitCad?: FitCadOptions | false;
 }
 
 /** What a meshio++ write needs, in a form that can cross a thread boundary. */
@@ -77,6 +85,8 @@ export interface MeshioWriteJob {
   stem?: string;
   provenance?: ProvenanceRequest;
   signal?: AbortSignal;
+  /** The `.step` auto-fit controls; see `MeshWriteOptions.fitCad`. */
+  fitCad?: FitCadOptions | false;
 }
 
 /** The result plus the diagnostics `modelToMeshio` and the OpenFOAM patch rewrite produced. */
@@ -96,6 +106,7 @@ export async function writeMeshioInProcess(model: MdpaModel, ext: string, job: M
     stem: job.stem,
     diagnostics,
     provenance: job.provenance,
+    fitCad: job.fitCad,
   });
   return { result, diagnostics };
 }
@@ -225,7 +236,7 @@ export async function writeMeshFileAsync(
     // passed to writeMeshioBytes itself — it already forwards its own
     // OpenFOAM-patch diagnostics into this same array, and forwarding them a
     // second time here would double-report them.
-    const job: MeshioWriteJob = { format: opts.format, stem: opts.name, provenance: opts.provenance, signal: opts.signal };
+    const job: MeshioWriteJob = { format: opts.format, stem: opts.name, provenance: opts.provenance, signal: opts.signal, fitCad: opts.fitCad };
     // A worker has its own engineActivity singleton, so the host reports the
     // status-bar line for it; in-process, loadMeshio() already does.
     const { result, diagnostics } = workerRunnerInstalled

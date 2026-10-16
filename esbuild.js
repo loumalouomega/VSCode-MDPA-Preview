@@ -94,11 +94,19 @@ const copyPyodidePlugin = {
 // The src/ <- dist/ layout MUST be preserved: src/index.mjs imports
 // '../dist/meshioplusplus_wasm.mjs'.
 //
-// Since 8.8.0 there are TWO native artifacts and index.mjs's resolveVariant()
-// picks the threaded `_mt` one under Node — i.e. in the extension host — so
-// both pairs must ship or the packaged extension cannot open any meshio format
-// at all. That is the ~6.2 MB the _mt.wasm adds to the .vsix; the mt glue finds
-// its own pthread worker relative to its file, so no other change is needed.
+// Since 8.8.0 there are TWO native variants of each artifact and index.mjs's
+// resolveVariant() picks the threaded `_mt` one under Node — i.e. in the
+// extension host — so both files of a pair must ship or the packaged extension
+// cannot open any meshio format at all. The mt glue finds its own pthread
+// worker relative to its file, so no other change is needed.
+//
+// Since 17.0.0 the package also ships a FULL artifact (OpenCASCADE, zstd,
+// lz4, bzip2; mixed licence, see THIRD_PARTY_NOTICES.md) in the same src/ +
+// dist/ layout and the same two variants. It is what `loadMeshioFull`
+// ({full: true}) instantiates for the step/iges reads, fitCad and the
+// zstd/lz4/bzip2 fallbacks, so all four `_full` files ship beside the lean
+// pair — ~53 MB in dist/meshio/, about 18 MB more in the .vsix. Every other
+// format and operation keeps instantiating the lean pair.
 const copyMeshioPlugin = {
   name: "copy-meshio",
   setup(build) {
@@ -116,13 +124,20 @@ const copyMeshioPlugin = {
         "meshioplusplus_wasm.wasm",
         "meshioplusplus_wasm_mt.mjs",
         "meshioplusplus_wasm_mt.wasm",
+        "meshioplusplus_wasm_full.mjs",
+        "meshioplusplus_wasm_full.wasm",
+        "meshioplusplus_wasm_full_mt.mjs",
+        "meshioplusplus_wasm_full_mt.wasm",
       ]) {
         fs.copyFileSync(path.join(src, "dist", file), path.join(out, "dist", file));
       }
       // package.json records the shipped version; the rest is attribution.
-      // The published tarball currently carries no LICENSE (the MIT text lives
-      // at the meshio++ repo root, outside the wasm/ package dir), so guard it.
-      for (const file of ["package.json", "README.md", "LICENSE"]) {
+      // The published tarball carries no LICENSE (the MIT text lives at the
+      // meshio++ repo root, outside the wasm/ package dir), so guard it; the
+      // full artifact's own licence text — MIT AND (LGPL-2.1-only WITH
+      // OCCT-exception-1.0), covering OpenCASCADE and the codecs — is
+      // THIRD_PARTY_NOTICES.md, which the tarball does ship.
+      for (const file of ["package.json", "README.md", "LICENSE", "THIRD_PARTY_NOTICES.md"]) {
         const from = path.join(src, file);
         if (fs.existsSync(from)) fs.copyFileSync(from, path.join(out, file));
       }
@@ -339,6 +354,8 @@ async function main() {
     "node_modules/@loumalouomega/mmg-wasm/dist/mmg-core.wasm",
     "node_modules/pyodide/pyodide.js",
     "node_modules/@meshioplusplus/wasm/src/index.mjs",
+    "node_modules/@meshioplusplus/wasm/dist/meshioplusplus_wasm_full.wasm",
+    "node_modules/@meshioplusplus/wasm/THIRD_PARTY_NOTICES.md",
     "node_modules/@kratos-flowgraph/flowgraph/public",
     "node_modules/@kratos-flowgraph/flowgraph/views",
     "node_modules/@kratos-flowgraph/flowgraph/LICENSE",

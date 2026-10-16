@@ -12,7 +12,8 @@ import test from "node:test";
 
 import { parseMeshFile } from "../parser/meshFileParser";
 import { loadMeshio, readMeshioModel, writeMeshioBytes } from "../parser/meshio";
-import { MdpaModel } from "../parser/types";
+import { exportEligibility } from "../parser/writers/exportEligibility";
+import { MdpaDiagnostic, MdpaModel } from "../parser/types";
 
 function tmpDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "meshio-"));
@@ -704,6 +705,313 @@ test("locateFile is asked for the loaded variant's own filename", async () => {
   } finally {
     configureMeshio({}); // never leak the override into the other tests
   }
+});
+
+// The same two invariants for the FULL artifact (meshio++ >= 17.0.0), which
+// this extension ships beside the lean one and loads through `loadMeshioFull`.
+// The flavour assertions are what make a loader that silently handed back the
+// lean artifact fail here rather than in an OCCT-only feature much later.
+test("loadMeshioFull instantiates the full artifact with its own libraries", async () => {
+  const { loadMeshioFull } = await import("../parser/meshio");
+  const m = await loadMeshioFull();
+  assert.equal(m.buildFlavour(), "full");
+  assert.equal(m.hasOcct(), true);
+  assert.equal(m.hasZstd(), true);
+  assert.equal(m.hasLz4(), true);
+  assert.equal(m.hasBzip2(), true);
+  assert.ok(
+    ["seq", "openmp"].includes(m.parallelBackend()),
+    `unexpected parallel backend "${m.parallelBackend()}"`
+  );
+});
+
+test("locateFile is asked for the full variant's own filename", async () => {
+  const { configureMeshio, loadMeshioFull } = await import("../parser/meshio");
+  const dist = path.join(
+    path.dirname(require.resolve("@meshioplusplus/wasm/package.json")),
+    "dist"
+  );
+  const requested: string[] = [];
+  configureMeshio({
+    locateFile: (name: string) => {
+      requested.push(name);
+      return path.join(dist, path.basename(name));
+    },
+  });
+  try {
+    const m = await loadMeshioFull();
+    const expected =
+      m.parallelBackend() === "openmp"
+        ? "meshioplusplus_wasm_full_mt.wasm"
+        : "meshioplusplus_wasm_full.wasm";
+    assert.ok(
+      requested.includes(expected),
+      `locateFile was asked for ${JSON.stringify(requested)}, not "${expected}"`
+    );
+  } finally {
+    configureMeshio({}); // never leak the override into the other tests
+  }
+});
+
+// --- the FULL artifact's CAD reads (.step/.igs, routed in 17.2.0) -----------
+//
+// `step`/`iges` have READERS only where OpenCASCADE is linked — the full
+// artifact — and 17.2.0 routes both: meshio.ts's loadMeshioForRead dispatches
+// their extensions (and an explicit `inputFormat` naming either key) to
+// `loadMeshioFull()` instead of the lean one, where the read would die with
+// the registry's own `{full: true}` refusal. The fixtures are a unit box
+// committed per fixtures/cad/README.md: one faceted-written by this repo's
+// lean writer, one upstream's own IGES — so the test also pins that the
+// dispatch is INVISIBLE to the caller: readMeshioModel takes the same
+// (name, files, ext) shape either build serves.
+
+test("meshio++ 17.2.0: .step and .igs read through the FULL artifact as ordinary models", async () => {
+  const cad = path.resolve(__dirname, "..", "..", "src", "test", "fixtures", "cad");
+  for (const [file, ext] of [
+    ["box.step", ".step"],
+    ["box.igs", ".igs"],
+  ] as const) {
+    const data = fs.readFileSync(path.join(cad, file));
+    const back = await readMeshioModel(file, [{ name: file, data }], ext);
+    assert.equal(back.nodeCount, 8, `${ext} reads the box's 8 corners`);
+    const triangles = back.blocks.reduce((n, b) => n + b.count, 0);
+    assert.equal(triangles, 12, `${ext} triangulates the box's 6 faces`);
+    for (const b of back.blocks) {
+      assert.equal(b.vtkCellType, 5, `${ext} surfaces arrive as triangles`);
+    }
+  }
+});
+
+test("meshio++ 17.2.0: an explicit inputFormat routes a CAD read to the full artifact too", async () => {
+  // The `format` argument overrides the extension's candidates, and the
+  // dispatch follows the FORMAT as well as the extension: asking for "step"
+  // on an arbitrary path must not attempt the lean build, which has no such
+  // reader at all.
+  const data = fs.readFileSync(
+    path.resolve(__dirname, "..", "..", "src", "test", "fixtures", "cad", "box.step")
+  );
+  const back = await readMeshioModel("box.step", [{ name: "box.step", data }], ".step", "step");
+  assert.equal(back.nodeCount, 8);
+});
+
+// --- the .step export: Skin to CAD (17.2.0) ---------------------------------
+//
+// ONE export target with auto-fit behaviour. A closed, consistently wound
+// all-triangle skin is fitted by the FULL artifact's fitCad — analytic faces
+// where a primitive fits — and the solid's B-rep also rides beside the file
+// as a <stem>.cad.json companion; anything else writes the faceted solid
+// instead, without info (the faceted writer refuses it). The message says
+// which of the two ran, and the companion is what makes the difference
+// observable: a faceted export has none.
+
+const CUBE_SKIN_MDPA =
+  "Begin Nodes\n" +
+  "1 0 0 0\n2 1 0 0\n3 1 1 0\n4 0 1 0\n5 0 0 1\n6 1 0 1\n7 1 1 1\n8 0 1 1\n" +
+  "End Nodes\n" +
+  "Begin Conditions SurfaceCondition3D3N\n" +
+  "1 0 1 3 2\n2 0 1 4 3\n3 0 5 6 7\n4 0 5 7 8\n" +
+  "5 0 1 2 6\n6 0 1 6 5\n7 0 2 3 7\n8 0 2 7 6\n" +
+  "9 0 3 4 8\n10 0 3 8 7\n11 0 4 1 5\n12 0 4 5 8\n" +
+  "End Conditions\n";
+
+const HEXA_MDPA =
+  "Begin Nodes\n" +
+  "1 0 0 0\n2 1 0 0\n3 1 1 0\n4 0 1 0\n5 0 0 1\n6 1 0 1\n7 1 1 1\n8 0 1 1\n" +
+  "End Nodes\n" +
+  "Begin Elements Hexahedron3D8N\n1 0 1 2 3 4 5 6 7 8\nEnd Elements\n";
+
+async function cubeSkinModel(text: string): Promise<MdpaModel> {
+  const dir = tmpDir();
+  const p = path.join(dir, "skin.mdpa");
+  fs.writeFileSync(p, text);
+  return parseMeshFile(p);
+}
+
+test("meshio++ 17.2.0: a closed triangle skin exports as a FITTED STEP with a .cad.json B-rep companion", async () => {
+  const cube = await cubeSkinModel(CUBE_SKIN_MDPA);
+  const diagnostics: MdpaDiagnostic[] = [];
+  const { data, companions } = await writeMeshioBytes(cube, ".step", { stem: "box", diagnostics });
+  assert.ok(Buffer.from(data).toString("utf8", 0, 14) === "ISO-10303-21;\n", "a real AP214 STEP file");
+  assert.ok(
+    companions.some((c) => c.name === "box.cad.json"),
+    `the B-rep rides beside the file: ${companions.map((c) => c.name).join(", ")}`
+  );
+  // The message names which export ran, and at unit scale the whole box fits
+  // analytically: six plane faces, nothing demoted.
+  assert.ok(diagnostics.some((d) => d.message.includes("fitted CAD B-rep via fitCad")));
+  assert.ok(diagnostics.some((d) => d.message.includes("6 planes")));
+  // The companion is a real, readable CAD JSON of the SAME solid.
+  const cad = companions.find((c) => c.name === "box.cad.json")!;
+  const back = await readMeshioModel("box.cad.json", [{ name: "box.cad.json", data: cad.data }], ".cad.json");
+  assert.ok(back.nodeCount > 0, "the companion parses back as a model");
+  // And the STEP itself re-opens through the CAD reader (stage 2's route).
+  const reopened = await readMeshioModel("box.step", [{ name: "box.step", data }], ".step");
+  assert.equal(reopened.nodeCount, 8);
+});
+
+test("meshio++ 17.2.0: fitCad:false writes the faceted solid only", async () => {
+  const cube = await cubeSkinModel(CUBE_SKIN_MDPA);
+  const diagnostics: MdpaDiagnostic[] = [];
+  const { data, companions } = await writeMeshioBytes(cube, ".step", { stem: "box", fitCad: false, diagnostics });
+  assert.ok(Buffer.from(data).toString("utf8", 0, 14) === "ISO-10303-21;\n");
+  assert.deepEqual(companions, [], "no B-rep companion without the fit");
+  assert.ok(!diagnostics.some((d) => d.message.includes("fitCad")), "the message says nothing about fitting");
+});
+
+test("meshio++ 17.2.0: a volume model exports its boundary skin, and an open surface is refused", async () => {
+  const hex = await cubeSkinModel(HEXA_MDPA);
+  const diagnostics: MdpaDiagnostic[] = [];
+  const { data, companions } = await writeMeshioBytes(hex, ".step", { stem: "hex", fitCad: false, diagnostics });
+  assert.ok(Buffer.from(data).toString("utf8", 0, 14) === "ISO-10303-21;\n", "the quad skin writes as a faceted solid");
+  assert.ok(
+    diagnostics.some((d) => d.message.includes("boundary skin (6 faces)")),
+    "the interior drop is stated: " + diagnostics.map((d) => d.message).join(" | ")
+  );
+  // A lone triangle is not a solid: refused up front, and the writer's own
+  // refusal (which names the open edges) propagates to direct callers.
+  const open = await sampleModel();
+  const eligibility = exportEligibility(open, ".step");
+  assert.equal(eligibility?.ok, false);
+  assert.ok((eligibility?.reason ?? "").includes("closed, consistently wound solid surface"));
+  await assert.rejects(
+    writeMeshioBytes(open, ".step", { fitCad: false }),
+    /not a closed, consistently wound solid/
+  );
+});
+
+// --- the codec fallback (17.2.0's full artifact) ----------------------------
+//
+// Three files the LEAN build cannot inflate, each refusing by flag name —
+// `VTK XML zstd decompression requires a build with -DMESHIOPLUSPLUS_WITH_
+// ZSTD=ON` (lz4 twin) and `libMesh: <path> is bzip2-compressed and this build
+// has no bzip2 (MESHIOPLUSPLUS_WITH_BZIP2; …)`. readMeshioModel's fallback
+// fires ONLY on those messages, retries against the full artifact, and states
+// the fallback in a diagnostic. The fixtures are authored by the full
+// artifact itself: a codec:"zstd"/"lz4" VTK XML write, and a libMesh write to
+// a `.bz2` name renamed DOWN to `.xda` (the extension-known `.xda.bz2` path
+// is already inflated by our own JS decoder, so the fallback only ever sees
+// content-known bz2).
+
+const CODEC_TET = {
+  dim: 3,
+  points: new Float64Array([0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1]),
+  cells: [{ type: "tetra", nodesPerCell: 4, data: new Int32Array([0, 1, 2, 3]) }],
+  point_data: {},
+  cell_data: {},
+  field_data: {},
+} as const;
+
+test("meshio++ 17.2.0: a zstd/lz4 .vtu falls back through meshio++ to the full artifact", async () => {
+  const { loadMeshioFull } = await import("../parser/meshio");
+  const m = await loadMeshioFull();
+  const dir = tmpDir();
+  for (const codec of ["zstd", "lz4"] as const) {
+    m.writeMesh(`/codec-${codec}.vtu`, CODEC_TET as never, "", { encoding: "binary", codec });
+    const p = path.join(dir, `codec-${codec}.vtu`);
+    fs.writeFileSync(p, m.FS.readFile(`/codec-${codec}.vtu`));
+    const model = await parseMeshFile(p);
+    assert.equal(model.nodeCount, 4, `${codec}: the mesh reads whole`);
+    assert.ok(
+      model.diagnostics.some((d) => d.message.includes("Read via the full artifact")),
+      `${codec}: the fallback is stated, not silent`
+    );
+  }
+});
+
+test("meshio++ 17.2.0: bzip2 libMesh bytes under a plain .xda name read through the full artifact", async () => {
+  const { loadMeshioFull } = await import("../parser/meshio");
+  const m = await loadMeshioFull();
+  m.writeMesh("/b.xda.bz2", CODEC_TET as never);
+  const dir = tmpDir();
+  const p = path.join(dir, "plain.xda"); // BZh content, NO .bz2 extension
+  fs.writeFileSync(p, m.FS.readFile("/b.xda.bz2"));
+  const model = await parseMeshFile(p);
+  assert.equal(model.nodeCount, 4);
+  assert.ok(
+    model.diagnostics.some((d) => d.message.includes("Read via the full artifact")),
+    "the fallback is stated: " + model.diagnostics.map((d) => d.message).join(" | ")
+  );
+});
+
+test("meshio++ 17.2.0: glTF/GLB reads through the lean build (not full-only)", async () => {
+  const { writeRawMeshioBytes } = await import("../parser/meshio");
+  // glTF is a SURFACE container: a tetra writes as its four faces, so the
+  // round-trip input is one triangle and the readback is that triangle.
+  const tri = {
+    dim: 3,
+    points: new Float64Array([0, 0, 0, 1, 0, 0, 0, 1, 0]),
+    cells: [{ type: "triangle", nodesPerCell: 3, data: new Int32Array([0, 1, 2]) }],
+    point_data: {},
+    cell_data: {},
+    field_data: {},
+  } as never;
+  const dir = tmpDir();
+  for (const ext of [".glb", ".gltf"]) {
+    const { data, companions } = await writeRawMeshioBytes(tri, ext, "gltf");
+    const p = path.join(dir, `t${ext}`);
+    fs.writeFileSync(p, data);
+    // The writer's companions ride beside it (a .gltf names its own .bin).
+    for (const c of companions) fs.writeFileSync(path.join(dir, c.name), c.data);
+    const back = await parseMeshFile(p);
+    assert.equal(back.nodeCount, 3, `${ext} reads the triangle's nodes`);
+    assert.equal(back.blocks.reduce((n, b) => n + b.count, 0), 1, `${ext} reads one triangle`);
+  }
+});
+
+// --- the IGA derive kinds over the NURBS side channel (17.2.0) --------------
+//
+// The side channel is what makes the IGA ops possible without re-reading the
+// file: a read of a .cad.json / .step / MFEM NURBS .mesh requests
+// `{info: true}` and keeps the patches ON the model (MdpaModel.nurbs); every
+// applied edit drops it (operations.ts's applyOpAsync — one funnel, so
+// "never carried through ops" is one line). The ops themselves run on the
+// LEAN build, and the info crosses instances fine: it is plain data
+// (measured), cloned across the read worker by structured clone — but it
+// holds typed arrays, so it must never touch JSON.
+
+test("meshio++ 17.2.0: a read keeps the NURBS side channel and the IGA ops run on it", async () => {
+  const { deriveMesh } = await import("../parser/deriveMesh");
+  const cube = await cubeSkinModel(CUBE_SKIN_MDPA);
+  const fit = await writeMeshioBytes(cube, ".step", { stem: "box" });
+  const cad = fit.companions.find((c) => c.name === "box.cad.json")!;
+  const model = await readMeshioModel("box.cad.json", [{ name: "box.cad.json", data: cad.data }], ".cad.json");
+  assert.ok(model.nurbs, "the read keeps the side channel");
+  assert.equal(model.nurbs.format, "cad_json");
+  assert.equal(model.nurbs.faces, 6);
+  assert.equal(model.nurbs.patches, 6);
+
+  const sampled = await deriveMesh(model, { kind: "igaSample" });
+  assert.ok(sampled.model.nodeCount > 0, "igaSample produces a mesh");
+  assert.match(sampled.summary, /IGA sampling of 6 NURBS patch/);
+  const refined = await deriveMesh(model, { kind: "igaRefine", subdivisions: 2 });
+  assert.ok(refined.model.nodeCount > 0, "igaRefine produces a mesh");
+  assert.match(refined.summary, /IGA refinement of 6 NURBS patch/);
+  // The results are DERIVED meshes: no side channel, by the same rule that
+  // drops it on edits (the file round-trip is the refine chain).
+  assert.equal(refined.model.nurbs, undefined);
+  assert.equal(sampled.model.nurbs, undefined);
+});
+
+test("meshio++ 17.2.0: an applied edit drops the NURBS side channel; a noop keeps it", async () => {
+  const { applyOpAsync } = await import("../parser/operations");
+  const cube = await cubeSkinModel(CUBE_SKIN_MDPA);
+  const fit = await writeMeshioBytes(cube, ".step", { stem: "box" });
+  const cad = fit.companions.find((c) => c.name === "box.cad.json")!;
+  const model = await readMeshioModel("box.cad.json", [{ name: "box.cad.json", data: cad.data }], ".cad.json");
+  assert.ok(model.nurbs);
+  const moved = await applyOpAsync(model, { op: "translate", dx: 1, dy: 0, dz: 0 });
+  assert.ok(!moved.noop);
+  assert.equal(moved.model.nurbs, undefined, "a moved mesh is no longer the patches' sampling");
+  const noop = await applyOpAsync(model, { op: "mergeMesh" });
+  assert.ok(noop.noop);
+  assert.ok(noop.model.nurbs, "nothing changed, so the channel stays");
+});
+
+test("meshio++ 17.2.0: the IGA kinds refuse a mesh without a side channel", async () => {
+  const { deriveMesh } = await import("../parser/deriveMesh");
+  const open = await sampleModel();
+  await assert.rejects(deriveMesh(open, { kind: "igaSample" }), /no NURBS side channel/);
+  await assert.rejects(deriveMesh(open, { kind: "igaRefine" }), /no NURBS side channel/);
 });
 
 // --- meshio++ 10.14.0: what the 9.22.0 -> 10.14.0 jump actually changes -------

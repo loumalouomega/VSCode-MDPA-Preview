@@ -6,6 +6,7 @@ import * as path from "node:path";
 import {
   IN_FILE_PROBE_EXTENSIONS,
   IN_FILE_TIMELINE_EXTENSIONS,
+  STATIC_EXTENSIONS,
   TIMELINE_EXTENSIONS,
   SUPPORTED_MESH_EXTENSIONS,
   timelineKindFor,
@@ -22,14 +23,25 @@ const tri = (x: number) =>
   `Begin Elements Element2D3N\n1 0 1 2 3\nEnd Elements\n`;
 
 test("every supported extension resolves to exactly one timeline kind, and the probe list is disjoint", () => {
+  // Three shapes since the CAD reads: in-file, filename series, or static
+  // (STEP/IGES — a directory of CAD parts is not a time series; see
+  // STATIC_EXTENSIONS). Exactly ONE of the three, so a file can never fall
+  // through two branches or none.
   for (const e of [...SUPPORTED_MESH_EXTENSIONS, ".mdpa"]) {
-    const inFile = IN_FILE_TIMELINE_EXTENSIONS.includes(e);
-    const filename = TIMELINE_EXTENSIONS.includes(e);
-    assert.ok(inFile !== filename, `${e} must be in-file XOR filename series`);
+    const kinds = [
+      IN_FILE_TIMELINE_EXTENSIONS.includes(e),
+      TIMELINE_EXTENSIONS.includes(e),
+      STATIC_EXTENSIONS.includes(e),
+    ].filter(Boolean).length;
+    assert.equal(kinds, 1, `${e} has exactly one timeline kind`);
   }
   for (const e of IN_FILE_PROBE_EXTENSIONS) {
     assert.ok(TIMELINE_EXTENSIONS.includes(e), `${e} stays a filename series`);
     assert.ok(!IN_FILE_TIMELINE_EXTENSIONS.includes(e), `${e} is probed, not in-file by name`);
+  }
+  for (const e of STATIC_EXTENSIONS) {
+    assert.equal(timelineKindFor(`/a/m${e}`), "static", `${e} has no timeline`);
+    assert.equal(timelineWatchGlob(`m${e}`), undefined, `${e} has no watcher`);
   }
 });
 

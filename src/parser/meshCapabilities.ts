@@ -5,13 +5,15 @@
  * No vscode / DOM imports, so it stays Node-testable and MCP-reachable. This
  * is the headless query roadmap Tier 1 item 1 asks for: instead of scattering
  * "is X supported?" across format tables and test pins, one call answers from
- * the LIVE artifact (readers/writers/options-awareness/backend/cgnslib) next
- * to the static routing tables that decide what the extension does with them.
+ * the LIVE artifacts — both of them, since 17.2.0 ships a full OCCT/zstd/lz4/
+ * bzip2 artifact beside the lean one (readers/writers/options-awareness/
+ * flavour/backend/cgnslib) — next to the static routing tables that decide
+ * what the extension does with them.
  */
 
 import { ADOPTING_OPS } from "./adoptingOps";
 import { exportFidelityCapabilities, ExportFidelityCapabilities } from "./exportReport";
-import { loadMeshio, meshioPackageVersion } from "./meshio";
+import { loadMeshio, loadMeshioFull, meshioFullInstalled, meshioPackageVersion } from "./meshio";
 import {
   HEADER_METADATA_EXTENSIONS,
   IN_FILE_TIMELINE_EXTENSIONS,
@@ -49,6 +51,40 @@ export interface MeshCapabilities {
   operations: { available: string[]; unavailable: { name: string; reason: string }[] };
   /** Sequential or threaded build actually instantiated (`parallelBackend`). */
   backend: string;
+  /**
+   * The LIVE build's flavour ("lean" here) and the optional native libraries
+   * it links (`buildFlavour`/`hasOcct`/`hasZstd`/`hasLz4`/`hasBzip2`,
+   * meshio++ >= 17.0.0). All four libraries are false on the lean build.
+   */
+  build: {
+    flavour: string;
+    occt: boolean;
+    zstd: boolean;
+    lz4: boolean;
+    bzip2: boolean;
+  };
+  /**
+   * The FULL artifact shipped beside the lean one since 17.2.0 (OpenCASCADE,
+   * zstd, lz4, bzip2; mixed licence — see the package's THIRD_PARTY_NOTICES).
+   * `installed` is the file-system fact; `build` is a SECOND live
+   * instantiation, present only when it loaded, and `error` says why not when
+   * it did not. The step/iges reads, fitCad and the zstd/lz4/bzip2 fallbacks
+   * run on it (see meshFileParser.ts).
+   */
+  full: {
+    installed: boolean;
+    build?: {
+      flavour: string;
+      backend: string;
+      occt: boolean;
+      zstd: boolean;
+      lz4: boolean;
+      bzip2: boolean;
+      readers: string[];
+      writers: string[];
+    };
+    error?: string;
+  };
   /** Whether ADF containers / CGNS 3.x layouts are reachable (`hasCgnslib`). */
   hasCgnslib: boolean;
   /** Format keys the live build reports (availableFormats). */
@@ -126,9 +162,6 @@ export interface MeshFidelityCapabilities {
 const UNROUTED_READER_REASONS: Record<string, string> = {
   mdpa: "parsed natively everywhere, never routed through meshio++",
   gmsh22: "write-only MSH 2.2 alias; .msh writes 4.1",
-  gltf: "glTF/GLB: the writer (>= 15.4.0) and, since 17.0.0, a reader; no web-viewer consumer routes to either yet",
-  step: "STEP: the writer (>= 16.40.0) works, but the reader (>= 16.42.0) needs OpenCASCADE, which only the FULL artifact (mixed licence, 17.x `{full: true}`) links and this extension ships the lean one, so the reader is absent from the live registry; B-rep/CAD handoff belongs to the sibling CAD-Preview extension, so nothing routes to it here",
-  iges: "IGES reader (>= 16.42.0) needs OpenCASCADE, which only the FULL artifact links; the lean build this extension ships (17.x) does not list it at all; CAD import belongs to the sibling CAD-Preview extension",
   vti: "read natively by vtkXmlParser; the writer needs a dense lattice",
   vts: "read natively by vtkXmlParser; the writer needs a dense lattice",
   vtr: "read natively by vtkXmlParser; the writer needs a uniform lattice",
@@ -216,6 +249,14 @@ export async function getMeshCapabilities(): Promise<MeshCapabilities> {
   return {
     ...(meshioPackageVersion() ? { packageVersion: meshioPackageVersion() as string } : {}),
     backend: m.parallelBackend(),
+    build: {
+      flavour: m.buildFlavour(),
+      occt: m.hasOcct(),
+      zstd: m.hasZstd(),
+      lz4: m.hasLz4(),
+      bzip2: m.hasBzip2(),
+    },
+    full: await probeFullArtifact(),
     hasCgnslib: m.hasCgnslib(),
     live: { readers: [...live.readers].sort(), writers: [...live.writers].sort() },
     readers,
@@ -240,6 +281,36 @@ export async function getMeshCapabilities(): Promise<MeshCapabilities> {
     exportFidelity: exportFidelityCapabilities(),
     partitioning: probePartitioners(m),
   };
+}
+
+/**
+ * The second, FULL artifact: reported separately from the lean live build
+ * because it is a separate instantiation. `installed` never loads (see
+ * meshioFullInstalled); everything else is one real load, released when the
+ * call returns like every `loadMeshio` call. A full artifact that is installed
+ * but cannot instantiate is reported with the error rather than hidden.
+ */
+async function probeFullArtifact(): Promise<MeshCapabilities["full"]> {
+  if (!meshioFullInstalled()) return { installed: false };
+  try {
+    const fm = await loadMeshioFull();
+    const live = fm.availableFormats();
+    return {
+      installed: true,
+      build: {
+        flavour: fm.buildFlavour(),
+        backend: fm.parallelBackend(),
+        occt: fm.hasOcct(),
+        zstd: fm.hasZstd(),
+        lz4: fm.hasLz4(),
+        bzip2: fm.hasBzip2(),
+        readers: [...live.readers].sort(),
+        writers: [...live.writers].sort(),
+      },
+    };
+  } catch (e) {
+    return { installed: true, error: e instanceof Error ? e.message : String(e) };
+  }
 }
 
 /** Runs each partitioner on a two-triangle mesh: a method the build lacks refuses by name. */

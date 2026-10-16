@@ -76,6 +76,34 @@ import { CaseState } from "../problemtype/types";
 
 // Same shape as problemtypeGenerate.test.ts: one tetrahedron (3D) with a
 // volume part and two boundary parts.
+/** A unit cube's closed, consistently wound triangle skin (SurfaceCondition3D3N) — the fitCad showcase. */
+const CUBE_SKIN_MDPA = `Begin Nodes
+1 0 0 0
+2 1 0 0
+3 1 1 0
+4 0 1 0
+5 0 0 1
+6 1 0 1
+7 1 1 1
+8 0 1 1
+End Nodes
+
+Begin Conditions SurfaceCondition3D3N
+1 0 1 3 2
+2 0 1 4 3
+3 0 5 6 7
+4 0 5 7 8
+5 0 1 2 6
+6 0 1 6 5
+7 0 2 3 7
+8 0 2 7 6
+9 0 3 4 8
+10 0 3 8 7
+11 0 4 1 5
+12 0 4 5 8
+End Conditions
+`;
+
 const MDPA_3D = `Begin Properties 0
 End Properties
 
@@ -1234,6 +1262,65 @@ test("mesh_convert round-trips a mesh through an extended text format", async ()
   assert.equal(model.blocks.reduce((n, b) => n + b.count, 0), 2);
 });
 
+test("mesh_convert to .step auto-fits the closed skin and writes the B-rep companion", async () => {
+  // A unit cube's closed triangle skin (MDPA Conditions, outward wound) is
+  // exactly what fitCad wants: six plane faces. The companion makes the fit
+  // observable, and `fitCad: false` must produce none.
+  const dir = tmpDir();
+  const mdpa = path.join(dir, "cube.mdpa");
+  fs.writeFileSync(mdpa, CUBE_SKIN_MDPA);
+  const out = path.join(dir, "box.step");
+  const converted = (await meshConvert({ path: mdpa, outputPath: out })) as {
+    warnings: string[];
+  };
+  assert.ok(fs.existsSync(out), "the STEP itself is written");
+  assert.ok(fs.existsSync(path.join(dir, "box.cad.json")), "the fitted B-rep rides beside it");
+  assert.ok(
+    converted.warnings.some((w) => w.includes("fitted CAD B-rep via fitCad")),
+    "the report says which export ran: " + converted.warnings.join(" | ")
+  );
+
+  const faceted = path.join(dir, "faceted.step");
+  await meshConvert({ path: mdpa, outputPath: faceted, fitCad: false });
+  assert.ok(fs.existsSync(faceted));
+  assert.ok(!fs.existsSync(path.join(dir, "faceted.cad.json")), "no companion without the fit");
+});
+
+test("mesh_derive igaSample/igaRefine run the NURBS side channel; a plain mesh is refused", async () => {
+  // The side channel comes from a READ: the fitted .cad.json companion of the
+  // stage-3 convert carries the B-rep, and mesh_info reports its counts.
+  const dir = tmpDir();
+  const mdpa = path.join(dir, "cube.mdpa");
+  fs.writeFileSync(mdpa, CUBE_SKIN_MDPA);
+  const stepOut = path.join(dir, "box.step");
+  await meshConvert({ path: mdpa, outputPath: stepOut });
+  const cad = path.join(dir, "box.cad.json");
+  assert.ok(fs.existsSync(cad), "the fit wrote the B-rep companion");
+  const info = (await meshInfo({ path: cad })) as {
+    nurbs?: { format: string; patches: number; faces: number };
+  };
+  assert.deepEqual(info.nurbs, { format: "cad_json", patches: 6, faces: 6 });
+
+  const sampled = path.join(dir, "sampled.vtu");
+  const r1 = (await meshDerive({ path: cad, kind: "igaSample", outputPath: sampled })) as {
+    summary?: string;
+  };
+  assert.ok(fs.existsSync(sampled));
+  assert.match(r1.summary ?? "", /IGA sampling of 6 NURBS patch/);
+  const refined = path.join(dir, "refined.vtu");
+  const r2 = (await meshDerive({ path: cad, kind: "igaRefine", outputPath: refined, subdivisions: 2 })) as {
+    summary?: string;
+  };
+  assert.ok(fs.existsSync(refined));
+  assert.match(r2.summary ?? "", /IGA refinement of 6 NURBS patch/);
+
+  // A mesh with no side channel is refused by name (the beam has none).
+  await assert.rejects(
+    meshDerive({ path: writeFixture(dir), kind: "igaSample", outputPath: path.join(dir, "x.vtu") }),
+    /no NURBS side channel/
+  );
+});
+
 test("mesh_capabilities reports the live build next to the routing tables", async () => {
   // The headless query roadmap Tier 1 item 1 asks for: readers/writers from
   // the live artifact, per-reader options-awareness, and the extension's own
@@ -1241,6 +1328,21 @@ test("mesh_capabilities reports the live build next to the routing tables", asyn
   const caps = (await meshCapabilities()) as {
     packageVersion?: string;
     backend: string;
+    build: { flavour: string; occt: boolean; zstd: boolean; lz4: boolean; bzip2: boolean };
+    full: {
+      installed: boolean;
+      build?: {
+        flavour: string;
+        backend: string;
+        occt: boolean;
+        zstd: boolean;
+        lz4: boolean;
+        bzip2: boolean;
+        readers: string[];
+        writers: string[];
+      };
+      error?: string;
+    };
     hasCgnslib: boolean;
     live: { readers: string[]; writers: string[] };
     readers: { key: string; extensions: string[]; optionsAware: boolean }[];
@@ -1277,6 +1379,28 @@ test("mesh_capabilities reports the live build next to the routing tables", asyn
   // readers, writers unchanged at 75.
   assert.equal(caps.live.readers.length, 80);
   assert.equal(caps.live.writers.length, 75);
+  // 17.2.0 ships a FULL artifact beside the lean one; mesh_capabilities
+  // reports both, live (see meshCapabilities.ts's `full`). The lean build is
+  // what `live`/`readers` describe; `build` names its flavour, and the full
+  // block is a SECOND instantiation — the lean one plus the two
+  // OpenCASCADE-backed CAD readers (82 vs 80; writers unchanged at 75, the
+  // faceted `step` writer exists in both builds).
+  assert.equal(caps.build.flavour, "lean");
+  assert.equal(caps.build.occt, false);
+  assert.equal(caps.build.zstd, false);
+  assert.equal(caps.build.lz4, false);
+  assert.equal(caps.build.bzip2, false);
+  assert.equal(caps.full.installed, true);
+  assert.equal(caps.full.error, undefined);
+  assert.equal(caps.full.build?.flavour, "full");
+  assert.equal(caps.full.build?.occt, true);
+  assert.equal(caps.full.build?.zstd, true);
+  assert.equal(caps.full.build?.lz4, true);
+  assert.equal(caps.full.build?.bzip2, true);
+  assert.equal(caps.full.build?.readers.length, 82);
+  assert.equal(caps.full.build?.writers.length, 75);
+  assert.ok(caps.full.build?.readers.includes("step"));
+  assert.ok(caps.full.build?.readers.includes("iges"));
   assert.ok(caps.live.readers.includes("vtm"));
   // A sanity check on those two counts that fails LOUDLY if the next bump
   // moves them, so whoever raises them knows to re-audit the keys rather than
@@ -1293,10 +1417,21 @@ test("mesh_capabilities reports the live build next to the routing tables", asyn
   assert.equal(byKey.get("frd")?.optionsAware, true);
   assert.equal(byKey.get("vtkhdf")?.optionsAware, true);
   assert.equal(byKey.get("lsdyna")?.optionsAware, false);
+  // The CAD reads: routed now, and the lean live registry enumerates neither
+  // key, so the options probe answers false for both (the full build answers
+  // false too — measured against 17.2.0, not assumed).
+  assert.deepEqual(byKey.get("step")?.extensions, [".step", ".stp"]);
+  assert.deepEqual(byKey.get("iges")?.extensions, [".igs", ".iges"]);
+  // glTF (17.0.0 reader, routed 17.2.0 on the lean build): options-aware like
+  // every VTK-ish reader, and a static scene all the same.
+  assert.deepEqual(byKey.get("gltf")?.extensions, [".glb", ".gltf"]);
+  assert.equal(byKey.get("gltf")?.optionsAware, true);
   // Deliberately unrouted keys name their reason rather than vanishing.
   const unrouted = new Map(caps.unroutedReaders.map((r) => [r.key, r.reason]));
-  // `iges` left the live registry in 17.x (full artifact only), so it has no row.
-  for (const key of ["mdpa", "gmsh22", "gltf", "vti", "vts", "vtr", "vtm", "pvd", "step"]) {
+  // `iges` left the lean registry in 17.x and is now ROUTED via the full
+  // artifact, so it has no row; step and gltf left this list with their own
+  // routing commits.
+  for (const key of ["mdpa", "gmsh22", "vti", "vts", "vtr", "vtm", "pvd"]) {
     assert.ok((unrouted.get(key) ?? "").length > 0, `${key} names its reason`);
   }
   // Marc and Radioss are accepted explicit formats. The UI deliberately
@@ -1415,9 +1550,13 @@ test("the read-only key set matches what the live build actually withholds a wri
   // live registry rather than trusted.
   const caps = (await meshCapabilities()) as {
     live: { readers: string[]; writers: string[] };
+    full: { build?: { readers: string[]; writers: string[] } };
   };
-  const readers = new Set(caps.live.readers);
-  const writers = new Set(caps.live.writers);
+  // BOTH artifacts are "this build" since 17.2.0: `step`/`iges` are full-only
+  // readers, so a lean-only view would call `iges` a key with no writer in a
+  // build that does not even list it. The union is the honest registry.
+  const readers = new Set([...caps.live.readers, ...(caps.full.build?.readers ?? [])]);
+  const writers = new Set([...caps.live.writers, ...(caps.full.build?.writers ?? [])]);
   // Every key we call read-only really is a reader and really has no writer.
   for (const key of MESHIO_READ_ONLY_KEYS) {
     assert.ok(readers.has(key), `${key} is a reader in this build`);

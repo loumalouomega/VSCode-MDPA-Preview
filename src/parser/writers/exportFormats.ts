@@ -96,6 +96,7 @@ export const EXPORT_FORMAT_LABELS: Record<ExportableExtension, string> = {
   ".pf3": "FLUX",
   ".poly": "Triangle PSLG (.poly)",
   ".post": "PERMAS",
+  ".step": "STEP (CAD, auto-fitted)",
   ".su2": "SU2",
   ".svg": "SVG figure",
   ".tec": "Tecplot (.tec)",
@@ -155,7 +156,10 @@ export const EXPORT_MENU_GROUPS: readonly ExportGroup[] = [
   },
   // Kratos CAD JSON (meshio++ >= 16.42.0): quads become bilinear NURBS faces and
   // lines edges. A COMPOUND extension, because a bare `.json` is far too generic.
-  { label: "CAD", extensions: [".cad.json"] },
+  // `.step` (17.2.0) is the auto-fit CAD target: fitCad on a closed triangle
+  // skin, the faceted writer otherwise — ONE target, see meshio.ts's
+  // writeStepModel. Its fit controls are asked for on this path (pickStepFit).
+  { label: "CAD", extensions: [".step", ".cad.json"] },
   // HDF5/netCDF-backed containers (meshio++ >= 8.0.0 wasm builds only). `.med`
   // is writable since meshio++ 9.9.0 and carries SubModelParts as families;
   // `.exo` writes lossily (block names survive as SubModelParts, but genuine

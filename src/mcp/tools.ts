@@ -659,6 +659,13 @@ export async function meshInfo(args: {
     // only MED (mesh name, description, units). Conditional like `properties`
     // /`constraints`, so every other format's report is unchanged.
     ...(model.source ? { source: model.source } : {}),
+    // The NURBS side channel (meshio++ >= 16.42.0/17.2.0): counts ONLY — the
+    // info itself holds typed arrays and must never be JSON-serialized (see
+    // MdpaModel.nurbs). mesh_derive kinds igaRefine/igaSample run on it while
+    // the model is unedited.
+    ...(model.nurbs
+      ? { nurbs: { format: model.nurbs.format, patches: model.nurbs.patches, faces: model.nurbs.faces } }
+      : {}),
     // Reported only when the mesh actually has particles, so ordinary meshes
     // are unchanged. Present so an agent can decide whether to reach for
     // setElementRadius without a second call: `radiusField: false` on a
@@ -1095,6 +1102,46 @@ interface WriteInfo {
   inPlace?: boolean;
   /** Numeric time directory index the model was read at (OpenFOAM in-place saves). */
   timeStep?: number;
+  /**
+   * The `.step` export's fit controls (meshio.ts's writeStepModel): `false`
+   * skips fitting and writes the faceted solid; an object rides upstream's
+   * FitCadOptions verbatim (unknown keys are refused by the kernel itself);
+   * undefined takes the kernel's own defaults. Every other format ignores it.
+   * Deliberately NOT the upstream type: `stepPath` is the extension's own
+   * MEMFS scratch path and is always forced, so callers never set it.
+   */
+  fitCad?: StepFitOptions | false;
+}
+
+/**
+ * The fit controls `mesh_convert` accepts for a `.step` output, in plain-JSON
+ * MCP-arg form. Same keys and meanings as upstream's FitCadOptions minus
+ * `stepPath`, which the write always sets itself (the harvest reads that
+ * exact path back, so a caller-supplied one would strand the solid in MEMFS).
+ */
+export interface StepFitOptions {
+  /** The largest distance a face may lie from the skin; <= 0 is automatic. */
+  tolerance?: number;
+  /** Try the exact intersection of two analytic surfaces first (default true). */
+  exactEdges?: boolean;
+  /** The accepted primitive types that become analytic faces (default: all five). */
+  types?: Array<"plane" | "sphere" | "cylinder" | "cone" | "torus">;
+  /** The re-meshed solid's chordal deflection; <= 0 takes tolerance / 4. */
+  meshDeflection?: number;
+  /** Rounds of demoting failed faces before every patch is faceted (default 8). */
+  maxDemotionRounds?: number;
+  /** Try a freeform B-spline face where no primitive fits (default true). */
+  freeform?: boolean;
+  /** The freeform B-spline's highest degree, 3 to 8 (default 3). */
+  freeformDegree?: number;
+  /** The most grid points per direction a freeform fit samples (default 64). */
+  freeformMaxControl?: number;
+  /** Split a freeform patch that folds over every flattening (default true). */
+  freeformSplit?: boolean;
+  /** Try fillets, blends, chamfers and vertex blends (default true). */
+  fillets?: boolean;
+  /** Try thread faces, tapered and of varying pitch included (default true). */
+  threads?: boolean;
 }
 
 function provenanceModeOf(v: string | undefined): ProvenanceMode {
@@ -1192,6 +1239,7 @@ export async function writeModelReported(
     sourceText: ext === ".mdpa" ? sourceText : undefined,
     name: outputStem ?? path.basename(abs, ext),
     format,
+    fitCad: info.fitCad,
     onWarning: (m) => warnings.push(m),
     provenance: provenanceRequest(mode, {
       sourceFile: sourceName,
@@ -1520,6 +1568,8 @@ export async function meshConvert(args: {
   dropGhosts?: boolean;
   /** Selects one region of a multi-region OpenFOAM input case (.foam) instead of merging every region. */
   region?: string;
+  /** The `.step` target's fit controls (see StepFitOptions); `false` writes the faceted solid only. Other targets ignore it. */
+  fitCad?: StepFitOptions | false;
   provenance?: string;
   verify?: boolean;
 }, execution: PlotExecution = {}): Promise<object> {
@@ -1539,7 +1589,7 @@ export async function meshConvert(args: {
     src.sourceText,
     args.outputFormat,
     warnings,
-    { sourceFile: args.path, provenance: args.provenance, verify: args.verify, inPlace: true, timeStep: args.timeStep }
+    { sourceFile: args.path, provenance: args.provenance, verify: args.verify, inPlace: true, timeStep: args.timeStep, fitCad: args.fitCad }
   );
   return {
     outputPath: written,
@@ -1632,7 +1682,18 @@ export async function meshDerive(args: {
   path?: string;
   provenance?: string;
   verify?: boolean;
-  kind: "featureEdges" | "slice" | "isosurface" | "threshold" | "decimate" | "grid" | "voxelize" | "sdfVolume" | "streamlines";
+  kind:
+    | "featureEdges"
+    | "slice"
+    | "isosurface"
+    | "threshold"
+    | "decimate"
+    | "grid"
+    | "voxelize"
+    | "sdfVolume"
+    | "streamlines"
+    | "igaRefine"
+    | "igaSample";
   outputPath: string;
   outputFormat?: string;
   /** Read this step of a multi-step file instead of the first (the frame every kind works on). */
@@ -1685,6 +1746,17 @@ export async function meshDerive(args: {
   band?: number;
   rootResolution?: number;
   maxDepth?: number;
+  /** IGA refinement (kind igaRefine): subdivisions and degree elevation per knot span/direction. */
+  subdivisions?: number | number[];
+  elevate?: number | number[];
+  /** IGA sampling (kind igaSample): cells per knot span and direction; 0 is automatic. */
+  sampleSubdivisions?: number;
+  /** B-rep trimming: points per knot span a trimming curve is sampled at (2..4096). */
+  trimSamples?: number;
+  /** B-rep: sample the edges that have a 3-D curve. */
+  edges?: boolean;
+  /** B-rep: keep only the cells inside the trimming loops. */
+  trim?: boolean;
 }, execution: PlotExecution = {}): Promise<object> {
   if (!args.path && !DERIVE_STANDALONE_KINDS.includes(args.kind)) throw new Error(`kind "${args.kind}" needs a \`path\`.`);
   const src = args.path
@@ -1776,6 +1848,27 @@ export async function meshDerive(args: {
       maxSeeds: args.maxSeeds,
       frame: args.path ? `${path.basename(args.path)}${args.timeStep !== undefined ? `, step ${args.timeStep}` : ""}` : undefined,
     };
+  } else if (args.kind === "igaRefine" || args.kind === "igaSample") {
+    // Both run on the model's NURBS side channel (model.nurbs); a mesh
+    // without one is refused inside deriveMesh with the formats that carry
+    // one. The args mirror upstream's IgaOptions (+refine's subdivisions/
+    // elevate); the kernel itself validates ranges.
+    spec =
+      args.kind === "igaRefine"
+        ? {
+            kind: "igaRefine",
+            subdivisions: args.subdivisions,
+            elevate: args.elevate,
+            edges: args.edges,
+            trim: args.trim,
+          }
+        : {
+            kind: "igaSample",
+            sampleSubdivisions: args.sampleSubdivisions,
+            trimSamples: args.trimSamples,
+            edges: args.edges,
+            trim: args.trim,
+          };
   } else {
     throw new Error(`kind must be one of ${DERIVE_KINDS.join(", ")}.`);
   }

@@ -348,3 +348,42 @@ export function cellFieldArray(
   }
   return out;
 }
+
+/**
+ * True when `model` is one or more TRIANGLE blocks forming a closed, manifold
+ * surface: every undirected edge shared by exactly two triangles. This is the
+ * gate both STEP-export behaviours share — `fitCad` wants exactly such a skin,
+ * and the faceted `step` writer refuses anything less by name — so it lives
+ * here, pure, beside `cellCategory`, rather than once per caller. The edge
+ * keying mirrors extractSkin's own boundary walk, so a huge skin costs one
+ * pass of string-keyed Map lookups, like the extraction that produces it.
+ *
+ * Deliberately NOT a winding check: consistent orientation is the writer's
+ * own refusal to name ("K inconsistently wound edge(s) … run repair first"),
+ * and duplicating its exact count here would promise more than the check
+ * answers.
+ */
+export function closedTriangleSkin(model: MdpaModel): boolean {
+  if (model.blocks.length === 0) return false;
+  for (const b of model.blocks) {
+    if (b.vtkCellType !== C.TRIANGLE) return false;
+  }
+  const edges = new Map<string, number>();
+  for (const b of model.blocks) {
+    for (let c = 0; c < b.count; c++) {
+      const base = c * b.stride;
+      for (let k = 0; k < 3; k++) {
+        const a = b.connectivity[base + k];
+        const d = b.connectivity[base + ((k + 1) % 3)];
+        const key = a < d ? `${a},${d}` : `${d},${a}`;
+        const seen = edges.get(key) ?? 0;
+        if (seen === 2) return false; // a third share is non-manifold
+        edges.set(key, seen + 1);
+      }
+    }
+  }
+  for (const seen of edges.values()) {
+    if (seen !== 2) return false;
+  }
+  return true;
+}

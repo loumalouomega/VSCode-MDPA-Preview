@@ -135,6 +135,7 @@ export default defineConfig({
           { text: 'Plot Presets', link: '/guide/plot-presets' },
             { text: 'GiD Postprocess', link: '/guide/gid-postprocess' },
           { text: 'OpenFOAM Cases', link: '/guide/openfoam' },
+          { text: 'CAD, glTF & IGA', link: '/guide/cad-import-export' },
             { text: 'Mesh Editing & History', link: '/guide/mesh-editing' },
           { text: 'Batch Transform', link: '/guide/batch-transform' },
             { text: 'Export Report & Provenance', link: '/guide/export-report' },
