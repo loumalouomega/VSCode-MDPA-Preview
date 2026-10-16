@@ -37,7 +37,7 @@ export class PlotWorkerSession {
       const message = (msg: PlotWorkReply) => {
         if (msg.type === "chunk") { const k = pathKey(msg.path); const list = received.get(k); if (list) list.push(msg.items); else received.set(k, [msg.items]); setImmediate(() => { if (!settled) worker.postMessage({ type: "ack" }); }); }
         else if (msg.type === "progress") opts.progress?.(msg.done, msg.total, msg.label);
-        else if (msg.type === "partial") { partial=msg.result;opts.partial?.(partial); }
+        else if (msg.type === "partial") { partial = assembleResult(msg.result, msg.arrays, received) as PlotDataset; received.clear(); opts.partial?.(partial); }
         else if (msg.type === "done") finish(() => resolve(assembleResult(msg.result, msg.arrays, received) as PlotWorkResult));
         else finish(() => reject(new Error(msg.message)));
       };

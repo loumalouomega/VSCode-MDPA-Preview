@@ -14,21 +14,27 @@ import { resolvePlotRunTarget, type PlotRunTargetRequest, type PlotRunTarget } f
 export type PlotWork = {recipe:PlotRecipe;models?:PlotExecution["models"];reuseSources?:string[];cacheDir?:string} | {source:PlotSource;models?:PlotExecution["models"];cacheDir?:string}
   | {runs:string[]} | {bindRun:{recordPath:string;path:string}} | {resolveRun:{path:string;recordPath?:string}} | {timeCursor:PlotTimeCursorRequest} | {runTarget:PlotRunTargetRequest};
 export type PlotWorkResult = PlotDataset | PlotTable | PlotRunDiscovery | PlotRunBinding | PlotTimeCursorResult | PlotRunTarget | PlotRunResolution;
-export type PlotWorkReply = {type:"chunk";path:(string|number)[];items:unknown[]} | {type:"done";result:PlotWorkResult;arrays:{path:(string|number)[];aliasOf?:(string|number)[]}[]} | {type:"progress";done:number;total:number;label:string} | {type:"partial";result:PlotDataset} | {type:"error";message:string};
+export type PlotWorkReply = {type:"chunk";path:(string|number)[];items:unknown[]} | {type:"done";result:PlotWorkResult;arrays:{path:(string|number)[];aliasOf?:(string|number)[]}[]} | {type:"progress";done:number;total:number;label:string} | {type:"partial";result:PlotDataset;arrays:{path:(string|number)[];aliasOf?:(string|number)[]}[]} | {type:"error";message:string};
 if(parentPort) {
   const port=parentPort;
   // Flow control: Node drains every queued message of a port in one task, so unpaced chunks would
   // still deserialize back to back on the host. The host acks each chunk from a later turn.
   let waiting:(()=>void)|undefined;
-  const done=async(result:PlotWorkResult)=>{
+  // One ordered delivery chain: a partial is split NOW (so later mutation cannot change it) and posted when its turn
+  // comes, and `done` queues behind every partial so the host always sees them in order.
+  let chain:Promise<void>=Promise.resolve();
+  const deliver=(kind:"partial"|"done",result:PlotWorkResult):Promise<void>=>{
     const c=chunkResult(result);
-    for(const k of c.chunks){
-      const acked=new Promise<void>(r=>{waiting=r;});
-      port.postMessage({type:"chunk",path:k.path,items:k.items});
-      await acked;
-    }
-    port.postMessage({type:"done",result:c.head,arrays:c.arrays});
+    return chain=chain.then(async()=>{
+      for(const k of c.chunks){
+        const acked=new Promise<void>(r=>{waiting=r;});
+        port.postMessage({type:"chunk",path:k.path,items:k.items});
+        await acked;
+      }
+      port.postMessage({type:kind,result:c.head,arrays:c.arrays});
+    });
   };
+  const done=(result:PlotWorkResult)=>deliver("done",result);
   const cache = new PlotTableCache();
   const retained = new PlotTableCache(64 * 1024 * 1024,"Fixed extraction reused from the last explicit collection; Refresh rereads sources.");
   port.on("message",async(work:PlotWork|{type:"ack"})=>{
@@ -41,7 +47,7 @@ if(parentPort) {
       }
       if (!("recipe" in work) || !work.reuseSources) retained.clear();
       const persistent=work.cacheDir?new PersistentPlotCache(work.cacheDir):undefined;
-      const result="recipe" in work?await collectPlot(validatePlotRecipe(work.recipe),{models:work.models,persistent,progress:(done,total,label)=>port.postMessage({type:"progress",done,total,label}),partial:result=>port.postMessage({type:"partial",result})},cache,{cache:retained,reuseSources:work.reuseSources}):await loadPlotSource(work.source,{models:work.models,persistent},cache);
+      const result="recipe" in work?await collectPlot(validatePlotRecipe(work.recipe),{models:work.models,persistent,progress:(done,total,label)=>port.postMessage({type:"progress",done,total,label}),partial:result=>{void deliver("partial",result);}},cache,{cache:retained,reuseSources:work.reuseSources}):await loadPlotSource(work.source,{models:work.models,persistent},cache);
       await done(result);
     }catch(e){port.postMessage({type:"error",message:e instanceof Error?e.message:String(e)});}
   });

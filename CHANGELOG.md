@@ -8,7 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
-- **Plot budgets**: million-row table import peaks at about 10.6x the file (was 23x) and the plot worker no longer stalls the host while delivering a large result (about 2 s to 34 ms), by streaming the import and sending big arrays in acknowledged chunks.
+- **Plot budgets**: million-row table import peaks at about 10.6x the file (was 23x) and the plot worker no longer stalls the host while delivering a large result (about 2 s to 34 ms), by streaming the import and sending big arrays in acknowledged chunks (final and progressive results alike).
 - **meshio++ 17.2.0** (roadmap Tier 0, `^16.42.0` → `^17.2.0`): the lean artifact is still the only one shipped (kernel tree unchanged at 27 MB). Live readers 81 → 80 (the OpenCASCADE-backed `step`/`iges` readers exist only in the full artifact; a `gltf` reader is new and unrouted), writers unchanged at 75; no timeline classification or export-fidelity row changed.
 
 ### Added
