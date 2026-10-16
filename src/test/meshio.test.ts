@@ -766,7 +766,7 @@ test("locateFile is asked for the full variant's own filename", async () => {
 // (name, files, ext) shape either build serves.
 
 test("meshio++ 17.2.0: .step and .igs read through the FULL artifact as ordinary models", async () => {
-  const cad = path.resolve(__dirname, "..", "fixtures", "cad");
+  const cad = path.resolve(__dirname, "..", "..", "src", "test", "fixtures", "cad");
   for (const [file, ext] of [
     ["box.step", ".step"],
     ["box.igs", ".igs"],
@@ -788,7 +788,7 @@ test("meshio++ 17.2.0: an explicit inputFormat routes a CAD read to the full art
   // on an arbitrary path must not attempt the lean build, which has no such
   // reader at all.
   const data = fs.readFileSync(
-    path.resolve(__dirname, "..", "fixtures", "cad", "box.step")
+    path.resolve(__dirname, "..", "..", "src", "test", "fixtures", "cad", "box.step")
   );
   const back = await readMeshioModel("box.step", [{ name: "box.step", data }], ".step", "step");
   assert.equal(back.nodeCount, 8);

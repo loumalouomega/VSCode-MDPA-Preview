@@ -275,7 +275,13 @@ test("MESHIO_WRITER_KEYS is readers minus the read-only keys, plus the two figur
   }
   assert.ok(!MESHIO_READ_ONLY_KEYS.includes("frd"), "frd has a writer since 16.41.0");
   assert.ok(MESHIO_WRITER_KEYS.includes("frd"));
-  assert.ok(!MESHIO_WRITER_KEYS.includes("gltf"), "gltf is write-only upstream");
+  // `gltf` was write-only until 17.0.0 gave it a reader; 17.2.0 routes the
+  // reads (.glb/.gltf), so the key is a reader AND a writer now — its writer
+  // stays without an extension route (no consumer emits glTF), reachable only
+  // through an explicit outputFormat.
+  assert.ok(MESHIO_READER_KEYS.includes("gltf"), "gltf is a reader since 17.0.0");
+  assert.ok(MESHIO_WRITER_KEYS.includes("gltf"), "gltf keeps its writer key");
+  assert.ok(!(".glb" in MESHIO_WRITE_FORMAT) && !(".gltf" in MESHIO_WRITE_FORMAT), "no extension routes a glTF write");
 });
 
 test("the keys we never route stay out of both tables, on purpose", () => {
