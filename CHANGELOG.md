@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- **meshio++ 17.2.0** (roadmap Tier 0, `^16.42.0` → `^17.2.0`): the lean artifact is still the only one shipped (kernel tree unchanged at 27 MB). Live readers 81 → 80 (the OpenCASCADE-backed `step`/`iges` readers exist only in the full artifact; a `gltf` reader is new and unrouted), writers unchanged at 75; no timeline classification or export-fidelity row changed.
+
 ### Added
 
 - **Convert solver results to other formats**: Problemtype **Output ▸ also export as** (saved as `output.exportFormats`), the Kratos Runs action **Convert Results to Other Formats…** and the MCP tool `case_export_results` convert a case's `vtk_output/` frames through meshio++. `.xdmf`/`.pvd` pack the series into one file, other formats write one file per step into `converted/`; a finished run converts automatically to the saved formats.

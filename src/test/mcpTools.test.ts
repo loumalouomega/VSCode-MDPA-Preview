@@ -1255,7 +1255,7 @@ test("mesh_capabilities reports the live build next to the routing tables", asyn
       adoptingOperations: string[];
     };
   };
-  assert.equal(caps.packageVersion, "16.42.0");
+  assert.equal(caps.packageVersion, "17.2.0");
   assert.ok(caps.backend.length > 0);
   assert.equal(caps.hasCgnslib, true);
   // 15.x bump (roadmap item 3) added vtkhdf/pvd/pvtu/pvtp/pcd/xyz/lsdyna/frd/
@@ -1272,7 +1272,10 @@ test("mesh_capabilities reports the live build next to the routing tables", asyn
   // 16.42.0 bump adds the `cad_json`, `iges` and `step` READERS (81; the last two
   // throw without OpenCASCADE, which this build does not link) and the
   // `abaqus_fil`, `cad_json`, `lsdyna_binout` and `nastran_op2` WRITERS (75).
-  assert.equal(caps.live.readers.length, 81);
+  // The 17.2.0 bump: the lean artifact no longer lists the OpenCASCADE-backed
+  // `step`/`iges` readers (full artifact only) and gains a `gltf` reader: 80
+  // readers, writers unchanged at 75.
+  assert.equal(caps.live.readers.length, 80);
   assert.equal(caps.live.writers.length, 75);
   assert.ok(caps.live.readers.includes("vtm"));
   // A sanity check on those two counts that fails LOUDLY if the next bump
@@ -1292,7 +1295,8 @@ test("mesh_capabilities reports the live build next to the routing tables", asyn
   assert.equal(byKey.get("lsdyna")?.optionsAware, false);
   // Deliberately unrouted keys name their reason rather than vanishing.
   const unrouted = new Map(caps.unroutedReaders.map((r) => [r.key, r.reason]));
-  for (const key of ["mdpa", "gmsh22", "gltf", "vti", "vts", "vtr", "vtm", "pvd", "step", "iges"]) {
+  // `iges` left the live registry in 17.x (full artifact only), so it has no row.
+  for (const key of ["mdpa", "gmsh22", "gltf", "vti", "vts", "vtr", "vtm", "pvd", "step"]) {
     assert.ok((unrouted.get(key) ?? "").length > 0, `${key} names its reason`);
   }
   // Marc and Radioss are accepted explicit formats. The UI deliberately

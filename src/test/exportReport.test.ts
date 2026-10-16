@@ -317,7 +317,7 @@ test("mesh_convert returns the export report; verify grades it against a re-read
   assert.equal(r.report.source.file, "ref.mdpa");
   assert.equal(r.report.source.format, ".mdpa");
   assert.equal(r.report.kernel.name, "meshio++");
-  assert.match(r.report.kernel.version ?? "", /^16\./);
+  assert.match(r.report.kernel.version ?? "", /^17\./);
   assert.deepEqual(r.report.unexpected, []);
   const props = r.report.categories.find((c) => c.id === "properties")!;
   assert.equal(props.status, "omitted");
@@ -393,7 +393,7 @@ test("recipes and problem archives record the kernel and tool; readers that do n
   const src = referenceFile(dir);
   const packed = (await problemPack({ meshPath: src })) as { archivePath: string; manifest: { provenance?: { kernel?: string; tool?: string } } };
   assert.equal(packed.manifest.provenance?.tool, "Kratos MDPA Preview");
-  assert.match(packed.manifest.provenance?.kernel ?? "", /^16\./);
+  assert.match(packed.manifest.provenance?.kernel ?? "", /^17\./);
   const back = parseProblemZip(fs.readFileSync(packed.archivePath));
   assert.deepEqual(back.manifest?.provenance, packed.manifest.provenance);
 });
