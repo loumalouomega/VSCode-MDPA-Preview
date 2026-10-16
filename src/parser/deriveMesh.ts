@@ -82,10 +82,42 @@ export type DecimateSpec = { kind: "decimate" } & DecimateParams;
  */
 export type StreamlineSpec = { kind: "streamlines"; frame?: string } & StreamlineParams;
 
-export type DeriveSpec = ({ kind: "featureEdges" } & FeatureEdgeOptions) | SliceSpec | IsosurfaceSpec | ThresholdSpec | DecimateSpec | GridSampleSpec | StreamlineSpec;
-export const DERIVE_KINDS = ["featureEdges", "slice", "isosurface", "threshold", "decimate", "grid", "voxelize", "sdfVolume", "streamlines"] as const;
+export type DeriveSpec = ({ kind: "featureEdges" } & FeatureEdgeOptions) | SliceSpec | IsosurfaceSpec | ThresholdSpec | DecimateSpec | GridSampleSpec | StreamlineSpec | IgaRefineSpec | IgaSampleSpec;
+export const DERIVE_KINDS = ["featureEdges", "slice", "isosurface", "threshold", "decimate", "grid", "voxelize", "sdfVolume", "streamlines", "igaRefine", "igaSample"] as const;
 /** Kinds that need no input mesh at all (a grid is made from nothing). */
 export const DERIVE_STANDALONE_KINDS: readonly string[] = ["grid"];
+
+/**
+ * IGA h/p refinement of the model's NURBS side channel (`model.nurbs` — see
+ * types.ts): the patches a `.cad.json`, a full artifact's `.step`/`.igs` read
+ * or an MFEM NURBS `.mesh` was built from. Both kinds are DERIVED meshes (the
+ * source is untouched) and run on the LEAN build — no OpenCASCADE involved.
+ * The refined side channel is deliberately NOT carried on the result (only a
+ * read sets `nurbs`; any op drops it): the file round-trip is the chain —
+ * write `.cad.json`/`.mesh` and reopen it to refine again.
+ */
+export type IgaRefineSpec = {
+  kind: "igaRefine";
+  /** Subdivisions per knot span and direction: one number, or one per direction. */
+  subdivisions?: number | number[];
+  /** Degree elevation per direction: one number, or one per direction. */
+  elevate?: number | number[];
+  /** B-rep: sample the edges that have a 3-D curve (kernel default otherwise). */
+  edges?: boolean;
+  /** B-rep: keep only the cells inside the trimming loops (kernel default otherwise). */
+  trim?: boolean;
+};
+
+/** IGA sampling of the same side channel into Lagrange cells. */
+export type IgaSampleSpec = {
+  kind: "igaSample";
+  /** Cells per knot span and direction of the sampling; 0 is automatic. */
+  sampleSubdivisions?: number;
+  /** B-rep: points per knot span a trimming curve is sampled at (2..4096). */
+  trimSamples?: number;
+  edges?: boolean;
+  trim?: boolean;
+};
 
 export interface DeriveResult {
   model: MdpaModel;
@@ -242,6 +274,54 @@ export async function deriveMesh(
           `Surviving faces keep their entity ids, property ids and cell-field values; a node keeps the lowest id merged into it, and its nodal fields are upstream's blend of the endpoints (an approximation for optimal placement).` +
           (r.warnings.length ? ` ${r.warnings.join(" ")}` : ""),
         suffix: "decimated",
+      };
+    }
+    case "igaRefine":
+    case "igaSample": {
+      const channel = model.nurbs;
+      if (!channel) {
+        throw new Error(
+          "This mesh carries no NURBS side channel, so there is nothing to refine or sample. " +
+            "IGA works on a .cad.json, a .step/.igs read or an MFEM NURBS .mesh — and only while the " +
+            "model is unedited, because any edit invalidates the channel."
+        );
+      }
+      if (signal?.aborted) throw new Error("cancelled");
+      // The LEAN build serves both ops: the IGA kernel needs no OpenCASCADE.
+      const m = await loadMeshio();
+      if (signal?.aborted) throw new Error("cancelled");
+      const info = channel.info as Parameters<typeof m.igaRefine>[0];
+      // Upstream validates the option KEYS, and an explicit `undefined` is not
+      // an integer — omit the keys the caller left out rather than passing
+      // them through (the kernel's own defaults then apply).
+      const defined = (o: Record<string, unknown>) =>
+        Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined));
+      const r =
+        spec.kind === "igaRefine"
+          ? m.igaRefine(info, defined({
+              subdivisions: spec.subdivisions,
+              elevate: spec.elevate,
+              edges: spec.edges,
+              trim: spec.trim,
+            }))
+          : m.igaSample(info, defined({
+              sampleSubdivisions: spec.sampleSubdivisions,
+              trimSamples: spec.trimSamples,
+              edges: spec.edges,
+              trim: spec.trim,
+            }));
+      const read = meshioToModel(r.mesh, diagnostics);
+      const cells = read.blocks.reduce((s, b) => s + b.count, 0);
+      return {
+        model: read,
+        summary:
+          spec.kind === "igaRefine"
+            ? `IGA refinement of ${channel.patches} NURBS patch(es) (${channel.format}${channel.faces ? `, ${channel.faces} face(s)` : ""}): ` +
+              `${cells} cell(s), ${read.nodeCount} node(s). The refined side channel is NOT kept on this result — ` +
+              `write .cad.json or .mesh and reopen it to refine again.`
+            : `IGA sampling of ${channel.patches} NURBS patch(es) (${channel.format}${channel.faces ? `, ${channel.faces} face(s)` : ""}): ` +
+              `${cells} cell(s), ${read.nodeCount} node(s).`,
+        suffix: spec.kind === "igaRefine" ? "iga_refined" : "iga_sampled",
       };
     }
     case "threshold": {

@@ -958,6 +958,62 @@ test("meshio++ 17.2.0: glTF/GLB reads through the lean build (not full-only)", a
   }
 });
 
+// --- the IGA derive kinds over the NURBS side channel (17.2.0) --------------
+//
+// The side channel is what makes the IGA ops possible without re-reading the
+// file: a read of a .cad.json / .step / MFEM NURBS .mesh requests
+// `{info: true}` and keeps the patches ON the model (MdpaModel.nurbs); every
+// applied edit drops it (operations.ts's applyOpAsync — one funnel, so
+// "never carried through ops" is one line). The ops themselves run on the
+// LEAN build, and the info crosses instances fine: it is plain data
+// (measured), cloned across the read worker by structured clone — but it
+// holds typed arrays, so it must never touch JSON.
+
+test("meshio++ 17.2.0: a read keeps the NURBS side channel and the IGA ops run on it", async () => {
+  const { deriveMesh } = await import("../parser/deriveMesh");
+  const cube = await cubeSkinModel(CUBE_SKIN_MDPA);
+  const fit = await writeMeshioBytes(cube, ".step", { stem: "box" });
+  const cad = fit.companions.find((c) => c.name === "box.cad.json")!;
+  const model = await readMeshioModel("box.cad.json", [{ name: "box.cad.json", data: cad.data }], ".cad.json");
+  assert.ok(model.nurbs, "the read keeps the side channel");
+  assert.equal(model.nurbs.format, "cad_json");
+  assert.equal(model.nurbs.faces, 6);
+  assert.equal(model.nurbs.patches, 6);
+
+  const sampled = await deriveMesh(model, { kind: "igaSample" });
+  assert.ok(sampled.model.nodeCount > 0, "igaSample produces a mesh");
+  assert.match(sampled.summary, /IGA sampling of 6 NURBS patch/);
+  const refined = await deriveMesh(model, { kind: "igaRefine", subdivisions: 2 });
+  assert.ok(refined.model.nodeCount > 0, "igaRefine produces a mesh");
+  assert.match(refined.summary, /IGA refinement of 6 NURBS patch/);
+  // The results are DERIVED meshes: no side channel, by the same rule that
+  // drops it on edits (the file round-trip is the refine chain).
+  assert.equal(refined.model.nurbs, undefined);
+  assert.equal(sampled.model.nurbs, undefined);
+});
+
+test("meshio++ 17.2.0: an applied edit drops the NURBS side channel; a noop keeps it", async () => {
+  const { applyOpAsync } = await import("../parser/operations");
+  const cube = await cubeSkinModel(CUBE_SKIN_MDPA);
+  const fit = await writeMeshioBytes(cube, ".step", { stem: "box" });
+  const cad = fit.companions.find((c) => c.name === "box.cad.json")!;
+  const model = await readMeshioModel("box.cad.json", [{ name: "box.cad.json", data: cad.data }], ".cad.json");
+  assert.ok(model.nurbs);
+  const moved = await applyOpAsync(model, { op: "translate", dx: 1, dy: 0, dz: 0 });
+  assert.ok(!moved.noop);
+  assert.equal(moved.model.nurbs, undefined, "a moved mesh is no longer the patches' sampling");
+  const noop = await applyOpAsync(model, { op: "mergeMesh" });
+  assert.ok(noop.noop);
+  assert.ok(noop.model.nurbs, "nothing changed, so the channel stays");
+});
+
+test("meshio++ 17.2.0: the IGA kinds refuse a mesh without a side channel", async () => {
+  const { deriveMesh } = await import("../parser/deriveMesh");
+  const open = await sampleModel();
+  await assert.rejects(deriveMesh(open, { kind: "igaSample" }), /no NURBS side channel/);
+  await assert.rejects(deriveMesh(open, { kind: "igaRefine" }), /no NURBS side channel/);
+});
+
 // --- meshio++ 10.14.0: what the 9.22.0 -> 10.14.0 jump actually changes -------
 //
 // Twelve minor versions plus a major, and the major (v10.0.0) is a

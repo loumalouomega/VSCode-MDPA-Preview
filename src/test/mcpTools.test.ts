@@ -1286,6 +1286,41 @@ test("mesh_convert to .step auto-fits the closed skin and writes the B-rep compa
   assert.ok(!fs.existsSync(path.join(dir, "faceted.cad.json")), "no companion without the fit");
 });
 
+test("mesh_derive igaSample/igaRefine run the NURBS side channel; a plain mesh is refused", async () => {
+  // The side channel comes from a READ: the fitted .cad.json companion of the
+  // stage-3 convert carries the B-rep, and mesh_info reports its counts.
+  const dir = tmpDir();
+  const mdpa = path.join(dir, "cube.mdpa");
+  fs.writeFileSync(mdpa, CUBE_SKIN_MDPA);
+  const stepOut = path.join(dir, "box.step");
+  await meshConvert({ path: mdpa, outputPath: stepOut });
+  const cad = path.join(dir, "box.cad.json");
+  assert.ok(fs.existsSync(cad), "the fit wrote the B-rep companion");
+  const info = (await meshInfo({ path: cad })) as {
+    nurbs?: { format: string; patches: number; faces: number };
+  };
+  assert.deepEqual(info.nurbs, { format: "cad_json", patches: 6, faces: 6 });
+
+  const sampled = path.join(dir, "sampled.vtu");
+  const r1 = (await meshDerive({ path: cad, kind: "igaSample", outputPath: sampled })) as {
+    summary?: string;
+  };
+  assert.ok(fs.existsSync(sampled));
+  assert.match(r1.summary ?? "", /IGA sampling of 6 NURBS patch/);
+  const refined = path.join(dir, "refined.vtu");
+  const r2 = (await meshDerive({ path: cad, kind: "igaRefine", outputPath: refined, subdivisions: 2 })) as {
+    summary?: string;
+  };
+  assert.ok(fs.existsSync(refined));
+  assert.match(r2.summary ?? "", /IGA refinement of 6 NURBS patch/);
+
+  // A mesh with no side channel is refused by name (the beam has none).
+  await assert.rejects(
+    meshDerive({ path: writeFixture(dir), kind: "igaSample", outputPath: path.join(dir, "x.vtu") }),
+    /no NURBS side channel/
+  );
+});
+
 test("mesh_capabilities reports the live build next to the routing tables", async () => {
   // The headless query roadmap Tier 1 item 1 asks for: readers/writers from
   // the live artifact, per-reader options-awareness, and the extension's own

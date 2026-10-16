@@ -1,7 +1,10 @@
 import type {
   AgglomerateOptions,
+  CadJsonInfo,
   FitCadOptions,
   FitCadResult,
+  IgaOptions,
+  MfemInfo,
   RegionEdit,
   RegionSelector,
 } from "@meshioplusplus/wasm";
@@ -200,6 +203,30 @@ export interface MeshioModule {
    *   triangle surface, or an unknown options key.
    */
   fitCad(mesh: MeshioMesh, options?: FitCadOptions): FitCadResult;
+
+  /**
+   * The IGA ops over a NURBS side channel (meshio++ >= 16.42.0's mfem info,
+   * 17.x's cad_json — both LEAN-build features, no OpenCASCADE needed).
+   * `igaRefine` h/p-refines the patches (subdivisions per direction, degree
+   * elevation, B-rep edge/trim controls) and `igaSample` samples them into
+   * Lagrange cells; both return the mesh AND the refined side channel, which
+   * writes back through `writeMesh(..., "cad_json", {info})` / the MFEM
+   * writer while the mesh still is its sampling. The info is PLAIN data
+   * (measured: it survives a structured clone and works on a different
+   * instance than the one that read it) but holds typed arrays, so it must
+   * never be JSON-serialized.
+   *
+   * @throws {Error} when the info is not a NURBS side channel or an option is
+   *   out of range.
+   */
+  igaRefine(
+    info: MfemInfo | CadJsonInfo,
+    options?: IgaOptions & { subdivisions?: number | number[]; elevate?: number | number[] }
+  ): { mesh: MeshioMesh; info: MfemInfo | CadJsonInfo };
+  igaSample(info: MfemInfo | CadJsonInfo, options?: IgaOptions): {
+    mesh: MeshioMesh;
+    info: MfemInfo | CadJsonInfo;
+  };
 
   /**
    * The sharp, open, non-manifold and inconsistently wound edges of a surface
@@ -1493,6 +1520,9 @@ export async function readMeshioModel(
   );
 }
 
+/** The reader keys whose `{info: true}` side channel is a NURBS payload (see readModelWith). */
+const NURBS_INFO_FORMATS: readonly string[] = ["cad_json", "step", "iges", "mfem"];
+
 async function readMeshioModelInProcess(
   mainName: string,
   files: MeshioInputFile[],
@@ -1553,10 +1583,14 @@ async function readModelWith(
       // MED's own info side channel (mesh name/description/units, and —
       // lenient-only — exactly which constructs a lenient read could not
       // represent) needs `readMeshSelective(..., {info: true})`, which
-      // `readMesh`'s fast path cannot request. Requesting it for every
-      // other format is a silent noop upstream, so this widens ONLY med's
-      // path off the fast one rather than slowing every reader down.
-      const wantInfo = fmt === "med";
+      // `readMesh`'s fast path cannot request. The NURBS side channels need
+      // the same switch: a cad_json B-rep, a full artifact's step/iges read
+      // and an MFEM NURBS mesh all carry their patches in `mesh.info`, and
+      // the IGA derive kinds consume that (see deriveMesh.ts). Requesting it
+      // for every other format is a silent noop upstream, so this widens
+      // ONLY these formats off the fast one rather than slowing every reader
+      // down.
+      const wantInfo = fmt === "med" || NURBS_INFO_FORMATS.includes(fmt);
       const wantSelective =
         timeStep !== undefined ||
         lenient ||
@@ -1598,6 +1632,23 @@ async function readModelWith(
       if (medInfo) {
         model.source = medInfoToSource(medInfo);
         applyMedDimensions(model, medInfo.fieldUnits);
+      }
+      // The NURBS side channel: kept ON the model for the IGA derive kinds,
+      // dropped by every applied edit (operations.ts's applyOpAsync — a mesh
+      // an op changed is no longer the patches' sampling). The info object is
+      // plain data (measured: it crosses a worker by structured clone and
+      // runs on another instance) but holds typed arrays, so it must never be
+      // JSON-serialized; summaries read `format`/`patches`/`faces` only.
+      const info = mesh.info;
+      const infoFormat = info?.format;
+      if (info && (infoFormat === "cad_json" || infoFormat === "mfem")) {
+        const raw = info as { patches?: unknown[]; faces?: unknown[] };
+        model.nurbs = {
+          format: infoFormat,
+          patches: Array.isArray(raw.patches) ? raw.patches.length : 0,
+          faces: infoFormat === "cad_json" && Array.isArray(raw.faces) ? raw.faces.length : 0,
+          info,
+        };
       }
       return model;
     } catch (e) {
