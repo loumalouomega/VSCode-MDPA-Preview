@@ -180,11 +180,13 @@ async function loadUnownedPlotSource(source: PlotSource, opts: PlotExecution = {
   const stat=snapshot ? { size: 0 } : await fs.stat(source.path);
   if(stat.size>PLOT_MAX_BYTES&&!opts.models?.[source.id])throw new Error("Plot source exceeds the 128 MiB file budget; use a smaller table or selected live-mesh snapshot.");
   if(source.type==="table") {
-    const bytes=await fs.readFile(source.path);opts.signal?.throwIfAborted();
+    let bytes:Buffer|undefined=await fs.readFile(source.path);opts.signal?.throwIfAborted();
     if (bytes.length > PLOT_MAX_BYTES) throw new Error("Table exceeds the 128 MiB import budget.");
     const revision = hash(bytes), key = hash(JSON.stringify([revision,source.options ?? {}]));
     const hit = cache?.get(key);
-    const table = hit ?? parsePlotTable(bytes.toString("utf8"),source.options);
+    // Decode, then drop the raw bytes before the long parse: the file would otherwise stay resident beside its text.
+    const text = hit ? "" : bytes.toString("utf8"); bytes = undefined;
+    const table = hit ?? parsePlotTable(text,source.options);
     table.revision=revision;
     if (!hit) cache?.set(key, table);
     return {...table, origins: table.rows.map((_, rowIndex) => ({source:source.id,rowIndex}))};

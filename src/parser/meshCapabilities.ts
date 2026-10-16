@@ -126,9 +126,9 @@ export interface MeshFidelityCapabilities {
 const UNROUTED_READER_REASONS: Record<string, string> = {
   mdpa: "parsed natively everywhere, never routed through meshio++",
   gmsh22: "write-only MSH 2.2 alias; .msh writes 4.1",
-  gltf: "write-only (>= 15.4.0); no web-viewer consumer routes to it yet",
-  step: "STEP: the writer (>= 16.40.0) works, but the reader (>= 16.42.0) needs the OpenCASCADE backend, which this WASM build does not link; B-rep/CAD handoff belongs to the sibling CAD-Preview extension, so nothing routes to it here",
-  iges: "IGES reader (>= 16.42.0) needs the OpenCASCADE backend, which this WASM build does not link (reading throws); CAD import belongs to the sibling CAD-Preview extension",
+  gltf: "glTF/GLB: the writer (>= 15.4.0) and, since 17.0.0, a reader; no web-viewer consumer routes to either yet",
+  step: "STEP: the writer (>= 16.40.0) works, but the reader (>= 16.42.0) needs OpenCASCADE, which only the FULL artifact (mixed licence, 17.x `{full: true}`) links and this extension ships the lean one, so the reader is absent from the live registry; B-rep/CAD handoff belongs to the sibling CAD-Preview extension, so nothing routes to it here",
+  iges: "IGES reader (>= 16.42.0) needs OpenCASCADE, which only the FULL artifact links; the lean build this extension ships (17.x) does not list it at all; CAD import belongs to the sibling CAD-Preview extension",
   vti: "read natively by vtkXmlParser; the writer needs a dense lattice",
   vts: "read natively by vtkXmlParser; the writer needs a dense lattice",
   vtr: "read natively by vtkXmlParser; the writer needs a uniform lattice",
