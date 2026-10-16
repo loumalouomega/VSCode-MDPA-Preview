@@ -203,6 +203,17 @@ const CASES: ExampleCase[] = [
     values: { problem: { elementType: "fic", timeScheme: "bossak", timeStepMode: "adaptive", oss: true } },
   },
   {
+    label: "two-phase inlet: symbolic modulus up to 10 s, then a steady inlet",
+    file: "fluid.py",
+    builtinId: "fluid",
+    assignments: [
+      { conditionId: "parts", smpPath: "Parts/Solid", values: {} },
+      { conditionId: "inlet", smpPath: "Loaded", values: { modulusExpression: "0.5*(1-cos(0.1*pi*t))", intervalEnd: "10" } },
+      { conditionId: "inlet", smpPath: "Support", values: { modulus: 2, intervalStart: 10, direction: "y" } },
+    ],
+    materials: [{ smpPath: "Parts/Solid", lawId: "newtonian_3d", values: {} }],
+  },
+  {
     file: "convection_diffusion.py",
     builtinId: "convectionDiffusion",
     assignments: [

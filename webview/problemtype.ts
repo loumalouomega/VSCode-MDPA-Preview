@@ -87,6 +87,10 @@ let presets: MaterialPreset[] = [];
 let presetProblems: { file: string; message: string }[] = [];
 /** The Materials form's preset search text, kept across re-renders. */
 let presetFilter = "";
+/** The law the Materials add-row is on. The card re-renders when the law
+ * changes (the preset list follows it), so without this the dropdown would
+ * snap back to the first law and "+" would add a material nobody chose. */
+let presetLaw = "";
 /** True while the Flowgraph view has taken over the viewport (see render()). */
 let flowgraphActive = false;
 
@@ -1327,6 +1331,10 @@ function renderMaterials(decl: ProblemtypeDeclaration): void {
     opt.textContent = `${owner ? `${owner.label} · ` : ""}${l.name || l.id}`;
     lawSelect.appendChild(opt);
   }
+  // Keep the chosen law across the re-render the change below triggers; a
+  // problemtype switch may have left an id this declaration does not offer.
+  if (!decl.materialLaws.some((l) => l.id === presetLaw)) presetLaw = decl.materialLaws[0]?.id ?? "";
+  lawSelect.value = presetLaw;
   const whereSelect = document.createElement("select");
   whereSelect.className = "edit-sel pt-add-where";
   if (smpPaths.length === 0) {
@@ -1387,7 +1395,7 @@ function renderMaterials(decl: ProblemtypeDeclaration): void {
   });
   (picker.querySelector("select") as HTMLSelectElement).value = chosenPreset ? "0" : "";
   addHost.appendChild(picker);
-  lawSelect.addEventListener("change", () => render());
+  lawSelect.addEventListener("change", () => { presetLaw = lawSelect.value; render(); });
 
   state.materials.forEach((m: MaterialAssignment, i: number) => {
     const law = decl.materialLaws.find((l) => l.id === m.lawId);

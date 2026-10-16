@@ -24,6 +24,9 @@ hand-written. They show what a coupled problemtype needs:
   the coupling iterations of every step.
 """
 
+import math
+import re
+
 from kratos_problemtype import (define_problemtype, section, field, field_group,
                                 condition, material_law, domain)
 
@@ -42,6 +45,29 @@ def _num(value, default):
 
 def _str(value, default):
     return value if isinstance(value, str) else default
+
+
+_JS_DECIMAL = re.compile(r"[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?")
+_JS_RADIX = re.compile(r"0[xX][0-9a-fA-F]+|0[oO][0-7]+|0[bB][01]+")
+
+
+def _js_number(text):
+    """Number(text) for a trimmed string: the finite number it spells, else None."""
+    if _JS_RADIX.fullmatch(text):
+        return int(text, 0)
+    if _JS_DECIMAL.fullmatch(text):
+        number = float(text)
+        return number if math.isfinite(number) else None
+    return None
+
+
+def _interval_end(value):
+    """The inlet's intervalEnd: "End" (blank or in any case), a finite number, or the text."""
+    text = _str(value, "End").strip()
+    if text == "" or text.lower() == "end":
+        return "End"
+    number = _js_number(text)
+    return text if number is None else number
 
 
 def _unprefix(values, prefix):
@@ -160,6 +186,11 @@ def fluid_build_process(cond, assignment, ctx):
     values = assignment["values"]
     if cond["id"] == "inlet":
         process = _resolve(cond, assignment, ctx)
+        # The optional symbolic modulus and activation window (fluid.ts's inlet hook).
+        expression = _str(values.get("modulusExpression"), "").strip()
+        if expression:
+            process["Parameters"]["modulus"] = expression
+        process["Parameters"]["interval"] = [_num(values.get("intervalStart"), 0), _interval_end(values.get("intervalEnd"))]
         direction = values.get("direction")
         if direction in ("x", "y", "z"):
             process["Parameters"]["direction"] = {"x": [1, 0, 0], "y": [0, 1, 0], "z": [0, 0, 1]}[direction]
@@ -755,6 +786,16 @@ def cosim_extra_files(ctx, materials):
     # The interfaces are skins of the fluid solver, although they are not its processes.
     fluid_settings["skin_parts"] = list(fluid_settings.get("skin_parts") or []) + [
         domains["fluid"]["model_part_name"] + "." + _dotted(smp) for smp in fl]
+    # A skin wall that nothing constrains carries no reaction out of the fluid
+    # solve, so the structure would receive an empty load: constrain the
+    # interface velocity (the AleFluidSolver then sets it from the mesh).
+    fluid_document["processes"]["constraints_process_list"] = list(
+        fluid_document["processes"].get("constraints_process_list") or []) + [
+        {"python_module": "apply_noslip_process",
+         "kratos_module": "KratosMultiphysics.FluidDynamicsApplication",
+         "process_name": "ApplyNoSlipProcess",
+         "Parameters": {"model_part_name": domains["fluid"]["model_part_name"] + "." + _dotted(smp)}}
+        for smp in fl]
     structure_document = _participant_document(
         STRUCTURE_PHYSICS, S, STRUCTURE_CONDITIONS, ctx, domains["structure"],
         dict(time, timeStep=_num(values.get("f_timeStep"), 0.01)), STRUCTURE_PHYSICS["nodal_defaults"])
@@ -919,6 +960,12 @@ FLUID_CONDITIONS = [
               category="initial", icon="ptInitial"),
     condition("f_inlet", "Inlet velocity", list="fluid_boundary_conditions_process_list", target="surface",
               fields=[field("modulus", "|v| [m/s]", "number", default=1),
+                      field("modulusExpression", "|v| expression", "string", default="", advanced=True,
+                            help="A Kratos expression in the inlet's own coordinates and the current time t, e.g. 0.1214*(1-cos(0.1*pi*t))*y*(1-y). When set it replaces the numeric |v| above."),
+                      field("intervalStart", "Active from [s]", "number", default=0, advanced=True,
+                            help="The process applies from this time on. Two inlet assignments on one surface with disjoint windows write a two-phase inlet (the fsi_mok benchmark ramps up until 10 s, then holds)."),
+                      field("intervalEnd", "Active until [s]", "string", default="End", advanced=True,
+                            help='"End" keeps the process active to the end of the simulation; a number deactivates it there.'),
                       field("direction", "Direction", "enum", default="automatic_inwards_normal", options=[{"value": "automatic_inwards_normal", "label": "Inwards normal"}, {"value": "automatic_outwards_normal", "label": "Outwards normal"}, {"value": "x", "label": "+X"}, {"value": "y", "label": "+Y"}, {"value": "z", "label": "+Z"}])],
               process_template={
                   "python_module": "apply_inlet_process",
