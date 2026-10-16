@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [5.14.0] - 2026-10-16
+
+### Added
+
+- **meshio++ 17.3.0** (`^17.2.0` → `^17.3.0`; `index.d.ts` byte-identical, no binding changes): lean readers 80 → 81 (`neuroglancer`, native in the shared registry — deliberately unrouted: a precomputed segment directory, not a file) and writers 75 → 82 on both artifacts (`ansys_rst`, `lsdyna_d3plot`, `marc_t19`, `nastran_h5`, `neuroglancer`, `radioss_anim`, `xplt`). New export targets in the Solvers group: `.t19` (Marc post), `.xplt` (FEBio plot) and `.rst` (MAPDL results); Medit binary `.meshb` reads and writes (upstream dispatches on the suffix). `lsdyna_d3plot`/`radioss_anim` stay key-only (name-matched file families) and `nastran_h5` stays out of `.h5` (ambiguous against the XDMF companion and MOAB), all reachable via explicit `outputFormat`. The fidelity table is re-measured (`scripts/gen-export-fidelity.js`): new rows for the three routed writers, and OpenFOAM now retains Nodal fields (17.3 writes them to time directory 0).
+
 ### Added
 
 - **CAD glyph for the mesh → CAD targets** (`icons/tikz-ui/cad.tex` → `svg-ui/cad.svg` → `toolbarIcons.ts`): a faceted two-triangle patch refined into a shaded fitted cylinder, in the set's own coarse → arrow → result language. It heads the File ▸ Export ▸ CAD group (the only export group with a glyph; per-format rows stay text-only) and is wired for the optimization CAD export's buttons.

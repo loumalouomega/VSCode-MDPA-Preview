@@ -194,6 +194,13 @@ const UNROUTED_READER_REASONS: Record<string, string> = {
     "found by file name (`<stem>A001`, …) with no extension; reach it with an explicit inputFormat",
   radioss_th:
     "found by file name (`<stem>T01`, …) with no extension; reach it with an explicit inputFormat",
+  // `neuroglancer` (17.3.0: native in the shared registry, both directions):
+  // the precomputed format is a DIRECTORY of sharded chunks addressed by an
+  // index, not a file — no extension this extension offers can select it, and
+  // neither the single-file read staging nor the single-path write contract
+  // can express it. Deliberately absent from both routing tables, on purpose.
+  neuroglancer:
+    "a precomputed segment directory, not a file; nothing routes to it",
 
 };
 

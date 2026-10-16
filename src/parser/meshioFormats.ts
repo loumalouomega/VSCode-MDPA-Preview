@@ -226,6 +226,10 @@ export const MESHIO_READ_CANDIDATES: Readonly<Record<string, readonly string[]>>
   ".key": ["lsdyna"],
   ".med": ["med"], // HDF5-backed (Salome MED)
   ".mesh": ["medit", "mfem"],
+  // meshio++ 17.3.0 reads AND writes the binary Medit variant (libMeshb GMF,
+  // either byte order; upstream's own `read_medit` dispatches on the `b`
+  // suffix, so no separate key exists). Unambiguous, unlike `.mesh`.
+  ".meshb": ["medit"],
   ".mff": ["mff"],
   ".mfm": ["mfm"],
   ".mphtxt": ["mphtxt"],
@@ -400,11 +404,13 @@ export const MESHIO_READER_KEYS: readonly string[] = [
  * Reader keys the live build does NOT also expose as writers — it reports
  * them from `availableFormats().readers` and not from `.writers`, so they are
  * subtracted from MESHIO_WRITER_KEYS rather than being absent by omission.
- * Measured against the 16.22.0 artifact.
+ * Measured against the 17.3.0 artifact.
  *
  * `frd` (CalculiX results, >= 15.3.0) was read-only until 16.41.0 gave it a
  * writer (as it did `radioss_th`); both left this set in that bump. 16.42.0
- * did the same for `abaqus_fil`, `nastran_op2` and `lsdyna_binout`.
+ * did the same for `abaqus_fil`, `nastran_op2` and `lsdyna_binout`, and
+ * 17.3.0 for `ansys_rst`, `lsdyna_d3plot`, `marc_t19`, `nastran_h5`,
+ * `radioss_anim` and `xplt`.
  * The eleven solver-RESULT readers the 16.14.0 bump brought in are all
  * read-only too, and for the same structural reason upstream has no reason to
  * grow the other direction: a `.fil`/`.rst`/`.op2`/`.d3plot` result file is
@@ -428,17 +434,11 @@ export const MESHIO_READER_KEYS: readonly string[] = [
  * missing a key nor carrying one the build does write.
  */
 export const MESHIO_READ_ONLY_KEYS: readonly string[] = [
-  "ansys_rst",
   "ansys_rst_cyclic",
   // `iges` (>= 16.42.0): read in the full artifact; no writer exists upstream
   // for it in EITHER artifact. Its sibling CAD key `step` is deliberately NOT
   // here: the faceted STEP writer has been in both artefacts since 16.40.0.
   "iges",
-  "lsdyna_d3plot",
-  "marc_t19",
-  "nastran_h5",
-  "radioss_anim",
-  "xplt",
 ];
 
 /**
@@ -632,6 +632,7 @@ export const MESHIO_WRITE_FORMAT: Readonly<Record<string, string>> = {
   ".k": "lsdyna",
   ".med": "med",
   ".mesh": "medit",
+  ".meshb": "medit", // binary Medit (17.3.0); upstream dispatches on the suffix
   ".mff": "mff",
   ".mfm": "mfm",
   ".mphtxt": "mphtxt",
@@ -658,6 +659,18 @@ export const MESHIO_WRITE_FORMAT: Readonly<Record<string, string>> = {
   // ("arrays without a place in the file are not written").
   ".fil": "abaqus_fil",
   ".op2": "nastran_op2",
+  // Result-file writers added in meshio++ 17.3.0, same shape: the solver's own
+  // result file written back with geometry plus whatever fields it has slots
+  // for. `.t19` (Marc post) and `.xplt` (FEBio plot) are unambiguous; `.rst`
+  // (MAPDL results) writes the standard/result/geometry headers with the
+  // nodal solution and element-nodal results the mesh carries. `lsdyna_d3plot`
+  // and `radioss_anim` stay key-only: they address name-matched file FAMILIES
+  // (`d3plot01`…, `runA001`…), so no single extension routes to them — and
+  // `nastran_h5` would make `.h5` ambiguous against the XDMF companion and
+  // MOAB's `.h5m`.
+  ".t19": "marc_t19",
+  ".xplt": "xplt",
+  ".rst": "ansys_rst",
   // Kratos CAD JSON: quads and lines only (see exportEligibility.ts).
   ".cad.json": "cad_json",
   // Only the ascii flavour is offered as a write target. `.post.bin`/`.post.h5`
@@ -683,7 +696,7 @@ export const MESHIO_WRITE_FORMAT: Readonly<Record<string, string>> = {
   ".xyz": "xyz",
 };
 
-/** Extensions meshio++ reads for us (86; the four CAD spellings need the full artifact). */
+/** Extensions meshio++ reads for us (87; the four CAD spellings need the full artifact). */
 export const MESHIO_READ_EXTENSIONS: readonly string[] =
   Object.keys(MESHIO_READ_CANDIDATES).filter((ext) => ext !== ".mfem-rank");
 
@@ -706,7 +719,7 @@ export const MESHIO_READ_EXTENSIONS: readonly string[] =
 export const MESHIO_LENIENT_RETRY_FORMATS: readonly string[] = ["med"];
 
 /**
- * Extensions meshio++ writes for us (38; `.step` is the auto-fit CAD target —
+ * Extensions meshio++ writes for us (42; `.step` is the auto-fit CAD target —
  * see MESHIO_WRITE_FORMAT).  `as const` because
  * writers/exportFormats.ts spreads this into EXPORTABLE_EXTENSIONS, which is
  * the source of the ExportableExtension union.
@@ -735,8 +748,8 @@ export const MESHIO_EXPORT_EXTENSIONS = [
   ".mail", ".feb", ".neu", ".xda", ".xdr", ".mphbin", ".pat", ".z88", ".elmer",
   ".msh", ".e", ".ex2", ".exo", ".inp", ".avs", ".bdf", ".case", ".cgns",
   ".dat", ".dato", ".dex", ".ele", ".f3grid", ".fem", ".foam", ".h5m",
-  ".hmf", ".ip", ".k", ".med", ".mesh", ".mff", ".mfm", ".mphtxt", ".nas",
-  ".off", ".pcd", ".pf3", ".poly", ".post", ".post.msh", ".fil", ".op2", ".cad.json", ".su2", ".svg",
+  ".hmf", ".ip", ".k", ".med", ".mesh", ".meshb", ".mff", ".mfm", ".mphtxt", ".nas",
+  ".off", ".pcd", ".pf3", ".poly", ".post", ".post.msh", ".fil", ".op2", ".t19", ".xplt", ".rst", ".cad.json", ".su2", ".svg",
   ".step", ".tec", ".tikz", ".ugrid", ".unv", ".vol", ".vtkhdf", ".wkt", ".xdmf",
   ".xml", ".xmf", ".xyz",
 ] as const;

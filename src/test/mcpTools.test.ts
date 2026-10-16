@@ -1357,7 +1357,7 @@ test("mesh_capabilities reports the live build next to the routing tables", asyn
       adoptingOperations: string[];
     };
   };
-  assert.equal(caps.packageVersion, "17.2.0");
+  assert.equal(caps.packageVersion, "17.3.0");
   assert.ok(caps.backend.length > 0);
   assert.equal(caps.hasCgnslib, true);
   // 15.x bump (roadmap item 3) added vtkhdf/pvd/pvtu/pvtp/pcd/xyz/lsdyna/frd/
@@ -1376,14 +1376,16 @@ test("mesh_capabilities reports the live build next to the routing tables", asyn
   // `abaqus_fil`, `cad_json`, `lsdyna_binout` and `nastran_op2` WRITERS (75).
   // The 17.2.0 bump: the lean artifact no longer lists the OpenCASCADE-backed
   // `step`/`iges` readers (full artifact only) and gains a `gltf` reader: 80
-  // readers, writers unchanged at 75.
-  assert.equal(caps.live.readers.length, 80);
-  assert.equal(caps.live.writers.length, 75);
+  // readers, writers unchanged at 75. The 17.3.0 bump adds the `neuroglancer`
+  // reader (81) and seven writers — `ansys_rst`, `lsdyna_d3plot`, `marc_t19`,
+  // `nastran_h5`, `neuroglancer`, `radioss_anim` and `xplt` (82).
+  assert.equal(caps.live.readers.length, 81);
+  assert.equal(caps.live.writers.length, 82);
   // 17.2.0 ships a FULL artifact beside the lean one; mesh_capabilities
   // reports both, live (see meshCapabilities.ts's `full`). The lean build is
   // what `live`/`readers` describe; `build` names its flavour, and the full
   // block is a SECOND instantiation — the lean one plus the two
-  // OpenCASCADE-backed CAD readers (82 vs 80; writers unchanged at 75, the
+  // OpenCASCADE-backed CAD readers (83 vs 81; writers 82 on both builds — the
   // faceted `step` writer exists in both builds).
   assert.equal(caps.build.flavour, "lean");
   assert.equal(caps.build.occt, false);
@@ -1397,8 +1399,8 @@ test("mesh_capabilities reports the live build next to the routing tables", asyn
   assert.equal(caps.full.build?.zstd, true);
   assert.equal(caps.full.build?.lz4, true);
   assert.equal(caps.full.build?.bzip2, true);
-  assert.equal(caps.full.build?.readers.length, 82);
-  assert.equal(caps.full.build?.writers.length, 75);
+  assert.equal(caps.full.build?.readers.length, 83);
+  assert.equal(caps.full.build?.writers.length, 82);
   assert.ok(caps.full.build?.readers.includes("step"));
   assert.ok(caps.full.build?.readers.includes("iges"));
   assert.ok(caps.live.readers.includes("vtm"));
@@ -1431,7 +1433,7 @@ test("mesh_capabilities reports the live build next to the routing tables", asyn
   // `iges` left the lean registry in 17.x and is now ROUTED via the full
   // artifact, so it has no row; step and gltf left this list with their own
   // routing commits.
-  for (const key of ["mdpa", "gmsh22", "vti", "vts", "vtr", "vtm", "pvd"]) {
+  for (const key of ["mdpa", "gmsh22", "vti", "vts", "vtr", "vtm", "pvd", "neuroglancer"]) {
     assert.ok((unrouted.get(key) ?? "").length > 0, `${key} names its reason`);
   }
   // Marc and Radioss are accepted explicit formats. The UI deliberately
