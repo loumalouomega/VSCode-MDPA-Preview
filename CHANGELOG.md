@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [5.12.0] - 2026-10-16
+
 ### Changed
 
 - **Plot budgets**: million-row table import peaks at about 10.6x the file (was 23x) and the plot worker no longer stalls the host while delivering a large result (about 2 s to 34 ms), by streaming the import and sending big arrays in acknowledged chunks (final and progressive results alike).
