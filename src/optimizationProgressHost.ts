@@ -32,6 +32,7 @@ export interface OptimizationHostDeps {
   runStatus(caseDir: string): string | undefined;
   openPlot(recipe: PlotRecipe, title: string): void;
   openDesignFields(caseDir: string, folder: string, excludeNewest: boolean): void;
+  exportCad(caseDir: string, excludeNewest: boolean): void;
   /** Shown when a request cannot be honoured (no case, no rows). */
   info(message: string): void;
 }
@@ -102,6 +103,15 @@ export function createOptimizationProgressHost(deps: OptimizationHostDeps): Opti
             return true;
           }
           deps.openDesignFields(dir, folder, deps.runStatus(dir) !== "finished");
+          return true;
+        }
+        case "optimizationExportCad": {
+          const dir = caseDir();
+          if (!dir) {
+            deps.info("The preview is not part of an optimization case.");
+            return true;
+          }
+          deps.exportCad(dir, deps.runStatus(dir) !== "finished");
           return true;
         }
         default:

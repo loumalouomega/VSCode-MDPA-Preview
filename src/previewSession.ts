@@ -36,6 +36,7 @@ import { comparePeerRel, loadCompareModel, resolveComparePeer } from "./parser/c
 import { ExportContext, pickMergeMeshFile, saveMesh, saveMeshToPath } from "./meshExport";
 import { MmgRunOptions, OP_LABELS } from "./parser/operations";
 import { createOptimizationProgressHost, OptimizationHost } from "./optimizationProgressHost";
+import { runExportOptimizedCad } from "./optimizationCadCommand";
 import { openPlotBuilder } from "./plotController";
 import { VtkFileGroup } from "./parser/vtkFileGroup";
 import {
@@ -161,6 +162,9 @@ export class PreviewSession {
       openPlot: (recipe, title) => { openPlotBuilder(deps.context, undefined, recipe, title); },
       openDesignFields: (caseDir, folder, excludeNewest) => {
         void vscode.commands.executeCommand("kratos.vtk.openLatestResults", caseDir, { excludeNewest, outputFolder: folder });
+      },
+      exportCad: (caseDir, excludeNewest) => {
+        void runExportOptimizedCad(caseDir, { excludeNewest });
       },
       info: (message) => { void vscode.window.showInformationMessage(message); },
     });

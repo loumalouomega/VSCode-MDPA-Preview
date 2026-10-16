@@ -742,6 +742,11 @@
         "category": "%category.KratosRuns%"
       },
       {
+        "command": "kratos.runs.exportOptimizedCad",
+        "title": "%command.kratos.runs.exportOptimizedCad.title%",
+        "category": "%category.KratosRuns%"
+      },
+      {
         "command": "kratos.runs.plotSingularValues",
         "title": "%command.kratos.runs.plotSingularValues.title%",
         "category": "%category.KratosRuns%"
@@ -1081,6 +1086,10 @@
           "when": "(view == kratos.runs || view == kratos.runsSidebar) && viewItem =~ /^kratosRun\\./"
         },
         {
+          "command": "kratos.runs.exportOptimizedCad",
+          "when": "(view == kratos.runs || view == kratos.runsSidebar) && viewItem =~ /^kratosRun\\./"
+        },
+        {
           "command": "kratos.runs.plotSingularValues",
           "when": "(view == kratos.runs || view == kratos.runsSidebar) && viewItem =~ /^kratosRun\\./"
         },
@@ -1165,6 +1174,10 @@
         },
         {
           "command": "kratos.runs.openDesignFields",
+          "when": "false"
+        },
+        {
+          "command": "kratos.runs.exportOptimizedCad",
           "when": "false"
         },
         {

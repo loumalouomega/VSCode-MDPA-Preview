@@ -22,7 +22,10 @@ const exportItems = EXPORT_MENU_GROUPS.map(
   (group, index) =>
     `<button type="button" class="file-menu-item file-menu-category" data-export-group="${index}" ` +
     `aria-controls="file-menu-export-${index}" aria-expanded="false" role="menuitem">` +
-    `<span>${group.label}</span><span class="file-menu-category-chevron" aria-hidden="true">›</span></button>\n        ` +
+    // The CAD group is the only one with a glyph: mesh → fitted solid is the
+    // feature's own mark (icons/tikz-ui/cad.tex); every other group stays
+    // text-only, as before.
+    `${group.label === "CAD" ? ic("cad") : ""}<span>${group.label}</span><span class="file-menu-category-chevron" aria-hidden="true">›</span></button>\n        ` +
     `<div id="file-menu-export-${index}" class="file-menu-export-items hidden" role="group" ` +
     `aria-label="${group.label} export formats">` +
     group.extensions

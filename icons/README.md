@@ -45,6 +45,7 @@ To add a new toolbar icon: create `tikz-ui/<newId>.tex`, run `make ts` (the scri
 | `close` | X (*from CAD-Preview*) | Close panels / find bar |
 | `warning` | triangle + exclamation (*from CAD-Preview*) | Quality criteria not satisfied |
 | `check` | checkmark | Quality criteria satisfied |
+| `cad` | faceted patch → fitted cylinder | CAD targets (Export ▸ CAD group, optimization CAD export) |
 
 ## Extension icon (`images/icon.png` / `icon_transparency.png`)
 

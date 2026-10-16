@@ -32,6 +32,7 @@ import { readOptimization } from "./problemtype/optimization/summaryLogFile";
 import { romIconId, romRowText, romSingularValuesRecipe, romStatus } from "./problemtype/rom/romResults";
 import { isRomCase, readRomResults } from "./problemtype/rom/romResultsFile";
 import { deliverToPreview } from "./previewSession";
+import { runExportOptimizedCad } from "./optimizationCadCommand";
 import { viewTypeForMesh } from "./meshExport";
 import { evaluateMonitors, readMonitors } from "./problemtype/monitorsFile";
 import { openPlotBuilder } from "./plotController";
@@ -284,6 +285,13 @@ export function registerRunTreeView(runs: RunManager, context: vscode.ExtensionC
       void vscode.commands.executeCommand("kratos.vtk.openLatestResults", node.record.caseDir, {
         excludeNewest: node.record.status !== "finished",
         outputFolder: read.info.designFieldsFolder,
+      });
+    }),
+    vscode.commands.registerCommand("kratos.runs.exportOptimizedCad", (node?: Node) => {
+      if (node?.kind !== "run") return;
+      void runExportOptimizedCad(node.record.caseDir, {
+        excludeNewest: node.record.status !== "finished",
+        stem: `${node.record.stem}_optimized`,
       });
     }),
     vscode.commands.registerCommand("kratos.runs.plotSingularValues", (node?: Node) => {

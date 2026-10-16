@@ -51,6 +51,7 @@ import {
   caseConvergence,
   caseExportResults,
   caseOptimization,
+  caseOptimizationCad,
   caseRom,
   caseMonitors,
   caseStop,
@@ -1131,6 +1132,30 @@ export function registerAllTools(server: McpServer): void {
       },
     },
     run(caseOptimization)
+  );
+
+  server.registerTool(
+    "case_optimization_cad",
+    {
+      description:
+        "The optimized geometry of a Structural Optimization case (OptimizationApplication) as CAD (STEP): the latest finished design-field frame (the folder the case's optimization_parameters.json names, Optimization_Results/ by default) written through the .step pipeline — fitCad into a real B-rep on a closed triangle skin (the B-rep also written beside it as <stem>.cad.json), the faceted solid otherwise. " +
+        "`shape` (default) writes the frame mesh — vertex morphing moves the nodes, so the frame IS the optimized geometry. `topology` contours `densityField` (required there; an Elemental field is averaged to the nodes) at `threshold` (default 0.5, always reported because it defines the solid) into the solid first. Refusals name the cause: no optimization case, no design fields (VTU output off), no frames yet, an unknown density field (the frame's scalars are listed), a threshold the field never crosses, or a mesh with no skinnable surface.",
+      inputSchema: {
+        meshPath: z.string().describe("Path to the mesh the case belongs to"),
+        mode: z.enum(["shape", "topology"]).optional().describe("Which solid to write (default shape)"),
+        densityField: z.string().optional().describe("Topology only: the scalar field to contour (required there)"),
+        threshold: z.number().optional().describe("Topology only: material at or above this value (default 0.5)"),
+        fitCad: z
+          .union([z.boolean(), z.record(z.string(), z.unknown())])
+          .optional()
+          .describe(
+            "false = skip fitting, write the faceted solid. An object carries fitCad options: tolerance (number; <=0 automatic), exactEdges (bool), types (array of plane/sphere/cylinder/cone/torus), meshDeflection (number), maxDemotionRounds (int), freeform (bool), freeformDegree (3-8), freeformMaxControl (int), freeformSplit (bool), fillets (bool), threads (bool); unknown keys are refused by the kernel."
+          ),
+        outputPath: z.string().optional().describe("Output .step file (default <case>_optimized.step in the case folder)"),
+        excludeNewest: z.boolean().optional().describe("Drop the newest frame (a killed run can leave it half-written)"),
+      },
+    },
+    run(caseOptimizationCad)
   );
 
   server.registerTool(
