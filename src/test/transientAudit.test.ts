@@ -38,7 +38,10 @@ test("audit covers every registered reader's live options capability", async () 
   // `step`/`iges` are audited since the 17.2.0 bump routes them: like
   // `cad_json` they are single static geometries with no step axis, and their
   // readerSupportsOptions answers false — measured on the FULL artifact, the
-  // only one that links the OpenCASCADE readers at all.
+  // only one that links the OpenCASCADE readers at all. `gltf` joined the
+  // same bump on the LEAN build (the reader is new in 17.0.0): options-aware
+  // like every VTK-ish reader, and equally moot — a glTF is one static scene,
+  // so it is a STATIC extension, not a timeline.
   // Step 4b (roadmap item 3) routed pvtu/pvtp for reading (a static
   // partitioned dataset, not a time series): both are options-aware too
   // (measured — readerSupportsOptions is true for each), which is exactly
@@ -59,7 +62,7 @@ test("audit covers every registered reader's live options capability", async () 
   // practice) and is audited on its own merits below.
   const optionsAware = new Set([
     "abaqus_fil", "ansys_rst", "ansys_rst_cyclic", "ansysinp", "cgns", "ensight",
-    "exodus", "frd", "gid", "gmsh", "lsdyna_binout", "lsdyna_d3plot", "med",
+    "exodus", "frd", "gid", "gltf", "gmsh", "lsdyna_binout", "lsdyna_d3plot", "med",
     "marc_t19", "nastran_h5", "nastran_op2", "openfoam", "pvtp", "pvtu",
     "radioss_th", "tecplot", "unv", "vtkhdf", "xdmf", "xplt", "elmer", "febio",
     "femap", "mfem",
@@ -67,7 +70,7 @@ test("audit covers every registered reader's live options capability", async () 
   const audited = [
     "abaqus", "abaqus_fil", "ansys", "ansys_rst", "ansysinp", "avsucd", "cad_json",
     "cgns", "code_aster", "dex", "dolfin", "elmer", "ensight", "exodus", "febio", "femap",
-    "flac3d", "flux", "frd", "freefem", "gid", "gmsh", "h5m", "hmf", "iges", "ip",
+    "flac3d", "flux", "frd", "freefem", "gid", "gltf", "gmsh", "h5m", "hmf", "iges", "ip",
     "libmesh", "lsdyna", "lsdyna_d3plot", "marc", "marc_t19", "med", "medit",
     "mfem", "mff", "mfm", "mphbin", "mphtxt", "nastran", "nastran_h5",
     "nastran_op2", "netgen", "off", "openfoam", "patran", "pcd", "permas",

@@ -207,6 +207,13 @@ export const MESHIO_READ_CANDIDATES: Readonly<Record<string, readonly string[]>>
   ".foam": ["openfoam"],
   ".frd": ["frd"], // Calculix results — read-only upstream (absent from writers())
   ".geo": ["ensight"], // EnSight Gold geometry file
+  // glTF/GLB (meshio++ >= 15.4.0 writer, >= 17.0.0 reader; the LEAN build has
+  // both). One format, two spellings: `.glb` is the binary container, `.gltf`
+  // the JSON one. A static scene with no step axis, so it takes no timeline
+  // (STATIC_EXTENSIONS); the writer stays unrouted — no consumer here emits
+  // glTF yet, and `outputFormat: "gltf"` on mesh_convert reaches it anyway.
+  ".glb": ["gltf"],
+  ".gltf": ["gltf"],
   ".h5m": ["h5m"], // HDF5-backed (MOAB)
   ".hdf": ["vtkhdf"], // upstream's own default since 15.1.0
   ".hmf": ["hmf"], // HDF5-backed
@@ -381,7 +388,7 @@ export const MESHIO_READER_KEYS: readonly string[] = [
   "code_aster", "elmer", "febio", "femap", "libmesh", "marc", "mfem", "mphbin", "patran", "radioss", "z88",
   "abaqus", "abaqus_fil", "ansys", "ansys_rst", "ansys_rst_cyclic", "ansysinp",
   "avsucd", "cad_json", "cgns", "dex", "dolfin", "ensight", "exodus", "flac3d", "flux",
-  "frd", "freefem", "gid", "gmsh", "h5m", "hmf", "iges", "ip", "lsdyna",
+  "frd", "freefem", "gid", "gltf", "gmsh", "h5m", "hmf", "iges", "ip", "lsdyna",
   "lsdyna_binout", "lsdyna_d3plot", "marc_t19", "med", "medit", "mff", "mfm",
   "mphtxt", "nastran", "nastran_h5", "nastran_op2", "netgen", "obj", "off",
   "openfoam", "pcd", "permas", "ply", "pvtp", "pvtu", "radioss_anim",
@@ -676,7 +683,7 @@ export const MESHIO_WRITE_FORMAT: Readonly<Record<string, string>> = {
   ".xyz": "xyz",
 };
 
-/** Extensions meshio++ reads for us (84; the four CAD spellings need the full artifact). */
+/** Extensions meshio++ reads for us (86; the four CAD spellings need the full artifact). */
 export const MESHIO_READ_EXTENSIONS: readonly string[] =
   Object.keys(MESHIO_READ_CANDIDATES).filter((ext) => ext !== ".mfem-rank");
 
@@ -840,5 +847,10 @@ export function meshioSiblingNames(fileName: string, ext: string): string[] {
     const base = meshStem(fileName);
     return [`${base}.post.msh`, `${base}.post.res`];
   }
+  // glTF's JSON spelling carries its heavy arrays in an EXTERNAL
+  // `<stem>.bin` beside it (measured: meshio++'s own writer emits one and
+  // references it by that name) — but the exact names come from the JSON's
+  // own `buffers[].uri` via meshCompanionNames, not from the stem, so this
+  // function stays out of it. The binary `.glb` container is one file.
   return [];
 }

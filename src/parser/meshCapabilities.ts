@@ -162,7 +162,6 @@ export interface MeshFidelityCapabilities {
 const UNROUTED_READER_REASONS: Record<string, string> = {
   mdpa: "parsed natively everywhere, never routed through meshio++",
   gmsh22: "write-only MSH 2.2 alias; .msh writes 4.1",
-  gltf: "glTF/GLB: the writer (>= 15.4.0) and, since 17.0.0, a reader; no web-viewer consumer routes to either yet",
   vti: "read natively by vtkXmlParser; the writer needs a dense lattice",
   vts: "read natively by vtkXmlParser; the writer needs a dense lattice",
   vtr: "read natively by vtkXmlParser; the writer needs a uniform lattice",

@@ -879,6 +879,85 @@ test("meshio++ 17.2.0: a volume model exports its boundary skin, and an open sur
   );
 });
 
+// --- the codec fallback (17.2.0's full artifact) ----------------------------
+//
+// Three files the LEAN build cannot inflate, each refusing by flag name —
+// `VTK XML zstd decompression requires a build with -DMESHIOPLUSPLUS_WITH_
+// ZSTD=ON` (lz4 twin) and `libMesh: <path> is bzip2-compressed and this build
+// has no bzip2 (MESHIOPLUSPLUS_WITH_BZIP2; …)`. readMeshioModel's fallback
+// fires ONLY on those messages, retries against the full artifact, and states
+// the fallback in a diagnostic. The fixtures are authored by the full
+// artifact itself: a codec:"zstd"/"lz4" VTK XML write, and a libMesh write to
+// a `.bz2` name renamed DOWN to `.xda` (the extension-known `.xda.bz2` path
+// is already inflated by our own JS decoder, so the fallback only ever sees
+// content-known bz2).
+
+const CODEC_TET = {
+  dim: 3,
+  points: new Float64Array([0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1]),
+  cells: [{ type: "tetra", nodesPerCell: 4, data: new Int32Array([0, 1, 2, 3]) }],
+  point_data: {},
+  cell_data: {},
+  field_data: {},
+} as const;
+
+test("meshio++ 17.2.0: a zstd/lz4 .vtu falls back through meshio++ to the full artifact", async () => {
+  const { loadMeshioFull } = await import("../parser/meshio");
+  const m = await loadMeshioFull();
+  const dir = tmpDir();
+  for (const codec of ["zstd", "lz4"] as const) {
+    m.writeMesh(`/codec-${codec}.vtu`, CODEC_TET as never, "", { encoding: "binary", codec });
+    const p = path.join(dir, `codec-${codec}.vtu`);
+    fs.writeFileSync(p, m.FS.readFile(`/codec-${codec}.vtu`));
+    const model = await parseMeshFile(p);
+    assert.equal(model.nodeCount, 4, `${codec}: the mesh reads whole`);
+    assert.ok(
+      model.diagnostics.some((d) => d.message.includes("Read via the full artifact")),
+      `${codec}: the fallback is stated, not silent`
+    );
+  }
+});
+
+test("meshio++ 17.2.0: bzip2 libMesh bytes under a plain .xda name read through the full artifact", async () => {
+  const { loadMeshioFull } = await import("../parser/meshio");
+  const m = await loadMeshioFull();
+  m.writeMesh("/b.xda.bz2", CODEC_TET as never);
+  const dir = tmpDir();
+  const p = path.join(dir, "plain.xda"); // BZh content, NO .bz2 extension
+  fs.writeFileSync(p, m.FS.readFile("/b.xda.bz2"));
+  const model = await parseMeshFile(p);
+  assert.equal(model.nodeCount, 4);
+  assert.ok(
+    model.diagnostics.some((d) => d.message.includes("Read via the full artifact")),
+    "the fallback is stated: " + model.diagnostics.map((d) => d.message).join(" | ")
+  );
+});
+
+test("meshio++ 17.2.0: glTF/GLB reads through the lean build (not full-only)", async () => {
+  const { writeRawMeshioBytes } = await import("../parser/meshio");
+  // glTF is a SURFACE container: a tetra writes as its four faces, so the
+  // round-trip input is one triangle and the readback is that triangle.
+  const tri = {
+    dim: 3,
+    points: new Float64Array([0, 0, 0, 1, 0, 0, 0, 1, 0]),
+    cells: [{ type: "triangle", nodesPerCell: 3, data: new Int32Array([0, 1, 2]) }],
+    point_data: {},
+    cell_data: {},
+    field_data: {},
+  } as never;
+  const dir = tmpDir();
+  for (const ext of [".glb", ".gltf"]) {
+    const { data, companions } = await writeRawMeshioBytes(tri, ext, "gltf");
+    const p = path.join(dir, `t${ext}`);
+    fs.writeFileSync(p, data);
+    // The writer's companions ride beside it (a .gltf names its own .bin).
+    for (const c of companions) fs.writeFileSync(path.join(dir, c.name), c.data);
+    const back = await parseMeshFile(p);
+    assert.equal(back.nodeCount, 3, `${ext} reads the triangle's nodes`);
+    assert.equal(back.blocks.reduce((n, b) => n + b.count, 0), 1, `${ext} reads one triangle`);
+  }
+});
+
 // --- meshio++ 10.14.0: what the 9.22.0 -> 10.14.0 jump actually changes -------
 //
 // Twelve minor versions plus a major, and the major (v10.0.0) is a

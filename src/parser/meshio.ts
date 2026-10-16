@@ -368,8 +368,16 @@ export interface MeshioModule {
      * `{info}` writes the format's side channel back (or, with no explicit
      * `info`, reuses `mesh.info` when its own `format` matches the write
      * target). Throws naming the format for one with no Info-bearing writer.
+     * The other keys are upstream's own WriteOptions — the tests use
+     * `encoding`/`codec` to author zstd/lz4 `.vtu` fixtures (full artifact
+     * only); the extension's own write paths use none of them.
      */
-    options?: { info?: MeshioMeshInfo }
+    options?: {
+      info?: MeshioMeshInfo;
+      encoding?: "ascii" | "binary";
+      /** Block codec for VTK XML: "zlib" (both artifacts), "zstd"/"lz4" (full only). */
+      codec?: string;
+    }
   ): void;
   /**
    * A transient-XDMF writer. Stateful and handle-shaped: `writePointsCells`
@@ -1506,6 +1514,36 @@ async function readMeshioModelInProcess(
   }
 
   const m = await loadMeshioForRead(ext, candidates);
+  try {
+    return await readModelWith(m, mainName, files, candidates, attempts, timeStep, augment, opts);
+  } catch (e) {
+    // The codec fallback (meshio++ >= 17.0.0's full artifact): a file whose
+    // VTK XML blocks are zstd/lz4-deflated, or whose libMesh bytes are
+    // bzip2-compressed, is readable only where the codec is linked. The lean
+    // refusal names its own missing flag (measured verbatim), so the retry
+    // fires ONLY on that — an ordinary read failure propagates untouched.
+    if (!isCodecFallbackError(e) || !meshioFullInstalled()) throw e;
+    const fm = await loadMeshioFull();
+    const model = await readModelWith(fm, mainName, files, candidates, attempts, timeStep, augment, opts);
+    model.diagnostics.push({
+      line: 0,
+      message: `Read via the full artifact — the lean build cannot inflate this file: ${errText(e)}`,
+    });
+    return model;
+  }
+}
+
+/** The candidate walk itself, run against whichever module the caller resolved. */
+async function readModelWith(
+  m: MeshioModule,
+  mainName: string,
+  files: MeshioInputFile[],
+  candidates: readonly string[],
+  attempts: readonly { fmt: string; lenient: boolean }[],
+  timeStep: number | undefined,
+  augment: ((mesh: MeshioMesh, diagnostics: MdpaDiagnostic[]) => void) | undefined,
+  opts: MeshioReadOptions | undefined
+): Promise<MdpaModel> {
   const mainPath = stageFiles(m, mainName, files);
 
   const diagnostics: MdpaDiagnostic[] = [];
@@ -1574,6 +1612,20 @@ async function readMeshioModelInProcess(
 }
 
 /**
+ * The lean build's own refusals for a codec only the full artifact links.
+ * Measured verbatim against 17.2.0 — the three messages a lean read gives for
+ * a zstd/lz4 VTK XML file and a bzip2 libMesh file (`VTK XML zstd
+ * decompression requires a build with -DMESHIOPLUSPLUS_WITH_ZSTD=ON`, the lz4
+ * twin, and `libMesh: <path> is bzip2-compressed and this build has no
+ * bzip2 (MESHIOPLUSPLUS_WITH_BZIP2; the Python reader inflates it)`). Note
+ * they do NOT say `{full: true}` — that phrasing is the CAD refusals' — so
+ * the allowlist is keyed on the flag name the kernel actually prints.
+ */
+function isCodecFallbackError(e: unknown): boolean {
+  return /MESHIOPLUSPLUS_WITH_(ZSTD|LZ4|BZIP2)/.test(errText(e));
+}
+
+/**
  * Shared candidate walk backing `readMeshioTimeValues`/`readMeshioMetadata`:
  * both stage the file and try each candidate format's `readMetadata`, in the
  * same aggregated-error shape, differing only in which part of the result
@@ -1592,6 +1644,25 @@ async function readMetadataWith<T>(
   }
 
   const m = await loadMeshioForRead(ext, candidates);
+  try {
+    return await readMetadataFrom(m, mainName, files, candidates, pick);
+  } catch (e) {
+    // The same codec fallback readMeshioModelInProcess applies: a summary of
+    // a zstd/lz4 VTK XML file or a bzip2 libMesh file needs the full
+    // artifact's inflator, and the lean refusal names the missing flag.
+    if (!isCodecFallbackError(e) || !meshioFullInstalled()) throw e;
+    return await readMetadataFrom(await loadMeshioFull(), mainName, files, candidates, pick);
+  }
+}
+
+/** The metadata walk itself, run against whichever module the caller resolved. */
+async function readMetadataFrom<T>(
+  m: MeshioModule,
+  mainName: string,
+  files: MeshioInputFile[],
+  candidates: readonly string[],
+  pick: (md: MeshioMetadata) => T
+): Promise<T> {
   const mainPath = stageFiles(m, mainName, files);
 
   const errors: string[] = [];

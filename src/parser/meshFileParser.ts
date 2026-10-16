@@ -324,6 +324,16 @@ export function readOpenFoamTimeFields(
  * formats (.msh, .inp, .unv, …).  Throws a descriptive Error for unsupported
  * extensions or malformed files.
  */
+
+/** The meshio++ reader key for each VTK XML extension (the codec-fallback retry). */
+const VTK_XML_FORMAT_KEY: Record<string, string> = {
+  ".vtu": "vtu",
+  ".vtp": "vtp",
+  ".vti": "vti",
+  ".vts": "vts",
+  ".vtr": "vtr",
+};
+
 export async function parseMeshFile(
   fsPath: string,
   onProgress?: ProgressCallback,
@@ -346,6 +356,29 @@ export async function parseMeshFile(
     throwIfCancelled(signal);
     const buf = await readFileWithProgress(fsPath, onProgress, signal);
     throwIfCancelled(signal);
+    // A zstd/lz4 VTK XML file (meshio++ >= 17.0.0: the full artifact's writer
+    // offers `codec: "zstd"|"lz4"`) is beyond node:zlib — our parser can
+    // never inflate those blocks (it degrades to an empty mesh with an
+    // inflate-failure diagnostic), so the file's own compressor tag routes it
+    // straight to meshio++ instead of through a guaranteed-failing native
+    // pass. The FULL artifact inflates it; the lean one refuses by flag name
+    // and readMeshioModel's codec fallback gets through that on the way.
+    // Every other file — zlib-tagged included — parses natively first, as
+    // always.
+    const head = buf.subarray(0, 1024).toString("latin1");
+    const codecTag = /vtk(ZSTD|LZ4)DataCompressor/.exec(head);
+    if (codecTag) {
+      const name = path.basename(fsPath);
+      return readMeshioModel(
+        name,
+        [{ name, data: buf }],
+        ext,
+        VTK_XML_FORMAT_KEY[ext],
+        undefined,
+        undefined,
+        { signal }
+      );
+    }
     return parseVtkXml(buf);
   }
 
@@ -770,8 +803,32 @@ export function meshCompanionNames(
     ...(mainText !== undefined && (ext === ".pvtu" || ext === ".pvtp")
       ? pvtuPieceFiles(mainText)
       : []),
+    // glTF's JSON spelling (meshio++ >= 17.0.0 reader): the heavy arrays live
+    // in the external files its `buffers[].uri` names — exactly like XDMF's
+    // `.h5`, and the writer names the bin after ITS OWN stem, so the JSON is
+    // the authority. A self-contained `.gltf` (data URIs) lists none. The
+    // binary `.glb` container is one file and skips this.
+    ...(mainText !== undefined && ext === ".gltf" ? gltfBufferFiles(mainText) : []),
   ];
   return [...new Set(names)].filter((n) => n !== fileName);
+}
+
+/**
+ * The external buffer files a `.gltf` references. `data:` URIs are
+ * self-contained and any other scheme (https:) cannot be staged, so only
+ * plain relative file names come back; a file that is not JSON at all (the
+ * reader will refuse it with the real message) returns `[]`.
+ */
+export function gltfBufferFiles(text: string): string[] {
+  let parsed: { buffers?: { uri?: string }[] };
+  try {
+    parsed = JSON.parse(text) as { buffers?: { uri?: string }[] };
+  } catch {
+    return [];
+  }
+  return (parsed.buffers ?? [])
+    .map((b) => b.uri ?? "")
+    .filter((uri) => uri.length > 0 && !uri.startsWith("data:") && !uri.includes("://"));
 }
 
 /** An XDMF/.pvd above this is inline-ascii (or an implausibly huge index); its own size already dominates. */

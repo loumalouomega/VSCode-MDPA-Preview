@@ -1387,12 +1387,16 @@ test("mesh_capabilities reports the live build next to the routing tables", asyn
   // false too — measured against 17.2.0, not assumed).
   assert.deepEqual(byKey.get("step")?.extensions, [".step", ".stp"]);
   assert.deepEqual(byKey.get("iges")?.extensions, [".igs", ".iges"]);
+  // glTF (17.0.0 reader, routed 17.2.0 on the lean build): options-aware like
+  // every VTK-ish reader, and a static scene all the same.
+  assert.deepEqual(byKey.get("gltf")?.extensions, [".glb", ".gltf"]);
+  assert.equal(byKey.get("gltf")?.optionsAware, true);
   // Deliberately unrouted keys name their reason rather than vanishing.
   const unrouted = new Map(caps.unroutedReaders.map((r) => [r.key, r.reason]));
   // `iges` left the lean registry in 17.x and is now ROUTED via the full
-  // artifact, so it has no row; step likewise left this list with the same
-  // commit.
-  for (const key of ["mdpa", "gmsh22", "gltf", "vti", "vts", "vtr", "vtm", "pvd"]) {
+  // artifact, so it has no row; step and gltf left this list with their own
+  // routing commits.
+  for (const key of ["mdpa", "gmsh22", "vti", "vts", "vtr", "vtm", "pvd"]) {
     assert.ok((unrouted.get(key) ?? "").length > 0, `${key} names its reason`);
   }
   // Marc and Radioss are accepted explicit formats. The UI deliberately

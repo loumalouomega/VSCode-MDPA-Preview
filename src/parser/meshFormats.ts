@@ -143,7 +143,16 @@ export function probesInFileSteps(fsPath: string): boolean {
  *
  * Declared BEFORE `TIMELINE_EXTENSIONS` because that constant subtracts it.
  */
-export const STATIC_EXTENSIONS: readonly string[] = [".step", ".stp", ".igs", ".iges"];
+export const STATIC_EXTENSIONS: readonly string[] = [
+  ".step",
+  ".stp",
+  ".igs",
+  ".iges",
+  // glTF/GLB (17.2.0): a static scene, not a time series — same rule as the
+  // CAD reads above, recorded in fixtures/transient/README.md.
+  ".glb",
+  ".gltf",
+];
 
 /** Filename series use the existing per-file reader, including its companions.
  * Discovery lists filenames only; mesh bytes are loaded on frame selection.
