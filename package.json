@@ -290,6 +290,18 @@
             "filenamePattern": "*.cad.json"
           },
           {
+            "filenamePattern": "*.step"
+          },
+          {
+            "filenamePattern": "*.stp"
+          },
+          {
+            "filenamePattern": "*.igs"
+          },
+          {
+            "filenamePattern": "*.iges"
+          },
+          {
             "filenamePattern": "*.rst"
           },
           {
@@ -984,7 +996,7 @@
         },
         {
           "command": "kratos.vtk.openPreview",
-          "when": "(resourceExtname =~ /^\\.(mail|feb|neu|xda|xdr|mphbin|pat|out|rad|z88|elmer|vtk|vtu|vtp|vti|vts|vtr|vtm|vtkhdf|stl|obj|ply|msh|inp|avs|bdf|case|cgns|dat|dato|d3plot|dex|dyn|e|ele|ex2|exo|f3grid|fil|fem|foam|frd|geo|h5|h5m|hdf|hmf|ip|k|key|med|mesh|mff|mfm|mphtxt|nas|node|off|op2|pcd|pf3|poly|post|pvd|rst|rth|pvtp|pvtu|su2|t19|tec|ugrid|unv|vol|wkt|xdmf|xmf|xplt|xml|xyz|xyzn|xyzrgb)$/i || resourceFilename =~ /\\.post\\.(msh|res|bin|h5)$/i || resourceFilename =~ /\\.(xda|xdr)\\.(gz|bz2)$/i || resourceFilename =~ /^(z88i1\\.txt|z88structure\\.txt|mesh\\.header)$/i || resourceFilename =~ /\\.mesh\\.\\d{6}$/i) && activeCustomEditorId != kratos.vtkPreview",
+          "when": "(resourceExtname =~ /^\\.(mail|feb|neu|xda|xdr|mphbin|pat|out|rad|z88|elmer|vtk|vtu|vtp|vti|vts|vtr|vtm|vtkhdf|stl|obj|ply|msh|inp|avs|bdf|case|cgns|dat|dato|d3plot|dex|dyn|e|ele|ex2|exo|f3grid|fil|fem|foam|frd|geo|h5|h5m|hdf|hmf|iges|igs|ip|k|key|med|mesh|mff|mfm|mphtxt|nas|node|off|op2|pcd|pf3|poly|post|pvd|rst|rth|pvtp|pvtu|step|stp|su2|t19|tec|ugrid|unv|vol|wkt|xdmf|xmf|xplt|xml|xyz|xyzn|xyzrgb)$/i || resourceFilename =~ /\\.post\\.(msh|res|bin|h5)$/i || resourceFilename =~ /\\.(xda|xdr)\\.(gz|bz2)$/i || resourceFilename =~ /^(z88i1\\.txt|z88structure\\.txt|mesh\\.header)$/i || resourceFilename =~ /\\.mesh\\.\\d{6}$/i) && activeCustomEditorId != kratos.vtkPreview",
           "group": "navigation"
         }
       ],
@@ -996,7 +1008,7 @@
         },
         {
           "command": "kratos.vtk.openPreview",
-          "when": "(resourceExtname =~ /^\\.(mail|feb|neu|xda|xdr|mphbin|pat|out|rad|z88|elmer|vtk|vtu|vtp|vti|vts|vtr|vtm|vtkhdf|stl|obj|ply|msh|inp|avs|bdf|case|cgns|dat|dato|d3plot|dex|dyn|e|ele|ex2|exo|f3grid|fil|fem|foam|frd|geo|h5|h5m|hdf|hmf|ip|k|key|med|mesh|mff|mfm|mphtxt|nas|node|off|op2|pcd|pf3|poly|post|pvd|rst|rth|pvtp|pvtu|su2|t19|tec|ugrid|unv|vol|wkt|xdmf|xmf|xplt|xml|xyz|xyzn|xyzrgb)$/i || resourceFilename =~ /\\.post\\.(msh|res|bin|h5)$/i || resourceFilename =~ /\\.(xda|xdr)\\.(gz|bz2)$/i || resourceFilename =~ /^(z88i1\\.txt|z88structure\\.txt|mesh\\.header)$/i || resourceFilename =~ /\\.mesh\\.\\d{6}$/i)",
+          "when": "(resourceExtname =~ /^\\.(mail|feb|neu|xda|xdr|mphbin|pat|out|rad|z88|elmer|vtk|vtu|vtp|vti|vts|vtr|vtm|vtkhdf|stl|obj|ply|msh|inp|avs|bdf|case|cgns|dat|dato|d3plot|dex|dyn|e|ele|ex2|exo|f3grid|fil|fem|foam|frd|geo|h5|h5m|hdf|hmf|iges|igs|ip|k|key|med|mesh|mff|mfm|mphtxt|nas|node|off|op2|pcd|pf3|poly|post|pvd|rst|rth|pvtp|pvtu|step|stp|su2|t19|tec|ugrid|unv|vol|wkt|xdmf|xmf|xplt|xml|xyz|xyzn|xyzrgb)$/i || resourceFilename =~ /\\.post\\.(msh|res|bin|h5)$/i || resourceFilename =~ /\\.(xda|xdr)\\.(gz|bz2)$/i || resourceFilename =~ /^(z88i1\\.txt|z88structure\\.txt|mesh\\.header)$/i || resourceFilename =~ /\\.mesh\\.\\d{6}$/i)",
           "group": "navigation"
         }
       ],

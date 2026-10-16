@@ -250,6 +250,17 @@ export const MESHIO_READ_CANDIDATES: Readonly<Record<string, readonly string[]>>
   // the extension alone.
   ".pvtu": ["pvtu"],
   ".pvtp": ["pvtp"],
+  // CAD reads (meshio++ >= 16.42.0): the solid's own triangulation — the same
+  // shape every surface preview expects — and, requested with `{info: true}`,
+  // its B-rep in `cad_json`'s shape. Both keys need OpenCASCADE, which only
+  // the FULL artifact links, so these are the reads meshio.ts dispatches to
+  // loadMeshioFull (see FULL_ONLY_READ_EXTENSIONS). The `.stp`/`.iges`
+  // spellings are READ aliases only; `.step` is also a write key (the faceted
+  // writer, present in BOTH artifacts — meshio++ >= 16.40.0), `.igs` is not.
+  ".step": ["step"],
+  ".stp": ["step"],
+  ".igs": ["iges"],
+  ".iges": ["iges"],
   ".su2": ["su2"],
   // meshio++ >= 16.8.0: MSC Marc's formatted post file, time-capable. `.dat`
   // is shared with Tecplot and with the `marc` input deck, so only the
@@ -370,11 +381,11 @@ export const MESHIO_READER_KEYS: readonly string[] = [
   "code_aster", "elmer", "febio", "femap", "libmesh", "marc", "mfem", "mphbin", "patran", "radioss", "z88",
   "abaqus", "abaqus_fil", "ansys", "ansys_rst", "ansys_rst_cyclic", "ansysinp",
   "avsucd", "cad_json", "cgns", "dex", "dolfin", "ensight", "exodus", "flac3d", "flux",
-  "frd", "freefem", "gid", "gmsh", "h5m", "hmf", "ip", "lsdyna",
+  "frd", "freefem", "gid", "gmsh", "h5m", "hmf", "iges", "ip", "lsdyna",
   "lsdyna_binout", "lsdyna_d3plot", "marc_t19", "med", "medit", "mff", "mfm",
   "mphtxt", "nastran", "nastran_h5", "nastran_op2", "netgen", "obj", "off",
   "openfoam", "pcd", "permas", "ply", "pvtp", "pvtu", "radioss_anim",
-  "radioss_th", "stl", "su2", "tecplot", "tetgen", "triangle", "ugrid", "unv",
+  "radioss_th", "step", "stl", "su2", "tecplot", "tetgen", "triangle", "ugrid", "unv",
   "vtk", "vtkhdf", "vtp", "vtu", "wkt", "xdmf", "xplt", "xyz",
 ];
 
@@ -412,11 +423,41 @@ export const MESHIO_READER_KEYS: readonly string[] = [
 export const MESHIO_READ_ONLY_KEYS: readonly string[] = [
   "ansys_rst",
   "ansys_rst_cyclic",
+  // `iges` (>= 16.42.0): read in the full artifact; no writer exists upstream
+  // for it in EITHER artifact. Its sibling CAD key `step` is deliberately NOT
+  // here: the faceted STEP writer has been in both artefacts since 16.40.0.
+  "iges",
   "lsdyna_d3plot",
   "marc_t19",
   "nastran_h5",
   "radioss_anim",
   "xplt",
+];
+
+/**
+ * Reader keys that exist ONLY in the FULL artifact ({full: true}) — the
+ * OpenCASCADE-backed CAD readers. A build-level fact, not a routing choice:
+ * `availableFormats()` omits them from the lean registry entirely, so
+ * `meshio.ts` cannot even attempt them there (loadMeshioForRead uses this).
+ */
+export const FULL_ONLY_READER_KEYS: readonly string[] = ["step", "iges"];
+
+/**
+ * Read extensions whose reader lives only in the full artifact, hence
+ * dispatched straight to `loadMeshioFull()` — never attempted on the lean
+ * build first, since there it is a guaranteed "no reader" failure.
+ *
+ * `.xda.bz2`/`.xdr.bz2` (the libMesh bzip2 containers) are the other shape of
+ * full-only read: the `libmesh` key exists in both builds, but inflating bz2
+ * needs `hasBzip2()`, which only the full artifact links. They are routed
+ * through the fallback path in meshFileParser.ts instead, because that path
+ * only fires when the lean attempt names the missing codec.
+ */
+export const FULL_ONLY_READ_EXTENSIONS: readonly string[] = [
+  ".step",
+  ".stp",
+  ".igs",
+  ".iges",
 ];
 
 /**
@@ -623,7 +664,7 @@ export const MESHIO_WRITE_FORMAT: Readonly<Record<string, string>> = {
   ".xyz": "xyz",
 };
 
-/** Extensions meshio++ reads for us (54). */
+/** Extensions meshio++ reads for us (84; the four CAD spellings need the full artifact). */
 export const MESHIO_READ_EXTENSIONS: readonly string[] =
   Object.keys(MESHIO_READ_CANDIDATES).filter((ext) => ext !== ".mfem-rank");
 

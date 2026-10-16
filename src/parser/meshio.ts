@@ -53,6 +53,8 @@ import {
   modelToMeshio,
 } from "./meshioConvert";
 import {
+  FULL_ONLY_READ_EXTENSIONS,
+  FULL_ONLY_READER_KEYS,
   MESHIO_LENIENT_RETRY_FORMATS,
   MESHIO_READ_CANDIDATES,
   MESHIO_WRITE_FORMAT,
@@ -1175,6 +1177,30 @@ async function loadMeshioFlavour(full: boolean): Promise<MeshioModule> {
   }
 }
 
+/**
+ * The module a meshio++ READ needs: the full artifact for a format the lean
+ * build cannot serve AT ALL — the OpenCASCADE CAD readers and their four
+ * spellings (FULL_ONLY_READ_EXTENSIONS / FULL_ONLY_READER_KEYS) — the lean one
+ * everywhere else, which is every other read in the extension.
+ *
+ * A direct dispatch rather than attempt-then-retry, because there is nothing
+ * to retry with on the lean side: its registry has no entry for these keys, so
+ * the attempt fails before it can name the missing dependency. The codec
+ * fallbacks (zstd/lz4 `.vtu`, bzip2 libMesh) are the OPPOSITE shape — the
+ * reader exists in the lean build and only the codec is missing — and stay in
+ * meshFileParser.ts's error-allowlisted retry.
+ *
+ * `format` (an explicit MCP `inputFormat`) can override the extension's own
+ * candidates, so both are consulted: asking for "step" on a `.cad` path must
+ * reach the full build exactly as a `.step` file does.
+ */
+function loadMeshioForRead(ext: string, candidates: readonly string[]): Promise<MeshioModule> {
+  const fullOnly =
+    FULL_ONLY_READ_EXTENSIONS.includes(ext.toLowerCase()) ||
+    candidates.some((key) => FULL_ONLY_READER_KEYS.includes(key));
+  return fullOnly ? loadMeshioFull() : loadMeshio();
+}
+
 /** Set once if the auto-selected (threaded) build fails to instantiate. */
 let forceSequential = false;
 
@@ -1451,7 +1477,7 @@ async function readMeshioModelInProcess(
     if (MESHIO_LENIENT_RETRY_FORMATS.includes(fmt)) attempts.push({ fmt, lenient: true });
   }
 
-  const m = await loadMeshio();
+  const m = await loadMeshioForRead(ext, candidates);
   const mainPath = stageFiles(m, mainName, files);
 
   const diagnostics: MdpaDiagnostic[] = [];
@@ -1537,7 +1563,7 @@ async function readMetadataWith<T>(
     throw new Error(`No meshio++ reader is registered for "${ext}".`);
   }
 
-  const m = await loadMeshio();
+  const m = await loadMeshioForRead(ext, candidates);
   const mainPath = stageFiles(m, mainName, files);
 
   const errors: string[] = [];

@@ -5,8 +5,8 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { loadMeshio, readMeshioModel, writeMeshioBytes } from "../parser/meshio";
-import { MESHIO_READ_CANDIDATES } from "../parser/meshioFormats";
+import { loadMeshio, loadMeshioFull, readMeshioModel, writeMeshioBytes } from "../parser/meshio";
+import { FULL_ONLY_READER_KEYS, MESHIO_READ_CANDIDATES } from "../parser/meshioFormats";
 import { IN_FILE_TIMELINE_EXTENSIONS } from "../parser/meshFormats";
 import { parseMeshFile } from "../parser/meshFileParser";
 
@@ -34,8 +34,11 @@ test("audit covers every registered reader's live options capability", async () 
   // multi-step file written by the wasm's own sequenceToTimeseries, not
   // "unmeasured" as an earlier pass of this comment claimed.
   // The 16.42.0 bump routed `cad_json` (the compound `.cad.json`): a static
-  // geometry file with no step axis, and not options-aware. `step`/`iges` are
-  // not audited because nothing routes to them (their reader needs OpenCASCADE).
+  // geometry file with no step axis, and not options-aware. The CAD readers
+  // `step`/`iges` are audited since the 17.2.0 bump routes them: like
+  // `cad_json` they are single static geometries with no step axis, and their
+  // readerSupportsOptions answers false — measured on the FULL artifact, the
+  // only one that links the OpenCASCADE readers at all.
   // Step 4b (roadmap item 3) routed pvtu/pvtp for reading (a static
   // partitioned dataset, not a time series): both are options-aware too
   // (measured — readerSupportsOptions is true for each), which is exactly
@@ -64,17 +67,26 @@ test("audit covers every registered reader's live options capability", async () 
   const audited = [
     "abaqus", "abaqus_fil", "ansys", "ansys_rst", "ansysinp", "avsucd", "cad_json",
     "cgns", "code_aster", "dex", "dolfin", "elmer", "ensight", "exodus", "febio", "femap",
-    "flac3d", "flux", "frd", "freefem", "gid", "gmsh", "h5m", "hmf", "ip",
+    "flac3d", "flux", "frd", "freefem", "gid", "gmsh", "h5m", "hmf", "iges", "ip",
     "libmesh", "lsdyna", "lsdyna_d3plot", "marc", "marc_t19", "med", "medit",
     "mfem", "mff", "mfm", "mphbin", "mphtxt", "nastran", "nastran_h5",
     "nastran_op2", "netgen", "off", "openfoam", "patran", "pcd", "permas",
-    "pvtp", "pvtu", "radioss", "su2", "tecplot", "tetgen", "triangle", "ugrid",
+    "pvtp", "pvtu", "radioss", "step", "su2", "tecplot", "tetgen", "triangle", "ugrid",
     "unv", "vtkhdf", "wkt", "xdmf", "xplt", "xyz", "z88",
   ].sort();
   const readers = [...new Set(Object.values(MESHIO_READ_CANDIDATES).flat())].sort();
   assert.deepEqual(readers, audited, "new reader keys require a temporal audit");
+  // The CAD readers exist only in the full artifact, so the lean instance has
+  // no registry entry to ask about at all — ask the full one (measured there:
+  // no options awareness either way, which keeps them static reads).
+  const full = FULL_ONLY_READER_KEYS.some((k) => readers.includes(k))
+    ? await loadMeshioFull()
+    : undefined;
   for (const format of readers) {
-    assert.equal(m.readerSupportsOptions(format), optionsAware.has(format), format);
+    const supports = FULL_ONLY_READER_KEYS.includes(format)
+      ? full!.readerSupportsOptions(format)
+      : m.readerSupportsOptions(format);
+    assert.equal(supports, optionsAware.has(format), format);
   }
 });
 

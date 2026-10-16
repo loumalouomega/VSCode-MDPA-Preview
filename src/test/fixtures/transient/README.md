@@ -55,7 +55,7 @@ Run `npm run build:tests`, then run `generate.py` with Python, h5py and NumPy. T
 
 ## Full reader-key inventory
 
-The test pins the complete set of `MESHIO_READ_CANDIDATES` keys and probes `readerSupportsOptions` for each distinct reader. New keys or newly options-aware readers fail the audit test and require review. Options awareness alone does not mean time selection works (Gmsh is the counterexample; FRD is a second one).
+The test pins the complete set of `MESHIO_READ_CANDIDATES` keys and probes `readerSupportsOptions` for each distinct reader (the OpenCASCADE CAD readers against the FULL artifact — the only one that links them). New keys or newly options-aware readers fail the audit test and require review. Options awareness alone does not mean time selection works (Gmsh is the counterexample; FRD is a second one).
 
 | Classification | Reader keys | Decision |
 | --- | --- | --- |
@@ -64,6 +64,7 @@ The test pins the complete set of `MESHIO_READ_CANDIDATES` keys and probes `read
 | Temporal probes without eligibility | `gmsh`, `ensight`, `h5m`, `frd` | Gmsh selects but cannot enumerate untagged sections; EnSight rejects transient geometry; H5M tags are not a time axis; FRD selects distinctly but its metadata falls back to a full read; filename series supported. `frd` is the reference case for the whole "options-aware but not admitted" row below |
 | New in-file timeline (14.0.0) | `vtkhdf` | Native Steps-group metadata enumeration + distinct selection, same admission bar as MED/CGNS/Tecplot; `.hdf` shares the key |
 | Single-grid HMF schema | `hmf` | `domain/grid` contains geometry, topology and attributes, with no temporal index; not a multi-step candidate |
+| CAD reads (17.2.0) | `step`, `iges` | Read-only, FULL artifact only (OpenCASCADE): the solid's triangulation, one static geometry per file. `readerSupportsOptions` is false (measured on the full artifact), so neither forms a timeline — they are the first entries in `STATIC_EXTENSIONS`: a directory of `.step`/`.igs` files is a set of CAD parts, not a `<prefix>_<rank>_<step>` series, and there is nothing in-file |
 | Mesh readers without an options-aware step-selection entry point | `abaqus`, `ansys`, `avsucd`, `dex`, `dolfin`, `flac3d`, `flux`, `freefem`, `ip`, `lsdyna`, `medit`, `mff`, `mfm`, `mphtxt`, `nastran`, `netgen`, `off`, `pcd`, `permas`, `radioss_anim`, `su2`, `tetgen`, `triangle`, `ugrid`, `wkt`, `xyz` | Filename series supported (`pcd`/`xyz` have no cells, so nothing groups as a series either); their registered mesh readers cannot select an internal step. `radioss_anim` joined this row in 16.14.0 despite being documented as time-capable: it reports no options awareness, so there is no `timeStep` to pass |
 | Options-aware but not admitted (16.14.0) | `abaqus_fil`, `ansys_rst`, `ansys_rst_cyclic`, `ansysinp`, `lsdyna_binout`, `lsdyna_d3plot`, `marc_t19`, `nastran_h5`, `nastran_op2`, `radioss_th`, `unv`, `xplt` | Every one reports `fellBackToFullRead: true`, so times are not enumerable without a full read — the `frd` bar. The eleven new ones and `unv` are measured against upstream's fixtures; `ansysinp` has no step axis to begin with. Filename series supported |
 

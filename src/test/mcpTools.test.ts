@@ -1330,10 +1330,17 @@ test("mesh_capabilities reports the live build next to the routing tables", asyn
   assert.equal(byKey.get("frd")?.optionsAware, true);
   assert.equal(byKey.get("vtkhdf")?.optionsAware, true);
   assert.equal(byKey.get("lsdyna")?.optionsAware, false);
+  // The CAD reads: routed now, and the lean live registry enumerates neither
+  // key, so the options probe answers false for both (the full build answers
+  // false too — measured against 17.2.0, not assumed).
+  assert.deepEqual(byKey.get("step")?.extensions, [".step", ".stp"]);
+  assert.deepEqual(byKey.get("iges")?.extensions, [".igs", ".iges"]);
   // Deliberately unrouted keys name their reason rather than vanishing.
   const unrouted = new Map(caps.unroutedReaders.map((r) => [r.key, r.reason]));
-  // `iges` left the live registry in 17.x (full artifact only), so it has no row.
-  for (const key of ["mdpa", "gmsh22", "gltf", "vti", "vts", "vtr", "vtm", "pvd", "step"]) {
+  // `iges` left the lean registry in 17.x and is now ROUTED via the full
+  // artifact, so it has no row; step likewise left this list with the same
+  // commit.
+  for (const key of ["mdpa", "gmsh22", "gltf", "vti", "vts", "vtr", "vtm", "pvd"]) {
     assert.ok((unrouted.get(key) ?? "").length > 0, `${key} names its reason`);
   }
   // Marc and Radioss are accepted explicit formats. The UI deliberately
@@ -1452,9 +1459,13 @@ test("the read-only key set matches what the live build actually withholds a wri
   // live registry rather than trusted.
   const caps = (await meshCapabilities()) as {
     live: { readers: string[]; writers: string[] };
+    full: { build?: { readers: string[]; writers: string[] } };
   };
-  const readers = new Set(caps.live.readers);
-  const writers = new Set(caps.live.writers);
+  // BOTH artifacts are "this build" since 17.2.0: `step`/`iges` are full-only
+  // readers, so a lean-only view would call `iges` a key with no writer in a
+  // build that does not even list it. The union is the honest registry.
+  const readers = new Set([...caps.live.readers, ...(caps.full.build?.readers ?? [])]);
+  const writers = new Set([...caps.live.writers, ...(caps.full.build?.writers ?? [])]);
   // Every key we call read-only really is a reader and really has no writer.
   for (const key of MESHIO_READ_ONLY_KEYS) {
     assert.ok(readers.has(key), `${key} is a reader in this build`);

@@ -131,6 +131,20 @@ export function probesInFileSteps(fsPath: string): boolean {
   return IN_FILE_PROBE_EXTENSIONS.includes(meshExtname(fsPath));
 }
 
+/**
+ * Supported preview formats with NEITHER timeline mechanism — the fall-through
+ * `timelineKindFor` returns for them, deliberately.
+ *
+ * The Kratos `<prefix>_<rank>_<step>` filename grammar describes SOLVER output;
+ * a directory of `.step`/`.igs` files is a set of CAD parts, not a time series,
+ * so grouping them into a "timeline" would invent steps that do not exist. The
+ * CAD readers are also single-file (no companion staging) and carry no steps
+ * inside. Decision recorded in fixtures/transient/README.md.
+ *
+ * Declared BEFORE `TIMELINE_EXTENSIONS` because that constant subtracts it.
+ */
+export const STATIC_EXTENSIONS: readonly string[] = [".step", ".stp", ".igs", ".iges"];
+
 /** Filename series use the existing per-file reader, including its companions.
  * Discovery lists filenames only; mesh bytes are loaded on frame selection.
  * Formats with their own timeline remain exclusively in-file.
@@ -145,13 +159,14 @@ export const TIMELINE_EXTENSIONS: readonly string[] = [
   // item 3) is the first NATIVE extension with an in-file timeline of its
   // own, so the earlier "only meshio needs filtering" assumption no longer
   // holds. A no-op for every other native extension today (none of them
-  // are in IN_FILE_TIMELINE_EXTENSIONS).
+  // are in IN_FILE_TIMELINE_EXTENSIONS). The meshio spread subtracts
+  // STATIC_EXTENSIONS too — the first supported extensions with no timeline
+  // at all (the CAD reads), which must not fall through to "filename".
   ...NATIVE_MESH_EXTENSIONS.filter((ext) => !IN_FILE_TIMELINE_EXTENSIONS.includes(ext)),
-  ...MESHIO_EXTENSIONS.filter((ext) => !IN_FILE_TIMELINE_EXTENSIONS.includes(ext)),
+  ...MESHIO_EXTENSIONS.filter(
+    (ext) => !IN_FILE_TIMELINE_EXTENSIONS.includes(ext) && !STATIC_EXTENSIONS.includes(ext)
+  ),
 ];
-
-/** Supported preview formats with neither timeline mechanism. */
-export const STATIC_EXTENSIONS: readonly string[] = [];
 
 /**
  * Which of the three timeline shapes a mesh path takes.  THE dispatch decision

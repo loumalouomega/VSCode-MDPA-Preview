@@ -25,6 +25,8 @@ import {
   contentWatchGlob,
 } from "../parser/meshFormats";
 import {
+  FULL_ONLY_READ_EXTENSIONS,
+  FULL_ONLY_READER_KEYS,
   MESHIO_EXPORT_EXTENSIONS,
   MESHIO_LENIENT_RETRY_FORMATS,
   MESHIO_READ_CANDIDATES,
@@ -163,6 +165,26 @@ test("every read candidate is a real reader key, default first", () => {
   // js_bindings.cpp's extension_defaults().
   assert.equal(MESHIO_READ_CANDIDATES[".msh"][0], "gmsh");
   assert.equal(MESHIO_READ_CANDIDATES[".inp"][0], "abaqus");
+});
+
+test("full-only reads are exactly the CAD candidates, and the two lists agree", () => {
+  // FULL_ONLY_READ_EXTENSIONS / FULL_ONLY_READER_KEYS drive meshio.ts's
+  // loadMeshioForRead dispatch. An extension here without a candidate (or a
+  // full-only candidate without an extension entry) would read from the wrong
+  // artifact and fail with the lean build's "no reader" error.
+  const fromCandidates = Object.entries(MESHIO_READ_CANDIDATES)
+    .filter(([, keys]) => keys.some((k) => FULL_ONLY_READER_KEYS.includes(k)))
+    .map(([ext]) => ext);
+  assert.deepEqual(sorted(FULL_ONLY_READ_EXTENSIONS), sorted(fromCandidates));
+  for (const ext of FULL_ONLY_READ_EXTENSIONS) {
+    for (const key of MESHIO_READ_CANDIDATES[ext]) {
+      assert.ok(FULL_ONLY_READER_KEYS.includes(key), `${ext} -> "${key}" is a full-only read`);
+    }
+  }
+  assert.deepEqual(sorted(FULL_ONLY_READER_KEYS), ["iges", "step"]);
+  // `step` keeps a writer (faceted, in BOTH artifacts) and `iges` has none.
+  assert.ok(MESHIO_WRITER_KEYS.includes("step"));
+  assert.ok(!MESHIO_WRITER_KEYS.includes("iges"));
 });
 
 test("dolfin/tetgen/ensight write through their canonical extension only, eligibility checked separately", () => {

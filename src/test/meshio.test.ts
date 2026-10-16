@@ -752,6 +752,47 @@ test("locateFile is asked for the full variant's own filename", async () => {
   }
 });
 
+// --- the FULL artifact's CAD reads (.step/.igs, routed in 17.2.0) -----------
+//
+// `step`/`iges` have READERS only where OpenCASCADE is linked — the full
+// artifact — and 17.2.0 routes both: meshio.ts's loadMeshioForRead dispatches
+// their extensions (and an explicit `inputFormat` naming either key) to
+// `loadMeshioFull()` instead of the lean one, where the read would die with
+// the registry's own `{full: true}` refusal. The fixtures are a unit box
+// committed per fixtures/cad/README.md: one faceted-written by this repo's
+// lean writer, one upstream's own IGES — so the test also pins that the
+// dispatch is INVISIBLE to the caller: readMeshioModel takes the same
+// (name, files, ext) shape either build serves.
+
+test("meshio++ 17.2.0: .step and .igs read through the FULL artifact as ordinary models", async () => {
+  const cad = path.resolve(__dirname, "..", "fixtures", "cad");
+  for (const [file, ext] of [
+    ["box.step", ".step"],
+    ["box.igs", ".igs"],
+  ] as const) {
+    const data = fs.readFileSync(path.join(cad, file));
+    const back = await readMeshioModel(file, [{ name: file, data }], ext);
+    assert.equal(back.nodeCount, 8, `${ext} reads the box's 8 corners`);
+    const triangles = back.blocks.reduce((n, b) => n + b.count, 0);
+    assert.equal(triangles, 12, `${ext} triangulates the box's 6 faces`);
+    for (const b of back.blocks) {
+      assert.equal(b.vtkCellType, 5, `${ext} surfaces arrive as triangles`);
+    }
+  }
+});
+
+test("meshio++ 17.2.0: an explicit inputFormat routes a CAD read to the full artifact too", async () => {
+  // The `format` argument overrides the extension's candidates, and the
+  // dispatch follows the FORMAT as well as the extension: asking for "step"
+  // on an arbitrary path must not attempt the lean build, which has no such
+  // reader at all.
+  const data = fs.readFileSync(
+    path.resolve(__dirname, "..", "fixtures", "cad", "box.step")
+  );
+  const back = await readMeshioModel("box.step", [{ name: "box.step", data }], ".step", "step");
+  assert.equal(back.nodeCount, 8);
+});
+
 // --- meshio++ 10.14.0: what the 9.22.0 -> 10.14.0 jump actually changes -------
 //
 // Twelve minor versions plus a major, and the major (v10.0.0) is a
