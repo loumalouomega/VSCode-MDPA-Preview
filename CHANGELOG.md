@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [5.13.0] - 2026-10-16
+
 ### Added
 
 - **The FULL meshio++ artifact ships beside the lean one** (meshio++ 17.2.0's second build: OpenCASCADE, zstd, lz4, bzip2; MIT AND (LGPL-2.1-only WITH OCCT-exception-1.0) — the package's own `THIRD_PARTY_NOTICES.md` ships with it). `dist/meshio/` grows ~27 → ~80 MB raw and the packaged `.vsix` from ~31.5 to **50.2 MB** (+~19 MB compressed). `mesh_capabilities` reports both live builds: the lean one's flavour and optional libraries, plus the full artifact's own backend, flags and reader/writer lists (82/75 vs the lean 80/75). The full build is loaded lazily, only where the lean build cannot serve.
