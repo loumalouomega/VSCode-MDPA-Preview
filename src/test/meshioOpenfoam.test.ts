@@ -13,7 +13,7 @@ import test from "node:test";
 
 import { parseMeshFile } from "../parser/meshFileParser";
 import { readMeshioModel, writeMeshioBytes } from "../parser/meshio";
-import { MdpaModel } from "../parser/types";
+import { MdpaDiagnostic, MdpaModel } from "../parser/types";
 
 function tmpDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "meshio-"));
@@ -62,6 +62,47 @@ test("meshio++ 9.20.0: .foam writes a polyMesh DIRECTORY, not a sibling file", a
   // No OpenFoamInfo side channel through the generic registry writer, so every
   // case gets the one synthesized patch `blockMesh` itself produces.
   assert.match(boundary, /defaultFaces/, "the synthesized patch is named in boundary");
+});
+
+/** Two hexahedra sharing the face at x = 1, so a field can cover one cell or both. */
+function twoHexModel(fieldLines: string[]): MdpaModel {
+  const { parseMdpa } = require("../parser/mdpaParser") as typeof import("../parser/mdpaParser");
+  return parseMdpa(
+    [
+      "Begin Nodes",
+      " 1 0.0 0.0 0.0", " 2 1.0 0.0 0.0", " 3 1.0 1.0 0.0", " 4 0.0 1.0 0.0",
+      " 5 0.0 0.0 1.0", " 6 1.0 0.0 1.0", " 7 1.0 1.0 1.0", " 8 0.0 1.0 1.0",
+      " 9 2.0 0.0 0.0", "10 2.0 1.0 0.0", "11 2.0 0.0 1.0", "12 2.0 1.0 1.0",
+      "End Nodes",
+      "Begin Elements Element3D8N",
+      " 1 0 1 2 3 4 5 6 7 8",
+      " 2 0 2 9 10 3 6 11 12 7",
+      "End Elements",
+      ...fieldLines,
+      "",
+    ].join("\n")
+  );
+}
+
+test("meshio++ 17.3.0's own time-zero copies never stand in for ours: one file per field, none for a refused one", async () => {
+  // meshio++ 17.3.0 writes every field into `0/` itself. Its copy of a field
+  // that covers every cell duplicates ours (the export would carry two `0/TEMP`
+  // entries), and its copy of a partial field is zero-filled. Only the writer's
+  // own file may remain, and a field it refuses must leave no file at all.
+  const model = twoHexModel([
+    "Begin ElementalData TEMP", " 1 111", " 2 222", "End ElementalData",
+    "Begin ElementalData Q", " 1 7", "End ElementalData",
+  ]);
+  const diagnostics: MdpaDiagnostic[] = [];
+  const { companions } = await writeMeshioBytes(model, ".foam", { stem: "case", diagnostics });
+  const timeZero = companions.filter((c) => c.name.startsWith("0/")).map((c) => c.name);
+  assert.deepEqual(timeZero, ["0/TEMP"], "one time-zero file, and none for the partial field Q");
+  const temp = Buffer.from(companions.find((c) => c.name === "0/TEMP")!.data).toString("utf8");
+  assert.match(temp, /nonuniform List<scalar>\n2\n\(\n111\n222\n\)/);
+  assert.ok(
+    diagnostics.some((d) => /"Q" does not cover every volume cell \(1 of 2\)/.test(d.message)),
+    JSON.stringify(diagnostics.map((d) => d.message))
+  );
 });
 
 test("a mesh exported to .foam writes the whole tree to disk", async () => {

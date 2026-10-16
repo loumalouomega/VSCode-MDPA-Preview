@@ -17,6 +17,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **CAD glyph for the mesh → CAD targets** (`icons/tikz-ui/cad.tex` → `svg-ui/cad.svg` → `toolbarIcons.ts`): a faceted two-triangle patch refined into a shaded fitted cylinder, in the set's own coarse → arrow → result language. It heads the File ▸ Export ▸ CAD group (the only export group with a glyph; per-format rows stay text-only) and is wired for the optimization CAD export's buttons.
 - **Optimized geometry as CAD** (Structural Optimization): the Kratos Runs command **Export Optimized Geometry as CAD…**, the Optimization progress panel's **Export CAD** button and the MCP tool `case_optimization_cad` write the run's final design-field frame through the `.step` pipeline — same fit ask, same `<stem>.cad.json` B-rep companion, same faceted fallback and refusals as File ▸ Export ▸ CAD. **Shape** writes the frame mesh (vertex morphing moved the nodes); **topology** contours a density field at a threshold first (an Elemental field is averaged to the nodes, the threshold is always reported because it defines the solid, and a threshold the field never crosses is a refusal). `excludeNewest` drops a possibly half-written newest frame, matching Open Design Fields.
 
+### Fixed
+
+- **OpenFOAM export writes one time-zero file per field**: meshio++ 17.3.0 writes every field into the time directory itself, so an export carried its own copy beside the writer's. A field covering every cell appeared twice (the writer's with the recorded dimensions, meshio++'s with zeros), a partial field was zero-filled although the export refuses it, and a Conditional field came out as one zero-valued cell. The writer's copy of a cell-centred field is now the only one; a point-centred (Nodal) copy is kept as meshio++ writes it.
+
 ## [5.13.0] - 2026-10-16
 
 ### Added
