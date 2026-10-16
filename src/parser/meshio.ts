@@ -25,14 +25,15 @@ import type { RegionSelector, RegionEdit, AgglomerateOptions } from "@meshioplus
  *     loader already knows the resolved package dir it passes one
  *     unconditionally, in both the dev and packaged layouts.
  *
- * Since 8.8.0 the package ships TWO native artifacts — the sequential
- * `meshioplusplus_wasm.{mjs,wasm}` and the OpenMP/pthreads
- * `meshioplusplus_wasm_mt.{mjs,wasm}` — and `loadMeshioPlusPlus` picks between
- * them itself: its `resolveVariant` returns "mt" whenever `crossOriginIsolated`
- * is undefined, which is exactly the case under Node, hence in the extension
- * host.  So `locateFile` MUST honour the filename it is handed rather than
- * returning a fixed path: hand the mt glue the sequential binary and every
- * meshio format dies with
+ * Since 8.8.0 the package ships TWO native variants of each artifact — the
+ * sequential `meshioplusplus_wasm.{mjs,wasm}` and the OpenMP/pthreads
+ * `meshioplusplus_wasm_mt.{mjs,wasm}`, and since 17.0.0 the same pair again
+ * with a `_full` infix behind `{full: true}` — and `loadMeshioPlusPlus` picks
+ * between the variants itself: its `resolveVariant` returns "mt" whenever
+ * `crossOriginIsolated` is undefined, which is exactly the case under Node,
+ * hence in the extension host.  So `locateFile` MUST honour the filename it is
+ * handed rather than returning a fixed path: hand the mt glue the sequential
+ * binary and every meshio format dies with
  *   Aborted(LinkError: WebAssembly.instantiate(): Import #0 module="a"
  *           function="a" error: function import requires a callable)
  * — an error that names neither the file nor the variant.  meshio.test.ts pins
@@ -379,6 +380,31 @@ export interface MeshioModule {
    * the regression would only surface on a user's ADF file.
    */
   hasCgnslib(): boolean;
+
+  /**
+   * meshio++ >= 17.0.0 ships the same API as two artifacts: this "lean" one
+   * (MIT) and a "full" one (OpenCASCADE, zstd, lz4, bzip2; mixed licence —
+   * see the package's THIRD_PARTY_NOTICES.md) that `loadMeshioFull` loads.
+   * `buildFlavour` names which one THIS instance is; `hasOcct`/`hasZstd`/
+   * `hasLz4`/`hasBzip2` say which optional native libraries it links (all
+   * four are false on lean, true on full, measured against 17.2.0).
+   *
+   * Nothing here branches on them — the routing tables decide what runs and
+   * meshFileParser retries locally — but `mesh_capabilities` reports them and
+   * meshio.test.ts asserts them, so a loader that handed back the wrong
+   * flavour, or a rebuild that dropped a dependency, fails a test rather than
+   * a user's file.
+   */
+  buildFlavour(): "lean" | "full";
+  /** Whether OpenCASCADE is linked (step/iges reads, fitCad): full artifact only. */
+  hasOcct(): boolean;
+  /** Whether the VTK XML readers accept zstd-deflated data: full artifact only. */
+  hasZstd(): boolean;
+  /** Whether the VTK XML readers accept lz4-deflated data: full artifact only. */
+  hasLz4(): boolean;
+  /** Whether libMesh readers inflate .bz2 containers: full artifact only. */
+  hasBzip2(): boolean;
+
   /**
    * Provenance (former roadmap item 6): with a scope open, a writer records the richer
    * header block (source, target, notes, timestamp) into the target format's
@@ -966,7 +992,19 @@ type MeshioVariant = "auto" | "mt" | "seq";
 interface MeshioNamespace {
   loadMeshioPlusPlus(
     overrides?: Record<string, unknown>,
-    options?: { variant?: MeshioVariant }
+    options?: {
+      variant?: MeshioVariant;
+      /**
+       * meshio++ >= 17.0.0: instantiate the FULL artifact
+       * (`meshioplusplus_wasm_full{,_mt}.{mjs,wasm}`) instead of the lean one.
+       * With no `fullGlue` it imports the full glue relative to the package's
+       * own index.mjs, so the packaged `dist/meshio/` tree — which preserves
+       * the src/ + dist/ layout — needs neither.
+       */
+      full?: boolean;
+      /** Where the full artifact's glue module lives; see `full` above. */
+      fullGlue?: string | URL;
+    }
   ): Promise<MeshioModule>;
 }
 
@@ -1014,16 +1052,7 @@ function packageDir(): string {
  * copy esbuild's copy-meshio plugin ships) without importing the module.
  */
 export function meshioPackageVersion(): string | undefined {
-  for (const dir of (() => {
-    const dirs: string[] = [];
-    try {
-      dirs.push(path.dirname(require.resolve("@meshioplusplus/wasm/package.json")));
-    } catch {
-      /* dev package absent — try the packaged layout */
-    }
-    dirs.push(path.join(__dirname, "meshio"));
-    return dirs;
-  })()) {
+  for (const dir of packageDirs()) {
     try {
       const pkg = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8")) as {
         version?: unknown;
@@ -1034,6 +1063,31 @@ export function meshioPackageVersion(): string | undefined {
     }
   }
   return undefined;
+}
+
+/** The two layouts `packageDir()` resolves, in the same order: dev first. */
+function packageDirs(): string[] {
+  const dirs: string[] = [];
+  try {
+    dirs.push(path.dirname(require.resolve("@meshioplusplus/wasm/package.json")));
+  } catch {
+    /* dev package absent — try the packaged layout */
+  }
+  dirs.push(path.join(__dirname, "meshio"));
+  return dirs;
+}
+
+/**
+ * Whether the installed/packaged tree carries the FULL artifact
+ * (`dist/meshioplusplus_wasm_full.wasm`, the OpenCASCADE build of meshio++
+ * >= 17.0.0). A file-system fact, deliberately not a load: `mesh_capabilities`
+ * reports it before paying for a second ~27 MB instantiation, and
+ * `loadMeshioFull()` is what fails loudly when the pair is missing.
+ */
+export function meshioFullInstalled(): boolean {
+  return packageDirs().some((dir) =>
+    fs.existsSync(path.join(dir, "dist", "meshioplusplus_wasm_full.wasm"))
+  );
 }
 
 // Hidden from esbuild AND from tsc's CommonJS downlevelling, both of which
@@ -1070,10 +1124,30 @@ function namespace(): Promise<MeshioNamespace> {
 export function loadMeshio(): Promise<MeshioModule> {
   // Reported to the status bar's engine line (engineActivity.ts): the one place
   // every meshio++ read, write and oracle op instantiates the module.
-  return trackEngine("meshio", loadMeshioUntracked);
+  return trackEngine("meshio", () => loadMeshioFlavour(false));
 }
 
-async function loadMeshioUntracked(): Promise<MeshioModule> {
+/**
+ * The FULL artifact of the same release (meshio++ >= 17.0.0): the same C++
+ * core plus OpenCASCADE, zstd, lz4 and bzip2, under a mixed licence. It is a
+ * DIFFERENT artifact rather than a feature flag on the lean one: the lean
+ * build keeps serving every format and operation it already covers, and this
+ * one is loaded lazily, only where the lean build cannot serve — the
+ * step/iges reads, `fitCad` and the zstd/lz4 `.vtu` and bzip2 libMesh
+ * fallbacks (see meshFileParser.ts).
+ *
+ * Same contracts as `loadMeshio` — a fresh instance per call (the docblock
+ * above explains why dropping it matters, and this artifact is twice the
+ * size), the name-aware `locateFile` for whichever variant the loader picks,
+ * and the one-off mt -> seq fallback. The full glue resolves its own
+ * `../dist/` siblings relative to the packaged `src/index.mjs`, so no
+ * `fullGlue` override is needed in either layout.
+ */
+export function loadMeshioFull(): Promise<MeshioModule> {
+  return trackEngine("meshio", () => loadMeshioFlavour(true));
+}
+
+async function loadMeshioFlavour(full: boolean): Promise<MeshioModule> {
   const ns = await namespace();
   const dist = path.join(packageDir(), "dist");
   const overrides = {
@@ -1083,16 +1157,17 @@ async function loadMeshioUntracked(): Promise<MeshioModule> {
     locateFile: (name: string) => path.join(dist, path.basename(name)),
     ...extraOverrides,
   };
-  if (forceSequential) return ns.loadMeshioPlusPlus(overrides, { variant: "seq" });
+  const flavour = full ? { full: true as const } : {};
+  if (forceSequential) return ns.loadMeshioPlusPlus(overrides, { ...flavour, variant: "seq" });
   try {
-    return await ns.loadMeshioPlusPlus(overrides);
+    return await ns.loadMeshioPlusPlus(overrides, full ? { full: true } : undefined);
   } catch (e) {
     // An environment that cannot host Wasm threads (no SharedArrayBuffer, a
     // locked-down container) aborts inside the mt glue.  Fall back once and
     // remember the DECISION — never the instance, see the docblock above.
     forceSequential = true;
     try {
-      return await ns.loadMeshioPlusPlus(overrides, { variant: "seq" });
+      return await ns.loadMeshioPlusPlus(overrides, { ...flavour, variant: "seq" });
     } catch {
       forceSequential = false; // do not poison future loads with a transient failure
       throw e; // the original error is the informative one

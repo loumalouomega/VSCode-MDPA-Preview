@@ -822,7 +822,7 @@ export function registerAllTools(server: McpServer): void {
     "mesh_capabilities",
     {
       description:
-        "meshio++ capability inventory: the installed WASM build's readers/writers, per-reader options-awareness (timeStep/lenient), backend and cgnslib — next to the extension's routing (read candidates, write targets, in-file vs filename timelines, header-only metadata set, lenient retries, unrouted keys with reasons). Ask this before assuming a format, reader key or timeStep works.",
+        "meshio++ capability inventory: the installed WASM artifacts — the lean build's readers/writers, per-reader options-awareness (timeStep/lenient), flavour, backend and cgnslib, plus the full artifact (OpenCASCADE, zstd, lz4, bzip2) and its own live reader/writer list — next to the extension's routing (read candidates, write targets, in-file vs filename timelines, header-only metadata set, lenient retries, unrouted keys with reasons). Ask this before assuming a format, reader key or timeStep works.",
       inputSchema: {},
     },
     run(meshCapabilities)

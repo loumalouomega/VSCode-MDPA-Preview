@@ -1241,6 +1241,21 @@ test("mesh_capabilities reports the live build next to the routing tables", asyn
   const caps = (await meshCapabilities()) as {
     packageVersion?: string;
     backend: string;
+    build: { flavour: string; occt: boolean; zstd: boolean; lz4: boolean; bzip2: boolean };
+    full: {
+      installed: boolean;
+      build?: {
+        flavour: string;
+        backend: string;
+        occt: boolean;
+        zstd: boolean;
+        lz4: boolean;
+        bzip2: boolean;
+        readers: string[];
+        writers: string[];
+      };
+      error?: string;
+    };
     hasCgnslib: boolean;
     live: { readers: string[]; writers: string[] };
     readers: { key: string; extensions: string[]; optionsAware: boolean }[];
@@ -1277,6 +1292,28 @@ test("mesh_capabilities reports the live build next to the routing tables", asyn
   // readers, writers unchanged at 75.
   assert.equal(caps.live.readers.length, 80);
   assert.equal(caps.live.writers.length, 75);
+  // 17.2.0 ships a FULL artifact beside the lean one; mesh_capabilities
+  // reports both, live (see meshCapabilities.ts's `full`). The lean build is
+  // what `live`/`readers` describe; `build` names its flavour, and the full
+  // block is a SECOND instantiation — the lean one plus the two
+  // OpenCASCADE-backed CAD readers (82 vs 80; writers unchanged at 75, the
+  // faceted `step` writer exists in both builds).
+  assert.equal(caps.build.flavour, "lean");
+  assert.equal(caps.build.occt, false);
+  assert.equal(caps.build.zstd, false);
+  assert.equal(caps.build.lz4, false);
+  assert.equal(caps.build.bzip2, false);
+  assert.equal(caps.full.installed, true);
+  assert.equal(caps.full.error, undefined);
+  assert.equal(caps.full.build?.flavour, "full");
+  assert.equal(caps.full.build?.occt, true);
+  assert.equal(caps.full.build?.zstd, true);
+  assert.equal(caps.full.build?.lz4, true);
+  assert.equal(caps.full.build?.bzip2, true);
+  assert.equal(caps.full.build?.readers.length, 82);
+  assert.equal(caps.full.build?.writers.length, 75);
+  assert.ok(caps.full.build?.readers.includes("step"));
+  assert.ok(caps.full.build?.readers.includes("iges"));
   assert.ok(caps.live.readers.includes("vtm"));
   // A sanity check on those two counts that fails LOUDLY if the next bump
   // moves them, so whoever raises them knows to re-audit the keys rather than

@@ -706,6 +706,52 @@ test("locateFile is asked for the loaded variant's own filename", async () => {
   }
 });
 
+// The same two invariants for the FULL artifact (meshio++ >= 17.0.0), which
+// this extension ships beside the lean one and loads through `loadMeshioFull`.
+// The flavour assertions are what make a loader that silently handed back the
+// lean artifact fail here rather than in an OCCT-only feature much later.
+test("loadMeshioFull instantiates the full artifact with its own libraries", async () => {
+  const { loadMeshioFull } = await import("../parser/meshio");
+  const m = await loadMeshioFull();
+  assert.equal(m.buildFlavour(), "full");
+  assert.equal(m.hasOcct(), true);
+  assert.equal(m.hasZstd(), true);
+  assert.equal(m.hasLz4(), true);
+  assert.equal(m.hasBzip2(), true);
+  assert.ok(
+    ["seq", "openmp"].includes(m.parallelBackend()),
+    `unexpected parallel backend "${m.parallelBackend()}"`
+  );
+});
+
+test("locateFile is asked for the full variant's own filename", async () => {
+  const { configureMeshio, loadMeshioFull } = await import("../parser/meshio");
+  const dist = path.join(
+    path.dirname(require.resolve("@meshioplusplus/wasm/package.json")),
+    "dist"
+  );
+  const requested: string[] = [];
+  configureMeshio({
+    locateFile: (name: string) => {
+      requested.push(name);
+      return path.join(dist, path.basename(name));
+    },
+  });
+  try {
+    const m = await loadMeshioFull();
+    const expected =
+      m.parallelBackend() === "openmp"
+        ? "meshioplusplus_wasm_full_mt.wasm"
+        : "meshioplusplus_wasm_full.wasm";
+    assert.ok(
+      requested.includes(expected),
+      `locateFile was asked for ${JSON.stringify(requested)}, not "${expected}"`
+    );
+  } finally {
+    configureMeshio({}); // never leak the override into the other tests
+  }
+});
+
 // --- meshio++ 10.14.0: what the 9.22.0 -> 10.14.0 jump actually changes -------
 //
 // Twelve minor versions plus a major, and the major (v10.0.0) is a
