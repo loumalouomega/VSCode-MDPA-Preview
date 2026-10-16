@@ -181,6 +181,30 @@ export const fluid = defineProblemtype(
         fields: [
           { id: "modulus", label: "|v| [m/s]", type: "number", default: 1.0 },
           {
+            id: "modulusExpression",
+            label: "|v| expression",
+            type: "string",
+            default: "",
+            advanced: true,
+            help: "A Kratos expression in the inlet's own coordinates and the current time t, e.g. 0.1214*(1-cos(0.1*pi*t))*y*(1-y). When set it replaces the numeric |v| above.",
+          },
+          {
+            id: "intervalStart",
+            label: "Active from [s]",
+            type: "number",
+            default: 0,
+            advanced: true,
+            help: "The process applies from this time on. Two inlet assignments on one surface with disjoint windows write a two-phase inlet (the fsi_mok benchmark ramps up until 10 s, then holds).",
+          },
+          {
+            id: "intervalEnd",
+            label: "Active until [s]",
+            type: "string",
+            default: "End",
+            advanced: true,
+            help: "\"End\" keeps the process active to the end of the simulation; a number deactivates it there.",
+          },
+          {
             id: "direction",
             label: "Direction",
             type: "enum",
@@ -338,6 +362,20 @@ export const fluid = defineProblemtype(
       if (cond.id === "inlet") {
         const result = resolveProcessTemplate(cond, a, ctx);
         const params = result.Parameters as JsonObject;
+        // Optional symbolic modulus and activation window: the expression is a
+        // Kratos function of the inlet's own coordinates and time t and
+        // replaces the numeric |v| when set; two inlet assignments on one
+        // surface with disjoint windows then write a two-phase inlet (the
+        // fsi_mok benchmark: the ramp expression up to 10 s, the steady one to
+        // the end). Absent values reproduce the template's [0, "End"] window
+        // exactly, so cases already recorded keep their bytes.
+        const expression = asStr(a.values.modulusExpression, "").trim();
+        if (expression) params.modulus = expression;
+        const until = asStr(a.values.intervalEnd, "End").trim();
+        params.interval = [
+          asNum(a.values.intervalStart, 0),
+          until === "" || /^end$/i.test(until) ? "End" : Number.isFinite(Number(until)) ? Number(until) : until,
+        ];
         const direction = a.values.direction;
         if (direction === "x") params.direction = [1, 0, 0];
         if (direction === "y") params.direction = [0, 1, 0];
