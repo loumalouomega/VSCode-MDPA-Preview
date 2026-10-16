@@ -2,6 +2,7 @@ import { Worker } from "node:worker_threads";
 import * as path from "node:path";
 import type { PlotWork, PlotWorkReply, PlotWorkResult } from "./plotWorker";
 import type { PlotDataset, PlotExecution, PlotTable } from "./parser/plot/types";
+import { assembleResult, pathKey } from "./plotChunks";
 import { evaluatePlot } from "./parser/plot/numerics";
 
 /** One owner/request at a time; cancellation terminates synchronous parsers too.
@@ -32,10 +33,12 @@ export class PlotWorkerSession {
           resolve(result);
         } else reject(new Error("Plot request cancelled."));
       }, true);
+      const received = new Map<string, unknown[][]>();
       const message = (msg: PlotWorkReply) => {
-        if (msg.type === "progress") opts.progress?.(msg.done, msg.total, msg.label);
-        else if (msg.type === "partial") { partial=msg.result;opts.partial?.(partial); }
-        else if (msg.type === "done") finish(() => resolve(msg.result));
+        if (msg.type === "chunk") { const k = pathKey(msg.path); const list = received.get(k); if (list) list.push(msg.items); else received.set(k, [msg.items]); setImmediate(() => { if (!settled) worker.postMessage({ type: "ack" }); }); }
+        else if (msg.type === "progress") opts.progress?.(msg.done, msg.total, msg.label);
+        else if (msg.type === "partial") { partial = assembleResult(msg.result, msg.arrays, received) as PlotDataset; received.clear(); opts.partial?.(partial); }
+        else if (msg.type === "done") finish(() => resolve(assembleResult(msg.result, msg.arrays, received) as PlotWorkResult));
         else finish(() => reject(new Error(msg.message)));
       };
       const error = (e: Error) => finish(() => reject(e), true);
