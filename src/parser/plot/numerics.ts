@@ -130,7 +130,7 @@ function seriesFromTable(table: PlotTable, spec: PlotSeriesSpec): PlotSeriesData
     if (ei >= 0) diagnostics.push(`Supplied error bars: ${spec.uncertainty!.meaning}; negative/missing errors are not drawn.`);
     const baseY = table.columns[components[0] ?? yi];
     const yc = components.length ? {...baseY,label:`Magnitude (${spec.components!.join(", ")})`} : baseY;
-    const data: PlotSeriesData = { id: group ? `${spec.id}:${group}` : spec.id, name: group ? `${spec.name} — ${group}` : spec.name, xColumn: { ...table.columns[xi] }, yColumn: { ...yc }, originalXColumn: { ...table.columns[xi] }, originalYColumn: { ...yc }, ...(zi >= 0 ? { zColumn: { ...table.columns[zi] } } : {}), ...(si >= 0 ? { sizeColumn: { ...table.columns[si] } } : {}), original: points.map(p => ({ ...p })), points, diagnostics, statistics: plotStatistics(points) };
+    const data: PlotSeriesData = { id: group ? `${spec.id}:${group}` : spec.id, name: group ? `${spec.name} — ${group}` : spec.name, xColumn: { ...table.columns[xi] }, yColumn: { ...yc }, originalXColumn: { ...table.columns[xi] }, originalYColumn: { ...yc }, ...(zi >= 0 ? { zColumn: { ...table.columns[zi] } } : {}), ...(si >= 0 ? { sizeColumn: { ...table.columns[si] } } : {}), /* shared until a transform replaces `points` with copies (transform() never mutates in place) */ original: points, points, diagnostics, statistics: plotStatistics(points) };
     for (const t of spec.transforms ?? []) transform(data, t);
     return data;
   });
