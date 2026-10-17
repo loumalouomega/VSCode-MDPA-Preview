@@ -168,7 +168,7 @@ export interface WallSizes {
   tangential: number;
 }
 
-export function wallLayerSizes(distance: number, spec: WallLayerSpec): WallSizes {
+export function wallLayerSizes(distance: number, spec: WallLayerSpec, cap?: number): WallSizes {
   const d = Math.abs(distance);
   const growth = Math.max(1, spec.growth ?? 1.2);
   const aspect = Math.max(1, spec.maxAspect ?? 50);
@@ -177,6 +177,10 @@ export function wallLayerSizes(distance: number, spec: WallLayerSpec): WallSizes
   let tangential = Math.min(spec.hmax, wall + (spec.tangentialGrowth ?? 0.25) * d);
   // Never narrower than across, never more stretched than the aspect limit.
   tangential = Math.max(normal, Math.min(tangential, aspect * normal));
+  // An outside size field (a refined wake, say) can only make cells smaller.
+  if (cap !== undefined && Number.isFinite(cap) && cap > 0) {
+    return { normal: Math.min(normal, cap), tangential: Math.min(tangential, cap) };
+  }
   return { normal, tangential };
 }
 
@@ -187,8 +191,8 @@ export function wallLayerSizes(distance: number, spec: WallLayerSpec): WallSizes
  * (the medial axis, a failed node) has no wall direction, so it gets the
  * isotropic metric of the along-wall size.
  */
-export function metricFromWall(gradient: ArrayLike<number>, distance: number, spec: WallLayerSpec): Float64Array {
-  const { normal, tangential } = wallLayerSizes(distance, spec);
+export function metricFromWall(gradient: ArrayLike<number>, distance: number, spec: WallLayerSpec, cap?: number): Float64Array {
+  const { normal, tangential } = wallLayerSizes(distance, spec, cap);
   const lt = 1 / (tangential * tangential);
   const gx = gradient[0];
   const gy = gradient[1];

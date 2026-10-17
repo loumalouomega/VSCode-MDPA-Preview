@@ -2631,6 +2631,11 @@ export function opRecordFromMessage(
           if (!GRADIENT_METHODS.includes(msg.method as GradientMethod)) return undefined;
           rec.method = msg.method as GradientMethod;
         }
+        const cap = typeof msg.sizeExpr === "string" ? msg.sizeExpr.trim() : "";
+        if (cap) {
+          if (validateSizeExpr(cap, allowedVars) !== undefined) return undefined;
+          rec.sizeExpr = cap;
+        }
       }
       const frozen = parseFrozen(msg.frozen);
       if (frozen) rec.frozen = frozen;
@@ -3309,6 +3314,9 @@ function validateParams(rec: OpRecord, warnings: string[]): boolean {
           return bad("invalid tangentialGrowth");
         }
         if (rec.method !== undefined && !GRADIENT_METHODS.includes(rec.method)) return bad("invalid method");
+        if (rec.sizeExpr !== undefined) {
+          if (typeof rec.sizeExpr !== "string" || validateSizeExprLenient(rec.sizeExpr, false) !== undefined) return bad("invalid sizeExpr");
+        }
       }
       if (rec.frozen !== undefined) {
         if (!Array.isArray(rec.frozen) || !rec.frozen.every((f) => selectorOk(f))) {

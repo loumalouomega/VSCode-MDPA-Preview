@@ -992,7 +992,8 @@ async function anisoTensorMetric(
 async function wallTensorMetric(
   s: Staged,
   model: MdpaModel,
-  params: RemeshParams
+  params: RemeshParams,
+  cap?: Float64Array
 ): Promise<{ sols: Float64Array; warnings: string[] } | { error: string }> {
   const variable = params.variable?.trim() ?? "";
   if (!variable) return { error: "A wall-layer remesh needs a nodal distance field." };
@@ -1035,7 +1036,7 @@ async function wallTensorMetric(
     const dv = di === undefined ? NaN : dist.values[di];
     if (di !== undefined && gi !== undefined && Number.isFinite(dv)) {
       for (let k = 0; k < 3; k++) g[k] = gradField.values[gi * 3 + k];
-      sols.set(metricFromWall(g, dv, spec), i * 6);
+      sols.set(metricFromWall(g, dv, spec, cap ? cap[i] : undefined), i * 6);
     } else {
       const h = local[i] > 0 ? local[i] : mean;
       const m = 1 / (h * h);
@@ -1045,7 +1046,7 @@ async function wallTensorMetric(
   }
   const warnings: string[] = [];
   if (fallbacks > 0) warnings.push(`${fallbacks} node(s) with no distance value kept their current size.`);
-  if (grad.numSkipped > 0) warnings.push(`${grad.numSkipped} node(s) came back NaN from the gradient and are isotropic.`);
+  if (grad.numSkipped > 0) warnings.push(`${grad.numSkipped} boundary cell(s) have no gradient; their nodes use the other cells' wall direction.`);
   return { sols, warnings };
 }
 
@@ -1649,7 +1650,19 @@ export async function remeshModel(
         message: "A wall-layer remesh needs a 3D (mmg3d) or surface (mmgs) mesh — the planar tensor layout is not supported.",
       };
     }
-    const r = await wallTensorMetric(staged, model, params);
+    // An optional size formula (coordinates, existing fields) caps the layer
+    // sizes, so a refined region such as a wake survives the metric.
+    let cap: Float64Array | undefined;
+    if (params.sizeExpr) {
+      try {
+        const c = await expressionSizes(staged, model, params);
+        cap = c.sizes;
+        exprWarnings.push(...c.warnings);
+      } catch (err) {
+        return { model, noop: true, message: `Invalid sizing expression: ${err instanceof Error ? err.message : String(err)}` };
+      }
+    }
+    const r = await wallTensorMetric(staged, model, params, cap);
     if ("error" in r) return { model, noop: true, message: r.error };
     aniso = r;
     exprWarnings.push(...r.warnings);
