@@ -324,6 +324,9 @@ export function renderWindTunnelPanel(container: HTMLElement, state: WindTunnelP
         row("Max aspect", text(() => form.maxAspect, (v) => { form.maxAspect = v; }, "50", "Largest along/across cell ratio in the layer"));
       }
       row("Wake", text(() => form.wakeLength, (v) => { form.wakeLength = v; }, "2", "Refined wake length behind the body, in body lengths (0 = none)"));
+      if (form.mode === "bodyFitted") {
+        row("Wall snap", check(() => form.snap, (v) => { form.snap = v; }, "Project the carved wall onto the surface and smooth it (uncheck to keep the carve)"));
+      }
       if (plan) {
         if (form.mode === "bodyFitted") {
           note(`First node row ${sig(plan.boundaryLayer.firstHeight * 1000)} mm (${plan.boundaryLayer.basis}); about ${plan.boundaryLayer.layers} layers across the boundary layer (${sig(plan.boundaryLayer.thickness * 1000)} mm).`);
@@ -374,6 +377,7 @@ export function renderWindTunnelPanel(container: HTMLElement, state: WindTunnelP
     section("Built");
     note(`${count(r.tetrahedra)} tetrahedra, ${count(r.nodes)} nodes in ${duration(r.seconds)}.`);
     if (r.wallFit) note(`Wall within ${(r.wallFit.max * 100).toFixed(2)}% of the body length of the surface (mean ${(r.wallFit.mean * 100).toFixed(3)}%).`);
+    if (r.snap) note(`Wall snap ${r.snap.applied ? `on: carve fit ${(r.snap.before * 100).toFixed(2)}% → ${(r.snap.after * 100).toFixed(2)}% of the body length` : "off: no clean sub-step, the wall stays at the carve fit"}.`);
     if (r.firstLayer) note(`First node row ${sig(r.firstLayer.achieved * 1000)} mm (asked ${sig(r.firstLayer.requested * 1000)} mm), y+ about ${sig(r.firstLayer.yPlus, 2)}.`);
     note(`Minimum angle ${r.check.minAngle === undefined ? "—" : sig(r.check.minAngle, 2) + "°"}, largest edge ratio ${r.check.maxEdgeRatio === undefined ? "—" : sig(r.check.maxEdgeRatio, 2)}; ${r.check.inverted} inverted.`);
     for (const w of r.warnings.slice(0, 6)) note(w, "warn");

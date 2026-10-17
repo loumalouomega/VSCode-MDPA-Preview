@@ -26,7 +26,7 @@ const params = {
 test("the plan lists every step, its ops and a size law the evaluator accepts", () => {
   const plan = planWindTunnel(params, icosphere(0.5, 4));
   assert.deepEqual(plan.errors, []);
-  assert.deepEqual(plan.steps.map((s) => s.id).filter((i) => !i.startsWith("size-")), ["body", "lattice", "carve", "tidy", "wall", "check", "write"]);
+  assert.deepEqual(plan.steps.map((s) => s.id).filter((i) => !i.startsWith("size-")), ["body", "lattice", "carve", "tidy", "snap", "wall", "check", "write"]);
   assert.ok(plan.passes >= 2);
   assert.equal(validateSizeExpr(plan.sizeExpr, ["d", "x", "y", "z"]), undefined);
   assert.equal(validateSizeExpr(wakeSizeExpr(plan.domain, 1, 1, 0.3, 0.25), ["x", "y", "z"]), undefined);

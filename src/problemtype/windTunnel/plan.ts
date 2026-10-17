@@ -58,6 +58,14 @@ export interface WindTunnelMesh {
   /** Surface fit: the largest gap between the mesh wall and the surface, as a fraction of the body length. Default 0.003. */
   fit?: number;
   /**
+   * Sobolev wall snap after the carve (body-fitted only, default true): the
+   * carved wall is projected onto the surface, the Body displacement is
+   * smoothed with the far-field and tunnel faces pinned, and the largest
+   * sub-step that inverts no cell is kept. Falls back to the carve with a
+   * reported gap. Set false to keep the carve as the wall.
+   */
+  snap?: boolean;
+  /**
    * The carve cuts the wall through cells of this fraction of the surface size, then the wall layer
    * coarsens the surface back: a finer carve follows sharp edges better. Default 0.7.
    */
@@ -281,6 +289,9 @@ export function planWindTunnel(params: WindTunnelParams, bodyModel: MdpaModel): 
       weight: 5,
     });
     steps.push({ id: "tidy", label: "Name the parts and drop the body interior", weight: 1 });
+    if (mesh.snap ?? true) {
+      steps.push({ id: "snap", label: "Snap the wall onto the surface", weight: 2 });
+    }
     steps.push({
       id: "wall",
       label: "Build the wall layer",

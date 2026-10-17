@@ -28,7 +28,7 @@ test("wind_tunnel_plan reports the body, the tunnel, the boundary layer and the 
   assert.ok(plan.body.closed);
   assert.ok(plan.estimate.expectedTetrahedra > 1000);
   assert.ok(plan.boundaryLayer.firstHeight > 0);
-  assert.deepEqual(plan.steps.map((s: { id: string }) => s.id).filter((i: string) => !i.startsWith("size-")), ["body", "lattice", "carve", "tidy", "wall", "check", "write"]);
+  assert.deepEqual(plan.steps.map((s: { id: string }) => s.id).filter((i: string) => !i.startsWith("size-")), ["body", "lattice", "carve", "tidy", "snap", "wall", "check", "write"]);
   assert.ok(Array.isArray(plan.case) && plan.case.length > 0);
   const bad = (await windTunnelPlanTool({ ...request(bodyFile()), mesh: { maxTetrahedra: 100 } })) as Record<string, any>;
   assert.equal(bad.runnable, false);

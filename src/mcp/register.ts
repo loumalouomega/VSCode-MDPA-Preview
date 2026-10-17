@@ -493,6 +493,7 @@ export function registerAllTools(server: McpServer): void {
       carveFactor: z.number().min(0.2).max(1).optional().describe("The carve uses cells this fraction of the surface size (default 0.7); smaller follows sharp edges better and costs more"),
       wakeLength: z.number().nonnegative().optional().describe("Wake refinement length behind the body, in body lengths (default 2; 0 = none)"),
       wakeSize: z.number().positive().optional().describe("Cell size in the wake in metres (default far size / 4)"),
+      snap: z.boolean().optional().describe("Sobolev wall snap after the carve (default true): project the wall onto the surface and smooth it with the far-field pinned, keeping the largest clean sub-step; false keeps the carve as the wall"),
       maxTetrahedra: z.number().int().positive().optional().describe("Refuse a plan expecting more tetrahedra than this (default 3 000 000)"),
       sdfMaxTriangles: z.number().int().positive().optional().describe("A body with more triangles is simplified for the distance sampling only (default 300 000)"),
     }).optional(),

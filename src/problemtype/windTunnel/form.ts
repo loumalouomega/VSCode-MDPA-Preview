@@ -40,6 +40,7 @@ export interface WindTunnelForm {
   maxAspect: string;
   wakeLength: string;
   wakeSize: string;
+  snap: boolean;
   fit: string;
   // Output
   outputFolder: string;
@@ -76,6 +77,7 @@ export function defaultWindTunnelForm(): WindTunnelForm {
     maxAspect: "",
     wakeLength: "",
     wakeSize: "",
+    snap: true,
     fit: "",
     outputFolder: "",
     stem: "tunnel",
@@ -168,7 +170,7 @@ export function buildWindTunnelRequest(form: WindTunnelForm): FormResult<WindTun
     const v = num[k];
     if (v !== undefined) tunnel[k] = v;
   }
-  const mesh: NonNullable<WindTunnelParams["mesh"]> = { mode: form.mode };
+  const mesh: NonNullable<WindTunnelParams["mesh"]> = { mode: form.mode, snap: form.snap };
   for (const k of ["surfaceSize", "farSize", "yPlus", "firstHeight", "growth", "maxAspect", "wakeLength", "wakeSize", "fit"] as const) {
     const v = num[k];
     if (v !== undefined) mesh[k] = v;
