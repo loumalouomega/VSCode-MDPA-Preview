@@ -11,6 +11,7 @@ import { asBool, asNum, asStr, dottedModelPart, resolveProcessTemplate } from ".
 import type {
   Assignment,
   ConditionCategory,
+  ConditionEmitSpec,
   ConditionSpec,
   FieldSpec,
   GenContext,
@@ -90,6 +91,8 @@ interface ConditionBase {
   help?: string;
   list?: ProcessList;
   interval?: JsonValue;
+  /** Load emission into a sibling part; see `ConditionEmitSpec`. */
+  emit?: ConditionEmitSpec;
 }
 
 /** `AssignVectorVariableProcess` on nodes: value + a single Fixed checkbox broadcast per component. */
@@ -193,6 +196,7 @@ export function vectorLoadOnConditions(variable: string, o: ConditionBase & { un
     category: o.category ?? "loads",
     icon: o.icon,
     help: o.help,
+    emit: o.emit,
     fields: [
       { id: "modulus", label: `Modulus${o.unit ? ` [${o.unit}]` : ""}`, type: "number", default: o.dflt ?? 0 },
       { id: "direction", label: "Direction", type: "vector3", default: o.direction ?? [0, 0, -1] },

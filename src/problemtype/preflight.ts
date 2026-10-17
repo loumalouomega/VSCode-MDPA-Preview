@@ -301,7 +301,12 @@ export async function preflightCase(
       surface: ["conditionIds", "geometryIds", "elementIds"],
     };
     const lists = need[cond.target];
-    if (lists && !partHas(part, lists)) {
+    // An emitted load is synthesized from the part's own entities, so a part
+    // the plain target check rejects may still feed the emitter.
+    const emittable =
+      cond.emit !== undefined &&
+      partHas(part, cond.emit.source === "nodes" ? ["nodeIds", "conditionIds"] : ["elementIds", "conditionIds"]);
+    if (lists && !partHas(part, lists) && !emittable) {
       const what = cond.target === "nodes" ? "nodes" : cond.target === "volume" ? "elements" : "conditions or elements";
       add("warning", "part-wrong-kind",
         `"${cond.label}" targets ${cond.target === "nodes" ? "nodes" : cond.target}, but "${a.smpPath}" has no ${what}, so it would have nothing to act on.`,

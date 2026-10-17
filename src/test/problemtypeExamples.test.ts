@@ -169,6 +169,7 @@ const CASES: ExampleCase[] = [
       { conditionId: "displacement", smpPath: "Support", values: { value: [0, 0, 0.001], constrained: true } },
       { conditionId: "selfWeight", smpPath: "Parts/Solid", values: {} },
       { conditionId: "surfacePressure", smpPath: "Loaded", values: { value: 1000 } },
+      { conditionId: "pointLoad", smpPath: "Support", values: { modulus: 100, direction: [0, 0, -1] } },
     ],
     materials: [{ smpPath: "Parts/Solid", lawId: "linear_elastic_3d", values: {} }],
     values: { problem: { solverType: "dynamic" } },
@@ -183,6 +184,7 @@ const CASES: ExampleCase[] = [
       { conditionId: "rotation", smpPath: "Support", values: { value: [0, 0, 0.1], constrained: true } },
       { conditionId: "initialVelocity", smpPath: "Loaded", values: { value: [1, 0, 0], constrained: false } },
       { conditionId: "lineLoad", smpPath: "Support", values: { modulus: 5, direction: [0, 1, 0] } },
+      { conditionId: "movingLoad", smpPath: "Parts/Solid", values: { modulus: 5, direction: [0, 1, 0], velocity: 2, motionDirection: [1, 0, 0] } },
     ],
     materials: [{ smpPath: "Parts/Solid", lawId: "beam_2d", values: {} }],
     values: {

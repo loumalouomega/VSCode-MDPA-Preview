@@ -84,7 +84,7 @@ field_group(id, label, icon=None, collapsed=None)
 section(id, label, *fields, groups=None, icon=None)
 condition(id, label, list="constraints_process_list", target="any",
           fields=(), process_template=None, help=None, category=None,
-          icon=None, no_process=None)
+          icon=None, no_process=None, emit=None)
 domain(id, label, model_part_name, mdpa_suffix, parts_condition,
        condition_ids, materials_file_name=None, required=None,
        mesh_naming=None)                  # one physics of a coupled problemtype

@@ -221,6 +221,24 @@ export function validateDeclaration(decl: ProblemtypeDeclaration): string[] {
     if (c.category !== undefined && !CATEGORIES.has(c.category)) {
       errors.push(`condition "${c.id}": unknown category "${c.category}"`);
     }
+    if (c.emit !== undefined) {
+      const e = c.emit;
+      if (!e || typeof e.sibling !== "string" || e.sibling.length === 0) {
+        errors.push(`condition "${c.id}": emit needs a non-empty sibling suffix`);
+      }
+      if (e.source !== "nodes" && e.source !== "lines") {
+        errors.push(`condition "${c.id}": emit source must be "nodes" or "lines"`);
+      }
+      if (e.family !== "point" && e.family !== "moment" && e.family !== "moving") {
+        errors.push(`condition "${c.id}": emit family must be "point", "moment" or "moving"`);
+      }
+      if (e.formulationField !== undefined && (typeof e.formulationField !== "string" || e.formulationField.length === 0)) {
+        errors.push(`condition "${c.id}": emit formulationField must be a field id`);
+      }
+      if (e.axisymmetricPoint !== undefined && (typeof e.axisymmetricPoint !== "string" || e.axisymmetricPoint.length === 0)) {
+        errors.push(`condition "${c.id}": emit axisymmetricPoint must be a condition name`);
+      }
+    }
     checkFields(c.fields, `condition "${c.id}"`, false);
     checkRequirements(c.requiresFields, `condition "${c.id}"`);
   }

@@ -308,6 +308,39 @@ export interface ConditionSpec {
   noProcess?: boolean;
   /** Mesh fields every assignment of this condition expects; see `FieldRequirement`. */
   requiresFields?: FieldRequirement[];
+  /**
+   * Load emission: assigning the condition synthesizes the Kratos conditions
+   * the load needs from the part's own entities into a sibling SubModelPart
+   * (`<part name><sibling>` under the same parent), and the process targets
+   * the sibling. Point and moment loads re-emit the part's nodes as one-node
+   * conditions; a moving load re-emits its line entities as
+   * `MovingLoadCondition`s. Meshes that already carry the conditions need no
+   * emission, but targeting the sibling is unconditional, so the documents
+   * never depend on what the mesh happened to contain.
+   */
+  emit?: ConditionEmitSpec;
+}
+
+/**
+ * How one load condition's Kratos conditions are synthesized (see
+ * `emitLoadConditions`): the sibling suffix, which part entities become
+ * conditions, and which condition family they become.
+ */
+export interface ConditionEmitSpec {
+  /** Suffix of the sibling part (`Support` + `"PointLoad"`). */
+  sibling: string;
+  /** The part entities re-emitted as conditions: its nodes, or its line entities. */
+  source: "nodes" | "lines";
+  /** Which Kratos condition family to emit. */
+  family: "point" | "moment" | "moving";
+  /**
+   * Values field holding the element formulation (default none). A value
+   * starting with `"Axisym"` selects `axisymmetricPoint` for the 2D point
+   * family; coupled problemtypes prefix it when they prefix their fields.
+   */
+  formulationField?: string;
+  /** 2D point-load name for axisymmetric formulations (`AxisymPointLoadCondition2D1N`). */
+  axisymmetricPoint?: string;
 }
 
 /**

@@ -20,6 +20,7 @@ it cannot drift; only the hooks are hand-written. They show:
 
 from kratos_problemtype import (define_problemtype, section, field, field_group,
                                 condition, material_law)
+import math
 
 NAME = "Structural Mechanics (Python example)"
 
@@ -125,10 +126,47 @@ def _resolve(node, assignment, ctx):
     return node
 
 
+def _sibling(assignment, emit):
+    """The emitted sibling part of an assignment (mirrors siblingPathFor)."""
+    path = assignment["smpPath"]
+    parent, _, name = path.rpartition("/")
+    return (parent + "/" if parent else "") + name + emit["sibling"]
+
+
+def _moving_load_process(cond, assignment, ctx):
+    values = assignment["values"]
+    modulus = values.get("modulus", 0)
+    direction = values.get("direction", [0, 0, -1])
+    norm = math.sqrt(sum(x * x for x in direction))
+    unit = [x / norm for x in direction] if norm >= 1e-12 else [0.0, 0.0, 0.0]
+    motion = values.get("motionDirection", [1, 0, 0])
+    return {
+        "python_module": "set_moving_load_process",
+        "kratos_module": "KratosMultiphysics.StructuralMechanicsApplication",
+        "process_name": "SetMovingLoadProcess",
+        "Parameters": {
+            "model_part_name": ctx["model_part_name"] + "." + _sibling(assignment, cond["emit"]).replace("/", "."),
+            "variable_name": "POINT_LOAD",
+            "load": [modulus * x for x in unit],
+            "direction": list(motion),
+            "velocity": values.get("velocity", 1),
+            "origin": list(values.get("origin", [0, 0, 0])),
+            "motion_type": values.get("motionType", "base"),
+        },
+    }
+
+
 def build_process(cond, assignment, ctx):
+    if cond["id"] == "movingLoad":
+        return _moving_load_process(cond, assignment, ctx)
     template = cond["processTemplate"]
     if template.get("python_module") != "assign_vector_variable_process":
-        return None  # every other condition uses its declarative template
+        if not cond.get("emit"):
+            return None  # every other condition uses its declarative template
+        process = _resolve(template, assignment, ctx)
+        process["Parameters"]["model_part_name"] = (
+            ctx["model_part_name"] + "." + _sibling(assignment, cond["emit"]).replace("/", "."))
+        return process
     process = _resolve(template, assignment, ctx)
     fixed = assignment["values"].get("constrained", True)
     fixed = fixed if isinstance(fixed, bool) else True
@@ -136,6 +174,19 @@ def build_process(cond, assignment, ctx):
     process["Parameters"]["constrained"] = [fixed, fixed, fixed]
     process["Parameters"]["value"] = value if isinstance(value, list) else [0, 0, 0]
     return process
+
+
+def validate(ctx):
+    problems = []
+    for a in ctx["assignments"]:
+        if a["conditionId"] != "movingLoad":
+            continue
+        for field_id, what, dflt in (("direction", "load direction", [0, 0, -1]),
+                                   ("motionDirection", "motion direction", [1, 0, 0])):
+            v = a["values"].get(field_id, dflt)
+            if math.sqrt(sum(x * x for x in v)) < 1e-12:
+                problems.append(f'Moving load on "{a["smpPath"]}": the {what} is zero — give it a direction.')
+    return problems
 
 
 def post_process(project_parameters, ctx):
@@ -353,7 +404,7 @@ CONDITIONS = [
                       "interval": [0, "End"],
                   },
               },
-              category="loads", icon="ptLoad"),
+              category="loads", icon="ptLoad", emit={"sibling":"PointLoad","source":"nodes","family":"point","formulationField":"elementBase","axisymmetricPoint":"AxisymPointLoadCondition2D1N"}),
     condition("pointMoment", "Point moment", list="loads_process_list", target="nodes",
               fields=[field("modulus", "Modulus [N·m]", "number", default=0),
                       field("direction", "Direction", "vector3", default=[0, 0, -1])],
@@ -369,7 +420,24 @@ CONDITIONS = [
                       "interval": [0, "End"],
                   },
               },
-              help="3D only.", category="loads", icon="ptLoad"),
+              help="3D only.", category="loads", icon="ptLoad", emit={"sibling":"PointMoment","source":"nodes","family":"moment"}),
+    condition("movingLoad", "Moving load", list="loads_process_list", target="surface",
+              fields=[field("modulus", "Modulus [N]", "number", default=0),
+                      field("direction", "Direction", "vector3", default=[0, 0, -1]),
+                      field("velocity", "Velocity [m/s]", "number", default=1),
+                      field("motionDirection", "Motion direction", "vector3", default=[1, 0, 0]),
+                      field("origin", "Origin [m]", "vector3", default=[0, 0, 0]),
+                      field("motionType", "Motion type", "enum", default="base", options=[{"value": "base", "label": "Base"}, {"value": "total", "label": "Total"}])],
+              process_template={
+                  "python_module": "set_moving_load_process",
+                  "kratos_module": "KratosMultiphysics.StructuralMechanicsApplication",
+                  "process_name": "SetMovingLoadProcess",
+                  "Parameters": {
+                      "model_part_name": "$path",
+                      "variable_name": "POINT_LOAD",
+                  },
+              },
+              help="A load travelling along the part's line entities (bridge traffic): the lines are re-emitted as MovingLoadCondition blocks in a sibling part.", category="loads", icon="ptLoad", emit={"sibling":"MovingLoad","source":"lines","family":"moving"}),
     condition("lineLoad", "Line load", list="loads_process_list", target="surface",
               fields=[field("modulus", "Modulus [N/m]", "number", default=0),
                       field("direction", "Direction", "vector3", default=[0, 0, -1])],
@@ -533,6 +601,7 @@ define_problemtype(
     material_laws=MATERIAL_LAWS,
     solver_settings=solver_settings,
     build_process=build_process,
+    validate=validate,
     post_process=post_process,
     description="Static / dynamic / eigenvalue solid, beam, truss, shell, membrane and mass/spring mechanics (StructuralMechanicsApplication)",
     icon="ptStructural",

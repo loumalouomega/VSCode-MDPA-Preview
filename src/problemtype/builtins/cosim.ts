@@ -223,6 +223,8 @@ const structConditions: ConditionSpec[] = structural.decl.conditions.map((c) => 
   id: S + c.id,
   label: c.id === "parts" ? "Structure body" : c.label,
   list: c.id === "parts" ? "list_other_processes" : structList(c),
+  // The load-emission rules read the formulation field, which carries the prefix here.
+  ...(c.emit?.formulationField ? { emit: { ...c.emit, formulationField: S + c.emit.formulationField } } : {}),
 }));
 
 const fluidInterface: ConditionSpec = {

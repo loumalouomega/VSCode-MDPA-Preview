@@ -305,12 +305,15 @@ def section(id, label, *fields, groups=None, icon=None):
 
 def condition(id, label, list="constraints_process_list", target="any",
               fields=(), process_template=None, help=None, category=None, icon=None,
-              no_process=None):
+              no_process=None, emit=None):
     """A condition / boundary-condition spec (mirrors the JS ``ConditionSpec``).
 
     ``category`` (``"initial"`` / ``"constraints"`` / ``"loads"`` / ``"other"``) is the
     tree branch the condition is listed under; it is derived from ``list`` when
-    absent. ``icon`` is a toolbar icon id drawn on its rows.
+    absent. ``icon`` is a toolbar icon id drawn on its rows. ``emit`` is an
+    ``{"sibling", "source", "family"}`` dict (plus ``formulationField`` and
+    ``axisymmetricPoint`` for the 2D point variant) telling Generate to
+    synthesize the load's Kratos conditions into a sibling SubModelPart.
     """
     _require_str(id, "condition id")
     # Custom list names are allowed (e.g. boundary_conditions_process_list);
@@ -338,6 +341,12 @@ def condition(id, label, list="constraints_process_list", target="any",
     if no_process:
         # Marks a SubModelPart for the hooks (e.g. an FSI interface); emits no process.
         c["noProcess"] = True
+    if emit is not None:
+        if (not isinstance(emit, dict) or not emit.get("sibling")
+                or emit.get("source") not in ("nodes", "lines")
+                or emit.get("family") not in ("point", "moment", "moving")):
+            raise ValueError(f'condition "{id}": emit needs sibling/source/family')
+        c["emit"] = dict(emit)
     return c
 
 

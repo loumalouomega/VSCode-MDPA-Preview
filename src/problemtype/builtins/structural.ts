@@ -15,9 +15,10 @@
  * document it always did.
  */
 
-import { defineProblemtype, asNum, asStr, asBool } from "../api";
+import { defineProblemtype, asNum, asStr, asBool, dottedModelPart, resolveProcessTemplate } from "../api";
 import { STRUCTURAL_MAIN_KRATOS_PY } from "../mainKratosTemplate";
-import { FieldSpec, JsonObject, JsonValue, MeshNamingEntry, VisibleRule } from "../types";
+import { Assignment, ConditionSpec, FieldSpec, GenContext, JsonObject, JsonValue, MeshNamingEntry, VisibleRule } from "../types";
+import { siblingPathFor } from "../emitLoadConditions";
 import {
   INITIAL,
   broadcastConstrained,
@@ -176,6 +177,59 @@ const PRESTRESS = { id: "TRUSS_PRESTRESS_PK2", label: "Prestress [Pa]", type: "n
 const NODAL_MASS = { id: "NODAL_MASS", label: "Point mass [kg]", type: "number" as const, default: 1.0, unit: "kg" };
 /** A nodal stiffness/damping constant, one value per spatial direction (and moment). */
 const nodalConstant = (id: string, label: string, unit?: string): FieldSpec => ({ id, label, type: "vector3", unit });
+
+const asVec3 = (v: JsonValue | undefined, dflt = [0, 0, 0]): number[] =>
+  Array.isArray(v) && v.length === 3 ? (v as number[]) : dflt;
+
+const norm3 = (v: number[]): number => Math.hypot(v[0] ?? 0, v[1] ?? 0, v[2] ?? 0);
+
+/** Fields of the moving-load condition, shared with the generate-time direction check. */
+const MOVING_LOAD_FIELDS: FieldSpec[] = [
+  { id: "modulus", label: "Modulus [N]", type: "number", default: 0 },
+  { id: "direction", label: "Direction", type: "vector3", default: [0, 0, -1] },
+  { id: "velocity", label: "Velocity [m/s]", type: "number", default: 1 },
+  { id: "motionDirection", label: "Motion direction", type: "vector3", default: [1, 0, 0] },
+  { id: "origin", label: "Origin [m]", type: "vector3", default: [0, 0, 0] },
+  {
+    id: "motionType",
+    label: "Motion type",
+    type: "enum",
+    default: "base",
+    options: [{ value: "base", label: "Base" }, { value: "total", label: "Total" }],
+  },
+];
+
+/** A moving-load field value with the field default merged (assignments need not carry it). */
+const movingValue = (a: Assignment, id: string): JsonValue =>
+  a.values[id] ?? MOVING_LOAD_FIELDS.find((f) => f.id === id)?.default ?? null;
+
+/**
+ * The `SetMovingLoadProcess` entry for one moving-load assignment: the load is
+ * the modulus along the normalized load direction (Kratos normalizes the
+ * direction the same way), travelling along the motion direction from the
+ * origin at the given velocity. It addresses the emitted sibling part, which
+ * holds the `MovingLoadCondition` entities.
+ */
+function movingLoadProcess(cond: ConditionSpec, a: Assignment, ctx: GenContext): JsonObject {
+  const modulus = asNum(movingValue(a, "modulus"), 0);
+  const direction = asVec3(movingValue(a, "direction"), [0, 0, -1]);
+  const n = norm3(direction);
+  const unit = n < 1e-12 ? [0, 0, 0] : direction.map((x) => (x ?? 0) / n);
+  return {
+    python_module: "set_moving_load_process",
+    kratos_module: "KratosMultiphysics.StructuralMechanicsApplication",
+    process_name: "SetMovingLoadProcess",
+    Parameters: {
+      model_part_name: dottedModelPart(ctx.modelPartName, siblingPathFor(a.smpPath, cond.emit!.sibling)),
+      variable_name: "POINT_LOAD",
+      load: unit.map((x) => modulus * x),
+      direction: asVec3(movingValue(a, "motionDirection"), [1, 0, 0]),
+      velocity: asNum(movingValue(a, "velocity"), 1),
+      origin: asVec3(movingValue(a, "origin")),
+      motion_type: asStr(movingValue(a, "motionType"), "base"),
+    },
+  };
+}
 
 export const structural = defineProblemtype(
   {
@@ -370,6 +424,13 @@ export const structural = defineProblemtype(
         unit: "N",
         target: "nodes",
         icon: "ptLoad",
+        emit: {
+          sibling: "PointLoad",
+          source: "nodes",
+          family: "point",
+          formulationField: "elementBase",
+          axisymmetricPoint: "AxisymPointLoadCondition2D1N",
+        },
       }),
       vectorLoadOnConditions("POINT_MOMENT", {
         id: "pointMoment",
@@ -378,7 +439,25 @@ export const structural = defineProblemtype(
         target: "nodes",
         icon: "ptLoad",
         help: "3D only.",
+        emit: { sibling: "PointMoment", source: "nodes", family: "moment" },
       }),
+      {
+        id: "movingLoad",
+        label: "Moving load",
+        list: "loads_process_list",
+        target: "surface",
+        category: "loads",
+        icon: "ptLoad",
+        help: "A load travelling along the part's line entities (bridge traffic): the lines are re-emitted as MovingLoadCondition blocks in a sibling part.",
+        fields: MOVING_LOAD_FIELDS,
+        processTemplate: {
+          python_module: "set_moving_load_process",
+          kratos_module: "KratosMultiphysics.StructuralMechanicsApplication",
+          process_name: "SetMovingLoadProcess",
+          Parameters: { model_part_name: "$path", variable_name: "POINT_LOAD" },
+        },
+        emit: { sibling: "MovingLoad", source: "lines", family: "moving" },
+      },
       vectorLoadOnConditions("LINE_LOAD", {
         id: "lineLoad",
         label: "Line load",
@@ -536,7 +615,33 @@ export const structural = defineProblemtype(
       return pp;
     },
     // Every Assign*VariableProcess on nodes needs the per-component broadcast
-    // of its single "Fixed" checkbox; everything else uses its template.
-    buildProcess: (cond, a, ctx) => broadcastConstrained(cond, a, ctx),
+    // of its single "Fixed" checkbox; emitted loads address their sibling part;
+    // everything else uses its template.
+    buildProcess: (cond, a, ctx) => {
+      if (cond.id === "movingLoad") return movingLoadProcess(cond, a, ctx);
+      if (cond.emit !== undefined) {
+        const resolved = resolveProcessTemplate(cond, a, ctx) as { Parameters: JsonObject };
+        resolved.Parameters.model_part_name = dottedModelPart(
+          ctx.modelPartName,
+          siblingPathFor(a.smpPath, cond.emit.sibling)
+        );
+        return resolved;
+      }
+      return broadcastConstrained(cond, a, ctx);
+    },
+    // A moving load with no direction to point or move along would reach
+    // Kratos as a zero vector (or NaN); refuse it at generate time instead.
+    validate: (ctx) => {
+      const problems: string[] = [];
+      for (const a of ctx.assignments) {
+        if (a.conditionId !== "movingLoad") continue;
+        for (const [id, what] of [["direction", "load direction"], ["motionDirection", "motion direction"]] as const) {
+          if (norm3(asVec3(movingValue(a, id))) < 1e-12) {
+            problems.push(`Moving load on "${a.smpPath}": the ${what} is zero — give it a direction.`);
+          }
+        }
+      }
+      return problems;
+    },
   }
 );

@@ -99,6 +99,7 @@ for (const c of decl.conditions) {
   if (c.category !== undefined) rest.push(`category=${JSON.stringify(c.category)}`);
   if (c.icon !== undefined) rest.push(`icon=${JSON.stringify(c.icon)}`);
   if (c.noProcess) rest.push("no_process=True");
+  if (c.emit !== undefined) rest.push(`emit=${JSON.stringify(c.emit)}`);
   if (rest.length) out.push(`              ${rest.join(", ")}),`);
   else out.push("              ),");
 }

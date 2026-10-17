@@ -260,6 +260,18 @@ test("cosim: the structure slice emits interface point-load conditions in a sibl
   assert.ok(!fluid.model.blocks.some((b) => b.name.startsWith("PointLoadCondition")), "the fluid slice gets none");
 });
 
+test("cosim: a structural point load emits its sibling into the structure slice", () => {
+  const state = cosimState();
+  state.assignments.push({ conditionId: "s_pointLoad", smpPath: "Solid", values: { modulus: 10, direction: [0, 0, -1] } });
+  const plan = planCaseMesh(cosim, parseMdpa(MDPA), state, "flap", true);
+  const structure = plan.domainMeshes.find((m) => m.domainId === "structure")!;
+  const sibling = findSubModelPart(structure.model, "SolidPointLoad");
+  assert.ok(sibling, "the load sibling is emitted into the structure slice");
+  assert.deepEqual([...sibling.nodeIds].sort((a, b) => a - b), [5, 6, 7, 8]);
+  const fluid = plan.domainMeshes.find((m) => m.domainId === "fluid")!;
+  assert.ok(!findSubModelPart(fluid.model, "SolidPointLoad"), "the fluid slice gets none");
+});
+
 // The same mesh in 2D: triangle elements and line conditions, z all zero.
 const MDPA_2D = `Begin Properties 0
 End Properties
