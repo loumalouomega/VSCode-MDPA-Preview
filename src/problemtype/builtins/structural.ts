@@ -178,6 +178,34 @@ const NODAL_MASS = { id: "NODAL_MASS", label: "Point mass [kg]", type: "number" 
 /** A nodal stiffness/damping constant, one value per spatial direction (and moment). */
 const nodalConstant = (id: string, label: string, unit?: string): FieldSpec => ({ id, label, type: "vector3", unit });
 
+// Nonlinear solid response (ConstitutiveLawsApplication): GiD's curated set —
+// the hyperelastic laws, the small/finite-strain plasticity and damage
+// factories with their VonMises yield surface and plastic potential, the J2,
+// plastic-damage and viscous laws.
+const YIELD_STRESS = { id: "YIELD_STRESS", label: "Yield stress [Pa]", type: "number" as const, default: 1.0e6, unit: "Pa" };
+const FRACTURE_ENERGY = { id: "FRACTURE_ENERGY", label: "Fracture energy [J/m²]", type: "number" as const, default: 100, unit: "J/m²" };
+const HARDENING_CURVE = { id: "HARDENING_CURVE", label: "Hardening curve", type: "int" as const, default: 0 };
+const MAXIMUM_STRESS_POSITION = { id: "MAXIMUM_STRESS_POSITION", label: "Peak stress position", type: "number" as const, default: 0.3 };
+const MAXIMUM_STRESS = { id: "MAXIMUM_STRESS", label: "Peak stress [Pa]", type: "number" as const, default: 2.0e6, unit: "Pa" };
+const KINEMATIC_HARDENING_TYPE = { id: "KINEMATIC_HARDENING_TYPE", label: "Kinematic hardening type", type: "int" as const, default: 0 };
+const KINEMATIC_PLASTICITY_PARAMETERS = {
+  id: "KINEMATIC_PLASTICITY_PARAMETERS", label: "Kinematic hardening parameters",
+  type: "vector3" as const, default: [1.0e9, 0.0, 0.0],
+};
+const SOFTENING_TYPE = { id: "SOFTENING_TYPE", label: "Softening type", type: "int" as const, default: 0 };
+const REFERENCE_HARDENING_MODULUS = { id: "REFERENCE_HARDENING_MODULUS", label: "Reference hardening modulus", type: "number" as const, default: 1.0 };
+const ISOTROPIC_HARDENING_MODULUS = { id: "ISOTROPIC_HARDENING_MODULUS", label: "Isotropic hardening modulus", type: "number" as const, default: 0.12924 };
+const INFINITY_HARDENING_MODULUS = { id: "INFINITY_HARDENING_MODULUS", label: "Saturation hardening modulus", type: "number" as const, default: 0.0 };
+const HARDENING_EXPONENT = { id: "HARDENING_EXPONENT", label: "Hardening exponent", type: "number" as const, default: 1.0 };
+const VISCOUS_PARAMETER = { id: "VISCOUS_PARAMETER", label: "Viscous parameter", type: "number" as const, default: 0.15 };
+const DELAY_TIME = { id: "DELAY_TIME", label: "Delay time [s]", type: "number" as const, default: 100, unit: "s" };
+const PLASTIC = [DENSITY, YOUNG, POISSON, YIELD_STRESS, FRACTURE_ENERGY, HARDENING_CURVE, MAXIMUM_STRESS_POSITION, MAXIMUM_STRESS];
+const KINEMATIC = [...PLASTIC, KINEMATIC_HARDENING_TYPE, KINEMATIC_PLASTICITY_PARAMETERS];
+const DAMAGE = [DENSITY, YOUNG, POISSON, YIELD_STRESS, FRACTURE_ENERGY, SOFTENING_TYPE];
+const J2 = [DENSITY, YOUNG, POISSON, { ...YIELD_STRESS, default: 5.5e6 }, REFERENCE_HARDENING_MODULUS, ISOTROPIC_HARDENING_MODULUS, INFINITY_HARDENING_MODULUS, HARDENING_EXPONENT];
+/** A factory row's fixed block keys: the VonMises yield surface and plastic potential GiD curates. */
+const vonMises = (law_type: string) => ({ law_type, yield_surface: "VonMises", plastic_potential: "VonMises" });
+
 const asVec3 = (v: JsonValue | undefined, dflt = [0, 0, 0]): number[] =>
   Array.isArray(v) && v.length === 3 ? (v as number[]) : dflt;
 
@@ -506,6 +534,61 @@ export const structural = defineProblemtype(
         when: forFormulations(...ofKind("shell")), variables: [...ELASTIC, THICKNESS] },
       { id: "membrane", name: "LinearElasticPlaneStress2DLaw", group: "Membrane",
         when: forFormulations(...ofKind("membrane")), variables: [...ELASTIC, THICKNESS] },
+      { id: "hyperelastic_3d", name: "HyperElastic3DLaw", domainSize: 3, group: "Hyperelastic",
+        application: "ConstitutiveLawsApplication", when: forFormulations(...ofKind("solid", "shell")), variables: ELASTIC },
+      { id: "hyperelastic_plane_strain", name: "HyperElasticPlaneStrain2DLaw", domainSize: 2, group: "Hyperelastic",
+        application: "ConstitutiveLawsApplication", when: forFormulations(...ofKind("solid")), variables: ELASTIC },
+      { id: "kirchhoff_3d", name: "KirchhoffSaintVenant3DLaw", domainSize: 3, group: "Hyperelastic",
+        application: "ConstitutiveLawsApplication", when: forFormulations(...ofKind("solid", "shell")), variables: ELASTIC },
+      { id: "kirchhoff_plane_strain", name: "KirchhoffSaintVenantPlaneStrain2DLaw", domainSize: 2, group: "Hyperelastic",
+        application: "ConstitutiveLawsApplication", when: forFormulations(...ofKind("solid")), variables: ELASTIC },
+      { id: "kirchhoff_plane_stress", name: "KirchhoffSaintVenantPlaneStress2DLaw", domainSize: 2, group: "Hyperelastic",
+        application: "ConstitutiveLawsApplication", when: forFormulations(...ofKind("solid")), variables: [...ELASTIC, THICKNESS] },
+      { id: "plasticity_iso_3d", name: "SmallStrainIsotropicPlasticityFactory", domainSize: 3, group: "Plasticity",
+        application: "ConstitutiveLawsApplication", parameters: vonMises("3D"),
+        when: forFormulations(...ofKind("solid", "shell")), variables: PLASTIC },
+      { id: "plasticity_iso_plane_strain", name: "SmallStrainIsotropicPlasticityFactory", domainSize: 2, group: "Plasticity",
+        application: "ConstitutiveLawsApplication", parameters: vonMises("PlaneStrain"),
+        when: forFormulations(...ofKind("solid")), variables: PLASTIC },
+      { id: "plasticity_iso_plane_stress", name: "SmallStrainIsotropicPlasticityFactory", domainSize: 2, group: "Plasticity",
+        application: "ConstitutiveLawsApplication", parameters: vonMises("PlaneStress"),
+        when: forFormulations(...ofKind("solid")), variables: [...PLASTIC, THICKNESS] },
+      { id: "plasticity_kin_3d", name: "SmallStrainKinematicPlasticityFactory", domainSize: 3, group: "Plasticity",
+        application: "ConstitutiveLawsApplication", parameters: vonMises("3D"),
+        when: forFormulations(...ofKind("solid", "shell")), variables: KINEMATIC },
+      { id: "plasticity_kin_plane_stress", name: "SmallStrainKinematicPlasticityFactory", domainSize: 2, group: "Plasticity",
+        application: "ConstitutiveLawsApplication", parameters: vonMises("PlaneStress"),
+        when: forFormulations(...ofKind("solid")), variables: [...KINEMATIC, THICKNESS] },
+      { id: "plasticity_finite_iso_3d", name: "FiniteStrainIsotropicPlasticity3DVonMisesVonMises", domainSize: 3, group: "Plasticity",
+        application: "ConstitutiveLawsApplication", when: forFormulations(...ofKind("solid", "shell")), variables: PLASTIC },
+      { id: "plasticity_finite_iso_plane_stress", name: "FiniteStrainIsotropicPlasticityPlaneStressVonMisesVonMises", domainSize: 2, group: "Plasticity",
+        application: "ConstitutiveLawsApplication", when: forFormulations(...ofKind("solid")), variables: [...PLASTIC, THICKNESS] },
+      { id: "plasticity_finite_kin_3d", name: "FiniteStrainKinematicPlasticity3DVonMisesVonMises", domainSize: 3, group: "Plasticity",
+        application: "ConstitutiveLawsApplication", when: forFormulations(...ofKind("solid", "shell")), variables: KINEMATIC },
+      { id: "plasticity_finite_kin_plane_stress", name: "FiniteStrainKinematicPlasticityPlaneStressVonMisesVonMises", domainSize: 2, group: "Plasticity",
+        application: "ConstitutiveLawsApplication", when: forFormulations(...ofKind("solid")), variables: [...KINEMATIC, THICKNESS] },
+      { id: "plasticity_j2_3d", name: "SmallStrainJ2Plasticity3DLaw", domainSize: 3, group: "Plasticity",
+        application: "ConstitutiveLawsApplication", when: forFormulations(...ofKind("solid", "shell")), variables: J2 },
+      { id: "plasticity_j2_plane_strain", name: "SmallStrainJ2PlasticityPlaneStrain2DLaw", domainSize: 2, group: "Plasticity",
+        application: "ConstitutiveLawsApplication", when: forFormulations(...ofKind("solid")), variables: J2 },
+      { id: "damage_iso_3d", name: "SmallStrainIsotropicDamageFactory", domainSize: 3, group: "Damage",
+        application: "ConstitutiveLawsApplication", parameters: vonMises("3D"),
+        when: forFormulations(...ofKind("solid", "shell")), variables: DAMAGE },
+      { id: "damage_iso_plane_strain", name: "SmallStrainIsotropicDamageFactory", domainSize: 2, group: "Damage",
+        application: "ConstitutiveLawsApplication", parameters: vonMises("PlaneStrain"),
+        when: forFormulations(...ofKind("solid")), variables: DAMAGE },
+      { id: "damage_iso_plane_stress", name: "SmallStrainIsotropicDamageFactory", domainSize: 2, group: "Damage",
+        application: "ConstitutiveLawsApplication", parameters: vonMises("PlaneStress"),
+        when: forFormulations(...ofKind("solid")), variables: [...DAMAGE, THICKNESS] },
+      { id: "damage_plastic_3d", name: "AssociativePlasticDamageModel3DVonMises", domainSize: 3, group: "Damage",
+        application: "ConstitutiveLawsApplication", when: forFormulations(...ofKind("solid", "shell")),
+        variables: [DENSITY, YOUNG, POISSON, YIELD_STRESS, FRACTURE_ENERGY, HARDENING_CURVE] },
+      { id: "viscous_maxwell_3d", name: "ViscousGeneralizedMaxwell3D", domainSize: 3, group: "Viscous",
+        application: "ConstitutiveLawsApplication", when: forFormulations(...ofKind("solid", "shell")),
+        variables: [DENSITY, YOUNG, POISSON, VISCOUS_PARAMETER, DELAY_TIME] },
+      { id: "viscous_kelvin_3d", name: "ViscousGeneralizedKelvin3D", domainSize: 3, group: "Viscous",
+        application: "ConstitutiveLawsApplication", when: forFormulations(...ofKind("solid", "shell")),
+        variables: [DENSITY, YOUNG, POISSON, { ...DELAY_TIME, default: 1.0 }] },
       // Discrete elements carry no constitutive response: these laws are their
       // properties (Kratos reads them off the material), so `name` stays empty.
       { id: "point_mass", name: "", group: "Discrete",

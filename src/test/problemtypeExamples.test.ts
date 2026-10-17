@@ -210,6 +210,17 @@ const CASES: ExampleCase[] = [
     values: { problem: { solverType: "eigen_value", elementBase: "SmallDisplacementMixedStrainElement" } },
   },
   {
+    label: "static, isotropic plasticity factory law",
+    file: "structural.py",
+    builtinId: "structural",
+    assignments: [
+      { conditionId: "parts", smpPath: "Parts/Solid", values: {} },
+      { conditionId: "displacement", smpPath: "Support", values: { value: [0, 0, 0], constrained: true } },
+      { conditionId: "surfacePressure", smpPath: "Loaded", values: { value: 1000 } },
+    ],
+    materials: [{ smpPath: "Parts/Solid", lawId: "plasticity_iso_3d", values: { YIELD_STRESS: 2.5e8 } }],
+  },
+  {
     file: "fluid.py",
     builtinId: "fluid",
     assignments: [
