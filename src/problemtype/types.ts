@@ -355,6 +355,31 @@ export interface MaterialLawSpec {
   domainSize?: 2 | 3;
   /** The `DomainSpec` this law belongs to (coupled problemtypes only). */
   domain?: string;
+  /**
+   * Kratos application the law's name (or the factory it configures) comes
+   * from — `ConstitutiveLawsApplication` for the CLApp factories. A materials
+   * file carries no module path, so the document scan cannot see it: Generate
+   * requires the application of every law an assignment actually uses.
+   */
+  application?: string;
+  /**
+   * Materials-form heading the law is listed under (the picker's `<optgroup>`).
+   * Laws without one are listed first, in declaration order.
+   */
+  group?: string;
+  /**
+   * Extra keys of the generated `constitutive_law` block, written as they are:
+   * the ConstitutiveLawsApplication factories' settings (`law_type`,
+   * `yield_surface`, `plastic_potential`). `name` stays the law's own name.
+   */
+  parameters?: JsonObject;
+  /**
+   * Offer the law only while the case values satisfy these rules (an element
+   * formulation or solver whose constitutive law set this law belongs to). The
+   * form hides it; Generate refuses an assignment that still names it, so the
+   * laws never silently change meaning when the setup does.
+   */
+  when?: VisibleRule | VisibleRule[];
 }
 
 export interface OutputSpec {

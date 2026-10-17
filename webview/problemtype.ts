@@ -1324,16 +1324,33 @@ function renderMaterials(decl: ProblemtypeDeclaration): void {
   body.appendChild(addHost);
   const lawSelect = document.createElement("select");
   lawSelect.className = "edit-sel pt-add-what";
-  for (const l of decl.materialLaws) {
+  // A law may carry `when` rules over the case values (the element formulation
+  // whose constitutive-law set it belongs to), so the picker offers only the
+  // laws the current setup has; `group` arranges them under headings, and
+  // ungrouped laws keep their declaration order ahead of the groups they open.
+  const laws = decl.materialLaws.filter((l) => isFieldVisible({ visibleWhen: l.when }, flattenValues(decl, state!)));
+  const lawGroups = new Map<string, HTMLOptGroupElement>();
+  for (const l of laws) {
     const opt = document.createElement("option");
     opt.value = l.id;
     const owner = decl.domains?.find((d) => d.id === l.domain);
     opt.textContent = `${owner ? `${owner.label} · ` : ""}${l.name || l.id}`;
-    lawSelect.appendChild(opt);
+    if (l.group) {
+      let group = lawGroups.get(l.group);
+      if (!group) {
+        group = document.createElement("optgroup");
+        group.label = l.group;
+        lawGroups.set(l.group, group);
+        lawSelect.appendChild(group);
+      }
+      group.appendChild(opt);
+    } else {
+      lawSelect.appendChild(opt);
+    }
   }
   // Keep the chosen law across the re-render the change below triggers; a
   // problemtype switch may have left an id this declaration does not offer.
-  if (!decl.materialLaws.some((l) => l.id === presetLaw)) presetLaw = decl.materialLaws[0]?.id ?? "";
+  if (!laws.some((l) => l.id === presetLaw)) presetLaw = laws[0]?.id ?? "";
   lawSelect.value = presetLaw;
   const whereSelect = document.createElement("select");
   whereSelect.className = "edit-sel pt-add-where";
@@ -1358,7 +1375,7 @@ function renderMaterials(decl: ProblemtypeDeclaration): void {
   add.className = "edit-apply";
   add.textContent = "+";
   add.title = "Assign the material to the SubModelPart";
-  add.disabled = smpPaths.length === 0 || decl.materialLaws.length === 0;
+  add.disabled = smpPaths.length === 0 || laws.length === 0;
   add.addEventListener("click", () => {
     const lawId = lawSelect.value;
     const smpPath = whereSelect.value;
@@ -1385,6 +1402,12 @@ function renderMaterials(decl: ProblemtypeDeclaration): void {
     render();
   });
   addRow.append(lawSelect, whereSelect, add);
+  if (laws.length === 0) {
+    const note = document.createElement("span");
+    note.className = "pt-preset-problem";
+    note.textContent = "No material law matches the current setup.";
+    addHost.appendChild(note);
+  }
   addHost.appendChild(addRow);
   // The preset dropdown follows the chosen law, so it only ever offers rows
   // that declare compatibility with it. It starts on the first match, because

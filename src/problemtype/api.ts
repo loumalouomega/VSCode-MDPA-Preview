@@ -25,7 +25,7 @@ import {
 } from "./types";
 import { meshShapeKey } from "./meshNaming";
 import { DRIVER_TEMPLATES, driverTemplateScript } from "./mainKratosTemplate";
-import { applicationDeclarationProblems } from "./applications";
+import { APPLICATION_NAME, applicationDeclarationProblems } from "./applications";
 import { couplingInterfaceDeclarationProblems } from "./interfaceCheck";
 
 const FIELD_TYPES = new Set([
@@ -233,6 +233,29 @@ export function validateDeclaration(decl: ProblemtypeDeclaration): string[] {
     if (lawIds.has(l.id)) errors.push(`duplicate material law id "${l.id}"`);
     lawIds.add(l.id);
     checkFields(l.variables, `material law "${l.id}"`, false);
+    if (l.application !== undefined && (typeof l.application !== "string" || !APPLICATION_NAME.test(l.application))) {
+      errors.push(
+        `material law "${l.id}": application must be a Kratos application name such as "ConstitutiveLawsApplication"`
+      );
+    }
+    if (l.group !== undefined && (typeof l.group !== "string" || l.group.length === 0)) {
+      errors.push(`material law "${l.id}": group must be a non-empty name`);
+    }
+    if (l.parameters !== undefined) {
+      if (!l.parameters || typeof l.parameters !== "object" || Array.isArray(l.parameters)) {
+        errors.push(`material law "${l.id}": parameters must be an object`);
+      } else if ("name" in l.parameters) {
+        errors.push(`material law "${l.id}": parameters may not set "name" (the law's name is its own)`);
+      }
+    }
+    if (l.when !== undefined) {
+      for (const rule of Array.isArray(l.when) ? l.when : [l.when]) {
+        const field = (rule as { field?: unknown } | null)?.field;
+        if (typeof field !== "string" || !fieldSpecs.has(field)) {
+          errors.push(`material law "${l.id}": "when" names unknown field "${String(field)}"`);
+        }
+      }
+    }
   }
   if (decl.domains !== undefined) {
     if (!Array.isArray(decl.domains) || decl.domains.length === 0) {

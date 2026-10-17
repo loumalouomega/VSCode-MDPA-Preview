@@ -90,7 +90,8 @@ domain(id, label, model_part_name, mdpa_suffix, parts_condition,
        mesh_naming=None)                  # one physics of a coupled problemtype
 process(python_module, process_name=None, kratos_module="KratosMultiphysics",
         parameters=None)                  # process_template sugar
-material_law(id, name, variables=(), domain_size=None, domain=None)
+material_law(id, name, variables=(), domain_size=None, domain=None,
+             application=None, group=None, parameters=None, when=None)
 entry_type(id, label, *fields, parts=None, icon=None, help=None)
 collection(id, label, *entry_types, min=None, max=None, defaults=None,
            icon=None, help=None)          # a repeatable list of named entries

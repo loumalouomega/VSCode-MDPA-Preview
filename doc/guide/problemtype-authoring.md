@@ -123,6 +123,26 @@ The recognised quantities are density, length, time, mass, force, pressure and s
 
 A preset is applied against a law by variable **id**, and a law may also state a variable set a catalog row can fill by adding its id to the preset's `laws` array. A law that no shipped or user row names simply offers no presets in the form — the numeric fields still work.
 
+## Material laws
+
+A law carries more than its variables when its name (or the factory it configures) comes from a Kratos application and its `constitutive_law` block needs settings:
+
+```js
+materialLaws: [
+  { id: "linear_elastic_3d", name: "LinearElastic3DLaw", group: "Elastic", variables: [ /* … */ ] },
+  { id: "vm_plasticity", name: "SmallStrainIsotropicPlasticityFactory", group: "Plasticity",
+    application: "ConstitutiveLawsApplication",          // required by the driver when a material uses the law
+    parameters: { law_type: "SmallStrainIsotropicPlasticityFactory", yield_surface: "VonMises" },
+    when: { field: "solverType", equals: "static" },      // offered only for the setup it is written for
+    variables: [ /* … */ ] },
+]
+```
+
+- **`application`** names the Kratos application the law (or its factory) comes from. A materials file carries no module path, so the document scan cannot find it: the generated driver requires the application whenever a material actually uses the law.
+- **`group`** is the heading the law is listed under in the Materials form.
+- **`parameters`** are extra keys of the generated `constitutive_law` block, written as they are — the ConstitutiveLawsApplication factories' `law_type`, `yield_surface`, `plastic_potential`. The block's `name` stays the law's own name (a `parameters.name` is refused).
+- **`when`** is a visibility rule (or list) over the case's values — the element formulation or solver whose constitutive-law set the law belongs to. The form hides a law whose rules do not hold, and Generate refuses a material still assigned to it, so switching the setup can never silently change what a law means.
+
 ## Mesh naming, icons and custom process lists
 
 - **`meshNaming`** declares the element/condition block names the solver expects in the mdpa. When the previewed mesh differs, Generate writes a renamed `<stem>_case.mdpa` copy and points `input_filename` at it:

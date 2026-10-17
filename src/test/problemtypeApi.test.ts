@@ -14,6 +14,7 @@ import {
   Assignment,
   ConditionSpec,
   GenContext,
+  JsonObject,
   ProblemtypeDeclaration,
 } from "../problemtype/types";
 
@@ -116,6 +117,42 @@ test("validateDeclaration checks meshNaming tables", () => {
   const noField = minimalDecl();
   noField.meshNaming = { conditions: { field: "nope", names: { a: "X" } } };
   assert.ok(validateDeclaration(noField).some((e) => e.includes('field "nope" is not a section field')));
+});
+
+test("validateDeclaration checks material-law metadata", () => {
+  const decl = minimalDecl();
+  decl.materialLaws = [
+    {
+      id: "clapp",
+      name: "SmallStrainIsotropicPlasticityFactory",
+      variables: [],
+      application: "ConstitutiveLawsApplication",
+      group: "Plasticity",
+      parameters: { law_type: "SmallStrainIsotropicPlasticityFactory" },
+      when: { field: "mode", equals: "a" },
+    },
+  ];
+  assert.deepEqual(validateDeclaration(decl), []);
+
+  const bad = minimalDecl();
+  bad.materialLaws = [
+    {
+      id: "x",
+      name: "X",
+      variables: [],
+      application: "constitutive_laws",
+      group: "",
+      parameters: { name: "Y" },
+      when: [{ field: "nope", equals: 1 }],
+    },
+    { id: "y", name: "Y", variables: [], parameters: [] as unknown as JsonObject },
+  ];
+  const errors = validateDeclaration(bad).join("\n");
+  assert.match(errors, /application must be a Kratos application name/);
+  assert.match(errors, /group must be a non-empty name/);
+  assert.match(errors, /parameters may not set "name"/);
+  assert.match(errors, /"when" names unknown field "nope"/);
+  assert.match(errors, /parameters must be an object/);
 });
 
 test("defineProblemtype throws on an invalid declaration or missing solverSettings", () => {

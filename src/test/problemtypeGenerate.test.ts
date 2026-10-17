@@ -185,6 +185,43 @@ test("structural: materials file carries law, merged variables and dotted part n
   });
 });
 
+test("a law's application, parameters and when rules shape the materials file and the driver", async () => {
+  const base = structural.decl.materialLaws[0];
+  const decl = {
+    ...structural.decl,
+    materialLaws: [
+      base,
+      {
+        ...base,
+        id: "vm_plasticity",
+        name: "SmallStrainIsotropicPlasticityFactory",
+        application: "ConstitutiveLawsApplication",
+        parameters: { law_type: "SmallStrainIsotropicPlasticityFactory", yield_surface: "VonMises" },
+        when: { field: "solverType", equals: "dynamic" },
+      },
+    ],
+  };
+  const runtime = { ...structural, decl };
+  const model = parseMdpa(MDPA_3D);
+
+  const dynamic = structuralState();
+  dynamic.values.problem.solverType = "dynamic";
+  dynamic.materials = [{ smpPath: "Parts/Solid", lawId: "vm_plasticity", values: { YOUNG_MODULUS: 2.0e11 } }];
+  const out = await generateCase(runtime, model, dynamic, "beam");
+  assert.deepEqual(JSON.parse(out.materials).properties[0].Material.constitutive_law, {
+    name: "SmallStrainIsotropicPlasticityFactory",
+    law_type: "SmallStrainIsotropicPlasticityFactory",
+    yield_surface: "VonMises",
+  });
+  assert.deepEqual(out.applications, ["ConstitutiveLawsApplication", "StructuralMechanicsApplication"]);
+
+  // The setup the law was not written for refuses the assignment instead of
+  // writing it out under a meaning it never had.
+  const stat = structuralState();
+  stat.materials = dynamic.materials;
+  await assert.rejects(generateCase(runtime, model, stat, "beam"), /not available for the current setup/);
+});
+
 test("structural dynamic: solver gains the implicit bossak scheme", async () => {
   const model = parseMdpa(MDPA_3D);
   const state = structuralState();

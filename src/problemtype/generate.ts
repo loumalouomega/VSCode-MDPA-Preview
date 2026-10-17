@@ -25,6 +25,7 @@ import { validateMaterialAssignment } from "./materialCatalog";
 import { validateFluidTimeStepping } from "./timeStepEstimate";
 import { collectionProblems, resolveCollections } from "./collections";
 import { applicationCheckPy, requiredApplications } from "./applications";
+import { isFieldVisible } from "./layout";
 import { interfacePairProblems } from "./interfaceCheck";
 
 /** Flattens the SubModelPart tree into slash-separated paths (depth-first). */
@@ -207,6 +208,15 @@ export function buildMaterials(
       );
       return;
     }
+    // A law's `when` rules say which setup it was written for (a formulation's
+    // constitutive-law set). An assignment left on a law the setup excludes
+    // must be fixed, not written out under another meaning.
+    if (law.when !== undefined && !isFieldVisible({ visibleWhen: law.when }, ctx.values)) {
+      problems.push(
+        `"${m.smpPath}": material law "${law.name || law.id}" is not available for the current setup — its "when" rules do not hold for the case values.`
+      );
+      return;
+    }
     const label = `${m.smpPath} (${law.name || law.id})`;
     for (const issue of validateMaterialAssignment(law, m.values, m.preset)) {
       const message = `${label}: ${issue.message}`;
@@ -219,7 +229,7 @@ export function buildMaterials(
     }
     const material: JsonObject = { Variables: variables, Tables: {} };
     if (law.name.length > 0) {
-      material.constitutive_law = { name: law.name };
+      material.constitutive_law = { name: law.name, ...(law.parameters ?? {}) };
     }
     properties.push({
       model_part_name: dottedModelPart(ctx.modelPartName, m.smpPath),
@@ -386,10 +396,15 @@ export async function generateCase(
     materialsText = materialJson(materials, runtime);
   }
   extraFiles.push(...(await runtime.extraFiles(ctx, materials)));
-  const applications = requiredApplications(decl, values, [
-    projectParameters,
-    ...extraFiles.filter((f) => f.name.toLowerCase().endsWith(".json")).map((f) => parseJsonOrNull(f.content)),
-  ]);
+  const applications = requiredApplications(
+    decl,
+    values,
+    [
+      projectParameters,
+      ...extraFiles.filter((f) => f.name.toLowerCase().endsWith(".json")).map((f) => parseJsonOrNull(f.content)),
+    ],
+    state.materials
+  );
   // The prelude checks the applications before the driver reads or writes anything.
   const mainScript = applicationCheckPy(applications) + (await runtime.mainScript(ctx));
 

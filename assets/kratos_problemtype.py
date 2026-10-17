@@ -53,9 +53,14 @@ Compact reference (mirrors the JavaScript API, spelled snake_case)::
         A physics domain of a coupled problemtype: its own mesh slice
         <stem>_<mdpa_suffix>.mdpa and materials file, owning condition_ids.
 
-    material_law(id, name, variables=(), domain_size=None, domain=None)
+    material_law(id, name, variables=(), domain_size=None, domain=None,
+                 application=None, group=None, parameters=None, when=None)
         A constitutive law (domain = the domain id it belongs to, coupled only). Empty name omits the constitutive_law block
         (e.g. thermal materials). domain_size (2|3) restricts availability.
+        application = Kratos application the law needs (required when a material
+        uses it); group = Materials-form heading; parameters = extra
+        constitutive_law keys (CLApp factory settings); when = visibility rule
+        over case values the law is offered for.
 
     INTERVAL_TOTAL
         The whole-simulation interval ``[0.0, "End"]`` for process Parameters.
@@ -383,11 +388,20 @@ def domain(id, label, model_part_name, mdpa_suffix, parts_condition, condition_i
     return d
 
 
-def material_law(id, name, variables=(), domain_size=None, domain=None):
+def material_law(id, name, variables=(), domain_size=None, domain=None,
+                 application=None, group=None, parameters=None, when=None):
     """A constitutive-law spec (mirrors the JS ``MaterialLawSpec``).
 
     An empty ``name`` omits the ``constitutive_law`` block in the materials file
-    (used e.g. for thermal materials that carry variables only).
+    (used e.g. for thermal materials that carry variables only). ``application``
+    is the Kratos application the law's name comes from (the generated driver
+    then requires it when a material uses the law); ``group`` is the Materials
+    form heading the law is listed under. ``parameters`` are extra keys of the
+    ``constitutive_law`` block, written as they are (the ConstitutiveLaws
+    Application factories' ``law_type``/``yield_surface``/``plastic_potential``),
+    and ``when`` a visibility rule ({"field", "equals"} or {"field", "oneOf"}) or
+    list of them over the case values: the form offers the law only while they
+    hold, and Generate refuses an assignment left on a law the setup excludes.
     """
     _require_str(id, "material law id")
     if domain_size is not None and domain_size not in (2, 3):
@@ -397,6 +411,20 @@ def material_law(id, name, variables=(), domain_size=None, domain=None):
         m["domainSize"] = domain_size
     if domain is not None:
         m["domain"] = domain
+    if application is not None:
+        _require_str(application, f'material law "{id}" application')
+        m["application"] = application
+    if group is not None:
+        _require_str(group, f'material law "{id}" group')
+        m["group"] = group
+    if parameters is not None:
+        if not isinstance(parameters, dict):
+            raise ValueError(f'material law "{id}": parameters must be a dict')
+        if "name" in parameters:
+            raise ValueError(f'material law "{id}": parameters may not set "name"')
+        m["parameters"] = dict(parameters)
+    if when is not None:
+        m["when"] = list(when) if isinstance(when, (list, tuple)) else when
     return m
 
 
