@@ -280,6 +280,19 @@ const CASES: ExampleCase[] = [
     values: { problem: { elementType: "fic", timeScheme: "bossak", timeStepMode: "adaptive", oss: true } },
   },
   {
+    label: "integration-point statistics and temperature-dependent viscosity",
+    file: "fluid.py",
+    builtinId: "fluid",
+    assignments: [
+      { conditionId: "parts", smpPath: "Parts/Solid", values: {} },
+      { conditionId: "initialTemperature", smpPath: "Parts/Solid", values: { value: 350 } },
+      { conditionId: "integrationStats", smpPath: "Parts/Solid", values: { statisticType: "average", variable: "VELOCITY" } },
+      { conditionId: "integrationStats", smpPath: "Parts/Solid", values: { statisticType: "variance", variable: "PRESSURE" } },
+      { conditionId: "integrationStats", smpPath: "Parts/Solid", values: { statisticType: "average", variable: "PRESSURE" } },
+    ],
+    materials: [{ smpPath: "Parts/Solid", lawId: "temperature_dependent_3d", values: { DENSITY: 997, TEMPERATURE_TABLE: "293.15,1e-3; 373.15,2.8e-4" } }],
+  },
+  {
     label: "two-phase inlet: symbolic modulus up to 10 s, then a steady inlet",
     file: "fluid.py",
     builtinId: "fluid",

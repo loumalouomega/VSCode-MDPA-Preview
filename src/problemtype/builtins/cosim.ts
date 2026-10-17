@@ -216,7 +216,11 @@ const fluidList = (cond: ConditionSpec): string =>
 const structList = (cond: ConditionSpec): string =>
   cond.list === "loads_process_list" ? "structure_loads_process_list" : "structure_constraints_process_list";
 
-const fluidConditions: ConditionSpec[] = fluid.decl.conditions.map((c) => ({
+// The integration-point statistics monitor merges in the Fluid problemtype's own
+// post-process; the coupled document has no such merge, so it stays fluid-only.
+const fluidConditions: ConditionSpec[] = fluid.decl.conditions
+  .filter((c) => c.id !== "integrationStats")
+  .map((c) => ({
   ...c,
   id: F + c.id,
   label: c.id === "parts" ? "Fluid body" : c.label,

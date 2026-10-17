@@ -418,6 +418,13 @@ export interface MaterialLawSpec {
    * laws never silently change meaning when the setup does.
    */
   when?: VisibleRule | VisibleRule[];
+  /**
+   * Property tables the law reads (e.g. a temperature–viscosity table): each
+   * names the generated `Tables` entry and the law variable holding the
+   * `input,output; …` pairs text. Table variables are not written to
+   * `Variables` — Kratos would reject the unknown variable.
+   */
+  tables?: { id: string; inputVariable: string; outputVariable: string; dataField: string }[];
 }
 
 export interface OutputSpec {

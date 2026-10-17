@@ -11,7 +11,7 @@ import { monitoredMainScript } from "../mainKratosTemplate";
  */
 
 import { defineProblemtype, asBool, asNum, asStr, dottedModelPart, resolveProcessTemplate } from "../api";
-import { JsonObject, JsonValue } from "../types";
+import { JsonObject, JsonValue, MaterialLawSpec } from "../types";
 import {
   INITIAL,
   broadcastConstrained,
@@ -21,6 +21,26 @@ import {
   vectorConstraint,
 } from "./common";
 
+/** A viscosity that follows the nodal temperature through a property table. */
+const temperatureDependent = (size: 2 | 3): MaterialLawSpec => ({
+  id: `temperature_dependent_${size}d`,
+  name: size === 3 ? "NewtonianTemperatureDependent3DLaw" : "NewtonianTemperatureDependent2DLaw",
+  domainSize: size,
+  group: "Temperature dependent",
+  when: MONOLITHIC,
+  variables: [
+    { id: "DENSITY", label: "Density [kg/m³]", type: "number", default: 1000, unit: "kg/m³" },
+    {
+      id: "TEMPERATURE_TABLE",
+      label: "Viscosity table [K, Pa·s]",
+      type: "string",
+      default: "293.15,1e-3; 373.15,2.8e-4",
+      help: "Temperature–viscosity pairs, one `T,mu` per `;`, read as the TEMPERATURE–DYNAMIC_VISCOSITY table. Set the nodal TEMPERATURE (initial temperature) or every node reads the table at 0 K.",
+    },
+  ],
+  tables: [{ id: "Table1", inputVariable: "TEMPERATURE", outputVariable: "DYNAMIC_VISCOSITY", dataField: "TEMPERATURE_TABLE" }],
+});
+
 /** Conditions that are not boundary skin: GiD lists them in `no_skin_parts`. */
 const NO_SKIN = new Set(["velocityConstraints", "pressureConstraints"]);
 
@@ -29,10 +49,92 @@ const NO_SKIN = new Set(["velocityConstraints", "pressureConstraints"]);
  * solver: monitors read results off a part and a periodic pair is constrained
  * by a process, so neither belongs in `skin_parts` or `no_skin_parts`.
  */
-export const FLUID_NOT_BOUNDARY = new Set(["flowForces", "aerodynamicCoefficients", "pressureCoefficient", "yPlus", "periodic"]);
+export const FLUID_NOT_BOUNDARY = new Set(["flowForces", "aerodynamicCoefficients", "pressureCoefficient", "yPlus", "periodic", "integrationStats"]);
 
 /** Kratos' `formulation.element_type` for each element choice whose key differs from ours. */
 const FORMULATION_KEY: Record<string, string> = { axisymmetric: "axisymmetric_navier_stokes" };
+
+interface StatsEntry {
+  part: string;
+  type: "average" | "variance" | "third_order_moment";
+  variables: string[];
+  tags: string[];
+  outputFile: string;
+  startTime: number;
+}
+
+/**
+ * The `integrationStats` assignments grouped by part, with the problems that
+ * refuse them. A variance or third-order moment reads the average sampled in
+ * the SAME process, so entries on one part merge into a single process and
+ * every higher moment needs its average beside it — the same rule the C++
+ * process enforces, reported here before anything is written.
+ */
+function statsByPart(ctx: { assignments: { conditionId: string; smpPath: string; values: Record<string, JsonValue> }[]; domainSize: number }): {
+  byPart: Map<string, StatsEntry[]>;
+  problems: string[];
+} {
+  const byPart = new Map<string, StatsEntry[]>();
+  const problems: string[] = [];
+  const pretty = (t: string): string => t.replace(/_/g, " ");
+  for (const a of ctx.assignments) {
+    if (a.conditionId !== "integrationStats") continue;
+    const type = asStr(a.values.statisticType, "average");
+    if (type !== "average" && type !== "variance" && type !== "third_order_moment") {
+      problems.push(`"${a.smpPath}": unknown statistic "${type}" (average, variance or third_order_moment).`);
+      continue;
+    }
+    const variables = asStr(a.values.variable, "").split(",").map((s) => s.trim()).filter((s) => s !== "");
+    const tags = asStr(a.values.tags, "").split(",").map((s) => s.trim()).filter((s) => s !== "");
+    const entry: StatsEntry = {
+      part: a.smpPath, type, variables, tags,
+      outputFile: asStr(a.values.outputFile, "statistics").trim() || "statistics",
+      startTime: asNum(a.values.startTime, 0),
+    };
+    const need = type === "average" ? "one variable" : type === "variance" ? "one or two variables" : "three variables";
+    const okCount = type === "average" ? variables.length === 1 : type === "variance" ? variables.length >= 1 && variables.length <= 2 : variables.length === 3;
+    if (!okCount) {
+      problems.push(`"${a.smpPath}": a ${pretty(type)} needs ${need} (got ${variables.length}).`);
+      continue;
+    }
+    if (type !== "average" && tags.length > 0) {
+      problems.push(`"${a.smpPath}": tags belong to an average, not to a ${pretty(type)}.`);
+      continue;
+    }
+    if (type === "average") {
+      if (variables[0] === "VELOCITY") {
+        if (tags.length === 0) entry.tags = ctx.domainSize === 2 ? ["VELOCITY_X", "VELOCITY_Y"] : ["VELOCITY_X", "VELOCITY_Y", "VELOCITY_Z"];
+        else if (tags.length !== ctx.domainSize) {
+          problems.push(`"${a.smpPath}": a vector average needs one tag per component (${ctx.domainSize} for VELOCITY).`);
+          continue;
+        }
+      } else if (tags.length > 1) {
+        problems.push(`"${a.smpPath}": a scalar average takes at most one tag.`);
+        continue;
+      }
+    }
+    const list = byPart.get(a.smpPath) ?? [];
+    list.push(entry);
+    byPart.set(a.smpPath, list);
+  }
+  for (const [part, entries] of byPart) {
+    if (new Set(entries.map((e) => e.outputFile)).size > 1) {
+      problems.push(`"${part}": one statistics file per part — the entries name ${[...new Set(entries.map((e) => e.outputFile))].join(", ")}.`);
+    }
+    if (new Set(entries.map((e) => e.startTime)).size > 1) problems.push(`"${part}": one start time per part.`);
+    const averages = new Set(entries.filter((e) => e.type === "average").map((e) => e.variables[0]));
+    for (const e of entries) {
+      if (e.type === "average") continue;
+      for (const v of e.variables) {
+        const base = /_[XYZ]$/.test(v) ? v.slice(0, -2) : v;
+        if (!averages.has(base) && !averages.has(v)) {
+          problems.push(`"${part}": the ${pretty(e.type)} of "${v}" needs its average on the same part.`);
+        }
+      }
+    }
+  }
+  return { byPart, problems };
+}
 
 /** Output variables a monitor writes as non-historical nodal data, by condition. */
 const MONITOR_OUTPUT: Record<string, string> = { pressureCoefficient: "PRESSURE_COEFFICIENT", yPlus: "Y_PLUS" };
@@ -198,6 +300,17 @@ export const fluid = defineProblemtype(
         id: "initialPressure",
         label: "Initial pressure",
         unit: "Pa",
+        category: "initial",
+        list: "initial_conditions_process_list",
+        icon: "ptInitial",
+        interval: INITIAL,
+        fixed: false,
+      }),
+      scalarConstraint("TEMPERATURE", {
+        id: "initialTemperature",
+        label: "Initial temperature",
+        unit: "K",
+        dflt: 293.15,
         category: "initial",
         list: "initial_conditions_process_list",
         icon: "ptInitial",
@@ -484,6 +597,34 @@ export const fluid = defineProblemtype(
           Parameters: { model_part_name: "$path", output_variable_name: "Y_PLUS", output_to_elements: false, calculate_normals_every_time_step: false, echo_level: 0 },
         },
       },
+      {
+        id: "integrationStats",
+        label: "Integration-point statistics",
+        list: "auxiliar_process_list",
+        target: "volume",
+        category: "other",
+        icon: "ptResults",
+        noProcess: true,
+        help: "Samples a statistic at the integration points over time (average, variance or third-order moment) and writes it to a file. One entry per assignment on the same part merges into a single process; a variance or third-order moment needs its average on the same part, and a vector average needs a tag per component (VELOCITY tags itself).",
+        fields: [
+          {
+            id: "statisticType",
+            label: "Statistic",
+            type: "enum",
+            default: "average",
+            options: [
+              { value: "average", label: "Average" },
+              { value: "variance", label: "Variance" },
+              { value: "third_order_moment", label: "Third-order moment" },
+            ],
+          },
+          { id: "variable", label: "Variable(s)", type: "string", default: "VELOCITY", help: "One variable for an average, one or two for a variance, three for a third-order moment, comma-separated." },
+          { id: "tags", label: "Tags", type: "string", default: "", help: "Comma-separated output names for a vector average (VELOCITY fills VELOCITY_X, VELOCITY_Y, VELOCITY_Z itself); empty for a scalar." },
+          { id: "outputFile", label: "Output file", type: "string", default: "statistics" },
+          { id: "startTime", label: "Start time [s]", type: "number", default: 0, min: 0 },
+        ],
+        processTemplate: {},
+      },
     ],
     materialLaws: [
       {
@@ -547,6 +688,8 @@ export const fluid = defineProblemtype(
           { id: "REGULARIZATION_COEFFICIENT", label: "Regularization coefficient", type: "number", default: 100 },
         ],
       },
+      temperatureDependent(3),
+      temperatureDependent(2),
     ],
     output: { nodalDefaults: ["VELOCITY", "PRESSURE"] },
   },
@@ -607,7 +750,7 @@ export const fluid = defineProblemtype(
     },
     mainScript: () => monitoredMainScript("fluid"),
     validate: (ctx) => {
-      const problems: string[] = [];
+      const problems: string[] = [...statsByPart(ctx).problems];
       const v = ctx.values;
       if (v.elementType === "axisymmetric" && v.strategy === "monolithic" && ctx.domainSize !== 2) {
         problems.push("The axisymmetric element is two-dimensional: use a 2D mesh or another element.");
@@ -714,6 +857,33 @@ export const fluid = defineProblemtype(
       return settings;
     },
     postProcess: (pp, ctx) => {
+      // One statistics process per part: higher moments read the average
+      // sampled in the same process, so the entries merge here (validation
+      // above already refused the incomplete ones).
+      const { byPart } = statsByPart(ctx);
+      if (byPart.size > 0) {
+        const processes = pp.processes as JsonObject;
+        const auxiliar = (processes.auxiliar_process_list as JsonObject[] | undefined) ?? [];
+        processes.auxiliar_process_list = auxiliar;
+        for (const [part, entries] of byPart) {
+          auxiliar.push({
+            python_module: "integration_point_statistics_process",
+            kratos_module: "KratosMultiphysics.FluidDynamicsApplication",
+            process_name: "IntegrationPointStatisticsProcess",
+            Parameters: {
+              model_part_name: dottedModelPart(ctx.modelPartName, part),
+              output_file_name: entries[0].outputFile,
+              dimension: ctx.domainSize,
+              start_time: entries[0].startTime,
+              statistics: entries.map((e): JsonObject => {
+                const stat: JsonObject = e.type === "average" ? { type: e.type, variable: e.variables[0] } : { type: e.type, variables: [...e.variables] };
+                if (e.type === "average" && e.tags.length > 0) stat.tags = [...e.tags];
+                return stat;
+              }),
+            },
+          });
+        }
+      }
       // A monitor that writes a nodal result needs it in the output's non-historical list.
       const wanted = [...new Set(ctx.assignments.map((a) => MONITOR_OUTPUT[a.conditionId]).filter((n): n is string => Boolean(n)))];
       const vtk = (((pp.output_processes as JsonObject | undefined)?.vtk_output as JsonObject[] | undefined) ?? [])[0];

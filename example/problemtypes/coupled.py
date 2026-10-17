@@ -204,7 +204,7 @@ def _fluid_time_stepping_errors(values):
 
 FLUID_NO_SKIN = ("velocityConstraints", "pressureConstraints")
 # Conditions that name a part without being a boundary condition of the solver.
-FLUID_NOT_BOUNDARY = ("flowForces", "aerodynamicCoefficients", "pressureCoefficient", "yPlus", "periodic")
+FLUID_NOT_BOUNDARY = ("flowForces", "aerodynamicCoefficients", "pressureCoefficient", "yPlus", "periodic", "integrationStats")
 MONITOR_OUTPUT = {"pressureCoefficient": "PRESSURE_COEFFICIENT", "yPlus": "Y_PLUS"}
 FORMULATION_KEY = {"axisymmetric": "axisymmetric_navier_stokes"}
 
@@ -1132,6 +1132,22 @@ FLUID_CONDITIONS = [
                   },
               },
               category="initial", icon="ptInitial"),
+    condition("f_initialTemperature", "Initial temperature", list="fluid_initial_conditions_process_list", target="any",
+              fields=[field("value", "Value [K]", "number", default=293.15),
+                      field("constrained", "Fixed", "bool", default=False)],
+              process_template={
+                  "python_module": "assign_scalar_variable_process",
+                  "kratos_module": "KratosMultiphysics",
+                  "process_name": "AssignScalarVariableProcess",
+                  "Parameters": {
+                      "model_part_name": "$path",
+                      "variable_name": "TEMPERATURE",
+                      "interval": [0, 0],
+                      "constrained": "$field:constrained",
+                      "value": "$field:value",
+                  },
+              },
+              category="initial", icon="ptInitial"),
     condition("f_inlet", "Inlet velocity", list="fluid_boundary_conditions_process_list", target="surface",
               fields=[field("modulus", "|v| [m/s]", "number", default=1),
                       field("modulusExpression", "|v| expression", "string", default="", help="A Kratos expression in the inlet's own coordinates and the current time t, e.g. 0.1214*(1-cos(0.1*pi*t))*y*(1-y). When set it replaces the numeric |v| above.", advanced=True),
@@ -1684,6 +1700,32 @@ MATERIAL_LAWS = [
                  when={"field": "f_strategy", "equals": "monolithic"},
                  domain_size=3,
                  domain="fluid"),
+    material_law("temperature_dependent_3d", "NewtonianTemperatureDependent3DLaw",
+                 variables=[field("DENSITY", "Density [kg/m³]", "number", default=1000, unit="kg/m³"),
+                            field("TEMPERATURE_TABLE", "Viscosity table [K, Pa·s]", "string", default="293.15,1e-3; 373.15,2.8e-4", help="Temperature–viscosity pairs, one `T,mu` per `;`, read as the TEMPERATURE–DYNAMIC_VISCOSITY table. Set the nodal TEMPERATURE (initial temperature) or every node reads the table at 0 K.")],
+                 group="Temperature dependent",
+                 when={"field": "f_strategy", "equals": "monolithic"},
+                 tables=[{
+                     "id": "Table1",
+                     "input_variable": "TEMPERATURE",
+                     "output_variable": "DYNAMIC_VISCOSITY",
+                     "data_field": "TEMPERATURE_TABLE",
+                 }],
+                 domain_size=3,
+                 domain="fluid"),
+    material_law("temperature_dependent_2d", "NewtonianTemperatureDependent2DLaw",
+                 variables=[field("DENSITY", "Density [kg/m³]", "number", default=1000, unit="kg/m³"),
+                            field("TEMPERATURE_TABLE", "Viscosity table [K, Pa·s]", "string", default="293.15,1e-3; 373.15,2.8e-4", help="Temperature–viscosity pairs, one `T,mu` per `;`, read as the TEMPERATURE–DYNAMIC_VISCOSITY table. Set the nodal TEMPERATURE (initial temperature) or every node reads the table at 0 K.")],
+                 group="Temperature dependent",
+                 when={"field": "f_strategy", "equals": "monolithic"},
+                 tables=[{
+                     "id": "Table1",
+                     "input_variable": "TEMPERATURE",
+                     "output_variable": "DYNAMIC_VISCOSITY",
+                     "data_field": "TEMPERATURE_TABLE",
+                 }],
+                 domain_size=2,
+                 domain="fluid"),
     material_law("linear_elastic_3d", "LinearElastic3DLaw",
                  variables=[field("DENSITY", "Density [kg/m³]", "number", default=7850, unit="kg/m³"),
                             field("YOUNG_MODULUS", "Young modulus [Pa]", "number", default=210000000000, unit="Pa"),
@@ -2128,7 +2170,7 @@ MATERIAL_LAWS = [
 
 FSI_DOMAINS = [
     domain("fluid", "Fluid", "FluidModelPart", "Fluid", "f_parts",
-           condition_ids=["f_parts", "f_initialVelocity", "f_initialPressure", "f_inlet", "f_outlet", "f_slip", "f_noSlip", "f_wallLaw", "f_velocityConstraints", "f_pressureConstraints", "f_periodic", "f_flowForces", "f_aerodynamicCoefficients", "f_pressureCoefficient", "f_yPlus", "aleMeshBC", "fluidInterface"],
+           condition_ids=["f_parts", "f_initialVelocity", "f_initialPressure", "f_initialTemperature", "f_inlet", "f_outlet", "f_slip", "f_noSlip", "f_wallLaw", "f_velocityConstraints", "f_pressureConstraints", "f_periodic", "f_flowForces", "f_aerodynamicCoefficients", "f_pressureCoefficient", "f_yPlus", "aleMeshBC", "fluidInterface"],
            materials_file_name="FluidMaterials.json",
            required=[{
                "conditionId": "fluidInterface",
@@ -2487,7 +2529,7 @@ mesh_naming={
 
 COSIM_DOMAINS = [
     domain("fluid", "Fluid", "FluidModelPart", "Fluid", "f_parts",
-           condition_ids=["f_parts", "f_initialVelocity", "f_initialPressure", "f_inlet", "f_outlet", "f_slip", "f_noSlip", "f_wallLaw", "f_velocityConstraints", "f_pressureConstraints", "f_periodic", "f_flowForces", "f_aerodynamicCoefficients", "f_pressureCoefficient", "f_yPlus", "aleMeshBC", "fluidInterface"],
+           condition_ids=["f_parts", "f_initialVelocity", "f_initialPressure", "f_initialTemperature", "f_inlet", "f_outlet", "f_slip", "f_noSlip", "f_wallLaw", "f_velocityConstraints", "f_pressureConstraints", "f_periodic", "f_flowForces", "f_aerodynamicCoefficients", "f_pressureCoefficient", "f_yPlus", "aleMeshBC", "fluidInterface"],
            materials_file_name="FluidMaterials.json",
            required=[{
                "conditionId": "fluidInterface",

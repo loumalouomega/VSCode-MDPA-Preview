@@ -113,6 +113,7 @@ for (const l of decl.materialLaws) {
   if (l.group) extra.push(`group=${JSON.stringify(l.group)}`);
   if (l.parameters) extra.push(`parameters=${py(l.parameters, 17)}`);
   if (l.when) extra.push(`when=${whenSrc(l.when)}`);
+  if (l.tables) extra.push(`tables=${py(l.tables.map((t) => ({ id: t.id, input_variable: t.inputVariable, output_variable: t.outputVariable, data_field: t.dataField })), 17)}`);
   if (l.domainSize) extra.push(`domain_size=${l.domainSize}`);
   if (l.domain) extra.push(`domain=${JSON.stringify(l.domain)}`);
   out.push(`    material_law(${a.join(", ")},`);

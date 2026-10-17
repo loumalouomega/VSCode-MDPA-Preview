@@ -191,6 +191,18 @@ export function vtkOutputProcess(ctx: GenContext, state: CaseState, gauss: strin
  * Generate can never disagree with them. Warnings still collect, and a
  * problemtype with no material laws legitimately produces an empty file.
  */
+
+/** Parses a `"input,output; …"` table text into Kratos `[[in, out], …]` rows. */
+export function parseTableData(raw: unknown): number[][] {
+  if (typeof raw !== "string" || raw.trim() === "") throw new Error("enter one `input,output` pair per `;`");
+  const rows = raw.split(";").map((r) => r.trim()).filter((r) => r !== "");
+  if (rows.length < 2) throw new Error("at least two pairs are needed to interpolate");
+  return rows.map((r) => {
+    const pair = r.split(",").map((x) => Number(x.trim()));
+    if (pair.length !== 2 || pair.some((x) => !Number.isFinite(x))) throw new Error(`"${r}" is not an "input,output" pair of numbers`);
+    return pair;
+  });
+}
 export function buildMaterials(
   ctx: GenContext | DomainContext,
   state: Pick<CaseState, "materials">,
@@ -231,11 +243,25 @@ export function buildMaterials(
       if (issue.severity === "error") problems.push(message);
       else warnings.push(message);
     }
+    const tableFields = new Set((law.tables ?? []).map((t) => t.dataField));
     const variables: JsonObject = {};
     for (const v of law.variables) {
+      if (tableFields.has(v.id)) continue;
       variables[v.id] = m.values[v.id] !== undefined ? m.values[v.id] : fieldDefault(v);
     }
-    const material: JsonObject = { Variables: variables, Tables: {} };
+    const tables: JsonObject = {};
+    for (const t of law.tables ?? []) {
+      try {
+        tables[t.id] = { input_variable: t.inputVariable, output_variable: t.outputVariable, data: parseTableData(m.values[t.dataField]) };
+      } catch (err) {
+        problems.push(`${label}: table "${t.id}" is not "input,output; …" pairs of numbers (${err instanceof Error ? err.message : String(err)}).`);
+      }
+    }
+    if (problems.length > 0 && !(tables[tables ? Object.keys(tables)[0] ?? "" : ""] === undefined && (law.tables ?? []).length === 0)) {
+      // A failed table already recorded its problem above; the material is
+      // still written so one bad table does not hide the other findings.
+    }
+    const material: JsonObject = { Variables: variables, Tables: tables };
     if (law.name.length > 0) {
       material.constitutive_law = { name: law.name, ...(law.parameters ?? {}) };
     }

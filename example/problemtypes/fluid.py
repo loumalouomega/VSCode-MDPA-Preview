@@ -22,7 +22,7 @@ NAME = "Fluid Dynamics (Python example)"
 # Conditions that are not boundary skin: GiD lists them in no_skin_parts.
 NO_SKIN = ("velocityConstraints", "pressureConstraints")
 # Conditions that name a part without being a boundary condition of the solver.
-NOT_BOUNDARY = ("flowForces", "aerodynamicCoefficients", "pressureCoefficient", "yPlus", "periodic")
+NOT_BOUNDARY = ("flowForces", "aerodynamicCoefficients", "pressureCoefficient", "yPlus", "periodic", "integrationStats")
 # Output variables a monitor writes as non-historical nodal data.
 MONITOR_OUTPUT = {"pressureCoefficient": "PRESSURE_COEFFICIENT", "yPlus": "Y_PLUS"}
 FORMULATION_KEY = {"axisymmetric": "axisymmetric_navier_stokes"}
@@ -243,8 +243,73 @@ def solver_settings(values, ctx):
     return settings
 
 
-def validate(ctx):
+def _stats_by_part(ctx):
+    """Group the integration-point statistics assignments by part, with problems."""
+    by_part = {}
     problems = []
+
+    def pretty(t):
+        return t.replace("_", " ")
+
+    for a in ctx["assignments"]:
+        if a["conditionId"] != "integrationStats":
+            continue
+        values = a["values"]
+        stype = str(values.get("statisticType", "average"))
+        if stype not in ("average", "variance", "third_order_moment"):
+            problems.append(f'"{a["smpPath"]}": unknown statistic "{stype}".')
+            continue
+        variables = [x.strip() for x in str(values.get("variable", "")).split(",")]
+        variables = [x for x in variables if x]
+        tags = [x.strip() for x in str(values.get("tags", "")).split(",")]
+        tags = [x for x in tags if x]
+        entry = {"part": a["smpPath"], "type": stype, "variables": variables,
+                 "tags": tags,
+                 "output_file": str(values.get("outputFile", "statistics")).strip() or "statistics",
+                 "start_time": values.get("startTime", 0)}
+        need = ("one variable" if stype == "average"
+                else "one or two variables" if stype == "variance"
+                else "three variables")
+        ok_count = ((len(variables) == 1) if stype == "average"
+                    else (1 <= len(variables) <= 2) if stype == "variance"
+                    else len(variables) == 3)
+        if not ok_count:
+            problems.append(f'"{a["smpPath"]}": a {pretty(stype)} needs {need} (got {len(variables)}).')
+            continue
+        if stype != "average" and tags:
+            problems.append(f'"{a["smpPath"]}": tags belong to an average, not to a {pretty(stype)}.')
+            continue
+        if stype == "average":
+            if variables[0] == "VELOCITY":
+                if not tags:
+                    entry["tags"] = (["VELOCITY_X", "VELOCITY_Y"] if ctx["domain_size"] == 2
+                                     else ["VELOCITY_X", "VELOCITY_Y", "VELOCITY_Z"])
+                elif len(tags) != ctx["domain_size"]:
+                    problems.append(f'"{a["smpPath"]}": a vector average needs one tag per component ({ctx["domain_size"]} for VELOCITY).')
+                    continue
+            elif len(tags) > 1:
+                problems.append(f'"{a["smpPath"]}": a scalar average takes at most one tag.')
+                continue
+        by_part.setdefault(a["smpPath"], []).append(entry)
+    for part, entries in by_part.items():
+        if len({e["output_file"] for e in entries}) > 1:
+            problems.append(f'"{part}": one statistics file per part.')
+        if len({e["start_time"] for e in entries}) > 1:
+            problems.append(f'"{part}": one start time per part.')
+        averages = {e["variables"][0] for e in entries if e["type"] == "average"}
+        for e in entries:
+            if e["type"] == "average":
+                continue
+            for v in e["variables"]:
+                base = v[:-2] if (len(v) > 2 and v[-2] == "_" and v[-1] in "XYZ") else v
+                if base not in averages and v not in averages:
+                    problems.append(f'"{part}": the {pretty(e["type"])} of "{v}" needs its average on the same part.')
+    return by_part, problems
+
+
+def validate(ctx):
+    by_part, stats_problems = _stats_by_part(ctx)
+    problems = list(stats_problems)
     v = ctx["values"]
     if v["elementType"] == "axisymmetric" and v["strategy"] == "monolithic" and ctx["domain_size"] != 2:
         problems.append("The axisymmetric element is two-dimensional: use a 2D mesh or another element.")
@@ -261,6 +326,33 @@ def validate(ctx):
 
 
 def post_process(project_parameters, ctx):
+    # One statistics process per part: higher moments read the average
+    # sampled in the same process, so the entries merge here.
+    by_part, _problems = _stats_by_part(ctx)
+    if by_part:
+        auxiliar = project_parameters["processes"].setdefault("auxiliar_process_list", [])
+        for part, entries in by_part.items():
+            statistics = []
+            for e in entries:
+                if e["type"] == "average":
+                    stat = {"type": e["type"], "variable": e["variables"][0]}
+                    if e["tags"]:
+                        stat["tags"] = list(e["tags"])
+                else:
+                    stat = {"type": e["type"], "variables": list(e["variables"])}
+                statistics.append(stat)
+            auxiliar.append({
+                "python_module": "integration_point_statistics_process",
+                "kratos_module": "KratosMultiphysics.FluidDynamicsApplication",
+                "process_name": "IntegrationPointStatisticsProcess",
+                "Parameters": {
+                    "model_part_name": ctx["model_part_name"] + "." + part.replace("/", "."),
+                    "output_file_name": entries[0]["output_file"],
+                    "dimension": ctx["domain_size"],
+                    "start_time": entries[0]["start_time"],
+                    "statistics": statistics,
+                },
+            })
     # A monitor that writes a nodal result needs it in the output's non-historical list.
     wanted = []
     for a in ctx["assignments"]:
@@ -376,6 +468,22 @@ CONDITIONS = [
                   "Parameters": {
                       "model_part_name": "$path",
                       "variable_name": "PRESSURE",
+                      "interval": [0, 0],
+                      "constrained": "$field:constrained",
+                      "value": "$field:value",
+                  },
+              },
+              category="initial", icon="ptInitial"),
+    condition("initialTemperature", "Initial temperature", list="initial_conditions_process_list", target="any",
+              fields=[field("value", "Value [K]", "number", default=293.15),
+                      field("constrained", "Fixed", "bool", default=False)],
+              process_template={
+                  "python_module": "assign_scalar_variable_process",
+                  "kratos_module": "KratosMultiphysics",
+                  "process_name": "AssignScalarVariableProcess",
+                  "Parameters": {
+                      "model_part_name": "$path",
+                      "variable_name": "TEMPERATURE",
                       "interval": [0, 0],
                       "constrained": "$field:constrained",
                       "value": "$field:value",
@@ -566,6 +674,16 @@ CONDITIONS = [
                   },
               },
               help="Writes Y_PLUS on this wall's nodes for the output, to check the first cell height against the wall model.", category="other", icon="ptResults"),
+    condition("integrationStats", "Integration-point statistics", list="auxiliar_process_list", target="volume",
+              fields=[field("statisticType", "Statistic", "enum", default="average", options=[{"value": "average", "label": "Average"}, {"value": "variance", "label": "Variance"}, {"value": "third_order_moment", "label": "Third-order moment"}]),
+                      field("variable", "Variable(s)", "string", default="VELOCITY", help="One variable for an average, one or two for a variance, three for a third-order moment, comma-separated."),
+                      field("tags", "Tags", "string", default="", help="Comma-separated output names for a vector average (VELOCITY fills VELOCITY_X, VELOCITY_Y, VELOCITY_Z itself); empty for a scalar."),
+                      field("outputFile", "Output file", "string", default="statistics"),
+                      field("startTime", "Start time [s]", "number", default=0, min=0)],
+              process_template={
+
+              },
+              help="Samples a statistic at the integration points over time (average, variance or third-order moment) and writes it to a file. One entry per assignment on the same part merges into a single process; a variance or third-order moment needs its average on the same part, and a vector average needs a tag per component (VELOCITY tags itself).", category="other", icon="ptResults", no_process=True),
 ]
 
 MATERIAL_LAWS = [
@@ -602,6 +720,30 @@ MATERIAL_LAWS = [
                  group="Non-Newtonian",
                  when={"field": "strategy", "equals": "monolithic"},
                  domain_size=3),
+    material_law("temperature_dependent_3d", "NewtonianTemperatureDependent3DLaw",
+                 variables=[field("DENSITY", "Density [kg/m³]", "number", default=1000, unit="kg/m³"),
+                            field("TEMPERATURE_TABLE", "Viscosity table [K, Pa·s]", "string", default="293.15,1e-3; 373.15,2.8e-4", help="Temperature–viscosity pairs, one `T,mu` per `;`, read as the TEMPERATURE–DYNAMIC_VISCOSITY table. Set the nodal TEMPERATURE (initial temperature) or every node reads the table at 0 K.")],
+                 group="Temperature dependent",
+                 when={"field": "strategy", "equals": "monolithic"},
+                 tables=[{
+                     "id": "Table1",
+                     "input_variable": "TEMPERATURE",
+                     "output_variable": "DYNAMIC_VISCOSITY",
+                     "data_field": "TEMPERATURE_TABLE",
+                 }],
+                 domain_size=3),
+    material_law("temperature_dependent_2d", "NewtonianTemperatureDependent2DLaw",
+                 variables=[field("DENSITY", "Density [kg/m³]", "number", default=1000, unit="kg/m³"),
+                            field("TEMPERATURE_TABLE", "Viscosity table [K, Pa·s]", "string", default="293.15,1e-3; 373.15,2.8e-4", help="Temperature–viscosity pairs, one `T,mu` per `;`, read as the TEMPERATURE–DYNAMIC_VISCOSITY table. Set the nodal TEMPERATURE (initial temperature) or every node reads the table at 0 K.")],
+                 group="Temperature dependent",
+                 when={"field": "strategy", "equals": "monolithic"},
+                 tables=[{
+                     "id": "Table1",
+                     "input_variable": "TEMPERATURE",
+                     "output_variable": "DYNAMIC_VISCOSITY",
+                     "data_field": "TEMPERATURE_TABLE",
+                 }],
+                 domain_size=2),
 ]
 
 define_problemtype(

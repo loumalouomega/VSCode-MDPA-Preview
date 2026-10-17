@@ -411,7 +411,8 @@ def domain(id, label, model_part_name, mdpa_suffix, parts_condition, condition_i
 
 
 def material_law(id, name, variables=(), domain_size=None, domain=None,
-                 application=None, group=None, parameters=None, when=None):
+                 application=None, group=None, parameters=None, when=None,
+                 tables=None):
     """A constitutive-law spec (mirrors the JS ``MaterialLawSpec``).
 
     An empty ``name`` omits the ``constitutive_law`` block in the materials file
@@ -447,6 +448,19 @@ def material_law(id, name, variables=(), domain_size=None, domain=None,
         m["parameters"] = dict(parameters)
     if when is not None:
         m["when"] = _normalize_when(when, f'material law "{id}": when')
+    if tables is not None:
+        if not isinstance(tables, (list, tuple)):
+            raise ValueError(f'material law "{id}": tables must be a list')
+        normed = []
+        for t in tables:
+            if not isinstance(t, dict):
+                raise ValueError(f'material law "{id}": each table must be a dict')
+            for k in ("id", "input_variable", "output_variable", "data_field"):
+                if k not in t or not isinstance(t[k], str) or not t[k]:
+                    raise ValueError(f'material law "{id}": each table needs string "id", "input_variable", "output_variable" and "data_field"')
+            normed.append({"id": t["id"], "inputVariable": t["input_variable"],
+                           "outputVariable": t["output_variable"], "dataField": t["data_field"]})
+        m["tables"] = normed
     return m
 
 
