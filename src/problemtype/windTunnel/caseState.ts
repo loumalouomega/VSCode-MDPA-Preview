@@ -137,7 +137,7 @@ export function windTunnelCase(plan: WindTunnelPlan): WindTunnelCase {
   } else if (embedded) {
     Object.assign(problem, { distanceMode: "from_mdpa", computeDrag: true, writeDragFile: true, correctDistance: true });
   } else {
-    Object.assign(problem, { strategy: "monolithic", elementType: "qsvms", timeScheme: "bdf2", computeReactions: true });
+    Object.assign(problem, { strategy: "monolithic", elementType: "qsvms", timeScheme: "bossak", computeReactions: true });
   }
   state.output = turbulent
     ? { ...state.output, controlType: "step", interval: 25, nodalVariables: ["VELOCITY", "PRESSURE"] }

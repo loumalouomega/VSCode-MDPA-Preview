@@ -297,7 +297,6 @@ def fluid_solver_settings(values, ctx):
                 "CFL_number": values["courantTarget"],
                 "minimum_delta_time": values["minDeltaTime"],
                 "maximum_delta_time": values["maxDeltaTime"],
-                "time_step": values["timeStep"],
             }
             if values["timeStepMode"] == "adaptive"
             else {"automatic_time_step": False, "time_step": values["timeStep"]}
@@ -992,7 +991,7 @@ FLUID_SECTION = section("fluid", "Fluid",
     field("f_timeOrder", "Time order", "int", default=2, visible_when={"field": "f_strategy", "equals": "fractional_step"}, group="f_formulation", min=1, max=2),
     field("f_useSlipConditions", "Slip conditions on the skin", "bool", default=True, visible_when={"field": "f_strategy", "equals": "fractional_step"}, group="f_formulation"),
     field("f_considerPeriodic", "Periodic boundaries", "bool", default=False, help="Turn on when a Periodic boundary condition is assigned.", group="f_formulation"),
-    field("f_timeScheme", "Time scheme", "enum", default="bdf2", options=[{"value": "bdf2", "label": "BDF2"}, {"value": "bossak", "label": "Bossak"}], visible_when={"field": "f_strategy", "equals": "monolithic"}, group="f_formulation"),
+    field("f_timeScheme", "Time scheme", "enum", default="bossak", options=[{"value": "bdf2", "label": "BDF2"}, {"value": "bossak", "label": "Bossak"}], visible_when={"field": "f_strategy", "equals": "monolithic"}, group="f_formulation"),
     field("f_bossakAlpha", "Bossak alpha", "number", default=-0.3, visible_when=[{"field": "f_strategy", "equals": "monolithic"}, {"field": "f_timeScheme", "equals": "bossak"}], group="f_formulation", min=-0.5, max=0),
     field("f_oss", "Orthogonal subscales", "bool", default=False, visible_when=[{"field": "f_strategy", "equals": "monolithic"}, {"field": "f_elementType", "one_of": ["qsvms", "dvms"]}], group="f_formulation"),
     field("f_dynamicTau", "Dynamic tau", "number", default=1, group="f_formulation", min=0),

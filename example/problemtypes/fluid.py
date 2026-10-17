@@ -179,7 +179,6 @@ def solver_settings(values, ctx):
                 "CFL_number": values["courantTarget"],
                 "minimum_delta_time": values["minDeltaTime"],
                 "maximum_delta_time": values["maxDeltaTime"],
-                "time_step": values["timeStep"],
             }
             if values["timeStepMode"] == "adaptive"
             else {"automatic_time_step": False, "time_step": values["timeStep"]}
@@ -312,7 +311,7 @@ SECTION_0 = section("problem", "Problem data",
     field("timeOrder", "Time order", "int", default=2, visible_when={"field": "strategy", "equals": "fractional_step"}, group="formulation", min=1, max=2),
     field("useSlipConditions", "Slip conditions on the skin", "bool", default=True, visible_when={"field": "strategy", "equals": "fractional_step"}, group="formulation"),
     field("considerPeriodic", "Periodic boundaries", "bool", default=False, help="Turn on when a Periodic boundary condition is assigned.", group="formulation"),
-    field("timeScheme", "Time scheme", "enum", default="bdf2", options=[{"value": "bdf2", "label": "BDF2"}, {"value": "bossak", "label": "Bossak"}], visible_when={"field": "strategy", "equals": "monolithic"}, group="formulation"),
+    field("timeScheme", "Time scheme", "enum", default="bossak", options=[{"value": "bdf2", "label": "BDF2"}, {"value": "bossak", "label": "Bossak"}], visible_when={"field": "strategy", "equals": "monolithic"}, group="formulation"),
     field("bossakAlpha", "Bossak alpha", "number", default=-0.3, visible_when=[{"field": "strategy", "equals": "monolithic"}, {"field": "timeScheme", "equals": "bossak"}], group="formulation", min=-0.5, max=0),
     field("oss", "Orthogonal subscales", "bool", default=False, visible_when=[{"field": "strategy", "equals": "monolithic"}, {"field": "elementType", "one_of": ["qsvms", "dvms"]}], group="formulation"),
     field("dynamicTau", "Dynamic tau", "number", default=1, group="formulation", min=0),

@@ -31,6 +31,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
+- **Fluid solver fixes from the verification harness.** The monolithic default time scheme is **Bossak** (was BDF2): stock Kratos segfaults on BDF2 with a classic element (plain QSVMS/DVMS/VMS/FIC), whose BDF2 scheme reads BDF coefficients the solver only computes for time-integrated elements — the harness caught it, and Bossak is Kratos' own solver default. BDF2 stays offered (it applies to time-integrated elements). Adaptive time stepping no longer writes `time_step` (Kratos' step estimator rejects keys outside its defaults; it starts from the minimum). The generated driver resolves `rans_analysis` to the `RANSAnalysis` class (title-casing gives a name the module does not have).
 - **Embedded Fluid** wrote `solver_type: "Monolithic"`, which builds the monolithic solver and rejects an embedded element; it now writes `"Embedded"`, as GiD's strategy does. Its drag option wrote `compute_embedded_drag_process`, a module Kratos no longer ships, with keys the replacement does not read; it now writes `compute_embedded_flow_forces_and_moments_process` with `write_forces_output_file` and `print_to_screen`.
 
 ## [5.14.0] - 2026-10-16

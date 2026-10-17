@@ -113,7 +113,7 @@ export const fluid = defineProblemtype(
             id: "timeScheme",
             label: "Time scheme",
             type: "enum",
-            default: "bdf2",
+            default: "bossak",
             group: "formulation",
             visibleWhen: MONOLITHIC,
             options: [
@@ -652,7 +652,8 @@ export const fluid = defineProblemtype(
                 CFL_number: asNum(v.courantTarget, 1.0),
                 minimum_delta_time: asNum(v.minDeltaTime, 1e-4),
                 maximum_delta_time: asNum(v.maxDeltaTime, 0.1),
-                time_step: asNum(v.timeStep, 0.01),
+                // No time_step in adaptive mode: EstimateDtUtility rejects keys
+                // outside its defaults; the solver starts from the minimum.
               }
             : { automatic_time_step: false, time_step: asNum(v.timeStep, 0.01) },
       };
@@ -686,7 +687,7 @@ export const fluid = defineProblemtype(
         settings.absolute_velocity_tolerance = asNum(v.absVelTol, 1e-5);
         settings.relative_pressure_tolerance = asNum(v.relPresTol, 1e-3);
         settings.absolute_pressure_tolerance = asNum(v.absPresTol, 1e-5);
-        settings.time_scheme = asStr(v.timeScheme, "bdf2");
+        settings.time_scheme = asStr(v.timeScheme, "bossak");
         // Kratos' own defaults (alpha -0.3, FIC beta 0.8) are not written, so recorded cases keep their bytes.
         if (settings.time_scheme === "bossak" && asNum(v.bossakAlpha, -0.3) !== -0.3) settings.alpha = asNum(v.bossakAlpha, -0.3);
         // Each formulation validates its own key set, so only its keys are written.

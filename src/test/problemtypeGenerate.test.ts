@@ -622,17 +622,20 @@ function fluidState(): CaseState {
   return state;
 }
 
-test("fluid monolithic: QSVMS formulation, BDF2 scheme and the orthogonal-subscales switch only for the VMS family", async () => {
+test("fluid monolithic: QSVMS formulation, Bossak scheme by default and the orthogonal-subscales switch only for the VMS family", async () => {
   const model = parseMdpa(MDPA_3D);
   const state = fluidState();
   const ss = async () => JSON.parse((await generateCase(fluid, model, state, "flow")).projectParameters).solver_settings;
   let s = await ss();
   assert.equal(s.solver_type, "Monolithic");
-  assert.equal(s.time_scheme, "bdf2");
-  assert.deepEqual(s.formulation, { element_type: "qsvms", use_orthogonal_subscales: false, dynamic_tau: 1 });
-  Object.assign(state.values.problem, { elementType: "fic", timeScheme: "bossak", oss: true });
-  s = await ss();
+  // Bossak is the default: BDF2 with a classic (non-time-integrated) element
+  // segfaults stock Kratos (its BDF2 scheme reads BDF coefficients the solver
+  // only computes for time-integrated elements), so the default must not emit it.
   assert.equal(s.time_scheme, "bossak");
+  assert.deepEqual(s.formulation, { element_type: "qsvms", use_orthogonal_subscales: false, dynamic_tau: 1 });
+  Object.assign(state.values.problem, { elementType: "fic", timeScheme: "bdf2", oss: true });
+  s = await ss();
+  assert.equal(s.time_scheme, "bdf2");
   assert.deepEqual(s.formulation, { element_type: "fic", dynamic_tau: 1 });
   Object.assign(state.values.problem, { elementType: "dvms" });
   assert.equal((await ss()).formulation.use_orthogonal_subscales, true);

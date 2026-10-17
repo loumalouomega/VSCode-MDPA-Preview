@@ -45,48 +45,61 @@ const PASS = "pass";
 const FAIL = "fail";
 const SKIP = "skip";
 
-// A 2-tetra box, 1 x 1 x 1, with volume/skin parts and a DISTANCE field.
-// Nodes: 1:(0,0,0) 2:(1,0,0) 3:(1,1,0) 4:(0,1,0) 5:(0,0,1) 6:(1,0,1) 7:(1,1,1) 8:(0,1,1).
-// Skin faces are quads split along their diagonal; each family only needs the
-// part NAMES to resolve, so one condition per face is enough.
-const MESH = `Begin Properties 0
+// A 2-tetra box, 1 x 1 x 1, with volume/skin parts. The DISTANCE field is
+// appended only for the families whose solver reads it (embedded, two
+// fluids): the plain Fluid solver refuses unknown nodal variables.
+const MESH_BASE = `Begin Properties 0
 End Properties
 Begin Nodes
 1 0.0 0.0 0.0
-2 1.0 0.0 0.0
-3 1.0 1.0 0.0
-4 0.0 1.0 0.0
-5 0.0 0.0 1.0
+2 0.0 0.0 1.0
+3 0.0 1.0 0.0
+4 0.0 1.0 1.0
+5 1.0 0.0 0.0
 6 1.0 0.0 1.0
-7 1.0 1.0 1.0
-8 0.0 1.0 1.0
+7 1.0 1.0 0.0
+8 1.0 1.0 1.0
+9 2.0 0.0 0.0
+10 2.0 0.0 1.0
+11 2.0 1.0 0.0
+12 2.0 1.0 1.0
 End Nodes
 Begin Elements Element3D4N
-1 0 1 2 3 6
-2 0 1 3 4 8
-3 0 1 3 8 6
-4 0 3 7 8 6
-5 0 1 6 5 8
-6 0 1 8 4 5
+1 0 1 5 7 8
+2 0 1 6 5 8
+3 0 1 7 3 8
+4 0 1 3 4 8
+5 0 1 2 6 8
+6 0 1 4 2 8
+7 0 5 9 11 12
+8 0 5 10 9 12
+9 0 5 11 7 12
+10 0 5 7 8 12
+11 0 5 6 10 12
+12 0 5 8 6 12
 End Elements
 Begin Conditions SurfaceCondition3D3N
-1 0 1 2 3
-2 0 5 6 7
-3 0 1 2 6
-4 0 3 4 8
-5 0 2 3 7
-6 0 4 8 5
+1 0 1 5 7
+2 0 1 6 5
+3 0 1 7 3
+4 0 7 3 8
+5 0 1 3 4
+6 0 3 4 8
+7 0 1 2 6
+8 0 2 6 8
+9 0 1 4 2
+10 0 4 2 8
+11 0 5 9 11
+12 0 9 11 12
+13 0 5 10 9
+14 0 10 9 12
+15 0 5 11 7
+16 0 11 7 12
+17 0 7 8 12
+18 0 5 6 10
+19 0 6 10 12
+20 0 8 6 12
 End Conditions
-Begin NodalData DISTANCE
-1 0 -0.4
-2 0 -0.4
-3 0 0.4
-4 0 0.4
-5 0 -0.4
-6 0 -0.4
-7 0 0.4
-8 0 0.4
-End NodalData
 Begin SubModelPart Parts
 Begin SubModelPartNodes
 1
@@ -97,6 +110,10 @@ Begin SubModelPartNodes
 6
 7
 8
+9
+10
+11
+12
 End SubModelPartNodes
 Begin SubModelPartElements
 1
@@ -105,48 +122,80 @@ Begin SubModelPartElements
 4
 5
 6
+7
+8
+9
+10
+11
+12
 End SubModelPartElements
 End SubModelPart
 Begin SubModelPart Inlet
 Begin SubModelPartNodes
 1
 2
-5
-6
+3
+4
 End SubModelPartNodes
 Begin SubModelPartConditions
-3
+5
+9
 End SubModelPartConditions
 End SubModelPart
 Begin SubModelPart Outlet
 Begin SubModelPartNodes
-3
-4
-7
-8
+9
+10
+11
+12
 End SubModelPartNodes
 Begin SubModelPartConditions
-5
+12
+14
 End SubModelPartConditions
 End SubModelPart
 Begin SubModelPart Walls
 Begin SubModelPartNodes
-1
-4
 5
-8
-2
-3
 6
 7
+8
 End SubModelPartNodes
 Begin SubModelPartConditions
 1
 2
+3
 4
 6
+7
+8
+10
+11
+13
+15
+16
+17
+18
+19
+20
 End SubModelPartConditions
 End SubModelPart
+`;
+const MESH = MESH_BASE;
+const MESH_DISTANCE = MESH_BASE + `Begin NodalData DISTANCE
+1 0 -0.4
+2 0 -0.4
+3 0 -0.4
+4 0 -0.4
+5 0 -0.4
+6 0 -0.4
+7 0 -0.4
+8 0 -0.4
+9 0 0.4
+10 0 0.4
+11 0 0.4
+12 0 0.4
+End NodalData
 `;
 
 const FLUID_MATS = [{ smpPath: "Parts", lawId: "newtonian_3d", values: {} }];
@@ -189,8 +238,8 @@ const FAMILIES = [
     id: "fluid-monolithic",
     apps: ["FluidDynamicsApplication"],
     problemtype: "fluid",
-    describe: "monolithic QSVMS, BDF2, fixed step",
-    state: () => fluidState({ strategy: "monolithic", elementType: "qsvms", timeScheme: "bdf2" }),
+    describe: "monolithic QSVMS, Bossak, fixed step",
+    state: () => fluidState({ strategy: "monolithic", elementType: "qsvms", timeScheme: "bossak" }),
   },
   {
     id: "fluid-fractional-step",
@@ -212,8 +261,10 @@ const FAMILIES = [
     problemtype: "fluid",
     describe: "monolithic weakly-compressible element",
     state: () => {
-      const s = fluidState({ strategy: "monolithic", elementType: "weakly_compressible", soundVelocity: 10 });
-      s.materials = [{ smpPath: "Parts", lawId: "newtonian_3d_weakly_compressible", values: { SOUND_VELOCITY: 10 } }];
+      // The weakly compressible element integrates in time, so BDF2 (which a
+      // classic element must not use, see the monolithic family) applies here.
+      const s = fluidState({ strategy: "monolithic", elementType: "weakly_compressible", soundVelocity: 10, timeScheme: "bdf2" });
+      s.materials = [{ smpPath: "Parts", lawId: "newtonian_3d", values: {} }];
       return s;
     },
   },
@@ -222,6 +273,7 @@ const FAMILIES = [
     apps: ["FluidDynamicsApplication"],
     problemtype: "embeddedFluid",
     describe: "embedded (continuous), distance from the mesh",
+    needsDistance: true,
     state: () => {
       const s = defaultCaseState(embeddedFluid.decl);
       shortTime(s);
@@ -235,6 +287,7 @@ const FAMILIES = [
     apps: ["FluidDynamicsApplication"],
     problemtype: "twoFluids",
     describe: "two fluids, level set from the mesh DISTANCE",
+    needsDistance: true,
     state: () => {
       const s = defaultCaseState(twoFluids.decl);
       shortTime(s);
@@ -346,6 +399,7 @@ async function main() {
   }
   const python = opts.python || "python3";
   const root = opts.outDir ? path.resolve(opts.outDir) : fs.mkdtempSync(path.join(os.tmpdir(), "verify-fluid-"));
+  fs.mkdirSync(root, { recursive: true });
 
   // Probe once for the union of the wanted families' applications.
   const needed = [...new Set(wanted.flatMap((id) => FAMILIES.find((f) => f.id === id).apps))];
@@ -353,7 +407,7 @@ async function main() {
   try {
     const { computeKratosEnv } = out("problemtype/kratosEnv.js");
     const envDelta = computeKratosEnv({ platform: process.platform, installPath: opts.install ?? "", extraEnv: {}, base: {} });
-    probe = await probeKratosApplications({ python, envDelta, applications: ["KratosMultiphysics", ...needed], cwd: root, timeoutMs: 60000 });
+    probe = await probeKratosApplications({ python, envDelta, applications: needed, cwd: root, timeoutMs: 60000 });
   } catch (e) {
     probe = { missing: [], unavailable: String(e.message ?? e) };
   }
@@ -404,24 +458,36 @@ async function runFamily(fam, { python, install, timeout, root }) {
   let meshPath;
   let problemtype = fam.problemtype;
   if (fam.windTunnel) {
-    // A coarse tunnel sphere through the wizard path, kept small on purpose.
+    // A coarse tunnel sphere through the wizard path, kept small on purpose,
+    // with the run shortened to a fixed-step smoke (the wizard's own case
+    // runs ten adaptive flow-throughs, far too long for a smoke test).
     const { planWindTunnel } = out("problemtype/windTunnel/plan.js");
     const { runWindTunnel } = out("problemtype/windTunnel/run.js");
     const { icosphere } = require(path.join(ROOT, "out", "test", "fixtures", "shapes.js"));
+    const { parseCaseJson, caseFilePath } = out("problemtype/caseFile.js");
     const plan = planWindTunnel(
       {
         flow: { speed: 5 },
         tunnel: { upstream: 1.5, downstream: 3, side: 2, top: 2, bottom: 2 },
-        mesh: { surfaceSize: 0.3, farSize: 1.5, firstHeight: 0.03, growth: 1.3, maxAspect: 10, wakeLength: 1, wakeSize: 0.5, fit: 0.01, maxTetrahedra: 60000 },
+        mesh: { surfaceSize: 0.4, farSize: 2.0, firstHeight: 0.05, growth: 1.3, maxAspect: 10, wakeLength: 1, wakeSize: 0.8, fit: 0.02, maxTetrahedra: 20000 },
       },
-      icosphere(0.5, 1)
+      icosphere(0.5, 0)
     );
     if (plan.errors.length > 0) return { family: fam.id, status: FAIL, dir, detail: plan.errors.join("; ") };
     const built = await runWindTunnel(plan, { folder: dir, stem: "tunnel" });
     meshPath = built.files.mesh;
+    const flowThrough = plan.body.size[0] / 5;
+    const saved = parseCaseJson(fs.readFileSync(caseFilePath(meshPath), "utf8"));
+    if (saved.state) {
+      Object.assign(saved.state.values.problem, {
+        timeStepMode: "fixed", timeStep: flowThrough * 0.01, endTime: flowThrough * 0.5,
+      });
+      saved.state.output = { ...saved.state.output, controlType: "time", interval: flowThrough * 0.1 };
+      fs.writeFileSync(caseFilePath(meshPath), serializeCase(saved.state));
+    }
   } else {
     meshPath = path.join(dir, "case.mdpa");
-    fs.writeFileSync(meshPath, MESH);
+    fs.writeFileSync(meshPath, fam.needsDistance ? MESH_DISTANCE : MESH);
     fs.writeFileSync(meshPath.replace(/\.mdpa$/, ".kratoscase.json"), serializeCase(fam.state()));
   }
   const started = Date.now();
