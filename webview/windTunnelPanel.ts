@@ -152,6 +152,20 @@ export function renderWindTunnelPanel(container: HTMLElement, state: WindTunnelP
     });
     return el;
   };
+  const multitext = (get: () => string, set: (v: string) => void, placeholder = "", title?: string): HTMLTextAreaElement => {
+    const el = document.createElement("textarea");
+    el.className = "field-select";
+    el.value = get();
+    el.placeholder = placeholder;
+    el.rows = 3;
+    el.disabled = busy;
+    if (title) el.title = title;
+    el.addEventListener("input", () => {
+      set(el.value);
+      h.onChange();
+    });
+    return el;
+  };
   const select = (options: { value: string; label: string }[], value: string, set: (v: string) => void, title?: string): HTMLSelectElement => {
     const el = document.createElement("select");
     el.className = "field-select";
@@ -324,6 +338,15 @@ export function renderWindTunnelPanel(container: HTMLElement, state: WindTunnelP
         row("Max aspect", text(() => form.maxAspect, (v) => { form.maxAspect = v; }, "50", "Largest along/across cell ratio in the layer"));
       }
       row("Wake", text(() => form.wakeLength, (v) => { form.wakeLength = v; }, "2", "Refined wake length behind the body, in body lengths (0 = none)"));
+      row(
+        "Regions",
+        multitext(
+          () => form.regions,
+          (v) => { form.regions = v; },
+          "box -1 -0.5 0 3 0.5 1 0.25",
+          "One refinement region per line, in tunnel metres — box x0 y0 z0 x1 y1 z1 size [growth], cone x0 y0 z0 x1 y1 z1 r0 r1 size [growth], ellipsoid cx cy cz rx ry rz size [growth]. Any region replaces the wake box above."
+        )
+      );
       if (form.mode === "bodyFitted") {
         row("Wall snap", check(() => form.snap, (v) => { form.snap = v; }, "Project the carved wall onto the surface and smooth it (uncheck to keep the carve)"));
       }

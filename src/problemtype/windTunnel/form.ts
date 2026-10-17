@@ -8,6 +8,8 @@
  */
 
 import type { WindTunnelParams } from "./plan";
+import { checkRegion } from "./plan";
+import type { RefinementRegion } from "./plan";
 import type { GroundMode } from "./domain";
 
 export interface WindTunnelForm {
@@ -41,6 +43,8 @@ export interface WindTunnelForm {
   wakeLength: string;
   wakeSize: string;
   snap: boolean;
+  /** One refinement region per line; empty keeps the wake box above. */
+  regions: string;
   fit: string;
   // Output
   outputFolder: string;
@@ -78,6 +82,7 @@ export function defaultWindTunnelForm(): WindTunnelForm {
     wakeLength: "",
     wakeSize: "",
     snap: true,
+    regions: "",
     fit: "",
     outputFolder: "",
     stem: "tunnel",
@@ -117,8 +122,41 @@ const LABELS: Partial<Record<keyof WindTunnelForm, string>> = {
   maxAspect: "Maximum aspect ratio",
   wakeLength: "Wake length",
   wakeSize: "Wake size",
+  regions: "Refinement regions",
   fit: "Surface fit",
 };
+
+/** One refinement region per line; empty keeps the wake box from the Mesh step. */
+export function parseRegions(text: string): FormResult<RefinementRegion[] | undefined> {
+  const lines = text.split("\n").map((l) => l.trim()).filter((l) => l !== "" && !l.startsWith("#"));
+  if (lines.length === 0) return { ok: true, value: undefined };
+  const out: RefinementRegion[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const parts = lines[i].split(/[\s,]+/);
+    const shape = parts[0];
+    const nums = parts.slice(1).map(Number);
+    const bad = (): FormResult<RefinementRegion[] | undefined> => ({
+      ok: false,
+      error: `Refinement regions line ${i + 1}: use "box x0 y0 z0 x1 y1 z1 size [growth]", "cone x0 y0 z0 x1 y1 z1 r0 r1 size [growth]" or "ellipsoid cx cy cz rx ry rz size [growth]" (metres).`,
+      field: "regions",
+    });
+    if (nums.some((v) => !Number.isFinite(v))) return bad();
+    let region: RefinementRegion | undefined;
+    if (shape === "box" && (nums.length === 7 || nums.length === 8)) {
+      region = { shape: "box", min: [nums[0], nums[1], nums[2]], max: [nums[3], nums[4], nums[5]], size: nums[6], ...(nums.length === 8 ? { growth: nums[7] } : {}) };
+    } else if (shape === "cone" && (nums.length === 9 || nums.length === 10)) {
+      region = { shape: "cone", start: [nums[0], nums[1], nums[2]], end: [nums[3], nums[4], nums[5]], radiusStart: nums[6], radiusEnd: nums[7], size: nums[8], ...(nums.length === 10 ? { growth: nums[9] } : {}) };
+    } else if (shape === "ellipsoid" && (nums.length === 7 || nums.length === 8)) {
+      region = { shape: "ellipsoid", center: [nums[0], nums[1], nums[2]], radii: [nums[3], nums[4], nums[5]], size: nums[6], ...(nums.length === 8 ? { growth: nums[7] } : {}) };
+    } else {
+      return bad();
+    }
+    const problem = checkRegion(region);
+    if (problem !== undefined) return { ok: false, error: `Refinement regions line ${i + 1}: ${problem}.`, field: "regions" };
+    out.push(region);
+  }
+  return { ok: true, value: out };
+}
 
 /** Parses an optional number; empty means "use the default". Without `min` the value must be above zero. */
 function optional(form: WindTunnelForm, key: keyof WindTunnelForm, opts: { min?: number } = {}): FormResult<number | undefined> {
@@ -175,6 +213,9 @@ export function buildWindTunnelRequest(form: WindTunnelForm): FormResult<WindTun
     const v = num[k];
     if (v !== undefined) mesh[k] = v;
   }
+  const regions = parseRegions(form.regions);
+  if (!regions.ok) return regions;
+  if (regions.value !== undefined) mesh.regions = regions.value;
   return {
     ok: true,
     value: {

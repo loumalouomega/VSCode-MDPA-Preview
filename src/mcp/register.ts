@@ -493,6 +493,11 @@ export function registerAllTools(server: McpServer): void {
       carveFactor: z.number().min(0.2).max(1).optional().describe("The carve uses cells this fraction of the surface size (default 0.7); smaller follows sharp edges better and costs more"),
       wakeLength: z.number().nonnegative().optional().describe("Wake refinement length behind the body, in body lengths (default 2; 0 = none)"),
       wakeSize: z.number().positive().optional().describe("Cell size in the wake in metres (default far size / 4)"),
+      regions: z.array(z.union([
+        z.object({ shape: z.literal("box"), min: z.array(z.number()).length(3), max: z.array(z.number()).length(3), size: z.number().positive(), growth: z.number().min(0).optional() }),
+        z.object({ shape: z.literal("cone"), start: z.array(z.number()).length(3), end: z.array(z.number()).length(3), radiusStart: z.number().min(0), radiusEnd: z.number().min(0), size: z.number().positive(), growth: z.number().min(0).optional() }),
+        z.object({ shape: z.literal("ellipsoid"), center: z.array(z.number()).length(3), radii: z.array(z.number()).length(3), size: z.number().positive(), growth: z.number().min(0).optional() }),
+      ])).optional().describe("Extra refinement regions in tunnel metres (box, cone/frustum, ellipsoid), each size inside growing with the distance outside; any region replaces the wake box"),
       snap: z.boolean().optional().describe("Sobolev wall snap after the carve (default true): project the wall onto the surface and smooth it with the far-field pinned, keeping the largest clean sub-step; false keeps the carve as the wall"),
       maxTetrahedra: z.number().int().positive().optional().describe("Refuse a plan expecting more tetrahedra than this (default 3 000 000)"),
       sdfMaxTriangles: z.number().int().positive().optional().describe("A body with more triangles is simplified for the distance sampling only (default 300 000)"),

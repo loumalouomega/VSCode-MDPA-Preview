@@ -74,6 +74,13 @@ export interface WindTunnelMesh {
   wakeLength?: number;
   /** Cell size in the wake (m). Default: far size / 4. */
   wakeSize?: number;
+  /**
+   * Extra refinement regions (tunnel frame, metres), each `size` inside and
+   * growing with the distance outside. Replaces the single wake box: when set
+   * (even empty) the wake box above does not apply. Undefined keeps the wake
+   * exactly as before.
+   */
+  regions?: RefinementRegion[];
   /** Refuse a plan expecting more tetrahedra than this. */
   maxTetrahedra?: number;
   /** A surface with more triangles than this is decimated for the distance sampling only. Default 300 000. */
@@ -166,6 +173,91 @@ export function wakeSizeExpr(domain: TunnelDomain, length: number, wakeLength: n
 }
 
 /**
+ * Extra refinement regions, in the tunnel frame in metres: a size law that is
+ * `size` inside the region and grows with the distance outside it. They
+ * replace the single wake box; when `regions` is undefined the wake applies
+ * exactly as before.
+ */
+export type RefinementRegion =
+  | { shape: "box"; min: Vec3; max: Vec3; size: number; growth?: number }
+  | { shape: "cone"; start: Vec3; end: Vec3; radiusStart: number; radiusEnd: number; size: number; growth?: number }
+  | { shape: "ellipsoid"; center: Vec3; radii: Vec3; size: number; growth?: number };
+
+const num = (v: number): string => String(+v.toPrecision(7));
+
+function boxDistance(min: Vec3, max: Vec3): string {
+  const d = (lo: number, hi: number, c: string): string => `max(0, max(${num(lo)} - ${c}, ${c} - ${num(hi)}))`;
+  return `sqrt(pow(${d(min[0], max[0], "x")}, 2) + pow(${d(min[1], max[1], "y")}, 2) + pow(${d(min[2], max[2], "z")}, 2))`;
+}
+
+/** The size law of one region: `size` inside, `size + growth * outside-distance` beyond it. */
+export function regionSizeExpr(region: RefinementRegion, defaultGrowth: number): string {
+  const growth = region.growth ?? defaultGrowth;
+  if (region.shape === "box") {
+    return `${num(region.size)} + ${num(growth)}*${boxDistance(region.min, region.max)}`;
+  }
+  if (region.shape === "cone") {
+    const [sx, sy, sz] = region.start;
+    const dx = region.end[0] - sx;
+    const dy = region.end[1] - sy;
+    const dz = region.end[2] - sz;
+    const len2 = dx * dx + dy * dy + dz * dz;
+    const t = `min(1, max(0, ((x - ${num(sx)})*${num(dx)} + (y - ${num(sy)})*${num(dy)} + (z - ${num(sz)})*${num(dz)})/${num(len2)}))`;
+    const px = `${num(sx)} + ${num(dx)}*${t}`;
+    const py = `${num(sy)} + ${num(dy)}*${t}`;
+    const pz = `${num(sz)} + ${num(dz)}*${t}`;
+    const radius = `${num(region.radiusStart)} + ${num(region.radiusEnd - region.radiusStart)}*${t}`;
+    const outside = `max(0, sqrt(pow(x - (${px}), 2) + pow(y - (${py}), 2) + pow(z - (${pz}), 2)) - (${radius}))`;
+    return `${num(region.size)} + ${num(growth)}*${outside}`;
+  }
+  const [cx, cy, cz] = region.center;
+  const [rx, ry, rz] = region.radii;
+  const q = `pow((x - ${num(cx)})/${num(rx)}, 2) + pow((y - ${num(cy)})/${num(ry)}, 2) + pow((z - ${num(cz)})/${num(rz)}, 2)`;
+  const minR = Math.min(rx, ry, rz);
+  return `${num(region.size)} + ${num(growth)}*max(0, sqrt(${q}) - 1)*${num(minR)}`;
+}
+
+/** One region in plain words, for the plan summary and the wizard review. */
+export function describeRegion(region: RefinementRegion, i: number): string {
+  const size = `size ${region.size} m`;
+  if (region.shape === "box") return `Region ${i} (box [${region.min}]–[${region.max}], ${size})`;
+  if (region.shape === "cone") {
+    return `Region ${i} (cone [${region.start}] r=${region.radiusStart} → [${region.end}] r=${region.radiusEnd}, ${size})`;
+  }
+  return `Region ${i} (ellipsoid at [${region.center}] radii [${region.radii}], ${size})`;
+}
+
+const finiteVec3 = (v: unknown): v is Vec3 => Array.isArray(v) && v.length === 3 && v.every((x) => typeof x === "number" && Number.isFinite(x));
+
+/** What makes a region unusable, in one clause; undefined when it can run. */
+export function checkRegion(region: RefinementRegion): string | undefined {
+  if (!region || typeof region !== "object") return "the region is not an object";
+  if (!(region.size > 0)) return "the size must be above zero";
+  if (region.growth !== undefined && !(region.growth >= 0)) return "the growth cannot be below 0";
+  switch (region.shape) {
+    case "box":
+      if (!finiteVec3(region.min) || !finiteVec3(region.max)) return "min and max must be [x, y, z] in metres";
+      if (!(region.min[0] < region.max[0] && region.min[1] < region.max[1] && region.min[2] < region.max[2])) {
+        return "min must be below max on every axis";
+      }
+      return undefined;
+    case "cone":
+      if (!finiteVec3(region.start) || !finiteVec3(region.end)) return "start and end must be [x, y, z] in metres";
+      if (!(region.end[0] !== region.start[0] || region.end[1] !== region.start[1] || region.end[2] !== region.start[2])) {
+        return "start and end coincide: a cone needs an axis (use a box or an ellipsoid for a point)";
+      }
+      if (!(region.radiusStart >= 0) || !(region.radiusEnd >= 0)) return "the radii cannot be below 0";
+      return undefined;
+    case "ellipsoid":
+      if (!finiteVec3(region.center) || !finiteVec3(region.radii)) return "center and radii must be [x, y, z] in metres";
+      if (!(region.radii[0] > 0 && region.radii[1] > 0 && region.radii[2] > 0)) return "the radii must be above zero";
+      return undefined;
+    default:
+      return `unknown shape "${(region as { shape: unknown }).shape}" (box, cone or ellipsoid)`;
+  }
+}
+
+/**
  * Plans a tunnel for `bodyModel`. Never throws for a bad CHOICE (it reports it
  * in `errors`/`warnings`, so the wizard can show every problem at once); it
  * throws only when the input is unusable, such as a surface with no triangles.
@@ -252,10 +344,22 @@ export function planWindTunnel(params: WindTunnelParams, bodyModel: MdpaModel): 
     maxAspect,
   };
   const gradation = 0.25;
-  const wakeExpr = wakeLength > 0 ? wakeSizeExpr(domain, L, wakeLength, wake, gradation) : undefined;
+  // An explicit region list replaces the single wake box; undefined keeps the
+  // wake exactly as before (byte-identical size law).
+  const wakeExpr = mesh.regions === undefined && wakeLength > 0 ? wakeSizeExpr(domain, L, wakeLength, wake, gradation) : undefined;
+  const regionExprs: string[] = [];
+  if (mesh.regions !== undefined) {
+    mesh.regions.forEach((region, i) => {
+      const problem = checkRegion(region);
+      if (problem) errors.push(`regions[${i}]: ${problem}.`);
+      else regionExprs.push(regionSizeExpr(region, gradation));
+    });
+  }
+  const refineExprs = mesh.regions !== undefined ? regionExprs : wakeExpr !== undefined ? [wakeExpr] : [];
+  const refineCap = refineExprs.length === 1 ? refineExprs[0] : refineExprs.length > 1 ? `min(${refineExprs.join(", ")})` : undefined;
   const carveSurface = surface * Math.min(1, Math.max(0.2, mesh.carveFactor ?? 0.7));
   const wallLaw = `clamp(${+carveSurface.toPrecision(6)} + ${gradation}*abs(${SDF_FIELD}), ${+carveSurface.toPrecision(6)}, ${+far.toPrecision(6)})`;
-  const sizeExpr = wakeExpr ? `min(${wallLaw}, ${wakeExpr})` : wallLaw;
+  const sizeExpr = refineExprs.length > 0 ? `min(${wallLaw}, ${refineExprs.join(", ")})` : wallLaw;
 
   const maxTetrahedra = mesh.maxTetrahedra ?? DEFAULT_MAX_TETRAHEDRA;
   const estimate = estimateMesh({ volume: domain.volume, surfaceArea: body.surfaceArea * (domain.halfModel ? 0.5 : 1), wall });
@@ -306,7 +410,7 @@ export function planWindTunnel(params: WindTunnelParams, bodyModel: MdpaModel): 
           tangentialSize: +surface.toPrecision(6),
           tangentialGrowth: 0.25,
           maxAspect,
-          ...(wakeExpr ? { sizeExpr: wakeExpr } : {}),
+          ...(refineCap !== undefined ? { sizeExpr: refineCap } : {}),
           ...common,
           hausd: +(hausd * 0.5).toPrecision(4),
         } as OpRecord,
@@ -390,6 +494,10 @@ export function summarizePlan(plan: WindTunnelPlan): Record<string, unknown> {
       basis: plan.boundaryLayer.basis,
     },
     sizes: Object.fromEntries(Object.entries(plan.sizes).map(([k, v]) => [k, sig(v)])),
+    refinement:
+      plan.params.mesh?.regions !== undefined
+        ? plan.params.mesh.regions.map((r, i) => describeRegion(r, i))
+        : [`wake box, ${plan.params.mesh?.wakeLength ?? 2} body lengths, size ${sig(plan.sizes.wake)} m`],
     estimate: {
       expectedTetrahedra: Math.round(plan.estimate.expectedTetrahedra),
       nodes: Math.round(plan.estimate.nodes),
