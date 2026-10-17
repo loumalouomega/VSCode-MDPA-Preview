@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [5.15.0] - 2026-10-17
+
 ### Added
 
 - **Virtual wind tunnel: Sobolev wall snap** (body-fitted, on by default): after the carve, the wall is projected onto the surface and the Body displacement smoothed with the far-field and tunnel faces pinned — a size-preserving quality pass, an exact attempt, smoothed sub-steps coarse-to-fine, and a raw polish of the residual, keeping the largest move that inverts no cell and falling back to the carve with a reported gap. The report carries the carve fit before and the fit after (sharp box: 1.67% down to 0.29% of the body length). Wizard checkbox, `snap` in `wind_tunnel_plan`/`wind_tunnel_generate`.
