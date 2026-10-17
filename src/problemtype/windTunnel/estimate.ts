@@ -146,11 +146,13 @@ export function estimateMesh(input: MeshEstimateInput): MeshEstimate {
     tetrahedra: cells,
     expectedTetrahedra: expected,
     nodes: expected / 5.5,
-    memoryMb: (expected * 1.2e-3) * 6,
-    seconds: (expected / 8000) * 3,
+    // Measured on a sharp box in a tunnel: 413k tetrahedra in 78 s at 3.2 GB, 1.05M in 385 s at 2.8 GB
+    // (single process; the extension runs each wasm step in a worker that is released afterwards).
+    memoryMb: Math.max(1000, expected * 2.5e-3),
+    seconds: 78 * (expected / 413_000) ** 1.75,
     notes,
   };
 }
 
 /** Largest tetrahedron count the wizard accepts without an explicit override. */
-export const DEFAULT_MAX_TETRAHEDRA = 6_000_000;
+export const DEFAULT_MAX_TETRAHEDRA = 3_000_000;

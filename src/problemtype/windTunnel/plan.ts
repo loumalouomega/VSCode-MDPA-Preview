@@ -245,7 +245,7 @@ export function planWindTunnel(params: WindTunnelParams, bodyModel: MdpaModel): 
     errors.push(
       `The mesh would have about ${Math.round(estimate.expectedTetrahedra).toLocaleString("en-US")} tetrahedra, above the limit of ${maxTetrahedra.toLocaleString("en-US")}. Raise the surface or far size, the y+ target or the maximum aspect ratio, or raise the limit if the machine can take it.`
     );
-  } else if (estimate.expectedTetrahedra > 1_500_000) {
+  } else if (estimate.expectedTetrahedra > 1_000_000) {
     warnings.push(`About ${Math.round(estimate.expectedTetrahedra).toLocaleString("en-US")} tetrahedra: the meshing runs for many minutes and uses several GB.`);
   }
 
