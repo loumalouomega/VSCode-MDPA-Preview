@@ -40,7 +40,8 @@ import {
 import { scopeVariables as fieldScopeVariables, valueMaps as fieldValueMaps } from "./fieldCalc";
 import { globalScopeValues } from "./globalReduce";
 import { hessianFieldModel } from "./hessianField";
-import { metricFromHessian } from "./anisoMetric";
+import { metricFromHessian, metricFromWall, WallLayerSpec } from "./anisoMetric";
+import { gradientFieldModel } from "./gradientField";
 import type { GradientMethod } from "./gradientField";
 import { modelToMeshio } from "./meshioConvert";
 import { loadMeshio } from "./meshio";
@@ -120,9 +121,12 @@ export interface RemeshParams extends RemeshCommonParams {
    * (mean/std/min/max/median/q1/q3/iqr), the coordinates x,y,z, and — only
    * when `distanceSurface` is attached — the unsigned distance `d` to it;
    * aniso: tensor metric assembled from the Hessian of `variable`
-   * ("adapt to the curvature of this solution").
+   * ("adapt to the curvature of this solution");
+   * wall: tensor metric of a boundary-layer stack from the distance field
+   * `variable` — small across the wall (along the distance gradient, computed
+   * inline), larger along it; see `WallLayerSpec` in anisoMetric.ts.
    */
-  mode: "factor" | "hsiz" | "optimize" | "expr" | "aniso";
+  mode: "factor" | "hsiz" | "optimize" | "expr" | "aniso" | "wall";
   factor?: number;
   hsiz?: number;
   /** Global sizing expression (expr mode); evaluated at every node. */
@@ -150,8 +154,18 @@ export interface RemeshParams extends RemeshCommonParams {
    * need not exist beforehand — only the source variable must.
    */
   variable?: string;
-  /** Hessian method forwarded to both internal gradient passes (aniso mode). */
+  /** Hessian method forwarded to both internal gradient passes (aniso mode); gradient method in wall mode. */
   method?: GradientMethod;
+  /** Wall mode: cell height across the wall, at the wall. */
+  firstHeight?: number;
+  /** Wall mode: layer growth ratio (default 1.2). */
+  growth?: number;
+  /** Wall mode: cell size along the wall, at the wall (default maxAspect x firstHeight). */
+  tangentialSize?: number;
+  /** Wall mode: growth of the along-wall size per unit distance (default 0.25). */
+  tangentialGrowth?: number;
+  /** Wall mode: largest along/across size ratio (default 50). */
+  maxAspect?: number;
   /**
    * Entities MMG must leave exactly as they are (remesh only, not level-set:
    * level-set mode rewrites domain refs to MG_MINUS/MG_PLUS, so frozen refs
@@ -969,6 +983,72 @@ async function anisoTensorMetric(
   return { sols, hmin, hmax, warnings };
 }
 
+/**
+ * Per-vertex tensor metric for `wall` mode: the distance field `variable` and
+ * its gradient (computed inline) give each vertex a wall direction and a
+ * distance, and `metricFromWall` turns those into a stretched metric. A vertex
+ * with no value for either keeps its current local size.
+ */
+async function wallTensorMetric(
+  s: Staged,
+  model: MdpaModel,
+  params: RemeshParams
+): Promise<{ sols: Float64Array; warnings: string[] } | { error: string }> {
+  const variable = params.variable?.trim() ?? "";
+  if (!variable) return { error: "A wall-layer remesh needs a nodal distance field." };
+  const first = params.firstHeight;
+  if (!(typeof first === "number" && first > 0)) return { error: "A wall-layer remesh needs a first height above zero." };
+  const dist = model.fields.find((f) => f.kind === "Nodal" && f.variable === variable);
+  if (!dist || dist.components !== 1) return { error: `"${variable}" is not a scalar nodal field.` };
+  let grad: Awaited<ReturnType<typeof gradientFieldModel>>;
+  try {
+    grad = await gradientFieldModel(model, { variable, method: params.method });
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : String(err) };
+  }
+  const gradField = grad.model.fields.find((f) => f.kind === "Nodal" && f.variable === grad.output);
+  if (!gradField || gradField.components !== 3) return { error: `Gradient of "${variable}" produced no usable field.` };
+  const local = localEdgeSizes(s);
+  let mean = 0;
+  for (let i = 0; i < local.length; i++) mean += local[i];
+  mean = local.length > 0 ? mean / local.length : 1;
+  const hmax = params.hmax ?? mean * 4;
+  const spec: WallLayerSpec = {
+    firstHeight: first,
+    growth: params.growth,
+    tangentialSize: params.tangentialSize,
+    tangentialGrowth: params.tangentialGrowth,
+    maxAspect: params.maxAspect,
+    hmax,
+  };
+  const dRow = new Map<number, number>();
+  for (let i = 0; i < dist.ids.length; i++) dRow.set(dist.ids[i], i);
+  const gRow = new Map<number, number>();
+  for (let i = 0; i < gradField.ids.length; i++) gRow.set(gradField.ids[i], i);
+  const sols = new Float64Array(s.np * 6);
+  let fallbacks = 0;
+  const g = new Float64Array(3);
+  for (let i = 0; i < s.np; i++) {
+    const id = s.origIds[i];
+    const di = dRow.get(id);
+    const gi = gRow.get(id);
+    const dv = di === undefined ? NaN : dist.values[di];
+    if (di !== undefined && gi !== undefined && Number.isFinite(dv)) {
+      for (let k = 0; k < 3; k++) g[k] = gradField.values[gi * 3 + k];
+      sols.set(metricFromWall(g, dv, spec), i * 6);
+    } else {
+      const h = local[i] > 0 ? local[i] : mean;
+      const m = 1 / (h * h);
+      sols.set([m, 0, 0, m, 0, m], i * 6);
+      fallbacks++;
+    }
+  }
+  const warnings: string[] = [];
+  if (fallbacks > 0) warnings.push(`${fallbacks} node(s) with no distance value kept their current size.`);
+  if (grad.numSkipped > 0) warnings.push(`${grad.numSkipped} node(s) came back NaN from the gradient and are isotropic.`);
+  return { sols, warnings };
+}
+
 // --- run + harvest ----------------------------------------------------------------
 
 interface Harvest {
@@ -1561,6 +1641,20 @@ export async function remeshModel(
     exprWarnings.push(...r.warnings);
   }
 
+  if (params.mode === "wall") {
+    if (staged.kind === "mmg2d") {
+      return {
+        model,
+        noop: true,
+        message: "A wall-layer remesh needs a 3D (mmg3d) or surface (mmgs) mesh — the planar tensor layout is not supported.",
+      };
+    }
+    const r = await wallTensorMetric(staged, model, params);
+    if ("error" in r) return { model, noop: true, message: r.error };
+    aniso = r;
+    exprWarnings.push(...r.warnings);
+  }
+
   const extraSetupWarnings: string[] = [];
   let frozenNote = "";
   let localNote = "";
@@ -1584,7 +1678,7 @@ export async function remeshModel(
     } else if (params.mode === "expr") {
       mod.setSolSize(h.mesh, h.met, mmg.MMG5_Vertex, staged.np, mmg.MMG5_Scalar);
       mod.setScalarSols(h.met, exprSizes ?? localEdgeSizes(staged));
-    } else if (params.mode === "aniso" && aniso) {
+    } else if ((params.mode === "aniso" || params.mode === "wall") && aniso) {
       if (!mod.setTensorSols) throw new Error("This MMG module has no tensor-metric entry point.");
       mod.setIparameter(h.mesh, h.met, mod.IPARAM_anisosize, 1);
       mod.setSolSize(h.mesh, h.met, mmg.MMG5_Vertex, staged.np, mmg.MMG5_Tensor);
@@ -1625,7 +1719,7 @@ export async function remeshModel(
       onProgress
     );
     const result = rebuildModel(model, staged, harvest, undefined);
-    const verb = params.mode === "aniso" ? "Remeshed (anisotropic)" : "Remeshed";
+    const verb = params.mode === "aniso" ? "Remeshed (anisotropic)" : params.mode === "wall" ? "Remeshed (wall layer)" : "Remeshed";
     const extra = [...staged.warnings, ...exprWarnings, ...extraSetupWarnings, ...fieldWarning(model)];
     if (lowFailure) extra.push("MMG reported a low failure (result usable but not fully conforming).");
     return {

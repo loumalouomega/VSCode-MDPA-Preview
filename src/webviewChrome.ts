@@ -548,6 +548,7 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
                     <option value="optimize">optimize</option>
                     <option value="expr">size = ƒ(h)</option>
                     <option value="aniso">anisotropic</option>
+                    <option value="wall">wall layer</option>
                   </select></label>
                   <label class="edit-field" id="remesh-value-field"><span id="remesh-value-label">factor</span><input type="number" id="remesh-value" class="edit-num edit-num-wide" value="0.5" step="0.1"></label>
                   <button type="button" class="edit-apply edit-apply-mmg" data-op="remesh" title="Run the MMG remesher" data-run-title="Run the MMG remesher"><span class="apply-play">${ic("play")}</span><span class="apply-stop">${ic("stop")}</span></button>
@@ -570,6 +571,18 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
                     <button type="button" class="edit-form-title"><span class="sb-chevron"></span><span>Per-part sizing</span></button>
                     <div id="remesh-sizeparts"></div>
                     <button type="button" id="remesh-sizeparts-add" class="edit-addrow" title="Add a per-SubModelPart size override">+ Add override</button>
+                  </div>
+                </div>
+                <div class="edit-expr hidden" id="remesh-wall-block">
+                  <label class="edit-field edit-field-grow" title="Scalar nodal DISTANCE field (e.g. from Signed distance): the layer is graded by its value and stretched along its gradient. MMG makes stretched tetrahedra, not prisms."><span>distance</span><select id="remesh-wall-variable" class="edit-sel edit-sel-grow"></select></label>
+                  <div class="edit-form-row">
+                    <label class="edit-field" title="Cell height across the wall, at the wall (mesh units)."><span>first</span><input type="number" id="remesh-wall-first" class="edit-num edit-num-wide" value="0.001" step="any" min="0"></label>
+                    <label class="edit-field" title="Layer growth ratio (1 = uniform)."><span>growth</span><input type="number" id="remesh-wall-growth" class="edit-num" value="1.2" step="0.05" min="1"></label>
+                    <label class="edit-field" title="Largest ratio between the along-wall and across-wall size."><span>aspect</span><input type="number" id="remesh-wall-aspect" class="edit-num" value="50" step="1" min="1"></label>
+                  </div>
+                  <div class="edit-form-row">
+                    <label class="edit-field" title="Cell size along the wall, at the wall. Blank = aspect x first."><span>along</span><input type="number" id="remesh-wall-tangential" class="edit-num edit-num-wide" step="any" min="0" placeholder="auto"></label>
+                    <label class="edit-field" title="Growth of the along-wall size per unit distance."><span>along growth</span><input type="number" id="remesh-wall-tgrowth" class="edit-num" value="0.25" step="0.05" min="0"></label>
                   </div>
                 </div>
                 <div class="edit-expr hidden" id="remesh-aniso-block">
