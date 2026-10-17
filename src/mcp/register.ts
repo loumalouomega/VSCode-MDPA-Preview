@@ -477,7 +477,9 @@ export function registerAllTools(server: McpServer): void {
       speed: z.number().positive().describe("Free-stream speed in m/s"),
       density: z.number().positive().optional().describe("kg/m³ (default air at 20 °C, 1.204)"),
       viscosity: z.number().positive().optional().describe("Dynamic viscosity in Pa·s (default air at 20 °C, 1.825e-5)"),
-      turbulenceIntensity: z.number().min(0).max(1).optional().describe("Free-stream turbulence intensity, recorded for turbulence models (default 0.01)"),
+      turbulenceIntensity: z.number().min(0).max(1).optional().describe("Free-stream turbulence intensity as a fraction (default 0.01); sets the inlet and initial turbulence of a RANS case"),
+      turbulence: z.enum(["none", "k_epsilon", "k_omega", "k_omega_sst"]).optional().describe("Turbulence model of the prepared case. none (default): the Fluid problemtype with a wall law. k_epsilon / k_omega / k_omega_sst: the Turbulent Flow (RANS) problemtype with the logarithmic wall function on the body (body-fitted mesh only; steady)"),
+      turbulenceLength: z.number().positive().optional().describe("Turbulence length scale at the inlet in metres (default 1% of the body length); used by a RANS model"),
     }),
     mesh: z.object({
       mode: z.enum(["bodyFitted", "embedded"]).optional().describe("bodyFitted (default): carve the body out and build a wall layer. embedded: keep the surface unfitted and write the signed DISTANCE for the Embedded Fluid problemtype"),

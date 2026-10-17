@@ -53,7 +53,7 @@ The built-ins track [GiDInterface](https://github.com/KratosMultiphysics/GiDInte
 | Family | Problemtypes |
 |---|---|
 | Solids & structures | **Structural Mechanics** — small/large displacement, mixed, shell, beam, truss and cable formulations; static, dynamic (Newmark/Bossak) and eigenvalue analysis |
-| Fluids | **Fluid Dynamics** (monolithic QSVMS/DVMS/FIC/legacy VMS/weakly compressible/axisymmetric/P2-P1, Stokes and fractional step; wall law, periodic boundaries, non-Newtonian Bingham and Herschel-Bulkley fluids; force, aerodynamic-coefficient, pressure-coefficient and y+ monitors), **Compressible Fluid**, **Embedded Fluid**, **Free Surface** (edge-based level set), **Potential Flow**, **Shallow Water** (three solvers) |
+| Fluids | **Fluid Dynamics** (monolithic QSVMS/DVMS/FIC/legacy VMS/weakly compressible/axisymmetric/P2-P1, Stokes and fractional step; wall law, periodic boundaries, non-Newtonian Bingham and Herschel-Bulkley fluids; force, aerodynamic-coefficient, pressure-coefficient and y+ monitors), **Compressible Fluid**, **Embedded Fluid**, **Turbulent Flow (RANS)** (k-epsilon, k-omega or k-omega SST with the wall function), **Two Fluids** (a level-set interface between two fluids), **Free Surface** (edge-based level set), **Potential Flow**, **Shallow Water** (three solvers) |
 | Thermal | **Convection-Diffusion** |
 | Coupled physics | **Buoyancy** (Boussinesq natural convection), **Conjugate Heat Transfer** (fluid + solid), **Fluid-Structure Interaction** (partitioned Dirichlet-Neumann over an ALE mesh), **Generic Coupling (CoSimulation)** (weak or strong coupling of the fluid and structural solvers, optional ALE) — see [Coupled Simulations](./coupled-simulations) |
 | Reduced-order models | **ROM · Structural Mechanics**, **ROM · Convection-diffusion**, **ROM · Fluid Dynamics**, **ROM · Potential Flow** (RomApplication's `RomManager`: POD basis and HROM over a sampled parameter space) — see [Reduced-Order Models](./reduced-order-models) |
@@ -158,6 +158,19 @@ The **Fluid Dynamics** problemtype exposes every formulation `FluidDynamicsAppli
 - **Monitors** (category *Other*): *Forces and moments on a body*, *Aerodynamic coefficients* (reference area, chord and dynamic pressure), *Pressure coefficient* and *Wall y+*. They are processes on the wall part, stay out of `skin_parts`, and the two nodal results are added to the output automatically.
 
 **Embedded Fluid** offers all four embedded elements (continuous, weakly compressible, Ausas and discontinuous weakly compressible) through the `Embedded` solver, with the speed-of-sound property only where the element reads it. Kratos has no dynamic-Smagorinsky switch in the solver settings (the utility is called from scripts), so large-eddy simulation here means the Dynamic VMS element's dynamic subscales.
+
+## Turbulent flow (RANS)
+
+**Turbulent Flow (RANS)** runs the `RANSApplication`'s `CoupledRANS` solver: the incompressible flow solver (monolithic VMS/QSVMS or fractional step) coupled with a two-equation turbulence model — **k-epsilon**, **k-omega** or **k-omega SST** — and the logarithmic wall function. The Problem data adds a *Turbulence* group: the model, the stabilization, how the wall friction velocity is found, and the free-stream **speed, intensity and length scale**. From those the case derives the initial turbulent kinetic energy `k = 1.5 (I U)²`, the dissipation (`epsilon = Cmu^0.75 k^1.5 / l`, `omega = √k / (Cmu^0.25 l)`) and the eddy viscosity, and gives every *Inlet* the matching intensity and mixing-length processes.
+
+- **The wall.** Assign **Wall (wall function)** to ONE SubModelPart that holds every wall (the RANS wall function is applied once), and give that part the **Wall function** material, which carries the smoothness constant the function reads. Generation refuses a case with no wall, with more than one, or without the material. Keep the first node row at y+ 30–100.
+- **Time.** *Steady* (the default) iterates pseudo-time steps until the solver reports convergence; BDF2 and Bossak are transient.
+- **Periodic boundaries** use RANS's exact nodal periodic process, which pairs the nodes of the two boundaries one for one.
+- The Fluid problemtype's body monitors (forces, coefficients, y+) and gravity carry over.
+
+## Two fluids
+
+**Two Fluids** runs `FluidDynamicsApplication`'s two-fluids solver: an interface that moves with the flow is the zero of the nodal **DISTANCE** field (negative is fluid 1, positive is fluid 2). The mesh must carry that field, or the distance is read from a `.post.res` file. The materials are fixed by the solver: the **first two** material assignments are fluid 1 and fluid 2, in that order, both on the fluid part (generation refuses anything else). The Interface group sets the level-set convection (CFL, sub-steps), the re-initialization, the smoothing and the distance modification; the formulation group adds surface tension (the coefficient is a material property), the mass source and the momentum correction. The **Two-fluids inlet** gives each fluid its own velocity on one inlet, and the **Mass conservation check** reports the volume each fluid gains or loses and can correct the interface.
 
 ## Time stepping guidance (fluid)
 

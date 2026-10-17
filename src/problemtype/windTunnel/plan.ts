@@ -31,6 +31,13 @@ export interface WindTunnelFlow {
   viscosity?: number;
   /** Free-stream turbulence intensity (0–1), recorded for turbulence models. */
   turbulenceIntensity?: number;
+  /**
+   * The turbulence model of the prepared case: "none" keeps the Fluid problemtype (a wall law and the dynamic
+   * subscales), the others use the Turbulent Flow (RANS) problemtype with the logarithmic wall function.
+   */
+  turbulence?: "none" | "k_epsilon" | "k_omega" | "k_omega_sst";
+  /** Turbulence length scale at the inlet in metres (default 1% of the body length). */
+  turbulenceLength?: number;
 }
 
 export interface WindTunnelMesh {
@@ -179,6 +186,8 @@ export function planWindTunnel(params: WindTunnelParams, bodyModel: MdpaModel): 
     density: params.flow.density ?? AIR_20C.density,
     viscosity: params.flow.viscosity ?? AIR_20C.viscosity,
     turbulenceIntensity: params.flow.turbulenceIntensity ?? 0.01,
+    turbulence: params.flow.turbulence ?? "none",
+    turbulenceLength: params.flow.turbulenceLength ?? 0.01 * L,
   };
   if (!(flow.speed > 0)) errors.push("The free-stream speed must be above zero.");
   const mesh = params.mesh ?? {};
@@ -217,8 +226,13 @@ export function planWindTunnel(params: WindTunnelParams, bodyModel: MdpaModel): 
   }
   if (boundaryLayer.regime === "laminar") {
     warnings.push(`At Re = ${boundaryLayer.reynolds.toExponential(2)} the flow over the body is laminar, so the Fluid problemtype's laminar solvers apply.`);
+  } else if (flow.turbulence === "none") {
+    warnings.push(`At Re = ${boundaryLayer.reynolds.toExponential(2)} the flow is turbulent and no turbulence model is applied: the wall law and the dynamic subscales of QSVMS stand in, so treat the forces as a first estimate. Choose a turbulence model in the Flow step for a RANS case.`);
+  } else if (mode === "embedded") {
+    errors.push("A turbulence model needs the body-fitted mesh: the RANS wall function is applied to a wall part, which an embedded body does not have.");
   } else {
-    warnings.push(`At Re = ${boundaryLayer.reynolds.toExponential(2)} the flow is turbulent and no turbulence model is applied: the wall law and the dynamic subscales of QSVMS stand in, so treat the forces as a first estimate.`);
+    warnings.push(`The case uses the ${flow.turbulence.replace(/_/g, "-")} RANS model with the logarithmic wall function (Re = ${boundaryLayer.reynolds.toExponential(2)}): keep the first node row at y+ 30–100, and expect a steady solution only where the flow is steady.`);
+    if (yPlus < 30 || yPlus > 300) warnings.push(`A wall function assumes the first node in the logarithmic layer; y+ ${yPlus} is outside the usual 30–300.`);
   }
 
   const wall: WallLayerSpec = {

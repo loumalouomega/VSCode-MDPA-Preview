@@ -28,6 +28,8 @@ export interface WindTunnelForm {
   density: string;
   viscosity: string;
   turbulenceIntensity: string;
+  turbulence: "none" | "k_epsilon" | "k_omega" | "k_omega_sst";
+  turbulenceLength: string;
   // Mesh
   mode: "bodyFitted" | "embedded";
   surfaceSize: string;
@@ -63,6 +65,8 @@ export function defaultWindTunnelForm(): WindTunnelForm {
     density: "",
     viscosity: "",
     turbulenceIntensity: "",
+    turbulence: "none",
+    turbulenceLength: "",
     mode: "bodyFitted",
     surfaceSize: "",
     farSize: "",
@@ -96,6 +100,7 @@ const LABELS: Partial<Record<keyof WindTunnelForm, string>> = {
   density: "Density",
   viscosity: "Viscosity",
   turbulenceIntensity: "Turbulence intensity",
+  turbulenceLength: "Turbulence length scale",
   upstream: "Upstream distance",
   downstream: "Downstream distance",
   side: "Side distance",
@@ -133,7 +138,7 @@ export function buildWindTunnelRequest(form: WindTunnelForm): FormResult<WindTun
 
   const num: Partial<Record<keyof WindTunnelForm, number | undefined>> = {};
   const specs: [keyof WindTunnelForm, { min?: number }][] = [
-    ["density", {}], ["viscosity", {}], ["upstream", {}], ["downstream", {}], ["side", {}], ["top", {}], ["bottom", {}],
+    ["density", {}], ["viscosity", {}], ["turbulenceLength", {}], ["upstream", {}], ["downstream", {}], ["side", {}], ["top", {}], ["bottom", {}],
     ["clearance", { min: 0 }], ["surfaceSize", {}], ["farSize", {}], ["yPlus", {}], ["firstHeight", {}], ["growth", { min: 1 }],
     ["maxAspect", { min: 1 }], ["wakeLength", { min: 0 }], ["wakeSize", {}], ["fit", {}],
   ];
@@ -180,6 +185,8 @@ export function buildWindTunnelRequest(form: WindTunnelForm): FormResult<WindTun
         ...(num.density !== undefined ? { density: num.density } : {}),
         ...(num.viscosity !== undefined ? { viscosity: num.viscosity } : {}),
         ...(turbulenceIntensity !== undefined ? { turbulenceIntensity } : {}),
+        ...(form.turbulence !== "none" ? { turbulence: form.turbulence } : {}),
+        ...(num.turbulenceLength !== undefined ? { turbulenceLength: num.turbulenceLength } : {}),
       },
       mesh,
       outputFolder: form.outputFolder.trim(),

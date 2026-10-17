@@ -11,6 +11,7 @@
 
 import { defaultCaseState } from "../api";
 import { fluid } from "../builtins/fluid";
+import { rans } from "../builtins/rans";
 import { embeddedFluid } from "../builtins/embeddedFluid";
 import type { Assignment, CaseState, JsonValue, MaterialAssignment } from "../types";
 import type { WindTunnelPlan } from "./plan";
@@ -18,7 +19,7 @@ import { referenceQuantities } from "./plan";
 
 export interface WindTunnelCase {
   /** The problemtype the state belongs to. */
-  problemtypeId: "fluid" | "embeddedFluid";
+  problemtypeId: "fluid" | "embeddedFluid" | "rans";
   state: CaseState;
   /** What was assumed, in plain words, for the wizard's review step. */
   notes: string[];
@@ -31,7 +32,8 @@ const round = (v: number): number => +v.toPrecision(6);
 
 export function windTunnelCase(plan: WindTunnelPlan): WindTunnelCase {
   const embedded = plan.mode === "embedded";
-  const decl = embedded ? embeddedFluid.decl : fluid.decl;
+  const turbulent = !embedded && plan.flow.turbulence !== "none";
+  const decl = embedded ? embeddedFluid.decl : turbulent ? rans.decl : fluid.decl;
   const state = defaultCaseState(decl);
   const notes: string[] = [];
   const { area, length, dynamicPressure } = referenceQuantities(plan);
@@ -55,7 +57,11 @@ export function windTunnelCase(plan: WindTunnelPlan): WindTunnelCase {
       add("slip", "Floor");
       break;
     case "noslip":
-      add("noSlip", "Floor");
+      if (turbulent) {
+        // RANS applies its wall function to one part, the body; the floor is held at rest by a constraint.
+        add("velocityConstraints", "Floor", { value: [0, 0, 0], constrained: true });
+        notes.push("The floor is a no-slip wall without a wall function (the RANS wall function belongs to the body), written as a zero-velocity constraint.");
+      } else add("noSlip", "Floor");
       break;
     case "moving":
       add("velocityConstraints", "Floor", { value: [round(U), 0, 0], constrained: true });
@@ -66,7 +72,10 @@ export function windTunnelCase(plan: WindTunnelPlan): WindTunnelCase {
   // A wall function needs y+ above the viscous sub-layer; below 5 the wall is resolved and no-slip is the honest condition.
   const wallModelled = plan.boundaryLayer.regime === "turbulent" && (plan.params.mesh?.yPlus ?? 50) >= 5;
   if (!embedded) {
-    if (wallModelled) {
+    if (turbulent) {
+      add("ransWall", "Body");
+      notes.push(`The body wall uses the RANS logarithmic wall function; its first node row is ${round(plan.wall.firstHeight * 1000)} mm.`);
+    } else if (wallModelled) {
       add("wallLaw", "Body", { wallModel: "linear_log", yWall: round(plan.wall.firstHeight) });
       notes.push(`The body wall uses the linear-logarithmic wall law with the first node row at ${round(plan.wall.firstHeight * 1000)} mm.`);
     } else {
@@ -91,10 +100,10 @@ export function windTunnelCase(plan: WindTunnelPlan): WindTunnelCase {
 
   const material: MaterialAssignment = {
     smpPath: FLUID_PART,
-    lawId: "newtonian_3d",
+    lawId: turbulent ? "rans_newtonian_3d" : "newtonian_3d",
     values: { DENSITY: round(plan.flow.density), DYNAMIC_VISCOSITY: plan.flow.viscosity },
   };
-  state.materials = [material];
+  state.materials = turbulent ? [material, { smpPath: "Body", lawId: "rans_wall", values: {} }] : [material];
 
   const problem = state.values.problem;
   // Time: adaptive on the Courant number, bounded in flow-through times of the body.
@@ -109,14 +118,34 @@ export function windTunnelCase(plan: WindTunnelPlan): WindTunnelCase {
     endTime: round(flowThrough * 10),
     gravityValue: 0,
   });
-  if (embedded) {
+  if (turbulent) {
+    Object.assign(problem, {
+      flowSolver: "monolithic",
+      elementType: "vms",
+      turbulenceModel: plan.flow.turbulence,
+      scheme: "steady",
+      freestreamSpeed: round(U),
+      turbulenceIntensity: round(plan.flow.turbulenceIntensity),
+      turbulenceLength: round(plan.flow.turbulenceLength),
+      // A steady RANS run iterates pseudo-time steps of one until the solver reports convergence.
+      timeStepMode: "fixed",
+      timeStep: 1,
+      endTime: 300,
+      computeReactions: true,
+    });
+    notes.push("The run is steady: up to 300 pseudo-time steps, stopping earlier when the solver converges. Raise the end time if it has not.");
+  } else if (embedded) {
     Object.assign(problem, { distanceMode: "from_mdpa", computeDrag: true, writeDragFile: true, correctDistance: true });
   } else {
     Object.assign(problem, { strategy: "monolithic", elementType: "qsvms", timeScheme: "bdf2", computeReactions: true });
   }
-  state.output = { ...state.output, controlType: "time", interval: round(flowThrough * 0.1), nodalVariables: ["VELOCITY", "PRESSURE"] };
-  notes.push(
-    `Time stepping follows a Courant number of 2 and runs for ${round(flowThrough * 10)} s, ten flow-through times of the body (${round(flowThrough)} s each). Raise the end time until the force coefficients stop drifting.`
-  );
-  return { problemtypeId: embedded ? "embeddedFluid" : "fluid", state, notes };
+  state.output = turbulent
+    ? { ...state.output, controlType: "step", interval: 25, nodalVariables: ["VELOCITY", "PRESSURE"] }
+    : { ...state.output, controlType: "time", interval: round(flowThrough * 0.1), nodalVariables: ["VELOCITY", "PRESSURE"] };
+  if (!turbulent) {
+    notes.push(
+      `Time stepping follows a Courant number of 2 and runs for ${round(flowThrough * 10)} s, ten flow-through times of the body (${round(flowThrough)} s each). Raise the end time until the force coefficients stop drifting.`
+    );
+  }
+  return { problemtypeId: embedded ? "embeddedFluid" : turbulent ? "rans" : "fluid", state, notes };
 }

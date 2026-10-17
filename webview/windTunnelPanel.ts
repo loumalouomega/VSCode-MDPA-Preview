@@ -280,10 +280,25 @@ export function renderWindTunnelPanel(container: HTMLElement, state: WindTunnelP
       row("Fluid", preset);
       row("Density", text(() => form.density, (v) => { form.density = v; }, "1.204", "kg/m³"));
       row("Viscosity", text(() => form.viscosity, (v) => { form.viscosity = v; }, "1.825e-5", "Dynamic viscosity in Pa·s"));
-      row("Turbulence", text(() => form.turbulenceIntensity, (v) => { form.turbulenceIntensity = v; }, "0.01", "Free-stream intensity as a fraction; recorded for turbulence models"));
+      row(
+        "Turbulence model",
+        select(
+          [
+            { value: "none", label: "None (wall law only)" },
+            { value: "k_epsilon", label: "k-epsilon (RANS)" },
+            { value: "k_omega", label: "k-omega (RANS)" },
+            { value: "k_omega_sst", label: "k-omega SST (RANS)" },
+          ],
+          form.turbulence,
+          (v) => { form.turbulence = v as WindTunnelForm["turbulence"]; },
+          "A RANS model uses the Turbulent Flow problemtype with the logarithmic wall function on the body; it needs the body-fitted mesh"
+        )
+      );
+      row("Intensity", text(() => form.turbulenceIntensity, (v) => { form.turbulenceIntensity = v; }, "0.01", "Free-stream turbulence intensity as a fraction (0.01 = 1%)"));
+      if (form.turbulence !== "none") row("Length scale", text(() => form.turbulenceLength, (v) => { form.turbulenceLength = v; }, "1% of the body", "Turbulence length scale at the inlet, metres"));
       if (plan) {
         note(`Re = ${plan.flow.reynolds.toExponential(2)} (${plan.flow.regime}), dynamic pressure ${sig(plan.flow.dynamicPressure)} Pa.`);
-        if (plan.flow.regime === "turbulent") note("No turbulence model is applied: the wall law and the dynamic subscales stand in. Treat the forces as a first estimate.", "warn");
+        if (plan.flow.regime === "turbulent" && form.turbulence === "none") note("No turbulence model is applied: the wall law and the dynamic subscales stand in. Treat the forces as a first estimate.", "warn");
       }
       break;
     }

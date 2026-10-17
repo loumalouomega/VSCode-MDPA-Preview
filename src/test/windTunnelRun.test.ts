@@ -15,6 +15,7 @@ import { parseCaseJson } from "../problemtype/caseFile";
 import { windTunnelCase } from "../problemtype/windTunnel/caseState";
 import { fluid } from "../problemtype/builtins/fluid";
 import { embeddedFluid } from "../problemtype/builtins/embeddedFluid";
+import { rans } from "../problemtype/builtins/rans";
 
 const params = {
   flow: { speed: 10 },
@@ -94,6 +95,17 @@ test("a sphere in a tunnel meshes body-fitted: the wall holds, the boundary is n
   const wall = pp.processes.constraints_process_list.find((p: { python_module: string }) => p.python_module === "apply_wall_law_process");
   assert.equal(wall.Parameters.model_part_name, "FluidModelPart.Body");
   assert.equal(wall.Parameters.wall_model_settings.y_wall, 0.012);
+  // The same mesh prepared for a RANS model generates a CoupledRANS case with the wall function on the body.
+  const ransPlan = planWindTunnel({ ...params, flow: { speed: 10, turbulence: "k_omega_sst", turbulenceIntensity: 0.02 } }, icosphere(0.5, 4));
+  const ransCase = windTunnelCase(ransPlan);
+  assert.equal(ransCase.problemtypeId, "rans");
+  const ransGen = await generateCase(rans, casePlan.caseModel, ransCase.state, casePlan.caseStem);
+  const rp = JSON.parse(ransGen.projectParameters);
+  assert.equal(rp.analysis_stage, "KratosMultiphysics.RANSApplication.rans_analysis");
+  assert.equal(rp.solver_settings.formulation_settings.formulation_name, "monolithic_k_omega_sst");
+  assert.equal(rp.processes.constraints_process_list.find((p: { python_module: string }) => p.python_module === "apply_wall_function_process").Parameters.model_part_name, "FluidModelPart.Body");
+  const ransPre = await preflightCase(rans, back, ransCase.state, "sphere", { isMdpaSource: true });
+  assert.deepEqual(ransPre.findings.filter((f) => f.severity === "error").map((f) => f.message), []);
   assert.deepEqual(pp.solver_settings.skin_parts.sort(), ["FluidModelPart.Body", "FluidModelPart.Ceiling", "FluidModelPart.Floor", "FluidModelPart.Inlet", "FluidModelPart.Outlet", "FluidModelPart.SideHigh", "FluidModelPart.SideLow"]);
 });
 
@@ -112,6 +124,24 @@ test("the prepared case follows the ground mode, the half model and the mode", (
   assert.ok(!emb.state.assignments.some((a) => a.smpPath === "Body"));
   assert.equal(emb.state.values.problem.computeDrag, true);
   assert.ok(embeddedFluid.decl.id === "embeddedFluid");
+});
+
+test("a turbulence model prepares the RANS case; an embedded body cannot take one", () => {
+  const plan = planWindTunnel({ ...params, tunnel: { ...params.tunnel, ground: "noslip", clearance: 0.1 }, flow: { speed: 10, turbulence: "k_epsilon", turbulenceLength: 0.05 } }, icosphere(0.5, 3));
+  assert.deepEqual(plan.errors, []);
+  assert.ok(plan.warnings.some((w) => /k-epsilon RANS model/.test(w)));
+  assert.ok(!plan.warnings.some((w) => /no turbulence model is applied/.test(w)));
+  const c = windTunnelCase(plan);
+  assert.equal(c.problemtypeId, "rans");
+  const wall = c.state.assignments.filter((a) => a.conditionId === "ransWall");
+  assert.deepEqual(wall.map((a) => a.smpPath), ["Body"], "one wall function part");
+  assert.equal(c.state.assignments.find((a) => a.smpPath === "Floor")!.conditionId, "velocityConstraints", "a no-slip floor cannot take the wall function");
+  assert.deepEqual(c.state.materials.map((m) => m.lawId), ["rans_newtonian_3d", "rans_wall"]);
+  assert.equal(c.state.values.problem.turbulenceLength, 0.05);
+  assert.equal(c.state.values.problem.scheme, "steady");
+  assert.equal(c.state.output.controlType, "step");
+  const emb = planWindTunnel({ ...params, flow: { speed: 10, turbulence: "k_epsilon" }, mesh: { ...params.mesh, mode: "embedded" } }, icosphere(0.5, 3));
+  assert.ok(emb.errors.some((e) => /body-fitted/.test(e)));
 });
 
 test("cancelling stops the run between steps", async () => {

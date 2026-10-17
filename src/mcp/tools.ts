@@ -2588,6 +2588,7 @@ export async function meshCapabilities(): Promise<object> {
       tools: ["wind_tunnel_plan", "wind_tunnel_generate"],
       modes: ["bodyFitted", "embedded"],
       ground: ["free", "slip", "noslip", "moving"],
+      turbulence: ["none", "k_epsilon", "k_omega", "k_omega_sst"],
       frame: "flow along +X, up along +Z",
       wallLayer: "stretched tetrahedra from an anisotropic metric (remesh mode \"wall\"), not prisms",
       limits: "the carve follows a sharp edge to about 1% of the body length; the report states the measured gap",
