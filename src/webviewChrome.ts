@@ -169,6 +169,7 @@ export const MENU_ACTION_COMMANDS: Readonly<Record<string, string>> = {
   flowBalance: "kratos.mdpa.flowBalance",
   linkPreviews: "kratos.mdpa.linkPreviews",
   optimizationProgress: "kratos.mdpa.optimizationProgress",
+  windTunnel: "kratos.mdpa.windTunnel",
   compareSplit: "kratos.mdpa.compareInSplit",
   exportReport: "kratos.mdpa.exportReport",
   dataTable: "kratos.mdpa.dataTable",
@@ -200,6 +201,7 @@ export const ADVANCED_MENU_HTML = `<div id="advanced-popup" class="hidden" role=
         <button type="button" class="file-menu-item" data-action="streamlines" role="menuitem" title="Trace steady streamlines of a nodal vector field from seed points, a line, a plane or a SubModelPart, and export them as line cells">${ic("fieldQuiver")}<span>Streamlines…</span></button>
         <button type="button" class="file-menu-item" data-action="flowBalance" role="menuitem" title="Signed flux and area-weighted pressure through named SubModelPart boundaries: net flux, imbalance and pressure drop">${ic("average")}<span>Flow balance…</span></button>
         <button type="button" class="file-menu-item" data-action="optimizationProgress" role="menuitem" title="Follow an optimization run: objective and constraints per iteration, read from the optimizer's summary file">${ic("results")}<span>Optimization progress…</span></button>
+        <button type="button" class="file-menu-item" data-action="windTunnel" role="menuitem" title="A few steps from a body surface to a wind-tunnel mesh and a prepared fluid case: tunnel box, refinement, carved body, boundary layer, wake and force coefficients">${ic("fieldQuiver")}<span>Virtual wind tunnel…</span></button>
         <button type="button" class="file-menu-item" data-action="linkPreviews" role="menuitem" title="Link this preview with another open mesh or run so their camera, field, colour range, clip plane and physical time follow each other">${ic("merge")}<span>Link previews…</span></button>
         <button type="button" class="file-menu-item" data-action="compareSplit" role="menuitem" title="Show a second mesh file in one split pane next to this one, coloured by the same field where it has it — a read-only reference, never edited">${ic("grid")}<span>Compare in split…</span></button>
         <button type="button" class="file-menu-item" data-action="exportReport" role="menuitem" title="Inspect the latest export's fidelity and provenance">${ic("info")}<span>Export report…</span></button>

@@ -906,6 +906,8 @@ function attachEmptyPanel(
       await runFlowSeries(msg as Record<string, unknown>);
     } else if (session.handleLinkMessage(msg as Record<string, unknown>)) {
       // Linked previews: relayed by the hub (parser/previewLinkHub.ts).
+    } else if (session.handleWindTunnelMessage(msg as Record<string, unknown>)) {
+      // Virtual wind tunnel wizard (windTunnelHost.ts)
     } else if (session.handleOptimizationMessage(msg as Record<string, unknown>)) {
       // handled by the session (Optimization progress panel)
     } else if (session.handleCompareMessage(msg as Record<string, unknown>)) {

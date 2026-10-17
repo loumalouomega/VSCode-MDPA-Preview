@@ -218,7 +218,7 @@ export function planWindTunnel(params: WindTunnelParams, bodyModel: MdpaModel): 
   if (boundaryLayer.regime === "laminar") {
     warnings.push(`At Re = ${boundaryLayer.reynolds.toExponential(2)} the flow over the body is laminar, so the Fluid problemtype's laminar solvers apply.`);
   } else {
-    warnings.push(`At Re = ${boundaryLayer.reynolds.toExponential(2)} the flow is turbulent: without a turbulence model the simulation resolves no turbulence (dynamic subscales and a wall law only).`);
+    warnings.push(`At Re = ${boundaryLayer.reynolds.toExponential(2)} the flow is turbulent and no turbulence model is applied: the wall law and the dynamic subscales of QSVMS stand in, so treat the forces as a first estimate.`);
   }
 
   const wall: WallLayerSpec = {
@@ -326,5 +326,54 @@ export function referenceQuantities(plan: WindTunnelPlan): { area: number; lengt
     area: plan.body.frontalArea,
     length: plan.body.size[0],
     dynamicPressure: 0.5 * plan.flow.density * plan.flow.speed ** 2,
+  };
+}
+
+/** A plan as plain JSON for a tool or the wizard: everything but the placed body model. */
+export function summarizePlan(plan: WindTunnelPlan): Record<string, unknown> {
+  const ref = referenceQuantities(plan);
+  const sig = (v: number): number => +v.toPrecision(5);
+  return {
+    mode: plan.mode,
+    runnable: plan.errors.length === 0,
+    errors: plan.errors,
+    warnings: plan.warnings,
+    body: {
+      triangles: plan.body.triangles,
+      size: plan.body.size.map(sig),
+      surfaceArea: sig(plan.body.surfaceArea),
+      frontalArea: sig(plan.body.frontalArea),
+      volume: sig(plan.body.signedVolume),
+      closed: plan.body.closed,
+      problems: plan.body.problems,
+      unitScale: plan.scale,
+    },
+    tunnel: {
+      min: plan.domain.min.map(sig),
+      max: plan.domain.max.map(sig),
+      blockage: sig(plan.domain.blockage),
+      volume: sig(plan.domain.volume),
+      halfModel: plan.domain.halfModel,
+      ground: plan.domain.ground,
+    },
+    flow: { ...plan.flow, reynolds: sig(plan.boundaryLayer.reynolds), regime: plan.boundaryLayer.regime, dynamicPressure: sig(ref.dynamicPressure) },
+    boundaryLayer: {
+      firstHeight: sig(plan.boundaryLayer.firstHeight),
+      layers: plan.boundaryLayer.layers,
+      thickness: sig(plan.boundaryLayer.thickness),
+      frictionVelocity: sig(plan.boundaryLayer.uTau),
+      basis: plan.boundaryLayer.basis,
+    },
+    sizes: Object.fromEntries(Object.entries(plan.sizes).map(([k, v]) => [k, sig(v)])),
+    estimate: {
+      expectedTetrahedra: Math.round(plan.estimate.expectedTetrahedra),
+      nodes: Math.round(plan.estimate.nodes),
+      memoryMb: Math.round(plan.estimate.memoryMb),
+      seconds: Math.round(plan.estimate.seconds),
+      limit: plan.maxTetrahedra,
+      notes: plan.estimate.notes,
+    },
+    reference: { area: sig(ref.area), length: sig(ref.length) },
+    steps: plan.steps.map((s) => ({ id: s.id, label: s.label })),
   };
 }

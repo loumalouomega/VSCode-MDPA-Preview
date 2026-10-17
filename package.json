@@ -584,6 +584,11 @@
         "category": "%category.KratosMdpa%"
       },
       {
+        "command": "kratos.mdpa.windTunnel",
+        "title": "%command.kratos.mdpa.windTunnel.title%",
+        "category": "%category.KratosMdpa%"
+      },
+      {
         "command": "kratos.mdpa.flowBalance",
         "title": "%command.kratos.mdpa.flowBalance.title%",
         "category": "%category.KratosMdpa%"

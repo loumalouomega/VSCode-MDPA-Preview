@@ -33,9 +33,10 @@ import { RecentMeshStore } from "./recentMeshes";
 import { MeshPreviewDocument, MeshEditorHooks } from "./meshDocument";
 import { LinkMember, previewLinks } from "./parser/previewLinkHub";
 import { comparePeerRel, loadCompareModel, resolveComparePeer } from "./parser/comparePeer";
-import { ExportContext, pickMergeMeshFile, saveMesh, saveMeshToPath } from "./meshExport";
+import { ExportContext, pickMergeMeshFile, saveMesh, saveMeshToPath, viewTypeForMesh } from "./meshExport";
 import { MmgRunOptions, OP_LABELS } from "./parser/operations";
 import { createOptimizationProgressHost, OptimizationHost } from "./optimizationProgressHost";
+import { createWindTunnelHost, WindTunnelHost } from "./windTunnelHost";
 import { runExportOptimizedCad } from "./optimizationCadCommand";
 import { openPlotBuilder } from "./plotController";
 import { VtkFileGroup } from "./parser/vtkFileGroup";
@@ -124,6 +125,8 @@ export class PreviewSession {
   private readonly linkOff: () => void;
   /** The Optimization progress panel's host half (see optimizationProgressHost.ts). */
   private readonly optimization: OptimizationHost;
+  /** The virtual wind tunnel wizard's host half (see windTunnelHost.ts). */
+  private readonly windTunnel: WindTunnelHost;
 
   /** The webview posted `ready` (its script runs and its message handler is installed). */
   private webviewReady = false;
@@ -168,6 +171,32 @@ export class PreviewSession {
       },
       info: (message) => { void vscode.window.showInformationMessage(message); },
     });
+    this.windTunnel = createWindTunnelHost({
+      fsPath: () => this.fsPath,
+      post: (m) => { if (!this.disposed) void deps.panel.webview.postMessage(m); },
+      pickBody: async () => {
+        const picked = await vscode.window.showOpenDialog({
+          canSelectMany: false,
+          title: "Choose the body surface",
+          filters: { "Surface meshes": ["stl", "obj", "ply", "vtp", "off"], "All files": ["*"] },
+        });
+        return picked?.[0]?.fsPath;
+      },
+      pickFolder: async (defaultFolder) => {
+        const picked = await vscode.window.showOpenDialog({
+          canSelectFiles: false,
+          canSelectFolders: true,
+          canSelectMany: false,
+          title: "Folder for the tunnel mesh and case",
+          defaultUri: defaultFolder ? vscode.Uri.file(defaultFolder) : undefined,
+          openLabel: "Use this folder",
+        });
+        return picked?.[0]?.fsPath;
+      },
+      open: (meshPath) => {
+        void vscode.commands.executeCommand("vscode.openWith", vscode.Uri.file(meshPath), viewTypeForMesh(meshPath));
+      },
+    });
     // A run's progress refresh is also when its summary grew: follow it.
     this.disposables.push(deps.runs.onDidChange(() => this.optimization.refreshIfWatched()));
     const session = this;
@@ -185,6 +214,11 @@ export class PreviewSession {
   /** Routes one `optimization*` webview message (the Optimization progress panel); false for any other. */
   public handleOptimizationMessage(msg: Record<string, unknown>): boolean {
     return this.optimization.handle(msg);
+  }
+
+  /** Routes one `windTunnel*` webview message (the virtual wind tunnel wizard); false for any other. */
+  public handleWindTunnelMessage(msg: Record<string, unknown>): boolean {
+    return this.windTunnel.handle(msg);
   }
 
   /** Routes one `link*` webview message to the hub; false for any other message. */
@@ -451,6 +485,7 @@ export class PreviewSession {
     this.ptController?.dispose();
     this.engineOff();
     this.linkOff();
+    this.windTunnel.dispose();
     for (const d of this.disposables) d.dispose();
     this.disposables.length = 0;
   }

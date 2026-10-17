@@ -455,6 +455,7 @@ export function activate(context: vscode.ExtensionContext): void {
         ["flowBalance", "compute a flow balance"],
         ["linkPreviews", "link previews"],
         ["optimizationProgress", "follow an optimization run"],
+        ["windTunnel", "build a virtual wind tunnel"],
         ["compareSplit", "compare another mesh in a split pane"],
         ["dataTable", "open the data table"],
         ["lighting", "adjust lighting"],

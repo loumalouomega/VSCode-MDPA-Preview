@@ -25,6 +25,8 @@ import {
   meshCurvature,
   meshCompare,
   meshDerive,
+  windTunnelPlanTool,
+  windTunnelGenerate,
   meshProbe,
   meshSplit,
   meshSize,
@@ -455,6 +457,68 @@ export function registerAllTools(server: McpServer): void {
     .describe(
       "Re-read the written file and grade every claim in `report` against it (verified true/false per category, discrepancies under `report.unexpected`). Costs one extra read; without it categories are the format's measured expectation, `unverified` where no measurement covers this mesh."
     );
+
+  const windTunnelShape = {
+    bodyPath: z.string().describe("The body surface: an STL, OBJ or PLY file (or any mesh with a surface), in its own unit"),
+    unit: z.union([z.enum(["m", "cm", "mm", "in", "ft"]), z.number().positive()]).optional()
+      .describe("The body file's length unit, or metres per unit. Default metres. A model in millimetres read as metres is the usual mistake: the plan reports the measured size"),
+    rotation: z.array(z.number()).length(3).optional().describe("Euler angles in degrees (about x, then y, then z) turning the body so the flow runs along +X and up is +Z"),
+    tunnel: z.object({
+      upstream: z.number().positive().optional().describe("Distance in front of the body, in body lengths (default 3)"),
+      downstream: z.number().positive().optional().describe("Distance behind the body, in body lengths (default 6)"),
+      side: z.number().positive().optional().describe("Distance to each side wall, in body widths (default 4)"),
+      top: z.number().positive().optional().describe("Distance above the body, in body heights (default 5)"),
+      bottom: z.number().positive().optional().describe("Distance below a free-air body, in body heights (default 5)"),
+      ground: z.enum(["free", "slip", "noslip", "moving"]).optional().describe("free: no floor effect; slip/noslip/moving: a floor under the body (moving = moving ground at the stream speed)"),
+      clearance: z.number().nonnegative().optional().describe("Gap between the lowest point of the body and the floor, in metres (ground modes other than free)"),
+      halfModel: z.boolean().optional().describe("Mesh only y >= 0 and close the cut with a symmetry plane (the body must be symmetric about y = 0)"),
+    }).optional(),
+    flow: z.object({
+      speed: z.number().positive().describe("Free-stream speed in m/s"),
+      density: z.number().positive().optional().describe("kg/m³ (default air at 20 °C, 1.204)"),
+      viscosity: z.number().positive().optional().describe("Dynamic viscosity in Pa·s (default air at 20 °C, 1.825e-5)"),
+      turbulenceIntensity: z.number().min(0).max(1).optional().describe("Free-stream turbulence intensity, recorded for turbulence models (default 0.01)"),
+    }),
+    mesh: z.object({
+      mode: z.enum(["bodyFitted", "embedded"]).optional().describe("bodyFitted (default): carve the body out and build a wall layer. embedded: keep the surface unfitted and write the signed DISTANCE for the Embedded Fluid problemtype"),
+      surfaceSize: z.number().positive().optional().describe("Cell size along the body wall in metres (default body length / 80)"),
+      farSize: z.number().positive().optional().describe("Largest cell size in metres (default body length / 2)"),
+      yPlus: z.number().positive().optional().describe("Target y+ of the first node row (default 50; 30–100 suits a wall function)"),
+      firstHeight: z.number().positive().optional().describe("First node row height in metres; overrides the y+ estimate"),
+      growth: z.number().min(1).optional().describe("Layer growth ratio (default 1.2)"),
+      maxAspect: z.number().min(1).optional().describe("Largest along/across cell size ratio in the layer (default 50)"),
+      fit: z.number().positive().optional().describe("Surface fit as a fraction of the body length (default 0.003)"),
+      carveFactor: z.number().min(0.2).max(1).optional().describe("The carve uses cells this fraction of the surface size (default 0.7); smaller follows sharp edges better and costs more"),
+      wakeLength: z.number().nonnegative().optional().describe("Wake refinement length behind the body, in body lengths (default 2; 0 = none)"),
+      wakeSize: z.number().positive().optional().describe("Cell size in the wake in metres (default far size / 4)"),
+      maxTetrahedra: z.number().int().positive().optional().describe("Refuse a plan expecting more tetrahedra than this (default 6 000 000)"),
+      sdfMaxTriangles: z.number().int().positive().optional().describe("A body with more triangles is simplified for the distance sampling only (default 300 000)"),
+    }).optional(),
+  };
+  server.registerTool(
+    "wind_tunnel_plan",
+    {
+      description:
+        "PLAN a virtual wind tunnel around a body surface without meshing anything: the body as measured (size, area, frontal area, whether it is closed), the tunnel extents and blockage, the flat-plate boundary layer (Reynolds number, friction velocity, first-cell height for the target y+, layers), the sizes, an estimate of the tetrahedra, memory and time, the ordered steps, warnings and errors (a plan with errors cannot run). Read-only. Use it to tune the parameters before wind_tunnel_generate.",
+      inputSchema: windTunnelShape,
+    },
+    runCancellable(windTunnelPlanTool)
+  );
+  server.registerTool(
+    "wind_tunnel_generate",
+    {
+      description:
+        "Build a virtual wind tunnel from a body surface in a few steps: a graded background lattice, distance-driven refinement (with a wake box), a level-set carve of the body, the named parts (Fluid, Body, Inlet, Outlet, Floor, Ceiling, SideLow/SideHigh or Symmetry), a stretched wall layer (MMG makes stretched tetrahedra, not prisms), hard mesh checks and a measured wall fit, then writes <stem>.mdpa, the placed <stem>_body.stl, <stem>.kratosvwt.json (parameters, report) and <stem>.kratoscase.json (the prepared Fluid — or Embedded Fluid — case: inlet, outlet, slip/no-slip walls, wall law, time stepping, force and coefficient monitors). With generateCase it also writes ProjectParameters.json, the materials file and MainKratos.py. Refuses to overwrite unless overwrite is true. Long: a few hundred thousand tetrahedra take about a minute, a few million many minutes; cancelling stops between steps. The flow is turbulent at wind-tunnel Reynolds numbers and no turbulence model is applied; the report says so.",
+      inputSchema: {
+        ...windTunnelShape,
+        outputFolder: z.string().describe("Folder for the mesh, the body, the recipe and the case state (created if missing)"),
+        stem: z.string().optional().describe("File stem (default \"tunnel\")"),
+        overwrite: z.boolean().optional().describe("Replace existing files of that stem"),
+        generateCase: z.boolean().optional().describe("Also write the solver files through case_generate"),
+      },
+    },
+    runCancellable(windTunnelGenerate)
+  );
 
   server.registerTool(
     "mesh_derive",

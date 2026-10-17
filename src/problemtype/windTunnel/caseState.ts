@@ -118,10 +118,5 @@ export function windTunnelCase(plan: WindTunnelPlan): WindTunnelCase {
   notes.push(
     `Time stepping follows a Courant number of 2 and runs for ${round(flowThrough * 10)} s, ten flow-through times of the body (${round(flowThrough)} s each). Raise the end time until the force coefficients stop drifting.`
   );
-  if (plan.boundaryLayer.regime === "turbulent") {
-    notes.push(
-      `The flow is turbulent (Re = ${plan.boundaryLayer.reynolds.toExponential(2)}) and no turbulence model is applied: the wall law and the dynamic subscales of QSVMS stand in. Treat the forces as a first estimate.`
-    );
-  }
   return { problemtypeId: embedded ? "embeddedFluid" : "fluid", state, notes };
 }

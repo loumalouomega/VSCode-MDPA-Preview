@@ -329,6 +329,7 @@ const PANELS: CommandSpec[] = [
   ui("integrals", "panel", "Field integrals panel", "integrals"),
   ui("streamlines", "panel", "Streamlines panel", "streamlines"),
   ui("flowBalance", "panel", "Boundary flow balance panel", "flowBalance"),
+  ui("windTunnel", "panel", "Virtual wind tunnel wizard: body, tunnel, flow, mesh, generate", "windTunnel"),
   ui("linkPreviews", "panel", "Link two previews", "linkPreviews"),
   ui("compareSplit", "panel", "Compare a second mesh in a split pane", "compareSplit"),
   ui("exportReport", "panel", "Export report inspector", "exportReport"),

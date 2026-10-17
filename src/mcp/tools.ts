@@ -200,6 +200,10 @@ import {
   isSafeEntryName,
 } from "../parser/problemZip";
 import { collectProblemFiles } from "../problemFiles";
+import { planWindTunnel, summarizePlan } from "../problemtype/windTunnel/plan";
+import type { WindTunnelParams, WindTunnelPlan } from "../problemtype/windTunnel/plan";
+import { runWindTunnel } from "../problemtype/windTunnel/run";
+import { windTunnelCase } from "../problemtype/windTunnel/caseState";
 
 // --- progress -------------------------------------------------------------
 
@@ -2577,7 +2581,18 @@ export async function meshSelect(args: {
  * vocabulary does.
  */
 export async function meshCapabilities(): Promise<object> {
-  return { ...await getMeshCapabilities(), plotting: PLOT_CAPABILITIES };
+  return {
+    ...await getMeshCapabilities(),
+    plotting: PLOT_CAPABILITIES,
+    windTunnel: {
+      tools: ["wind_tunnel_plan", "wind_tunnel_generate"],
+      modes: ["bodyFitted", "embedded"],
+      ground: ["free", "slip", "noslip", "moving"],
+      frame: "flow along +X, up along +Z",
+      wallLayer: "stretched tetrahedra from an anisotropic metric (remesh mode \"wall\"), not prisms",
+      limits: "the carve follows a sharp edge to about 1% of the body length; the report states the measured gap",
+    },
+  };
 }
 
 /** General tables deliberately do not masquerade as meshes. JSON is bounded; CSV is not downsampled. */
@@ -2857,6 +2872,67 @@ export async function caseWriteState(args: {
   const casePath = caseFilePath(args.meshPath);
   fs.writeFileSync(casePath, serializeCase(parsed.state));
   return { casePath, warnings: parsed.warnings };
+}
+
+/** The inputs of a virtual wind tunnel, as the MCP tools and the wizard pass them. */
+export interface WindTunnelRequest extends WindTunnelParams {
+  /** The body surface file (STL, OBJ, PLY, or any mesh with a surface). */
+  bodyPath: string;
+}
+
+async function planFromRequest(args: WindTunnelRequest, signal?: AbortSignal): Promise<WindTunnelPlan> {
+  if (!args || typeof args.bodyPath !== "string" || !args.bodyPath) throw new Error("bodyPath is required.");
+  if (!args.flow || !(Number(args.flow.speed) > 0)) throw new Error("flow.speed (m/s) is required and must be above zero.");
+  const src = await loadMesh(args.bodyPath, undefined, undefined, undefined, undefined, undefined, signal);
+  return planWindTunnel({ ...args, flow: args.flow }, src.model);
+}
+
+/**
+ * What a virtual wind tunnel would be and cost, without meshing anything:
+ * the body as measured, the tunnel, the boundary layer, the sizes, the
+ * expected tetrahedra and the steps. Read-only.
+ */
+export async function windTunnelPlanTool(args: WindTunnelRequest, execution: PlotExecution = {}): Promise<object> {
+  const plan = await planFromRequest(args, execution.signal);
+  return { ...summarizePlan(plan), case: windTunnelCase(plan).notes };
+}
+
+/**
+ * Builds the tunnel: mesh, prepared case state and report, written to
+ * `outputFolder`. Refuses to overwrite existing files unless `overwrite`.
+ * With `generateCase` it also writes the solver files (ProjectParameters.json,
+ * materials, MainKratos.py) through the same path `case_generate` uses.
+ */
+export async function windTunnelGenerate(
+  args: WindTunnelRequest & { outputFolder: string; stem?: string; overwrite?: boolean; generateCase?: boolean },
+  execution: PlotExecution = {}
+): Promise<object> {
+  const plan = await planFromRequest(args, execution.signal);
+  if (plan.errors.length > 0) throw new Error(`The tunnel cannot be built:\n- ${plan.errors.join("\n- ")}`);
+  if (!args.outputFolder) throw new Error("outputFolder is required.");
+  const stem = (args.stem ?? "tunnel").replace(/[^A-Za-z0-9_.-]/g, "_");
+  const folder = path.resolve(args.outputFolder);
+  const clash = [`${stem}.mdpa`, `${stem}_body.stl`, `${stem}.kratosvwt.json`, `${stem}.kratoscase.json`].filter((f) => fs.existsSync(path.join(folder, f)));
+  if (clash.length > 0 && !args.overwrite) {
+    throw new Error(`${clash.join(", ")} already exist in ${folder}. Pass overwrite: true to replace them, or choose another folder or stem.`);
+  }
+  const done = (stepIndex: number, steps: number, label: string): void => execution.progress?.(stepIndex, steps, label);
+  const result = await runWindTunnel(plan, {
+    folder,
+    stem,
+    signal: execution.signal,
+    onProgress: (p) => done(p.stepIndex, p.steps, p.message ? `${p.label}: ${p.message}` : p.label),
+  });
+  const out: Record<string, unknown> = {
+    files: result.files,
+    report: { ...result.report, log: result.report.log.slice(-12) },
+    problemtype: result.case.problemtypeId,
+    caseNotes: result.case.notes,
+  };
+  if (args.generateCase) {
+    out.generated = await caseGenerate({ meshPath: result.files.mesh, problemtype: result.case.problemtypeId }, execution);
+  }
+  return out;
 }
 
 export async function caseGenerate(args: {
