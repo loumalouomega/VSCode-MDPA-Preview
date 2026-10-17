@@ -33,6 +33,8 @@ export interface WindTunnelPlanView {
   reference: { area: number; length: number };
   steps: { id: string; label: string }[];
   case: string[];
+  refinement: string[];
+  bodies?: { name: string; size: number[]; surfaceArea: number; frontalArea: number; center: number[]; triangles: number; closed: boolean; problems: string[]; unitScale: number }[];
 }
 
 export interface WindTunnelResultView {
@@ -42,6 +44,8 @@ export interface WindTunnelResultView {
     nodes: number;
     seconds: number;
     wallFit?: { max: number; mean: number };
+    snap?: { before: number; after: number; fraction: number; applied: boolean };
+    bodies?: { name: string; wallFit?: { max: number; mean: number; nodes: number } }[];
     firstLayer?: { requested: number; achieved: number; yPlus: number };
     check: { inverted: number; minAngle?: number; maxEdgeRatio?: number; unnamedBoundaryFaces: number; problems: string[] };
     warnings: string[];
