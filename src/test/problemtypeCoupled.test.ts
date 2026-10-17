@@ -140,7 +140,7 @@ test("embedded fluid: embedded formulation, distance reading and its auxiliary p
   assert.deepEqual(pp.solver_settings.distance_reading_settings, { import_mode: "from_GiD_file", distance_file_name: "dist.post.res" });
   assert.equal(pp.problem_data.mesh_adaptivity, true);
   assert.equal(pp.processes.mesh_adaptivity_process_list[0].process_name, "MmgProcess");
-  assert.deepEqual(pp.processes.auxiliar_process_list.map((p: { process_name: string }) => p.process_name), ["ApplyDistanceModificationProcess", "ComputeEmbeddedDragProcess"]);
+  assert.deepEqual(pp.processes.auxiliar_process_list.map((p: { process_name: string }) => p.process_name), ["ApplyDistanceModificationProcess", "ComputeEmbeddedFlowForcesAndMomentsProcess"]);
   assert.equal(pp.solver_settings.time_scheme, "bdf2");
 });
 

@@ -53,7 +53,7 @@ The built-ins track [GiDInterface](https://github.com/KratosMultiphysics/GiDInte
 | Family | Problemtypes |
 |---|---|
 | Solids & structures | **Structural Mechanics** — small/large displacement, mixed, shell, beam, truss and cable formulations; static, dynamic (Newmark/Bossak) and eigenvalue analysis |
-| Fluids | **Fluid Dynamics** (monolithic QSVMS/DVMS/FIC and fractional step, wall law), **Compressible Fluid**, **Embedded Fluid**, **Free Surface** (edge-based level set), **Potential Flow**, **Shallow Water** (three solvers) |
+| Fluids | **Fluid Dynamics** (monolithic QSVMS/DVMS/FIC/legacy VMS/weakly compressible/axisymmetric/P2-P1, Stokes and fractional step; wall law, periodic boundaries, non-Newtonian Bingham and Herschel-Bulkley fluids; force, aerodynamic-coefficient, pressure-coefficient and y+ monitors), **Compressible Fluid**, **Embedded Fluid**, **Free Surface** (edge-based level set), **Potential Flow**, **Shallow Water** (three solvers) |
 | Thermal | **Convection-Diffusion** |
 | Coupled physics | **Buoyancy** (Boussinesq natural convection), **Conjugate Heat Transfer** (fluid + solid), **Fluid-Structure Interaction** (partitioned Dirichlet-Neumann over an ALE mesh), **Generic Coupling (CoSimulation)** (weak or strong coupling of the fluid and structural solvers, optional ALE) — see [Coupled Simulations](./coupled-simulations) |
 | Reduced-order models | **ROM · Structural Mechanics**, **ROM · Convection-diffusion**, **ROM · Fluid Dynamics**, **ROM · Potential Flow** (RomApplication's `RomManager`: POD basis and HROM over a sampled parameter space) — see [Reduced-Order Models](./reduced-order-models) |
@@ -146,6 +146,18 @@ All three actions are also available from the Command Palette: **Kratos Case: Ge
 - Materials use Kratos' `ReadMaterialsUtility`, which assigns properties per SubModelPart — the `properties_id`s in the materials file do **not** need to match the property ids inside the mdpa.
 - Solver settings mirror what the [GiD interface](https://github.com/KratosMultiphysics/GiDInterface) writes for the same problems, so cases behave the same either way.
 - Need physics the built-ins don't cover? [Author your own problemtype](./problemtype-authoring) in JavaScript or [Python](./problemtype-python). Faithful Python ports of all five built-ins ship as copyable examples in [`example/problemtypes/`](https://github.com/loumalouomega/VSCode-MDPA-Preview/tree/master/example/problemtypes).
+
+## Fluid formulations, monitors and periodic boundaries
+
+The **Fluid Dynamics** problemtype exposes every formulation `FluidDynamicsApplication`'s solvers build, each writing only the keys that formulation validates:
+
+- **Monolithic** elements: Quasi-static VMS (optionally integrating in time inside the element), Dynamic VMS, FIC (with its beta), the legacy VMS (with Herschel-Bulkley power-law parameters for non-Newtonian fluids), weakly compressible (with the speed of sound), axisymmetric (2D only) and P2-P1 continuous (quadratic meshes). Bossak takes its alpha; Kratos' defaults (alpha −0.3, FIC beta 0.8) are not written.
+- **Stokes** (monolithic, linear, optionally forced steady) and **Fractional step** (time order, slip conditions on the skin).
+- **Non-Newtonian laws** in the material form — `Bingham3DLaw`/`Bingham2DLaw` and `HerschelBulkley3DLaw` — offered to the monolithic strategy.
+- **Periodic boundary**: assign it to the slave boundary, name the master and the translation, and turn on *Periodic boundaries*; Generate refuses a pair left half set up.
+- **Monitors** (category *Other*): *Forces and moments on a body*, *Aerodynamic coefficients* (reference area, chord and dynamic pressure), *Pressure coefficient* and *Wall y+*. They are processes on the wall part, stay out of `skin_parts`, and the two nodal results are added to the output automatically.
+
+**Embedded Fluid** offers all four embedded elements (continuous, weakly compressible, Ausas and discontinuous weakly compressible) through the `Embedded` solver, with the speed-of-sound property only where the element reads it. Kratos has no dynamic-Smagorinsky switch in the solver settings (the utility is called from scripts), so large-eddy simulation here means the Dynamic VMS element's dynamic subscales.
 
 ## Time stepping guidance (fluid)
 

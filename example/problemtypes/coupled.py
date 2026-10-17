@@ -203,6 +203,10 @@ def _fluid_time_stepping_errors(values):
 # --- the Fluid Dynamics hooks (example/problemtypes/fluid.py) ------------------------
 
 FLUID_NO_SKIN = ("velocityConstraints", "pressureConstraints")
+# Conditions that name a part without being a boundary condition of the solver.
+FLUID_NOT_BOUNDARY = ("flowForces", "aerodynamicCoefficients", "pressureCoefficient", "yPlus", "periodic")
+MONITOR_OUTPUT = {"pressureCoefficient": "PRESSURE_COEFFICIENT", "yPlus": "Y_PLUS"}
+FORMULATION_KEY = {"axisymmetric": "axisymmetric_navier_stokes"}
 
 
 def _linear_solver(values):
@@ -233,6 +237,27 @@ def fluid_build_process(cond, assignment, ctx):
         if direction in ("x", "y", "z"):
             process["Parameters"]["direction"] = {"x": [1, 0, 0], "y": [0, 1, 0], "z": [0, 0, 1]}[direction]
         return process
+    if cond["id"] == "periodic":
+        master = _str(values.get("master"), "")
+        direction = values.get("translation")
+        direction = direction if isinstance(direction, list) else [1, 0, 0]
+        return {
+            "python_module": "apply_periodic_condition_process",
+            "kratos_module": "KratosMultiphysics",
+            "process_name": "ApplyPeriodicConditionProcess",
+            "Parameters": {
+                "model_part_name": ctx["model_part_name"],
+                "first_model_part_name": ctx["model_part_name"] + "." + _dotted(master),
+                "second_model_part_name": ctx["model_part_name"] + "." + _dotted(assignment["smpPath"]),
+                "variable_names": ["VELOCITY", "PRESSURE"],
+                "transformation_settings": {
+                    "translation_settings": {
+                        "dir_of_translation": direction,
+                        "magnitude": _num(values.get("magnitude"), 1),
+                    },
+                },
+            },
+        }
     if cond["id"] == "wallLaw":
         process = _resolve(cond, assignment, ctx)
         if process["Parameters"]["wall_model_name"] == "linear_log":
@@ -245,16 +270,19 @@ def fluid_build_process(cond, assignment, ctx):
 
 def fluid_solver_settings(values, ctx):
     fractional = values["strategy"] == "fractional_step"
+    strategy = values["strategy"]
     skin, no_skin = [], []
     for a in ctx["assignments"]:
-        if a["conditionId"] == "parts" or a["conditionId"].startswith("initial"):
+        if (a["conditionId"] == "parts" or a["conditionId"].startswith("initial")
+                or a["conditionId"] in FLUID_NOT_BOUNDARY):
             continue
         name = ctx["model_part_name"] + "." + _dotted(a["smpPath"])
         (no_skin if a["conditionId"] in FLUID_NO_SKIN else skin).append(name)
     settings = {
         "model_part_name": ctx["model_part_name"],
         "domain_size": ctx["domain_size"],
-        "solver_type": "FractionalStep" if fractional else "Monolithic",
+        "solver_type": ("FractionalStep" if fractional
+                        else "monolithic_stokes" if strategy == "stokes" else "Monolithic"),
         "model_import_settings": {"input_type": "mdpa", "input_filename": ctx["mdpa_stem"]},
         "material_import_settings": {"materials_filename": ctx["materials_file_name"]},
         "echo_level": values["echoLevel"],
@@ -275,6 +303,8 @@ def fluid_solver_settings(values, ctx):
             else {"automatic_time_step": False, "time_step": values["timeStep"]}
         ),
     }
+    if values["considerPeriodic"]:
+        settings["consider_periodic_conditions"] = True
     linear = _linear_solver(values)
     if fractional:
         settings["dynamic_tau"] = values["dynamicTau"]
@@ -284,9 +314,17 @@ def fluid_solver_settings(values, ctx):
             settings["maximum_pressure_iterations"] = values["maxPressureIterations"]
         settings["velocity_tolerance"] = values["velocityTolerance"]
         settings["maximum_velocity_iterations"] = values["maxVelocityIterations"]
+        settings["time_order"] = values["timeOrder"]
+        settings["use_slip_conditions"] = values["useSlipConditions"]
         if linear:
             settings["velocity_linear_solver_settings"] = dict(linear)
             settings["pressure_linear_solver_settings"] = dict(linear)
+    elif strategy == "stokes":
+        settings["formulation"] = {"element_type": "symbolic_stokes"}
+        settings["analysis_type"] = "linear"
+        settings["force_steady_state"] = values["forceSteadyState"]
+        if linear:
+            settings["linear_solver_settings"] = linear
     else:
         element_type = values["elementType"]
         settings["maximum_iterations"] = values["maxIterations"]
@@ -295,9 +333,25 @@ def fluid_solver_settings(values, ctx):
         settings["relative_pressure_tolerance"] = values["relPresTol"]
         settings["absolute_pressure_tolerance"] = values["absPresTol"]
         settings["time_scheme"] = values["timeScheme"]
-        formulation = {"element_type": element_type}
+        # Kratos' own defaults (alpha -0.3, FIC beta 0.8) are not written.
+        if settings["time_scheme"] == "bossak" and values["bossakAlpha"] != -0.3:
+            settings["alpha"] = values["bossakAlpha"]
+        formulation = {"element_type": FORMULATION_KEY.get(element_type, element_type)}
         if element_type in ("qsvms", "dvms", "vms"):
             formulation["use_orthogonal_subscales"] = values["oss"]
+        if element_type == "qsvms" and values["timeIntegrated"]:
+            formulation["element_manages_time_integration"] = True
+        if element_type == "fic" and values["ficBeta"] != 0.8:
+            formulation["beta"] = values["ficBeta"]
+        if element_type == "weakly_compressible":
+            formulation["sound_velocity"] = values["soundVelocity"]
+        if element_type == "vms" and values["nonNewtonian"]:
+            formulation["non_newtonian_fluid_parameters"] = {
+                "power_law_k": values["powerLawK"],
+                "power_law_n": values["powerLawN"],
+                "yield_stress": values["yieldStress"],
+                "regularization_coefficient": values["regularization"],
+            }
         formulation["dynamic_tau"] = values["dynamicTau"]
         settings["formulation"] = formulation
         if linear:
@@ -307,6 +361,19 @@ def fluid_solver_settings(values, ctx):
 
 
 def fluid_post_process(project_parameters, ctx):
+    wanted = []
+    for a in ctx["assignments"]:
+        name = MONITOR_OUTPUT.get(a["conditionId"])
+        if name and name not in wanted:
+            wanted.append(name)
+    vtk = (project_parameters.get("output_processes") or {}).get("vtk_output") or []
+    if wanted and vtk:
+        parameters = vtk[0]["Parameters"]
+        listed = list(parameters.get("nodal_data_value_variables") or [])
+        for name in wanted:
+            if name not in listed:
+                listed.append(name)
+        parameters["nodal_data_value_variables"] = listed
     modulus = _num(ctx["values"].get("gravityValue"), 0)
     if modulus == 0:
         return project_parameters
@@ -521,7 +588,7 @@ def fsi_solver_settings(values, ctx):
     skin, no_skin = [], []
     for a in fluid_ctx["assignments"]:
         cid = a["conditionId"][len(F):] if a["conditionId"].startswith(F) else a["conditionId"]
-        if cid == "parts" or cid.startswith("initial"):
+        if cid == "parts" or cid.startswith("initial") or cid in FLUID_NOT_BOUNDARY:
             continue
         (no_skin if cid in FSI_FLUID_NO_SKIN else skin).append(fluid_ctx["model_part_name"] + "." + _dotted(a["smpPath"]))
     fluid_settings["skin_parts"] = skin
@@ -627,7 +694,8 @@ FLUID_PHYSICS = {
     "gauss_defaults": [],
     "lists": {"list_other_processes": "list_other_processes",
               "fluid_initial_conditions_process_list": "initial_conditions_process_list",
-              "fluid_boundary_conditions_process_list": "constraints_process_list"},
+              "fluid_boundary_conditions_process_list": "constraints_process_list",
+              "fluid_auxiliar_process_list": "auxiliar_process_list"},
     "solver_settings": fluid_solver_settings,
     "build_process": fluid_build_process,
     "post_process": fluid_post_process,
@@ -910,9 +978,22 @@ def cosim_extra_files(ctx, materials):
 # (the fluid and structure sections, conditions, laws and the domains are shared)
 
 FLUID_SECTION = section("fluid", "Fluid",
-    field("f_strategy", "Strategy", "enum", default="monolithic", options=[{"value": "monolithic", "label": "Monolithic"}, {"value": "fractional_step", "label": "Fractional step"}], group="f_formulation"),
-    field("f_elementType", "Element", "enum", default="qsvms", options=[{"value": "qsvms", "label": "Quasi-static VMS"}, {"value": "dvms", "label": "Dynamic VMS"}, {"value": "fic", "label": "FIC"}, {"value": "vms", "label": "Classic VMS (legacy)"}], visible_when={"field": "f_strategy", "equals": "monolithic"}, group="f_formulation"),
+    field("f_strategy", "Strategy", "enum", default="monolithic", options=[{"value": "monolithic", "label": "Monolithic"}, {"value": "fractional_step", "label": "Fractional step"}, {"value": "stokes", "label": "Stokes (monolithic, linear)"}], group="f_formulation"),
+    field("f_elementType", "Element", "enum", default="qsvms", options=[{"value": "qsvms", "label": "Quasi-static VMS"}, {"value": "dvms", "label": "Dynamic VMS"}, {"value": "fic", "label": "FIC"}, {"value": "vms", "label": "Classic VMS (legacy)"}, {"value": "weakly_compressible", "label": "Weakly compressible"}, {"value": "axisymmetric", "label": "Axisymmetric (2D)"}, {"value": "p2p1", "label": "P2-P1 continuous (quadratic)"}], visible_when={"field": "f_strategy", "equals": "monolithic"}, group="f_formulation"),
+    field("f_timeIntegrated", "Element integrates in time", "bool", default=False, visible_when=[{"field": "f_strategy", "equals": "monolithic"}, {"field": "f_elementType", "equals": "qsvms"}], help="TimeIntegratedQSVMS: the element applies the time scheme itself instead of the strategy.", group="f_formulation"),
+    field("f_ficBeta", "FIC beta", "number", default=0.8, visible_when=[{"field": "f_strategy", "equals": "monolithic"}, {"field": "f_elementType", "equals": "fic"}], group="f_formulation", min=0),
+    field("f_soundVelocity", "Speed of sound", "number", default=1000000000000, visible_when=[{"field": "f_strategy", "equals": "monolithic"}, {"field": "f_elementType", "equals": "weakly_compressible"}], unit="m/s", help="The default is effectively incompressible; use the real speed of sound for a compressible-limit study.", group="f_formulation", min=0),
+    field("f_nonNewtonian", "Non-Newtonian (Herschel-Bulkley)", "bool", default=False, visible_when=[{"field": "f_strategy", "equals": "monolithic"}, {"field": "f_elementType", "equals": "vms"}], help="The legacy VMS element takes its power-law parameters from the solver; the other elements read a constitutive law from the material.", group="f_formulation"),
+    field("f_powerLawK", "Consistency index K", "number", default=0.000001, visible_when=[{"field": "f_strategy", "equals": "monolithic"}, {"field": "f_elementType", "equals": "vms"}, {"field": "f_nonNewtonian", "equals": True}], group="f_formulation", min=0),
+    field("f_powerLawN", "Power-law index n", "number", default=1, visible_when=[{"field": "f_strategy", "equals": "monolithic"}, {"field": "f_elementType", "equals": "vms"}, {"field": "f_nonNewtonian", "equals": True}], group="f_formulation", min=0),
+    field("f_yieldStress", "Yield stress", "number", default=0, visible_when=[{"field": "f_strategy", "equals": "monolithic"}, {"field": "f_elementType", "equals": "vms"}, {"field": "f_nonNewtonian", "equals": True}], unit="Pa", group="f_formulation", min=0),
+    field("f_regularization", "Regularization coefficient", "number", default=100, visible_when=[{"field": "f_strategy", "equals": "monolithic"}, {"field": "f_elementType", "equals": "vms"}, {"field": "f_nonNewtonian", "equals": True}], group="f_formulation", min=0),
+    field("f_forceSteadyState", "Force steady state", "bool", default=False, visible_when={"field": "f_strategy", "equals": "stokes"}, group="f_formulation"),
+    field("f_timeOrder", "Time order", "int", default=2, visible_when={"field": "f_strategy", "equals": "fractional_step"}, group="f_formulation", min=1, max=2),
+    field("f_useSlipConditions", "Slip conditions on the skin", "bool", default=True, visible_when={"field": "f_strategy", "equals": "fractional_step"}, group="f_formulation"),
+    field("f_considerPeriodic", "Periodic boundaries", "bool", default=False, help="Turn on when a Periodic boundary condition is assigned.", group="f_formulation"),
     field("f_timeScheme", "Time scheme", "enum", default="bdf2", options=[{"value": "bdf2", "label": "BDF2"}, {"value": "bossak", "label": "Bossak"}], visible_when={"field": "f_strategy", "equals": "monolithic"}, group="f_formulation"),
+    field("f_bossakAlpha", "Bossak alpha", "number", default=-0.3, visible_when=[{"field": "f_strategy", "equals": "monolithic"}, {"field": "f_timeScheme", "equals": "bossak"}], group="f_formulation", min=-0.5, max=0),
     field("f_oss", "Orthogonal subscales", "bool", default=False, visible_when=[{"field": "f_strategy", "equals": "monolithic"}, {"field": "f_elementType", "one_of": ["qsvms", "dvms"]}], group="f_formulation"),
     field("f_dynamicTau", "Dynamic tau", "number", default=1, group="f_formulation", min=0),
     field("f_timeStepMode", "Time stepping", "enum", default="fixed", options=[{"value": "fixed", "label": "Fixed step"}, {"value": "adaptive", "label": "Adaptive (CFL)"}], group="f_time"),
@@ -1054,12 +1135,9 @@ FLUID_CONDITIONS = [
               category="initial", icon="ptInitial"),
     condition("f_inlet", "Inlet velocity", list="fluid_boundary_conditions_process_list", target="surface",
               fields=[field("modulus", "|v| [m/s]", "number", default=1),
-                      field("modulusExpression", "|v| expression", "string", default="", advanced=True,
-                            help="A Kratos expression in the inlet's own coordinates and the current time t, e.g. 0.1214*(1-cos(0.1*pi*t))*y*(1-y). When set it replaces the numeric |v| above."),
-                      field("intervalStart", "Active from [s]", "number", default=0, advanced=True,
-                            help="The process applies from this time on. Two inlet assignments on one surface with disjoint windows write a two-phase inlet (the fsi_mok benchmark ramps up until 10 s, then holds)."),
-                      field("intervalEnd", "Active until [s]", "string", default="End", advanced=True,
-                            help='"End" keeps the process active to the end of the simulation; a number deactivates it there.'),
+                      field("modulusExpression", "|v| expression", "string", default="", help="A Kratos expression in the inlet's own coordinates and the current time t, e.g. 0.1214*(1-cos(0.1*pi*t))*y*(1-y). When set it replaces the numeric |v| above.", advanced=True),
+                      field("intervalStart", "Active from [s]", "number", default=0, help="The process applies from this time on. Two inlet assignments on one surface with disjoint windows write a two-phase inlet (the fsi_mok benchmark ramps up until 10 s, then holds).", advanced=True),
+                      field("intervalEnd", "Active until [s]", "string", default="End", help="\"End\" keeps the process active to the end of the simulation; a number deactivates it there.", advanced=True),
                       field("direction", "Direction", "enum", default="automatic_inwards_normal", options=[{"value": "automatic_inwards_normal", "label": "Inwards normal"}, {"value": "automatic_outwards_normal", "label": "Outwards normal"}, {"value": "x", "label": "+X"}, {"value": "y", "label": "+Y"}, {"value": "z", "label": "+Z"}])],
               process_template={
                   "python_module": "apply_inlet_process",
@@ -1157,6 +1235,88 @@ FLUID_CONDITIONS = [
                   },
               },
               help="Imposes pressure on a SubModelPart that is not a skin boundary.", category="constraints", icon="ptConstraint"),
+    condition("f_periodic", "Periodic boundary", list="fluid_boundary_conditions_process_list", target="surface",
+              fields=[field("master", "Master boundary", "smp", default=""),
+                      field("translation", "Translation direction", "vector3", default=[1, 0, 0], help="From the slave to the master."),
+                      field("magnitude", "Translation distance [m]", "number", default=1, min=0)],
+              process_template={
+
+              },
+              help="Ties this boundary (the slave) to the master boundary a translation away, for velocity and pressure. Assign it to the slave only and turn on Periodic boundaries.", category="constraints", icon="ptConstraint"),
+    condition("f_flowForces", "Forces and moments on a body", list="fluid_auxiliar_process_list", target="surface",
+              fields=[field("referencePoint", "Moment reference point", "vector3", default=[0, 0, 0]),
+                      field("writeMoments", "Write moments", "bool", default=True),
+                      field("printToScreen", "Print to screen", "bool", default=False)],
+              process_template={
+                  "python_module": "compute_body_fitted_flow_forces_and_moments_process",
+                  "kratos_module": "KratosMultiphysics.FluidDynamicsApplication",
+                  "process_name": "ComputeBodyFittedFlowForcesAndMomentsProcess",
+                  "Parameters": {
+                      "model_part_name": "$path",
+                      "interval": [0, "End"],
+                      "print_to_screen": "$field:printToScreen",
+                      "write_forces_output_file": True,
+                      "write_moments_output_file": "$field:writeMoments",
+                      "reference_point": "$field:referencePoint",
+                  },
+              },
+              help="Integrates pressure and viscous traction over this wall and writes Fx Fy Fz (and moments) per step to <model part>_drag.dat.", category="other", icon="ptResults"),
+    condition("f_aerodynamicCoefficients", "Aerodynamic coefficients", list="fluid_auxiliar_process_list", target="surface",
+              fields=[field("referenceArea", "Reference area [m²]", "number", default=1, min=0),
+                      field("referenceChord", "Reference chord [m]", "number", default=1, min=0),
+                      field("dynamicPressure", "Dynamic pressure [Pa]", "number", default=1, help="0.5 · density · speed².", min=0),
+                      field("referencePoint", "Moment reference point", "vector3", default=[0, 0, 0]),
+                      field("printToScreen", "Print to screen", "bool", default=False)],
+              process_template={
+                  "python_module": "compute_aerodynamic_coefficients_process",
+                  "kratos_module": "KratosMultiphysics.FluidDynamicsApplication",
+                  "process_name": "ComputeAerodynamicCoefficientsProcess",
+                  "Parameters": {
+                      "model_part_name": "$path",
+                      "interval": [0, "End"],
+                      "print_coefficients_to_screen": "$field:printToScreen",
+                      "write_output_file": True,
+                      "is_embedded": False,
+                      "reference_point": "$field:referencePoint",
+                      "reference_area": "$field:referenceArea",
+                      "reference_chord": "$field:referenceChord",
+                      "dynamic_pressure": "$field:dynamicPressure",
+                  },
+              },
+              help="Writes drag, lift and moment coefficients of this wall: force over the dynamic pressure times the reference area (moments also times the reference chord).", category="other", icon="ptResults"),
+    condition("f_pressureCoefficient", "Pressure coefficient", list="fluid_auxiliar_process_list", target="surface",
+              fields=[field("freestreamDensity", "Free-stream density [kg/m³]", "number", default=1.204, min=0),
+                      field("freestreamVelocity", "Free-stream speed [m/s]", "number", default=1, min=0),
+                      field("freestreamPressure", "Free-stream pressure [Pa]", "number", default=0)],
+              process_template={
+                  "python_module": "compute_pressure_coefficient_process",
+                  "kratos_module": "KratosMultiphysics.FluidDynamicsApplication",
+                  "process_name": "ComputePressureCoefficientProcess",
+                  "Parameters": {
+                      "model_part_name": "$path",
+                      "freestream_density": "$field:freestreamDensity",
+                      "freestream_velocity": "$field:freestreamVelocity",
+                      "freestream_pressure": "$field:freestreamPressure",
+                      "pressure_is_historical": True,
+                      "execution_step": "ExecuteBeforeOutputStep",
+                  },
+              },
+              help="Writes PRESSURE_COEFFICIENT on this part's nodes for the output: (p − p∞) over the free-stream dynamic pressure.", category="other", icon="ptResults"),
+    condition("f_yPlus", "Wall y+", list="fluid_auxiliar_process_list", target="surface",
+              fields=[],
+              process_template={
+                  "python_module": "compute_y_plus_process",
+                  "kratos_module": "KratosMultiphysics.FluidDynamicsApplication",
+                  "process_name": "ComputeYPlusProcess",
+                  "Parameters": {
+                      "model_part_name": "$path",
+                      "output_variable_name": "Y_PLUS",
+                      "output_to_elements": False,
+                      "calculate_normals_every_time_step": False,
+                      "echo_level": 0,
+                  },
+              },
+              help="Writes Y_PLUS on this wall's nodes for the output, to check the first cell height against the wall model.", category="other", icon="ptResults"),
 ]
 
 STRUCTURE_CONDITIONS = [
@@ -1496,6 +1656,34 @@ MATERIAL_LAWS = [
                  variables=[field("DENSITY", "Density [kg/m³]", "number", default=1000, unit="kg/m³"),
                             field("DYNAMIC_VISCOSITY", "Dynamic viscosity [Pa·s]", "number", default=0.001, unit="Pa·s")],
                  domain_size=2,
+                 domain="fluid"),
+    material_law("bingham_3d", "Bingham3DLaw",
+                 variables=[field("DENSITY", "Density [kg/m³]", "number", default=1000, unit="kg/m³"),
+                            field("DYNAMIC_VISCOSITY", "Plastic viscosity [Pa·s]", "number", default=0.001, unit="Pa·s"),
+                            field("YIELD_STRESS", "Yield stress [Pa]", "number", default=1, unit="Pa"),
+                            field("REGULARIZATION_COEFFICIENT", "Regularization coefficient", "number", default=100)],
+                 group="Non-Newtonian",
+                 when={"field": "f_strategy", "equals": "monolithic"},
+                 domain_size=3,
+                 domain="fluid"),
+    material_law("bingham_2d", "Bingham2DLaw",
+                 variables=[field("DENSITY", "Density [kg/m³]", "number", default=1000, unit="kg/m³"),
+                            field("DYNAMIC_VISCOSITY", "Plastic viscosity [Pa·s]", "number", default=0.001, unit="Pa·s"),
+                            field("YIELD_STRESS", "Yield stress [Pa]", "number", default=1, unit="Pa"),
+                            field("REGULARIZATION_COEFFICIENT", "Regularization coefficient", "number", default=100)],
+                 group="Non-Newtonian",
+                 when={"field": "f_strategy", "equals": "monolithic"},
+                 domain_size=2,
+                 domain="fluid"),
+    material_law("herschel_bulkley_3d", "HerschelBulkley3DLaw",
+                 variables=[field("DENSITY", "Density [kg/m³]", "number", default=1000, unit="kg/m³"),
+                            field("YIELD_STRESS", "Yield stress [Pa]", "number", default=1, unit="Pa"),
+                            field("POWER_LAW_K", "Consistency index K", "number", default=0.001),
+                            field("POWER_LAW_N", "Power-law index n", "number", default=1),
+                            field("REGULARIZATION_COEFFICIENT", "Regularization coefficient", "number", default=100)],
+                 group="Non-Newtonian",
+                 when={"field": "f_strategy", "equals": "monolithic"},
+                 domain_size=3,
                  domain="fluid"),
     material_law("linear_elastic_3d", "LinearElastic3DLaw",
                  variables=[field("DENSITY", "Density [kg/m³]", "number", default=7850, unit="kg/m³"),
@@ -1941,7 +2129,7 @@ MATERIAL_LAWS = [
 
 FSI_DOMAINS = [
     domain("fluid", "Fluid", "FluidModelPart", "Fluid", "f_parts",
-           condition_ids=["f_parts", "f_initialVelocity", "f_initialPressure", "f_inlet", "f_outlet", "f_slip", "f_noSlip", "f_wallLaw", "f_velocityConstraints", "f_pressureConstraints", "aleMeshBC", "fluidInterface"],
+           condition_ids=["f_parts", "f_initialVelocity", "f_initialPressure", "f_inlet", "f_outlet", "f_slip", "f_noSlip", "f_wallLaw", "f_velocityConstraints", "f_pressureConstraints", "f_periodic", "f_flowForces", "f_aerodynamicCoefficients", "f_pressureCoefficient", "f_yPlus", "aleMeshBC", "fluidInterface"],
            materials_file_name="FluidMaterials.json",
            required=[{
                "conditionId": "fluidInterface",
@@ -2300,7 +2488,7 @@ mesh_naming={
 
 COSIM_DOMAINS = [
     domain("fluid", "Fluid", "FluidModelPart", "Fluid", "f_parts",
-           condition_ids=["f_parts", "f_initialVelocity", "f_initialPressure", "f_inlet", "f_outlet", "f_slip", "f_noSlip", "f_wallLaw", "f_velocityConstraints", "f_pressureConstraints", "aleMeshBC", "fluidInterface"],
+           condition_ids=["f_parts", "f_initialVelocity", "f_initialPressure", "f_inlet", "f_outlet", "f_slip", "f_noSlip", "f_wallLaw", "f_velocityConstraints", "f_pressureConstraints", "f_periodic", "f_flowForces", "f_aerodynamicCoefficients", "f_pressureCoefficient", "f_yPlus", "aleMeshBC", "fluidInterface"],
            materials_file_name="FluidMaterials.json",
            required=[{
                "conditionId": "fluidInterface",

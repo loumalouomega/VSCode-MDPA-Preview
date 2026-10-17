@@ -208,7 +208,11 @@ const couplingFields: FieldSpec[] = [
 ];
 
 const fluidList = (cond: ConditionSpec): string =>
-  cond.category === "initial" ? "fluid_initial_conditions_process_list" : "fluid_boundary_conditions_process_list";
+  cond.category === "initial"
+    ? "fluid_initial_conditions_process_list"
+    : cond.list === "auxiliar_process_list"
+      ? "fluid_auxiliar_process_list"
+      : "fluid_boundary_conditions_process_list";
 const structList = (cond: ConditionSpec): string =>
   cond.list === "loads_process_list" ? "structure_loads_process_list" : "structure_constraints_process_list";
 
@@ -350,7 +354,7 @@ const decl: ProblemtypeDeclaration = {
   ],
   conditions: [...fluidConditions, aleBC, fluidInterface, ...structConditions, structureInterface],
   materialLaws: [
-    ...fluid.decl.materialLaws.map((l) => ({ ...l, domain: "fluid" })),
+    ...prefixLawRules(fluid.decl.materialLaws, F).map((l) => ({ ...l, domain: "fluid" })),
     // The structure's laws carry `when` rules over its prefixed fields.
     ...prefixLawRules(structural.decl.materialLaws, S).map((l) => ({ ...l, domain: "structure" })),
   ],
