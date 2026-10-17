@@ -150,6 +150,28 @@ def _require_str(value, what):
         raise ValueError(f"{what} must be a non-empty string (got {value!r})")
 
 
+def _normalize_when(when, what):
+    """A ``{"field", "equals"|"one_of"}`` rule or list of them, in JS spelling.
+
+    ``field(visible_when=...)``, ``application(when=...)`` and
+    ``material_law(when=...)`` share the spelling; a single rule keeps the
+    plain-object form, a list means "all must hold".
+    """
+    rules = when if isinstance(when, (list, tuple)) else [when]
+    out = []
+    for rule in rules:
+        if (not isinstance(rule, dict) or "field" not in rule
+                or ("equals" not in rule and "one_of" not in rule)):
+            raise ValueError(f'{what} needs {{"field", "equals"}} or {{"field", "one_of"}}')
+        r = {"field": rule["field"]}
+        if "equals" in rule:
+            r["equals"] = rule["equals"]
+        else:
+            r["oneOf"] = list(rule["one_of"])
+        out.append(r)
+    return out[0] if not isinstance(when, (list, tuple)) else out
+
+
 def field(id, label, type, default=None, options=None, visible_when=None, unit=None, help=None,
           group=None, min=None, max=None, step=None, advanced=None, ref_collection=None):
     """A form field spec (mirrors the JS ``FieldSpec``). See the module docstring.
@@ -187,20 +209,8 @@ def field(id, label, type, default=None, options=None, visible_when=None, unit=N
     if default is not None:
         f["default"] = default
     if visible_when is not None:
-        rules = visible_when if isinstance(visible_when, (list, tuple)) else [visible_when]
-        out = []
-        for rule in rules:
-            if (not isinstance(rule, dict) or "field" not in rule
-                    or ("equals" not in rule and "one_of" not in rule)):
-                raise ValueError(f'field "{id}": visible_when needs {{"field", "equals"}} or {{"field", "one_of"}}')
-            r = {"field": rule["field"]}
-            if "equals" in rule:
-                r["equals"] = rule["equals"]
-            else:
-                r["oneOf"] = list(rule["one_of"])
-            out.append(r)
         # A single rule keeps the plain-object spelling; several mean "all must hold".
-        f["visibleWhen"] = out[0] if not isinstance(visible_when, (list, tuple)) else out
+        f["visibleWhen"] = _normalize_when(visible_when, f'field "{id}": visible_when')
     if unit is not None:
         if not isinstance(unit, str) or not unit:
             raise ValueError(f'field "{id}": unit must be a non-empty string')
@@ -399,7 +409,7 @@ def material_law(id, name, variables=(), domain_size=None, domain=None,
     form heading the law is listed under. ``parameters`` are extra keys of the
     ``constitutive_law`` block, written as they are (the ConstitutiveLaws
     Application factories' ``law_type``/``yield_surface``/``plastic_potential``),
-    and ``when`` a visibility rule ({"field", "equals"} or {"field", "oneOf"}) or
+    and ``when`` a visibility rule ({"field", "equals"} or {"field", "one_of"}) or
     list of them over the case values: the form offers the law only while they
     hold, and Generate refuses an assignment left on a law the setup excludes.
     """
@@ -424,7 +434,7 @@ def material_law(id, name, variables=(), domain_size=None, domain=None,
             raise ValueError(f'material law "{id}": parameters may not set "name"')
         m["parameters"] = dict(parameters)
     if when is not None:
-        m["when"] = list(when) if isinstance(when, (list, tuple)) else when
+        m["when"] = _normalize_when(when, f'material law "{id}": when')
     return m
 
 
@@ -529,19 +539,7 @@ def application(name, when=None):
         raise ValueError(f'application {name!r}: expected a Kratos application name such as "FluidDynamicsApplication"')
     if when is None:
         return name
-    rules = when if isinstance(when, (list, tuple)) else [when]
-    out = []
-    for rule in rules:
-        if (not isinstance(rule, dict) or "field" not in rule
-                or ("equals" not in rule and "one_of" not in rule)):
-            raise ValueError(f'application {name!r}: when needs {{"field", "equals"}} or {{"field", "one_of"}}')
-        r = {"field": rule["field"]}
-        if "equals" in rule:
-            r["equals"] = rule["equals"]
-        else:
-            r["oneOf"] = list(rule["one_of"])
-        out.append(r)
-    return {"application": name, "when": out[0] if not isinstance(when, (list, tuple)) else out}
+    return {"application": name, "when": _normalize_when(when, f"application {name!r}: when")}
 
 
 def define_problemtype(id, name, analysis_stage, model_part_name,
