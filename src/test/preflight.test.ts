@@ -126,6 +126,43 @@ test("what Generate refuses surfaces as an error finding", async () => {
   await assert.rejects(generateCase(fluid, model, state, "cavity"));
 });
 
+test("a block the selected formulation has no shape for is a generate-refused error", async () => {
+  const decl = {
+    ...structural.decl,
+    meshNaming: {
+      elements: {
+        field: "elementBase",
+        names: { ShellThinElementCorotational: { 3: { 3: "ShellThinElementCorotational3D3N", 4: "ShellThinElementCorotational3D4N" } } },
+      },
+    },
+  };
+  const runtime = { ...structural, decl };
+  const state = goodState();
+  state.values.problem.elementBase = "ShellThinElementCorotational";
+  // A hexahedron has no thin-shell variant: adapting it would invent a name.
+  const model = parseMdpa(`Begin Nodes
+1 0.0 0.0 0.0
+2 1.0 0.0 0.0
+3 0.0 1.0 0.0
+4 0.0 0.0 1.0
+5 1.0 1.0 1.0
+6 0.0 1.0 1.0
+7 0.0 0.0 1.0
+8 1.0 0.0 1.0
+End Nodes
+
+Begin Elements Element3D8N
+1 0 1 2 3 4 5 6 7 8
+End Elements
+`);
+  const report = await preflightCase(runtime, model, state, "beam", { quality: false });
+  assert.equal(report.ok, false);
+  const refused = codes(report.findings, "generate-refused");
+  assert.equal(refused.length, 1);
+  assert.match(refused[0].message, /Element3D8N/);
+  assert.match(refused[0].message, /ShellThinElementCorotational/);
+});
+
 test("a warning-severity material problem stays a warning (Generate still succeeds)", async () => {
   const model = parseMdpa(MDPA);
   const state = goodState();

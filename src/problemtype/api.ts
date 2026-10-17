@@ -12,14 +12,18 @@ import {
   CaseState,
   ConditionSpec,
   FieldSpec,
+  FormulationMeshNaming,
   GenContext,
   JsonObject,
   JsonValue,
+  MeshNamingEntry,
   ProblemtypeDeclaration,
   ProblemtypeHooks,
   ProblemtypeRuntime,
   ProblemtypeSource,
+  ResolvedMeshNaming,
 } from "./types";
+import { meshShapeKey } from "./meshNaming";
 import { DRIVER_TEMPLATES, driverTemplateScript } from "./mainKratosTemplate";
 import { applicationDeclarationProblems } from "./applications";
 import { couplingInterfaceDeclarationProblems } from "./interfaceCheck";
@@ -38,6 +42,71 @@ export const STANDARD_PROCESS_LISTS = [
   "loads_process_list",
   "list_other_processes",
 ] as const;
+
+/**
+ * Validates one `MeshNamingEntry`: a template/verbatim name, or a shape table
+ * of exact names (no placeholders in there — a table lists Kratos types).
+ */
+function checkMeshNames(entry: unknown, where: string, errors: string[]): void {
+  if (typeof entry === "string") {
+    if (entry.length === 0) errors.push(`${where}: empty name`);
+    else if (entry.replace(/\{dim\}|\{nodes\}/g, "").includes("{")) {
+      errors.push(`${where}: only {dim} and {nodes} placeholders are allowed ("${entry}")`);
+    }
+    return;
+  }
+  if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
+    errors.push(`${where}: must be a name or a {dim: {nodes: name}} table`);
+    return;
+  }
+  const dims = Object.entries(entry as Record<string, unknown>);
+  if (dims.length === 0) errors.push(`${where}: the shape table is empty`);
+  for (const [dim, byNodes] of dims) {
+    if (dim !== "2" && dim !== "3") {
+      errors.push(`${where}: domain-size keys must be 2 or 3 (got "${dim}")`);
+      continue;
+    }
+    if (typeof byNodes !== "object" || byNodes === null || Array.isArray(byNodes)) {
+      errors.push(`${where}.${dim}: must map node counts to names`);
+      continue;
+    }
+    const counts = Object.entries(byNodes as Record<string, unknown>);
+    if (counts.length === 0) errors.push(`${where}.${dim}: no shapes given`);
+    for (const [nodes, name] of counts) {
+      if (!/^[1-9][0-9]*$/.test(nodes)) {
+        errors.push(`${where}.${dim}: node counts must be positive integers (got "${nodes}")`);
+      }
+      if (typeof name !== "string" || name.length === 0) {
+        errors.push(`${where}.${dim}: the name for "${nodes}" node(s) must be a non-empty string`);
+      } else if (name.includes("{")) {
+        errors.push(`${where}.${dim}: a shape table holds exact names, not templates ("${name}")`);
+      }
+    }
+  }
+}
+
+/** Validates a `FormulationMeshNaming` against the declaration's enum fields. */
+function checkFormulationMeshNaming(
+  spec: FormulationMeshNaming,
+  where: string,
+  errors: string[],
+  fields: Map<string, FieldSpec>
+): void {
+  const field = fields.get(spec.field);
+  if (!field) errors.push(`${where}: field "${spec.field}" is not a section field`);
+  else if (field.type !== "enum" || !field.options || field.options.length === 0) {
+    errors.push(`${where}: field "${spec.field}" must be an enum of the formulations to table`);
+  }
+  if (typeof spec.names !== "object" || spec.names === null || Array.isArray(spec.names) || Object.keys(spec.names).length === 0) {
+    errors.push(`${where}: "names" must map field values to names`);
+    return;
+  }
+  const options = new Set((field?.options ?? []).map((o) => o.value));
+  for (const [value, entry] of Object.entries(spec.names)) {
+    if (field && !options.has(value)) errors.push(`${where}: "${value}" is not an option of "${spec.field}"`);
+    checkMeshNames(entry, `${where}.${value}`, errors);
+  }
+}
 
 /** Validates a declaration; returns a list of human-readable problems (empty = ok). */
 export function validateDeclaration(decl: ProblemtypeDeclaration): string[] {
@@ -64,6 +133,8 @@ export function validateDeclaration(decl: ProblemtypeDeclaration): string[] {
     errors.push("domainSizes must be a non-empty array of 2 | 3");
   }
   const fieldIds = new Set<string>();
+  // Section fields by id: meshNaming formulation tables resolve through them.
+  const fieldSpecs = new Map<string, FieldSpec>();
   const collectionIds = new Set(
     (Array.isArray(decl.collections) ? decl.collections : []).map((c) => c?.id).filter((id): id is string => typeof id === "string")
   );
@@ -90,6 +161,7 @@ export function validateDeclaration(decl: ProblemtypeDeclaration): string[] {
       const seen = globalUnique ? fieldIds : local;
       if (seen.has(f.id)) errors.push(`${where}: duplicate field id "${f.id}"`);
       seen.add(f.id);
+      if (globalUnique) fieldSpecs.set(f.id, f);
     }
   };
   const checkRequirements = (reqs: unknown, where: string, sectionFields?: FieldSpec[]): void => {
@@ -268,10 +340,24 @@ export function validateDeclaration(decl: ProblemtypeDeclaration): string[] {
       for (const kind of ["elements", "conditions"] as const) {
         const value = decl.meshNaming[kind];
         if (value === undefined) continue;
-        const bases = typeof value === "string" ? [value] : [value[2], value[3]];
-        if (typeof value !== "string" && typeof value !== "object") {
-          errors.push(`meshNaming.${kind} must be a string or a {2,3} object`);
-        } else if (!bases.some((b) => typeof b === "string" && b.length > 0)) {
+        if (typeof value === "string") {
+          if (value.length === 0) errors.push(`meshNaming.${kind}: empty name`);
+          continue;
+        }
+        if (typeof value !== "object" || value === null) {
+          errors.push(`meshNaming.${kind} must be a string, a {2,3} base object or a {field, names} table`);
+          continue;
+        }
+        if ("field" in value) {
+          if (typeof (value as { field?: unknown }).field !== "string") {
+            errors.push(`meshNaming.${kind}: "field" must name a section field`);
+          } else {
+            checkFormulationMeshNaming(value as unknown as FormulationMeshNaming, `meshNaming.${kind}`, errors, fieldSpecs);
+          }
+          continue;
+        }
+        const bases = [(value as { 2?: string; 3?: string })[2], (value as { 2?: string; 3?: string })[3]];
+        if (!bases.some((b) => typeof b === "string" && b.length > 0)) {
           errors.push(`meshNaming.${kind}: no base name given`);
         } else if (bases.some((b) => b !== undefined && (typeof b !== "string" || b.length === 0))) {
           errors.push(`meshNaming.${kind}: base names must be non-empty strings`);
@@ -284,25 +370,52 @@ export function validateDeclaration(decl: ProblemtypeDeclaration): string[] {
 
 /**
  * Resolves the declaration's meshNaming for one case: picks the per-size
- * variant and substitutes "$field:<id>" from the flattened values.
+ * variant, substitutes "$field:<id>" from the flattened values, and turns a
+ * formulation table into the selected formulation's entry.
+ *
+ * A kind is omitted when nothing selects it (no spec, or no value for the
+ * driving field), which leaves its blocks untouched. A field value the table
+ * has no entry for keeps the legacy meaning: the value itself is a base name.
  */
 export function resolveMeshNaming(
   decl: ProblemtypeDeclaration,
   values: Record<string, JsonValue>,
   domainSize: 2 | 3
-): { elements?: string; conditions?: string } {
-  const out: { elements?: string; conditions?: string } = {};
+): ResolvedMeshNaming {
+  const out: ResolvedMeshNaming = {};
   if (!decl.meshNaming) return out;
   for (const kind of ["elements", "conditions"] as const) {
     const spec = decl.meshNaming[kind];
     if (spec === undefined) continue;
+    if (typeof spec === "object" && spec !== null && "field" in spec) {
+      const formulation = spec as FormulationMeshNaming;
+      const v = values[formulation.field];
+      const source = typeof v === "string" && v.length > 0 ? v : undefined;
+      if (source === undefined) continue;
+      const entry = formulation.names[source];
+      if (typeof entry === "string") {
+        // A template when it has {dim}/{nodes} placeholders; one exact name otherwise.
+        out[kind] = { template: entry, source };
+      } else if (entry !== undefined) {
+        const shapes: { [shape: string]: string } = {};
+        for (const [dim, byNodes] of Object.entries(entry)) {
+          for (const [nodes, name] of Object.entries(byNodes)) {
+            shapes[meshShapeKey(Number(dim) as 2 | 3, Number(nodes))] = name;
+          }
+        }
+        out[kind] = { shapes, source };
+      } else {
+        out[kind] = { base: source, source };
+      }
+      continue;
+    }
     let base = typeof spec === "string" ? spec : spec[domainSize];
     if (base === undefined) continue;
     if (base.startsWith("$field:")) {
       const v = values[base.slice("$field:".length)];
       base = typeof v === "string" && v.length > 0 ? v : undefined;
     }
-    if (base) out[kind] = base;
+    if (base) out[kind] = { base, source: base };
   }
   return out;
 }

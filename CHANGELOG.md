@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- **Formulation-aware mesh naming**: a `meshNaming` kind may now be a `{ field, names }` table, giving each value of an enum field (element formulations) its own block names — a template (`"SpringDamperElement{dim}"`), one exact name (`"CableElement3D2N"`) or a `{dim: {nodes: name}}` table of exact names. A value without an entry keeps the base meaning, and a shape a table omits is refused by preflight (renaming it would invent a Kratos type) instead of generated. The Python authoring API mirrors the form.
+
 ## [5.14.0] - 2026-10-16
 
 ### Added

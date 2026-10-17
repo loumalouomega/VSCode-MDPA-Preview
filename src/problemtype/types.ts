@@ -142,16 +142,61 @@ export type ProcessList =
   | (string & {});
 
 /**
+ * One formulation's block names, for `FormulationMeshNaming.names`:
+ * - a string with `{dim}` / `{nodes}` is a template ("SpringDamperElement{dim}",
+ *   "Membrane{dim}D{nodes}N"); without them it is that exact name at every
+ *   shape ("CableElement3D2N");
+ * - an object lists the exact name per domain size → nodes per cell
+ *   ({3: {3: "ShellThinElementCorotational3D3N", 4: "…"}}). A shape the table
+ *   does not list is one the formulation has no element for, so adapting such
+ *   a block is refused — renaming it would invent a type Kratos lacks.
+ */
+export type MeshNamingEntry = string | { [dim: number]: { [nodes: number]: string } };
+
+/**
+ * Mesh names picked by a form field: the value of `field` (an enum of element
+ * formulations, say) selects the entry under `names`. A value without an entry
+ * keeps the legacy meaning — the value itself is a base name.
+ */
+export interface FormulationMeshNaming {
+  field: string;
+  names: { [value: string]: MeshNamingEntry };
+}
+
+/**
  * Expected mdpa block naming for the solver: per-kind target base name; the
  * final block name is `${base}${domainSize}D${nodesPerCell}N`. A plain string
  * applies to both domain sizes; the object form differs per size. Strings may
  * be "$field:<id>" (resolved against the flattened form values), letting e.g.
  * the structural formulation pick SmallDisplacementElement vs
- * TotalLagrangianElement.
+ * TotalLagrangianElement. The `FormulationMeshNaming` form adds a per-value
+ * table for formulations whose names no single base can describe.
  */
 export interface MeshNamingSpec {
-  elements?: string | { 2?: string; 3?: string };
-  conditions?: string | { 2?: string; 3?: string };
+  elements?: string | { 2?: string; 3?: string } | FormulationMeshNaming;
+  conditions?: string | { 2?: string; 3?: string } | FormulationMeshNaming;
+}
+
+/**
+ * One block kind's resolved naming for a case (see `resolveMeshNaming`).
+ * Exactly one of the three name sources is set:
+ * - `base`: every shape is named `${base}${dim}D${nodes}N`;
+ * - `template`: `{dim}`/`{nodes}` substituted per shape (verbatim without them);
+ * - `shapes`: the only names the formulation has, keyed "3D4N" (the GiD
+ *   convention) — a shape missing from the map has no name at all.
+ * `source` is the field value (or base) the names came from, for messages.
+ */
+export interface ResolvedMeshKind {
+  base?: string;
+  template?: string;
+  shapes?: { [shape: string]: string };
+  source?: string;
+}
+
+/** The resolved meshNaming of a case, one entry per block kind (see `resolveMeshNaming`). */
+export interface ResolvedMeshNaming {
+  elements?: ResolvedMeshKind;
+  conditions?: ResolvedMeshKind;
 }
 
 /** Hint for the SubModelPart picker; purely advisory in v1. */

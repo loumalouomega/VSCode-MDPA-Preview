@@ -135,6 +135,23 @@ A preset is applied against a law by variable **id**, and a law may also state a
   ```
 
   The final block name is `<base><dim>D<nodesPerCell>N` (the GiD convention). Use generic bases (`"Element"`, `"WallCondition"`) when the solver replaces elements itself; concrete ones (structural) when it doesn't. Point (single-node) condition blocks are never renamed.
+
+  When no single base can describe a formulation's names (shells, membranes, cables, springs), the kind takes a **`{ field, names }` table**: an enum field's value picks that formulation's entry, which is a template (`"SpringDamperElement{dim}"`, with `{dim}`/`{nodes}` placeholders), one exact name (`"CableElement3D2N"`), or a `{dim: {nodes: name}}` table of exact names. A value with no entry keeps the base meaning, so a table only lists the exceptions:
+
+  ```js
+  meshNaming: {
+    elements: {
+      field: "elementBase",
+      names: {
+        ShellThinElementCorotational: { 3: { 3: "ShellThinElementCorotational3D3N", 4: "ShellThinElementCorotational3D4N" } },
+        SpringDamperElement: "SpringDamperElement{dim}",
+        CableElement: "CableElement3D2N",
+      },
+    },
+  }
+  ```
+
+  A shape table also says which shapes the formulation *has*: a mesh block of any other shape is refused (preflight reports it as an error) instead of being renamed to a Kratos type that does not exist. A shape table that names a one-node shape (`{3: {1: "NodalConcentratedElement3D1N"}}`) lifts the point-block guard for it.
 - **`icon`** names a toolbar icon shown on the problemtype's forms — the built-ins use their own logos (`ptStructural`, `ptFluid`, `ptThermal`, `ptPotentialFlow`, `ptShallowWater`, `ptCompressible`, `ptEmbedded`, `ptFreeSurface`, `ptBuoyancy`, `ptConjugateHeat`, `ptFsi`); concept icons for groups and conditions are `ptTime`, `ptSolver`, `ptConstraint`, `ptLoad`, `ptInitial`, `ptGravity`, `ptParallel`, `ptCoupling` and `ptParts`; unknown ids fall back to the generic problemtype glyph.
 - **`list`** on a condition may also be a custom process-list name (e.g. Shallow Water's `boundary_conditions_process_list`) — the three GiD-standard lists are always emitted alongside any custom ones.
 

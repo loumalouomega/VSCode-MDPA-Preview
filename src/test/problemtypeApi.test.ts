@@ -83,6 +83,41 @@ test("validateDeclaration flags missing metadata, duplicates and bad refs", () =
   assert.ok(errors.some((e) => e.includes('partsCondition "nope"')));
 });
 
+test("validateDeclaration checks meshNaming tables", () => {
+  const decl = minimalDecl();
+  decl.meshNaming = {
+    elements: {
+      field: "mode",
+      names: {
+        a: "Element{dim}D{nodes}N",
+        b: { 3: { 8: "Hexahedron3D8N", 4: "Tetrahedron3D4N" } },
+      },
+    },
+    conditions: { 2: "LineLoadCondition", 3: "SurfaceLoadCondition" },
+  };
+  assert.deepEqual(validateDeclaration(decl), []);
+
+  const bad = minimalDecl();
+  bad.meshNaming = {
+    elements: {
+      field: "mode",
+      names: {
+        c: "Element", // not an option of "mode"
+        a: "Element{dimX}", // unknown placeholder
+        b: { 3: { 8: "Hexahedron3D8N{dim}" } }, // a shape table holds exact names
+      },
+    },
+  };
+  const errors = validateDeclaration(bad);
+  assert.ok(errors.some((e) => e.includes('"c" is not an option of "mode"')));
+  assert.ok(errors.some((e) => e.includes("only {dim} and {nodes}")));
+  assert.ok(errors.some((e) => e.includes("exact names, not templates")));
+
+  const noField = minimalDecl();
+  noField.meshNaming = { conditions: { field: "nope", names: { a: "X" } } };
+  assert.ok(validateDeclaration(noField).some((e) => e.includes('field "nope" is not a section field')));
+});
+
 test("defineProblemtype throws on an invalid declaration or missing solverSettings", () => {
   const bad = minimalDecl();
   bad.analysisStage = "";

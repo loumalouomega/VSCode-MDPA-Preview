@@ -19,7 +19,7 @@ import { extractSubModelParts } from "../parser/subModelPartExtract";
 import { CaseState, ProblemtypeRuntime } from "./types";
 import { flattenValues, resolveMeshNaming } from "./api";
 import { domainOfLaw, resolveDomainSize } from "./generate";
-import { adaptMeshNames, BlockRename } from "./meshAdapt";
+import { adaptMeshNames, BlockRename, MeshAdaptProblem } from "./meshAdapt";
 import { addInterfacePointLoads } from "./interfacePointLoad";
 
 /** One physics domain's own mesh file, sliced from the source (coupled problemtypes). */
@@ -50,6 +50,18 @@ export interface CaseMeshPlan {
 }
 
 /**
+ * Throws the Generate refusal for blocks the resolved naming cannot name, one
+ * bullet per block, so preflight reports each as its own error finding.
+ */
+function refuseMesh(problems: MeshAdaptProblem[], domain?: string): void {
+  if (problems.length === 0) return;
+  const bullets = problems.map((p) => (domain ? `Domain "${domain}": ${p.message}` : p.message));
+  throw new Error(
+    `The mesh cannot be adapted to the selected formulation, so no case files were written:\n- ${bullets.join("\n- ")}`
+  );
+}
+
+/**
  * Plans the case mesh for a source mesh of stem `stem`.
  *
  * `isMdpaSource` selects the policy: an `.mdpa` source is referenced directly
@@ -67,8 +79,9 @@ export function planCaseMesh(
 ): CaseMeshPlan {
   const scratch: string[] = []; // generateCase re-reports these warnings
   const domainSize = resolveDomainSize(runtime, model, scratch);
-  const bases = resolveMeshNaming(runtime.decl, flattenValues(runtime.decl, state), domainSize);
-  const adapted = adaptMeshNames(model, bases, domainSize);
+  const naming = resolveMeshNaming(runtime.decl, flattenValues(runtime.decl, state), domainSize);
+  const adapted = adaptMeshNames(model, naming, domainSize);
+  refuseMesh(adapted.problems);
   const warnings = [...adapted.warnings];
   if (
     model.subModelParts.length === 0 &&
@@ -96,8 +109,9 @@ export function planCaseMesh(
         warnings.push(`Domain "${d.label}": none of its assigned SubModelParts exist in the mesh, so its mesh file is empty.`);
       }
       const base = slice ?? { ...model, nodeCount: 0, nodeIds: new Int32Array(0), coords: new Float32Array(0), blocks: [], subModelParts: [], fields: [] };
-      const bases = resolveMeshNaming({ ...decl, meshNaming: d.meshNaming ?? decl.meshNaming }, values, domainSize);
-      const renamed = adaptMeshNames(base, bases, domainSize);
+      const naming = resolveMeshNaming({ ...decl, meshNaming: d.meshNaming ?? decl.meshNaming }, values, domainSize);
+      const renamed = adaptMeshNames(base, naming, domainSize);
+      refuseMesh(renamed.problems, d.label);
       warnings.push(...renamed.warnings.map((w) => `${d.label}: ${w}`));
       let domainModel = renamed.model;
       if (d.pointLoadInterface) {

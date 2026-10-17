@@ -115,3 +115,40 @@ End Elements
   const bare = planCaseMesh(structural, model, defaultCaseState(structural.decl), "beam", true);
   assert.ok(!bare.warnings.some((w) => w.includes("no SubModelParts")));
 });
+
+test("planCaseMesh refuses a block the selected formulation has no shape for", () => {
+  const decl = {
+    ...structural.decl,
+    meshNaming: {
+      elements: {
+        field: "elementBase",
+        names: { ShellThinElementCorotational: { 3: { 3: "ShellThinElementCorotational3D3N", 4: "ShellThinElementCorotational3D4N" } } },
+      },
+    },
+  };
+  const runtime = { ...structural, decl };
+  const state = defaultCaseState(decl);
+  state.values.problem.elementBase = "ShellThinElementCorotational";
+  const model = parseMdpa(`Begin Properties 0
+End Properties
+
+Begin Nodes
+1 0.0 0.0 0.0
+2 1.0 0.0 0.0
+3 0.0 1.0 0.0
+4 0.0 0.0 1.0
+5 1.0 1.0 1.0
+6 0.0 1.0 1.0
+7 0.0 0.0 1.0
+8 1.0 0.0 1.0
+End Nodes
+
+Begin Elements Element3D8N
+1 0 1 2 3 4 5 6 7 8
+End Elements
+`);
+  assert.throws(
+    () => planCaseMesh(runtime, model, state, "beam", true),
+    /Element block "Element3D8N" \(3D8N\) has no "ShellThinElementCorotational" variant/
+  );
+});

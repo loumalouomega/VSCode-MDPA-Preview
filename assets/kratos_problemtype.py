@@ -83,11 +83,16 @@ Compact reference (mirrors the JavaScript API, spelled snake_case)::
         them before running. output = {"nodal_defaults": [...],
         "gauss_defaults": [...]}. parts_condition names the pseudo-condition
         whose assignments mark the computing domain (emits no process).
-        mesh_naming = {"elements": <base>, "conditions": <base>} declares the
-        block names the solver expects in the mdpa; <base> is a string
-        ("Element", "$field:<id>") or a per-dimension dict {2: ..., 3: ...}.
-        The final name is <base><dim>D<nnodes>N; when the mesh differs a
-        renamed <stem>_case.mdpa copy is generated automatically.
+        mesh_naming = {"elements": <names>, "conditions": <names>} declares the
+        block names the solver expects in the mdpa. <names> is a string
+        ("Element", "$field:<id>") or a per-dimension dict {2: ..., 3: ...}; a
+        {"field": "<id>", "names": {<value>: <entry>}} table gives an enum
+        field's values their own names, where <entry> is a template
+        ("SpringDamperElement{dim}"), one exact name ("CableElement3D2N") or a
+        {dim: {nodes: name}} table of exact names — a shape such a table omits
+        is refused, because renaming it would invent a Kratos type. The final
+        name is <base><dim>D<nnodes>N; when the mesh differs a renamed
+        <stem>_case.mdpa copy is generated automatically.
 
 Hooks (plain JSON data in and out — no interpreter objects cross the boundary)::
 
@@ -403,6 +408,55 @@ def _check_unique(ids, what):
         seen.add(i)
 
 
+def _normalize_naming_entry(entry, where, ptid):
+    """One formulation's names: a template/verbatim string, or a {dim: {nodes: name}} table."""
+    if isinstance(entry, str):
+        if not entry:
+            raise ValueError(f'problemtype "{ptid}": {where} must be non-empty')
+        return entry
+    if not isinstance(entry, dict):
+        raise ValueError(
+            f'problemtype "{ptid}": {where} must be a name or a {{dim: {{nodes: name}}}} table'
+        )
+    shapes = {}
+    for dim, by_nodes in entry.items():
+        if str(dim) not in ("2", "3"):
+            raise ValueError(f'problemtype "{ptid}": {where} keys must be 2/3')
+        if not isinstance(by_nodes, dict) or not by_nodes:
+            raise ValueError(f'problemtype "{ptid}": {where}[{dim}] must map node counts to names')
+        counts = {}
+        for nodes, name in by_nodes.items():
+            if not str(nodes).isdigit() or int(nodes) < 1:
+                raise ValueError(
+                    f'problemtype "{ptid}": {where}[{dim}] node counts must be positive integers'
+                )
+            if not isinstance(name, str) or not name:
+                raise ValueError(
+                    f'problemtype "{ptid}": {where}[{dim}][{nodes}] must be a non-empty name'
+                )
+            counts[str(nodes)] = name
+        shapes[str(dim)] = counts
+    return shapes
+
+
+def _normalize_formulation_naming(value, kind, ptid):
+    """A {"field", "names"} mesh_naming table: the field value picks the entry."""
+    field = value.get("field")
+    if not isinstance(field, str) or not field:
+        raise ValueError(f'problemtype "{ptid}": mesh_naming.{kind}.field must name a section field')
+    names = value.get("names")
+    if not isinstance(names, dict) or not names:
+        raise ValueError(
+            f'problemtype "{ptid}": mesh_naming.{kind}.names must map field values to names'
+        )
+    out = {}
+    for entry_value, entry in names.items():
+        out[str(entry_value)] = _normalize_naming_entry(
+            entry, f'mesh_naming.{kind}.names.{entry_value}', ptid
+        )
+    return {"field": field, "names": out}
+
+
 def _normalize_mesh_naming(mesh_naming, ptid):
     if mesh_naming is None:
         return None
@@ -418,6 +472,9 @@ def _normalize_mesh_naming(mesh_naming, ptid):
                 raise ValueError(f'problemtype "{ptid}": mesh_naming.{kind} must be non-empty')
             out[kind] = value
         elif isinstance(value, dict):
+            if "field" in value:
+                out[kind] = _normalize_formulation_naming(value, kind, ptid)
+                continue
             sizes = {}
             for k, base in value.items():
                 if str(k) not in ("2", "3") or not isinstance(base, str) or not base:
