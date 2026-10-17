@@ -8,6 +8,13 @@ import { planWindTunnel, wakeSizeExpr } from "../problemtype/windTunnel/plan";
 import { runWindTunnel } from "../problemtype/windTunnel/run";
 import { parseMdpaFile } from "../parser/mdpaParser";
 import { validateSizeExpr } from "../parser/sizeExpr";
+import { generateCase } from "../problemtype/generate";
+import { planCaseMesh } from "../problemtype/caseMesh";
+import { preflightCase } from "../problemtype/preflight";
+import { parseCaseJson } from "../problemtype/caseFile";
+import { windTunnelCase } from "../problemtype/windTunnel/caseState";
+import { fluid } from "../problemtype/builtins/fluid";
+import { embeddedFluid } from "../problemtype/builtins/embeddedFluid";
 
 const params = {
   flow: { speed: 10 },
@@ -71,6 +78,40 @@ test("a sphere in a tunnel meshes body-fitted: the wall holds, the boundary is n
   assert.ok(fs.existsSync(r.files.body) && fs.existsSync(r.files.recipe));
   const recipe = JSON.parse(fs.readFileSync(r.files.recipe, "utf8"));
   assert.equal(recipe.report.mode, "bodyFitted");
+
+  // The prepared simulation reads back, passes the preflight and generates a solver case.
+  const saved = parseCaseJson(fs.readFileSync(r.files.caseState, "utf8"));
+  assert.deepEqual(saved.warnings, []);
+  assert.equal(saved.state!.problemtypeId, "fluid");
+  const pre = await preflightCase(fluid, back, saved.state!, "sphere", { isMdpaSource: true });
+  assert.deepEqual(pre.findings.filter((f) => f.severity === "error").map((f) => f.message), []);
+  const casePlan = planCaseMesh(fluid, back, saved.state!, "sphere", true);
+  const gen = await generateCase(fluid, casePlan.caseModel, saved.state!, casePlan.caseStem);
+  const pp = JSON.parse(gen.projectParameters);
+  const coeff = pp.processes.auxiliar_process_list.find((p: { python_module: string }) => p.python_module === "compute_aerodynamic_coefficients_process");
+  assert.ok(Math.abs(coeff.Parameters.reference_area - Math.PI * 0.25) / (Math.PI * 0.25) < 0.03, "reference area is the frontal area");
+  assert.ok(Math.abs(coeff.Parameters.dynamic_pressure - 0.5 * 1.204 * 100) < 1e-9);
+  const wall = pp.processes.constraints_process_list.find((p: { python_module: string }) => p.python_module === "apply_wall_law_process");
+  assert.equal(wall.Parameters.model_part_name, "FluidModelPart.Body");
+  assert.equal(wall.Parameters.wall_model_settings.y_wall, 0.012);
+  assert.deepEqual(pp.solver_settings.skin_parts.sort(), ["FluidModelPart.Body", "FluidModelPart.Ceiling", "FluidModelPart.Floor", "FluidModelPart.Inlet", "FluidModelPart.Outlet", "FluidModelPart.SideHigh", "FluidModelPart.SideLow"]);
+});
+
+test("the prepared case follows the ground mode, the half model and the mode", () => {
+  const moving = windTunnelCase(planWindTunnel({ ...params, tunnel: { ...params.tunnel, ground: "moving", clearance: 0.2 } }, icosphere(0.5, 3)));
+  const floor = moving.state.assignments.find((a) => a.smpPath === "Floor")!;
+  assert.equal(floor.conditionId, "velocityConstraints");
+  assert.deepEqual(floor.values.value, [10, 0, 0]);
+  const half = windTunnelCase(planWindTunnel({ ...params, tunnel: { ...params.tunnel, halfModel: true } }, icosphere(0.5, 3)));
+  assert.ok(half.state.assignments.some((a) => a.smpPath === "Symmetry" && a.conditionId === "slip"));
+  const area = half.state.assignments.find((a) => a.conditionId === "aerodynamicCoefficients")!.values.referenceArea as number;
+  const full = windTunnelCase(planWindTunnel(params, icosphere(0.5, 3))).state.assignments.find((a) => a.conditionId === "aerodynamicCoefficients")!.values.referenceArea as number;
+  assert.ok(Math.abs(area / full - 0.5) < 1e-6, "a half model uses half the reference area");
+  const emb = windTunnelCase(planWindTunnel({ ...params, mesh: { ...params.mesh, mode: "embedded" } }, icosphere(0.5, 3)));
+  assert.equal(emb.problemtypeId, "embeddedFluid");
+  assert.ok(!emb.state.assignments.some((a) => a.smpPath === "Body"));
+  assert.equal(emb.state.values.problem.computeDrag, true);
+  assert.ok(embeddedFluid.decl.id === "embeddedFluid");
 });
 
 test("cancelling stops the run between steps", async () => {

@@ -26,6 +26,9 @@ import type { MeshCheck } from "./finish";
 import { WIND_TUNNEL_VERSION } from "./plan";
 import type { WindTunnelPlan } from "./plan";
 import { yPlusAt } from "./estimate";
+import { windTunnelCase } from "./caseState";
+import type { WindTunnelCase } from "./caseState";
+import { serializeCase, caseFilePath } from "../caseFile";
 
 export interface WindTunnelProgress {
   stepIndex: number;
@@ -67,7 +70,9 @@ export interface WindTunnelReport {
 export interface WindTunnelResult {
   model: MdpaModel;
   report: WindTunnelReport;
-  files: { mesh: string; body: string; sdfBody?: string; recipe: string };
+  files: { mesh: string; body: string; sdfBody?: string; recipe: string; caseState: string };
+  /** The simulation prepared for the mesh, as written to `caseState`. */
+  case: WindTunnelCase;
 }
 
 class Cancelled extends Error {
@@ -127,6 +132,7 @@ export async function runWindTunnel(plan: WindTunnelPlan, opts: WindTunnelRunOpt
     body: path.join(opts.folder, `${stem}_body.stl`),
     sdfBody: undefined as string | undefined,
     recipe: path.join(opts.folder, `${stem}.kratosvwt.json`),
+    caseState: caseFilePath(path.join(opts.folder, `${stem}.mdpa`)),
   };
   const total = plan.steps.length;
   let stepIndex = 0;
@@ -218,6 +224,8 @@ export async function runWindTunnel(plan: WindTunnelPlan, opts: WindTunnelRunOpt
 
   say("write", "Write the mesh and the recipe");
   fs.writeFileSync(files.mesh, writeMeshFile(model!, ".mdpa"));
+  const prepared = windTunnelCase(plan);
+  fs.writeFileSync(files.caseState, serializeCase(prepared.state));
   const report: WindTunnelReport = {
     version: WIND_TUNNEL_VERSION,
     mode: plan.mode,
@@ -241,12 +249,12 @@ export async function runWindTunnel(plan: WindTunnelPlan, opts: WindTunnelRunOpt
   };
   fs.writeFileSync(
     files.recipe,
-    JSON.stringify({ version: WIND_TUNNEL_VERSION, params: plan.params, report, files: { mesh: path.basename(files.mesh), body: path.basename(files.body) } }, null, 2) + "\n"
+    JSON.stringify({ version: WIND_TUNNEL_VERSION, params: plan.params, report, caseNotes: prepared.notes, files: { mesh: path.basename(files.mesh), body: path.basename(files.body), caseState: path.basename(files.caseState) } }, null, 2) + "\n"
   );
   stepIndex = total;
   opts.onProgress?.({ stepIndex, steps: total, id: "done", label: "Done" });
   void nodeIndex;
-  return { model: model!, report, files };
+  return { model: model!, report, files, case: prepared };
 }
 
 export { Cancelled as WindTunnelCancelled };
