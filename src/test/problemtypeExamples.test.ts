@@ -221,6 +221,29 @@ const CASES: ExampleCase[] = [
     materials: [{ smpPath: "Parts/Solid", lawId: "plasticity_iso_3d", values: { YIELD_STRESS: 2.5e8 } }],
   },
   {
+    label: "explicit dynamic, central differences",
+    file: "structural.py",
+    builtinId: "structural",
+    assignments: [
+      { conditionId: "parts", smpPath: "Parts/Solid", values: {} },
+      { conditionId: "initialVelocity", smpPath: "Parts/Solid", values: { value: [1, 0, 0] } },
+    ],
+    materials: [{ smpPath: "Parts/Solid", lawId: "linear_elastic_3d", values: {} }],
+    values: { problem: { solverType: "dynamic", timeIntegration: "explicit", explicitScheme: "central_differences" } },
+  },
+  {
+    label: "harmonic modal, point load",
+    file: "structural.py",
+    builtinId: "structural",
+    assignments: [
+      { conditionId: "parts", smpPath: "Parts/Solid", values: {} },
+      { conditionId: "displacement", smpPath: "Support", values: { value: [0, 0, 0], constrained: true } },
+      { conditionId: "pointLoad", smpPath: "Support", values: { modulus: 100, direction: [0, 0, -1] } },
+    ],
+    materials: [{ smpPath: "Parts/Solid", lawId: "linear_elastic_3d", values: {} }],
+    values: { problem: { solverType: "harmonic_analysis", harmonicType: "modal" } },
+  },
+  {
     file: "fluid.py",
     builtinId: "fluid",
     assignments: [

@@ -160,7 +160,13 @@ export const STRUCTURAL_ELEMENT_NAMES: { [value: string]: MeshNamingEntry } = {
 const NONLINEAR = { field: "analysisType", equals: "non_linear" };
 const DYNAMIC = { field: "solverType", equals: "dynamic" };
 const EIGEN = { field: "solverType", equals: "eigen_value" };
+const HARMONIC = { field: "solverType", equals: "harmonic_analysis" };
+const MODAL = { field: "harmonicType", equals: "modal" };
+const DIRECT = { field: "harmonicType", equals: "direct" };
+const IMPLICIT = { field: "timeIntegration", equals: "implicit" };
+const EXPLICIT = { field: "timeIntegration", equals: "explicit" };
 const NOT_EIGEN = { field: "solverType", oneOf: ["static", "dynamic"] as JsonValue[] };
+const STATIC_DYNAMIC_HARMONIC = { field: "solverType", oneOf: ["static", "dynamic", "harmonic_analysis"] as JsonValue[] };
 const RESIDUAL = { field: "convergenceCriterion", oneOf: ["residual_criterion", "and_criterion", "or_criterion"] as JsonValue[] };
 const DISPLACEMENT = { field: "convergenceCriterion", oneOf: ["displacement_criterion", "and_criterion", "or_criterion"] as JsonValue[] };
 
@@ -232,6 +238,16 @@ const movingValue = (a: Assignment, id: string): JsonValue =>
   a.values[id] ?? MOVING_LOAD_FIELDS.find((f) => f.id === id)?.default ?? null;
 
 /**
+ * Sibling suffix per load condition, shared with the `emit` specs: the
+ * harmonic direct lists name the emitted siblings, not the assigned parts.
+ */
+const LOAD_SIBLING: Record<string, string> = { pointLoad: "PointLoad", imaginaryPointLoad: "ImaginaryPointLoad" };
+
+/** Dotted model-part name of the sibling a load assignment's conditions were emitted into. */
+const loadSibling = (ctx: GenContext, conditionId: string, smpPath: string): string =>
+  dottedModelPart(ctx.modelPartName, siblingPathFor(smpPath, LOAD_SIBLING[conditionId]));
+
+/**
  * The `SetMovingLoadProcess` entry for one moving-load assignment: the load is
  * the modulus along the normalized load direction (Kratos normalizes the
  * direction the same way), travelling along the motion direction from the
@@ -263,11 +279,23 @@ export const structural = defineProblemtype(
   {
     id: "structural",
     name: "Structural Mechanics",
-    description: "Static / dynamic / eigenvalue solid, beam, truss, shell, membrane and mass/spring mechanics (StructuralMechanicsApplication)",
+    description: "Static / dynamic / eigenvalue / harmonic solid, beam, truss, shell, membrane and mass/spring mechanics (StructuralMechanicsApplication)",
     icon: "ptStructural",
     family: "solid",
     analysisStage:
       "KratosMultiphysics.StructuralMechanicsApplication.structural_mechanics_analysis",
+    // The eigensolvers and the direct harmonic complex solve live in
+    // LinearSolversApplication; the driver requires it for those analyses.
+    applications: [
+      { application: "LinearSolversApplication", when: { field: "solverType", equals: "eigen_value" } },
+      {
+        application: "LinearSolversApplication",
+        when: [
+          { field: "solverType", equals: "harmonic_analysis" },
+          { field: "harmonicType", equals: "direct" },
+        ],
+      },
+    ],
     modelPartName: "Structure",
     materialsFileName: "StructuralMaterials.json",
     domainSizes: [2, 3],
@@ -281,6 +309,7 @@ export const structural = defineProblemtype(
           { id: "nonlinear", label: "Non-linear iteration", icon: "ptSolver" },
           { id: "dynamic", label: "Dynamic damping", icon: "ptTime" },
           { id: "eigen", label: "Eigenvalue solver", icon: "ptSolver" },
+          { id: "harmonic", label: "Harmonic analysis", icon: "ptSolver" },
           { id: "linear", label: "Linear solver", icon: "ptSolver", collapsed: true },
         ],
         fields: [
@@ -294,6 +323,7 @@ export const structural = defineProblemtype(
               { value: "static", label: "Static" },
               { value: "dynamic", label: "Dynamic" },
               { value: "eigen_value", label: "Eigenvalues" },
+              { value: "harmonic_analysis", label: "Harmonic" },
             ],
           },
           {
@@ -302,7 +332,7 @@ export const structural = defineProblemtype(
             type: "enum",
             default: "linear",
             group: "analysis",
-            visibleWhen: NOT_EIGEN,
+            visibleWhen: STATIC_DYNAMIC_HARMONIC,
             options: [
               { value: "linear", label: "Linear" },
               { value: "non_linear", label: "Non-linear" },
@@ -324,12 +354,66 @@ export const structural = defineProblemtype(
             type: "enum",
             default: "bossak",
             group: "analysis",
-            visibleWhen: DYNAMIC,
+            visibleWhen: [DYNAMIC, IMPLICIT],
             options: [
               { value: "newmark", label: "Newmark" },
               { value: "bossak", label: "Bossak" },
             ],
             help: "Bossak damps high-frequency accelerations; Newmark does not.",
+          },
+          {
+            id: "timeIntegration",
+            label: "Time integration",
+            type: "enum",
+            default: "implicit",
+            group: "analysis",
+            visibleWhen: DYNAMIC,
+            options: [
+              { value: "implicit", label: "Implicit" },
+              { value: "explicit", label: "Explicit" },
+            ],
+            help: "Explicit advances with central differences and no system solve; the step must resolve the shortest wave transit.",
+          },
+          {
+            id: "explicitScheme",
+            label: "Explicit scheme",
+            type: "enum",
+            default: "central_differences",
+            group: "analysis",
+            visibleWhen: [DYNAMIC, EXPLICIT],
+            options: [
+              { value: "central_differences", label: "Central differences" },
+              { value: "multi_stage", label: "Multi-stage" },
+            ],
+          },
+          {
+            id: "harmonicType",
+            label: "Harmonic analysis",
+            type: "enum",
+            default: "modal",
+            group: "harmonic",
+            visibleWhen: HARMONIC,
+            options: [
+              { value: "modal", label: "Modal (superposition)" },
+              { value: "direct", label: "Direct (complex solve)" },
+            ],
+            help: "Modal superposes the eigenmodes for the steady-state response; direct solves the complex system at each frequency and needs a real load list.",
+          },
+          {
+            id: "harmonicDamping",
+            label: "Use effective material damping",
+            type: "bool",
+            default: false,
+            group: "harmonic",
+            visibleWhen: [HARMONIC, MODAL],
+          },
+          {
+            id: "harmonicAssembleDamping",
+            label: "Assemble damping matrix",
+            type: "bool",
+            default: false,
+            group: "harmonic",
+            visibleWhen: [HARMONIC, DIRECT],
           },
           { id: "startTime", label: "Start time", type: "number", default: 0, group: "time", unit: "s" },
           { id: "timeStep", label: "Time step", type: "number", default: 0.1, group: "time", min: 0, unit: "s" },
@@ -360,6 +444,24 @@ export const structural = defineProblemtype(
           { id: "eigenCount", label: "Number of eigenvalues", type: "int", default: 5, min: 1, group: "eigen", visibleWhen: EIGEN },
           { id: "eigenMaxIteration", label: "Max iterations", type: "int", default: 1000, min: 1, group: "eigen", visibleWhen: EIGEN },
           { id: "eigenTolerance", label: "Tolerance", type: "number", default: 1e-6, min: 0, group: "eigen", visibleWhen: EIGEN },
+          {
+            id: "eigenSolver",
+            label: "Eigensolver",
+            type: "enum",
+            default: "eigen_eigensystem",
+            group: "eigen",
+            visibleWhen: EIGEN,
+            options: [
+              { value: "eigen_eigensystem", label: "Eigensystem (Spectra shift-invert)" },
+              { value: "spectra_sym_g_eigs_shift", label: "Spectra shift-invert" },
+              { value: "dense_eigensolver", label: "Dense" },
+              { value: "power_iteration_eigenvalue_solver", label: "Power iteration" },
+              { value: "power_iteration_highest_eigenvalue_solver", label: "Power iteration (highest)" },
+            ],
+            help: "All but the dense solver need LinearSolversApplication, which the driver then requires.",
+          },
+          { id: "eigenModalDecomposition", label: "Compute modal decomposition", type: "bool", default: false, group: "eigen", visibleWhen: EIGEN },
+          { id: "eigenNormalizeEigenvectors", label: "Normalize eigenvectors with mass matrix", type: "bool", default: false, group: "eigen", visibleWhen: EIGEN },
           ...linearSolverFields("linear").map((f) => ({ ...f, visibleWhen: f.visibleWhen ? [NOT_EIGEN, f.visibleWhen as never] : NOT_EIGEN })),
           { id: "echoLevel", label: "Echo level", type: "int", default: 1, min: 0, max: 3, advanced: true },
         ],
@@ -453,7 +555,7 @@ export const structural = defineProblemtype(
         target: "nodes",
         icon: "ptLoad",
         emit: {
-          sibling: "PointLoad",
+          sibling: LOAD_SIBLING.pointLoad,
           source: "nodes",
           family: "point",
           formulationField: "elementBase",
@@ -468,6 +570,21 @@ export const structural = defineProblemtype(
         icon: "ptLoad",
         help: "3D only.",
         emit: { sibling: "PointMoment", source: "nodes", family: "moment" },
+      }),
+      vectorLoadOnConditions("POINT_LOAD_IMAGINARY", {
+        id: "imaginaryPointLoad",
+        label: "Imaginary point load",
+        unit: "N",
+        target: "nodes",
+        icon: "ptLoad",
+        help: "Direct harmonic analysis: the imaginary part of a point load.",
+        emit: {
+          sibling: LOAD_SIBLING.imaginaryPointLoad,
+          source: "nodes",
+          family: "point",
+          formulationField: "elementBase",
+          pointName: "ImaginaryPointLoadCondition",
+        },
       }),
       {
         id: "movingLoad",
@@ -626,9 +743,12 @@ export const structural = defineProblemtype(
       const type = asStr(v.solverType, "static");
       const dynamic = type === "dynamic";
       const eigen = type === "eigen_value";
+      const harmonic = type === "harmonic_analysis";
+      const harmonicType = asStr(v.harmonicType, "modal");
+      const explicit = dynamic && asStr(v.timeIntegration, "implicit") === "explicit";
       const form = FORMULATIONS.find((f) => f.value === v.elementBase);
       const settings: JsonObject = {
-        solver_type: eigen ? "eigen_value" : dynamic ? "Dynamic" : "Static",
+        solver_type: eigen ? "eigen_value" : harmonic ? "harmonic_analysis" : dynamic ? "Dynamic" : "Static",
         model_part_name: ctx.modelPartName,
         domain_size: ctx.domainSize,
         echo_level: asNum(v.echoLevel, 1),
@@ -641,20 +761,44 @@ export const structural = defineProblemtype(
       if (form?.volumetricStrain) settings.volumetric_strain_dofs = true;
       if (eigen) {
         settings.eigensolver_settings = {
-          solver_type: "eigen_eigensystem",
+          solver_type: asStr(v.eigenSolver, "eigen_eigensystem"),
           max_iteration: asNum(v.eigenMaxIteration, 1000),
           tolerance: asNum(v.eigenTolerance, 1e-6),
           number_of_eigenvalues: asNum(v.eigenCount, 5),
           echo_level: 1,
         };
+        settings.compute_modal_decomposition = asBool(v.eigenModalDecomposition, false);
+        settings.normalize_eigenvectors_with_mass_matrix = asBool(v.eigenNormalizeEigenvectors, false);
         settings.builder_and_solver_settings = { use_block_builder: false };
+        return settings;
+      }
+      if (harmonic) {
+        settings.harmonic_analysis_type = harmonicType;
+        if (harmonicType === "modal") {
+          settings.modal_harmonic_analysis_settings = {
+            use_effective_material_damping: asBool(v.harmonicDamping, false),
+          };
+        } else {
+          settings.direct_harmonic_analysis_settings = {
+            assemble_damping_matrix: asBool(v.harmonicAssembleDamping, false),
+            real_load_sub_model_part_list: ctx.assignments
+              .filter((a) => a.conditionId === "pointLoad")
+              .map((a) => loadSibling(ctx, a.conditionId, a.smpPath)),
+            imaginary_load_sub_model_part_list: ctx.assignments
+              .filter((a) => a.conditionId === "imaginaryPointLoad")
+              .map((a) => loadSibling(ctx, a.conditionId, a.smpPath)),
+            complex_linear_solver_settings: { solver_type: "pardiso_lu_complex" },
+          };
+        }
         return settings;
       }
       const nonLinear = asStr(v.analysisType, "linear") === "non_linear";
       settings.analysis_type = nonLinear ? "non_linear" : "linear";
       if (dynamic) {
-        settings.time_integration_method = "implicit";
-        settings.scheme_type = asStr(v.schemeType, "bossak");
+        settings.time_integration_method = explicit ? "explicit" : "implicit";
+        settings.scheme_type = explicit
+          ? asStr(v.explicitScheme, "central_differences")
+          : asStr(v.schemeType, "bossak");
         settings.rayleigh_alpha = asNum(v.rayleighAlpha, 0);
         settings.rayleigh_beta = asNum(v.rayleighBeta, 0);
       }
@@ -722,6 +866,13 @@ export const structural = defineProblemtype(
           if (norm3(asVec3(movingValue(a, id))) < 1e-12) {
             problems.push(`Moving load on "${a.smpPath}": the ${what} is zero — give it a direction.`);
           }
+        }
+      }
+      // The direct strategy refuses an empty real list; the modal one reads
+      // the regular processes, so only direct is gated here.
+      if (asStr(ctx.values.solverType, "static") === "harmonic_analysis" && asStr(ctx.values.harmonicType, "modal") === "direct") {
+        if (!ctx.assignments.some((a) => a.conditionId === "pointLoad")) {
+          problems.push(`Direct harmonic analysis assembles its real load from point loads, so assign at least one "Point load".`);
         }
       }
       return problems;

@@ -145,6 +145,14 @@ def _sibling(assignment, emit):
     return (parent + "/" if parent else "") + name + emit["sibling"]
 
 
+_LOAD_SIBLING = {"pointLoad": "PointLoad", "imaginaryPointLoad": "ImaginaryPointLoad"}
+
+
+def _load_sibling(ctx, condition_id, smp_path):
+    """The dotted sibling part a load assignment's conditions were emitted into."""
+    return ctx["model_part_name"] + "." + _sibling({"smpPath": smp_path}, {"sibling": _LOAD_SIBLING[condition_id]}).replace("/", ".")
+
+
 def _moving_load_process(cond, assignment, ctx):
     values = assignment["values"]
     modulus = values.get("modulus", 0)
@@ -347,9 +355,12 @@ def structural_solver_settings(values, ctx):
     kind = values["solverType"]
     dynamic = kind == "dynamic"
     eigen = kind == "eigen_value"
+    harmonic = kind == "harmonic_analysis"
+    harmonic_type = values.get("harmonicType", "modal")
+    explicit = dynamic and values.get("timeIntegration", "implicit") == "explicit"
     flags = FORMULATIONS.get(values["elementBase"], {})
     settings = {
-        "solver_type": "eigen_value" if eigen else "Dynamic" if dynamic else "Static",
+        "solver_type": "eigen_value" if eigen else "harmonic_analysis" if harmonic else "Dynamic" if dynamic else "Static",
         "model_part_name": ctx["model_part_name"],
         "domain_size": ctx["domain_size"],
         "echo_level": values["echoLevel"],
@@ -364,19 +375,35 @@ def structural_solver_settings(values, ctx):
         settings["volumetric_strain_dofs"] = True
     if eigen:
         settings["eigensolver_settings"] = {
-            "solver_type": "eigen_eigensystem",
+            "solver_type": values["eigenSolver"],
             "max_iteration": values["eigenMaxIteration"],
             "tolerance": values["eigenTolerance"],
             "number_of_eigenvalues": values["eigenCount"],
             "echo_level": 1,
         }
+        settings["compute_modal_decomposition"] = values["eigenModalDecomposition"]
+        settings["normalize_eigenvectors_with_mass_matrix"] = values["eigenNormalizeEigenvectors"]
         settings["builder_and_solver_settings"] = {"use_block_builder": False}
+        return settings
+    if harmonic:
+        settings["harmonic_analysis_type"] = harmonic_type
+        if harmonic_type == "modal":
+            settings["modal_harmonic_analysis_settings"] = {
+                "use_effective_material_damping": values["harmonicDamping"],
+            }
+        else:
+            settings["direct_harmonic_analysis_settings"] = {
+                "assemble_damping_matrix": values["harmonicAssembleDamping"],
+                "real_load_sub_model_part_list": [_load_sibling(ctx, "pointLoad", a["smpPath"]) for a in ctx["assignments"] if a["conditionId"] == "pointLoad"],
+                "imaginary_load_sub_model_part_list": [_load_sibling(ctx, "imaginaryPointLoad", a["smpPath"]) for a in ctx["assignments"] if a["conditionId"] == "imaginaryPointLoad"],
+                "complex_linear_solver_settings": {"solver_type": "pardiso_lu_complex"},
+            }
         return settings
     non_linear = values["analysisType"] == "non_linear"
     settings["analysis_type"] = "non_linear" if non_linear else "linear"
     if dynamic:
-        settings["time_integration_method"] = "implicit"
-        settings["scheme_type"] = values["schemeType"]
+        settings["time_integration_method"] = "explicit" if explicit else "implicit"
+        settings["scheme_type"] = values["explicitScheme"] if explicit else values["schemeType"]
         settings["rayleigh_alpha"] = values["rayleighAlpha"]
         settings["rayleigh_beta"] = values["rayleighBeta"]
     if non_linear:
@@ -501,7 +528,11 @@ def fsi_solver_settings(values, ctx):
     fluid_settings["no_skin_parts"] = no_skin
     struct_values = dict(_unprefix(values, S), **time)
     struct_values["timeStep"] = _num(values.get("f_timeStep"), 0.01)
-    struct_settings = structural_solver_settings(struct_values, struct_ctx)
+    # The structural hook matches its own condition ids, so the domain's
+    # prefixed assignments are stripped first (as the fluid side already does).
+    struct_settings = structural_solver_settings(struct_values, dict(
+        struct_ctx,
+        assignments=[_strip(a, S) if a["conditionId"].startswith(S) else a for a in struct_ctx["assignments"]]))
     struct_settings["time_stepping"] = fluid_settings["time_stepping"]  # the structure takes the fluid's step
     fl, st = _interfaces(ctx)
 
@@ -912,10 +943,15 @@ FLUID_SECTION = section("fluid", "Fluid",
     icon="ptFluid")
 
 STRUCTURE_SECTION = section("structure", "Structure",
-    field("s_solverType", "Analysis", "enum", default="static", options=[{"value": "static", "label": "Static"}, {"value": "dynamic", "label": "Dynamic"}, {"value": "eigen_value", "label": "Eigenvalues"}], group="s_analysis"),
-    field("s_analysisType", "Linearity", "enum", default="linear", options=[{"value": "linear", "label": "Linear"}, {"value": "non_linear", "label": "Non-linear"}], visible_when={"field": "s_solverType", "one_of": ["static", "dynamic"]}, group="s_analysis"),
+    field("s_solverType", "Analysis", "enum", default="static", options=[{"value": "static", "label": "Static"}, {"value": "dynamic", "label": "Dynamic"}, {"value": "eigen_value", "label": "Eigenvalues"}, {"value": "harmonic_analysis", "label": "Harmonic"}], group="s_analysis"),
+    field("s_analysisType", "Linearity", "enum", default="linear", options=[{"value": "linear", "label": "Linear"}, {"value": "non_linear", "label": "Non-linear"}], visible_when={"field": "s_solverType", "one_of": ["static", "dynamic", "harmonic_analysis"]}, group="s_analysis"),
     field("s_elementBase", "Element formulation", "enum", default="SmallDisplacementElement", options=[{"value": "SmallDisplacementElement", "label": "Solid small displacements"}, {"value": "SmallDisplacementBbarElement", "label": "Solid small displacements B-bar"}, {"value": "SmallDisplacementMixedVolumetricStrainElement", "label": "Solid small displacements mixed u-εvol"}, {"value": "SmallDisplacementMixedVolumetricStrainOssElement", "label": "Solid small displacements mixed u-εvol (OSS)"}, {"value": "SmallDisplacementMixedVolumetricStrainOssNonLinearElement", "label": "Solid small displacements mixed u-εvol (OSS, non-linear)"}, {"value": "SmallDisplacementMixedStrainElement", "label": "Solid small displacements mixed u-ε"}, {"value": "TotalLagrangianElement", "label": "Solid total Lagrangian"}, {"value": "UpdatedLagrangianElement", "label": "Solid updated Lagrangian"}, {"value": "TotalLagrangianMixedVolumetricStrainElement", "label": "Solid total Lagrangian mixed u-εvol"}, {"value": "TotalLagrangianQ1P0MixedElement", "label": "Solid total Lagrangian Q1P0"}, {"value": "AxisymSmallDisplacementElement", "label": "Axisymmetric small displacements"}, {"value": "AxisymTotalLagrangianElement", "label": "Axisymmetric total Lagrangian"}, {"value": "AxisymUpdatedLagrangianElement", "label": "Axisymmetric updated Lagrangian"}, {"value": "SolidShellElementSprism", "label": "Solid-shell (SPRISM 3D6N)"}, {"value": "LinearTimoshenkoBeamElement", "label": "Beam small displacements (Timoshenko)"}, {"value": "LinearTimoshenkoCurvedBeamElement", "label": "Beam small displacements (curved Timoshenko)"}, {"value": "CrBeamElement", "label": "Beam large displacements (corotational)"}, {"value": "CrLinearBeamElement", "label": "Beam small displacements (corotational)"}, {"value": "LinearTrussElement", "label": "Truss small displacements"}, {"value": "TotalLagrangianTrussElement", "label": "Truss large displacements"}, {"value": "TrussElement", "label": "Truss large displacements (legacy)"}, {"value": "TrussLinearElement", "label": "Truss small displacements (legacy)"}, {"value": "CableElement", "label": "Cable"}, {"value": "ShellThinElementCorotational", "label": "Shell thin corotational"}, {"value": "ShellThickElementCorotational", "label": "Shell thick corotational"}, {"value": "ShellThinElement", "label": "Shell thin"}, {"value": "MITCThickShellElement", "label": "Shell thick (MITC)"}, {"value": "MITCThickShellCorotationalElement", "label": "Shell thick corotational (MITC)"}, {"value": "CSDSG3ThickShellLinearElement", "label": "Shell thick CS-DSG3"}, {"value": "CSDSG3ThickShellCorotationalElement", "label": "Shell thick corotational CS-DSG3"}, {"value": "MembraneElement", "label": "Membrane"}, {"value": "NodalConcentratedElement", "label": "Point mass"}, {"value": "NodalConcentratedDampedElement", "label": "Point mass (damped)"}, {"value": "LineMassElement", "label": "Line mass"}, {"value": "SurfaceMassElement", "label": "Surface mass"}, {"value": "BushingElement", "label": "Bushing"}, {"value": "SpringDamperElement", "label": "Spring / damper"}], group="s_analysis"),
-    field("s_schemeType", "Scheme", "enum", default="bossak", options=[{"value": "newmark", "label": "Newmark"}, {"value": "bossak", "label": "Bossak"}], visible_when={"field": "s_solverType", "equals": "dynamic"}, help="Bossak damps high-frequency accelerations; Newmark does not.", group="s_analysis"),
+    field("s_schemeType", "Scheme", "enum", default="bossak", options=[{"value": "newmark", "label": "Newmark"}, {"value": "bossak", "label": "Bossak"}], visible_when=[{"field": "s_solverType", "equals": "dynamic"}, {"field": "s_timeIntegration", "equals": "implicit"}], help="Bossak damps high-frequency accelerations; Newmark does not.", group="s_analysis"),
+    field("s_timeIntegration", "Time integration", "enum", default="implicit", options=[{"value": "implicit", "label": "Implicit"}, {"value": "explicit", "label": "Explicit"}], visible_when={"field": "s_solverType", "equals": "dynamic"}, help="Explicit advances with central differences and no system solve; the step must resolve the shortest wave transit.", group="s_analysis"),
+    field("s_explicitScheme", "Explicit scheme", "enum", default="central_differences", options=[{"value": "central_differences", "label": "Central differences"}, {"value": "multi_stage", "label": "Multi-stage"}], visible_when=[{"field": "s_solverType", "equals": "dynamic"}, {"field": "s_timeIntegration", "equals": "explicit"}], group="s_analysis"),
+    field("s_harmonicType", "Harmonic analysis", "enum", default="modal", options=[{"value": "modal", "label": "Modal (superposition)"}, {"value": "direct", "label": "Direct (complex solve)"}], visible_when={"field": "s_solverType", "equals": "harmonic_analysis"}, help="Modal superposes the eigenmodes for the steady-state response; direct solves the complex system at each frequency and needs a real load list.", group="s_harmonic"),
+    field("s_harmonicDamping", "Use effective material damping", "bool", default=False, visible_when=[{"field": "s_solverType", "equals": "harmonic_analysis"}, {"field": "s_harmonicType", "equals": "modal"}], group="s_harmonic"),
+    field("s_harmonicAssembleDamping", "Assemble damping matrix", "bool", default=False, visible_when=[{"field": "s_solverType", "equals": "harmonic_analysis"}, {"field": "s_harmonicType", "equals": "direct"}], group="s_harmonic"),
     field("s_convergenceCriterion", "Convergence criterion", "enum", default="residual_criterion", options=[{"value": "residual_criterion", "label": "Residual"}, {"value": "displacement_criterion", "label": "Displacement"}, {"value": "and_criterion", "label": "Residual and displacement"}, {"value": "or_criterion", "label": "Residual or displacement"}], visible_when=[{"field": "s_analysisType", "equals": "non_linear"}, {"field": "s_solverType", "one_of": ["static", "dynamic"]}], group="s_nonlinear"),
     field("s_residualRelTol", "Residual rel. tol.", "number", default=0.0001, visible_when=[{"field": "s_analysisType", "equals": "non_linear"}, {"field": "s_convergenceCriterion", "one_of": ["residual_criterion", "and_criterion", "or_criterion"]}], group="s_nonlinear", min=0),
     field("s_residualAbsTol", "Residual abs. tol.", "number", default=1e-9, visible_when=[{"field": "s_analysisType", "equals": "non_linear"}, {"field": "s_convergenceCriterion", "one_of": ["residual_criterion", "and_criterion", "or_criterion"]}], group="s_nonlinear", min=0),
@@ -929,13 +965,17 @@ STRUCTURE_SECTION = section("structure", "Structure",
     field("s_eigenCount", "Number of eigenvalues", "int", default=5, visible_when={"field": "s_solverType", "equals": "eigen_value"}, group="s_eigen", min=1),
     field("s_eigenMaxIteration", "Max iterations", "int", default=1000, visible_when={"field": "s_solverType", "equals": "eigen_value"}, group="s_eigen", min=1),
     field("s_eigenTolerance", "Tolerance", "number", default=0.000001, visible_when={"field": "s_solverType", "equals": "eigen_value"}, group="s_eigen", min=0),
+    field("s_eigenSolver", "Eigensolver", "enum", default="eigen_eigensystem", options=[{"value": "eigen_eigensystem", "label": "Eigensystem (Spectra shift-invert)"}, {"value": "spectra_sym_g_eigs_shift", "label": "Spectra shift-invert"}, {"value": "dense_eigensolver", "label": "Dense"}, {"value": "power_iteration_eigenvalue_solver", "label": "Power iteration"}, {"value": "power_iteration_highest_eigenvalue_solver", "label": "Power iteration (highest)"}], visible_when={"field": "s_solverType", "equals": "eigen_value"}, help="All but the dense solver need LinearSolversApplication, which the driver then requires.", group="s_eigen"),
+    field("s_eigenModalDecomposition", "Compute modal decomposition", "bool", default=False, visible_when={"field": "s_solverType", "equals": "eigen_value"}, group="s_eigen"),
+    field("s_eigenNormalizeEigenvectors", "Normalize eigenvectors with mass matrix", "bool", default=False, visible_when={"field": "s_solverType", "equals": "eigen_value"}, group="s_eigen"),
     field("s_linearSolver", "Solver", "enum", default="automatic", options=[{"value": "automatic", "label": "Automatic"}, {"value": "LinearSolversApplication.sparse_lu", "label": "Sparse LU"}, {"value": "cg", "label": "Conjugate gradients"}, {"value": "bicgstab", "label": "BiCGStab"}], visible_when={"field": "s_solverType", "one_of": ["static", "dynamic"]}, help="Automatic lets Kratos pick the default solver of the selected strategy.", group="s_linear"),
     field("s_linearMaxIteration", "Max iterations", "int", default=200, visible_when=[{"field": "s_solverType", "one_of": ["static", "dynamic"]}, {"field": "s_linearSolver", "one_of": ["cg", "bicgstab"]}], group="s_linear", min=1),
     field("s_linearTolerance", "Tolerance", "number", default=1e-7, visible_when=[{"field": "s_solverType", "one_of": ["static", "dynamic"]}, {"field": "s_linearSolver", "one_of": ["cg", "bicgstab"]}], group="s_linear", min=0),
     field("s_preconditioner", "Preconditioner", "enum", default="none", options=["none", "diagonal", "ilu", "ilu0"], visible_when=[{"field": "s_solverType", "one_of": ["static", "dynamic"]}, {"field": "s_linearSolver", "one_of": ["cg", "bicgstab"]}], group="s_linear"),
     field("s_echoLevel", "Echo level", "int", default=1, min=0, max=3, advanced=True),
-    groups=[field_group("s_analysis", "Structure · Analysis", icon="ptSolver"), field_group("s_nonlinear", "Structure · Non-linear iteration", icon="ptSolver"), field_group("s_dynamic", "Structure · Dynamic damping", icon="ptTime"), field_group("s_eigen", "Structure · Eigenvalue solver", icon="ptSolver"), field_group("s_linear", "Structure · Linear solver", icon="ptSolver", collapsed=True)],
+    groups=[field_group("s_analysis", "Structure · Analysis", icon="ptSolver"), field_group("s_nonlinear", "Structure · Non-linear iteration", icon="ptSolver"), field_group("s_dynamic", "Structure · Dynamic damping", icon="ptTime"), field_group("s_eigen", "Structure · Eigenvalue solver", icon="ptSolver"), field_group("s_harmonic", "Structure · Harmonic analysis", icon="ptSolver"), field_group("s_linear", "Structure · Linear solver", icon="ptSolver", collapsed=True)],
     icon="ptStructural")
+
 
 FSI_COUPLING_SECTION = section("problem", "Coupling",
     field("startTime", "Start time", "number", default=0, unit="s", group="time"),
@@ -1303,6 +1343,22 @@ STRUCTURE_CONDITIONS = [
                   },
               },
               help="3D only.", category="loads", icon="ptLoad", emit={"sibling":"PointMoment","source":"nodes","family":"moment"}),
+    condition("s_imaginaryPointLoad", "Imaginary point load", list="structure_loads_process_list", target="nodes",
+              fields=[field("modulus", "Modulus [N]", "number", default=0),
+                      field("direction", "Direction", "vector3", default=[0, 0, -1])],
+              process_template={
+                  "python_module": "assign_vector_by_direction_to_condition_process",
+                  "kratos_module": "KratosMultiphysics",
+                  "process_name": "AssignVectorByDirectionToConditionProcess",
+                  "Parameters": {
+                      "model_part_name": "$path",
+                      "variable_name": "POINT_LOAD_IMAGINARY",
+                      "modulus": "$field:modulus",
+                      "direction": "$field:direction",
+                      "interval": [0, "End"],
+                  },
+              },
+              help="Direct harmonic analysis: the imaginary part of a point load.", category="loads", icon="ptLoad", emit={"sibling":"ImaginaryPointLoad","source":"nodes","family":"point","formulationField":"s_elementBase","pointName":"ImaginaryPointLoadCondition"}),
     condition("s_movingLoad", "Moving load", list="structure_loads_process_list", target="surface",
               fields=[field("modulus", "Modulus [N]", "number", default=0),
                       field("direction", "Direction", "vector3", default=[0, 0, -1]),
@@ -1896,7 +1952,7 @@ FSI_DOMAINS = [
                "conditions": "WallCondition",
            }),
     domain("structure", "Structure", "Structure", "Structural", "s_parts",
-           condition_ids=["s_parts", "s_displacement", "s_rotation", "s_pressure", "s_volumetricStrain", "s_initialVelocity", "s_initialAcceleration", "s_angularVelocity", "s_angularAcceleration", "s_selfWeight", "s_pointLoad", "s_pointMoment", "s_movingLoad", "s_lineLoad", "s_surfaceLoad", "s_surfacePressure", "structureInterface"],
+           condition_ids=["s_parts", "s_displacement", "s_rotation", "s_pressure", "s_volumetricStrain", "s_initialVelocity", "s_initialAcceleration", "s_angularVelocity", "s_angularAcceleration", "s_selfWeight", "s_pointLoad", "s_pointMoment", "s_imaginaryPointLoad", "s_movingLoad", "s_lineLoad", "s_surfaceLoad", "s_surfacePressure", "structureInterface"],
            materials_file_name="StructuralMaterials.json",
            required=[{
                "conditionId": "structureInterface",
@@ -2255,7 +2311,7 @@ COSIM_DOMAINS = [
                "conditions": "WallCondition",
            }),
     domain("structure", "Structure", "Structure", "Structural", "s_parts",
-           condition_ids=["s_parts", "s_displacement", "s_rotation", "s_pressure", "s_volumetricStrain", "s_initialVelocity", "s_initialAcceleration", "s_angularVelocity", "s_angularAcceleration", "s_selfWeight", "s_pointLoad", "s_pointMoment", "s_movingLoad", "s_lineLoad", "s_surfaceLoad", "s_surfacePressure", "structureInterface"],
+           condition_ids=["s_parts", "s_displacement", "s_rotation", "s_pressure", "s_volumetricStrain", "s_initialVelocity", "s_initialAcceleration", "s_angularVelocity", "s_angularAcceleration", "s_selfWeight", "s_pointLoad", "s_pointMoment", "s_imaginaryPointLoad", "s_movingLoad", "s_lineLoad", "s_surfaceLoad", "s_surfacePressure", "structureInterface"],
            materials_file_name="StructuralMaterials.json",
            required=[{
                "conditionId": "structureInterface",

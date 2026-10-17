@@ -346,6 +346,9 @@ def condition(id, label, list="constraints_process_list", target="any",
                 or emit.get("source") not in ("nodes", "lines")
                 or emit.get("family") not in ("point", "moment", "moving")):
             raise ValueError(f'condition "{id}": emit needs sibling/source/family')
+        for key in ("formulationField", "axisymmetricPoint", "pointName"):
+            if key in emit and (not isinstance(emit[key], str) or not emit[key]):
+                raise ValueError(f'condition "{id}": emit {key} must be a non-empty string')
         c["emit"] = dict(emit)
     return c
 

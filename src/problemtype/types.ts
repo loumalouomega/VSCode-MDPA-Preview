@@ -341,6 +341,11 @@ export interface ConditionEmitSpec {
   formulationField?: string;
   /** 2D point-load name for axisymmetric formulations (`AxisymPointLoadCondition2D1N`). */
   axisymmetricPoint?: string;
+  /**
+   * Base name of the emitted 1N conditions (`PointLoadCondition`): the
+   * imaginary point load emits `ImaginaryPointLoadCondition` blocks instead.
+   */
+  pointName?: string;
 }
 
 /**

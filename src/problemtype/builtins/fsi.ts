@@ -308,7 +308,12 @@ export const fsi = defineProblemtype(decl, {
     fluidSettings.skin_parts = skin;
     fluidSettings.no_skin_parts = noSkin;
     const structValues = { ...unprefixValues(v, S), ...time, timeStep: asNum(v.f_timeStep, 0.01) };
-    const structSettings = (await structural.solverSettings(structValues, structCtx)) as JsonObject;
+    // The structural hook matches its own condition ids, so the domain's
+    // prefixed assignments are stripped first (as the fluid side already does).
+    const structSettings = (await structural.solverSettings(structValues, {
+      ...structCtx,
+      assignments: structCtx.assignments.map((a) => stripPrefix(a, a.conditionId.startsWith(S) ? S : "")),
+    })) as JsonObject;
     // Both solvers read their mesh from the model parts the importer creates; the case's mdpa files
     // are named in each nested solver's own import settings.
     structSettings.time_stepping = fluidSettings.time_stepping; // the structure takes the fluid's step

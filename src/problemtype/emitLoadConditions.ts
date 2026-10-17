@@ -151,9 +151,9 @@ export function emitLoadConditions(
         ? undefined
         : emit.family === "moment"
           ? "PointMomentCondition3D1N"
-          : opts.domainSize === 2 && emit.axisymmetricPoint && opts.formulationOf(conditionId).startsWith("Axisym")
+          : opts.domainSize === 2 && !emit.pointName && emit.axisymmetricPoint && opts.formulationOf(conditionId).startsWith("Axisym")
             ? emit.axisymmetricPoint
-            : `PointLoadCondition${opts.domainSize}D1N`;
+            : `${emit.pointName ?? "PointLoadCondition"}${opts.domainSize}D1N`;
     let entityIds: number[];
     let nodes: number[];
     if (emit.family === "moving") {

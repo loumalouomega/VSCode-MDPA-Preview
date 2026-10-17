@@ -238,6 +238,9 @@ export function validateDeclaration(decl: ProblemtypeDeclaration): string[] {
       if (e.axisymmetricPoint !== undefined && (typeof e.axisymmetricPoint !== "string" || e.axisymmetricPoint.length === 0)) {
         errors.push(`condition "${c.id}": emit axisymmetricPoint must be a condition name`);
       }
+      if (e.pointName !== undefined && (typeof e.pointName !== "string" || e.pointName.length === 0)) {
+        errors.push(`condition "${c.id}": emit pointName must be a condition base name`);
+      }
     }
     checkFields(c.fields, `condition "${c.id}"`, false);
     checkRequirements(c.requiresFields, `condition "${c.id}"`);
