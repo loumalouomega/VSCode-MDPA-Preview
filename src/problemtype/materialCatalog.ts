@@ -22,6 +22,7 @@
  */
 
 import { BUILTIN_PRESET_DATA } from "./materialPresetData";
+import { tableTextProblem } from "./materialTables";
 import type { FieldSpec, JsonValue, MaterialLawSpec } from "./types";
 
 // --- units --------------------------------------------------------------------
@@ -417,6 +418,14 @@ export function validateMaterialAssignment(
   for (const field of law.variables) {
     const value = values[field.id];
     if (value === undefined) continue;
+    const table = (law.tables ?? []).find((t) => t.dataField === field.id);
+    if (table !== undefined) {
+      const problem = tableTextProblem(value);
+      if (problem !== undefined) {
+        issues.push({ severity: "error", variable: field.id, message: `${table.id} table: ${problem}` });
+      }
+      continue;
+    }
     if (field.type !== "number" && field.type !== "int") continue;
     if (typeof value !== "number" || !Number.isFinite(value)) {
       issues.push({

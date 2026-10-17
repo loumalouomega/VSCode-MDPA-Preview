@@ -142,16 +142,61 @@ export type ProcessList =
   | (string & {});
 
 /**
+ * One formulation's block names, for `FormulationMeshNaming.names`:
+ * - a string with `{dim}` / `{nodes}` is a template ("SpringDamperElement{dim}D",
+ *   "Membrane{dim}D{nodes}N"); without them it is that exact name at every
+ *   shape ("CableElement3D2N");
+ * - an object lists the exact name per domain size → nodes per cell
+ *   ({3: {3: "ShellThinElementCorotational3D3N", 4: "…"}}). A shape the table
+ *   does not list is one the formulation has no element for, so adapting such
+ *   a block is refused — renaming it would invent a type Kratos lacks.
+ */
+export type MeshNamingEntry = string | { [dim: number]: { [nodes: number]: string } };
+
+/**
+ * Mesh names picked by a form field: the value of `field` (an enum of element
+ * formulations, say) selects the entry under `names`. A value without an entry
+ * keeps the legacy meaning — the value itself is a base name.
+ */
+export interface FormulationMeshNaming {
+  field: string;
+  names: { [value: string]: MeshNamingEntry };
+}
+
+/**
  * Expected mdpa block naming for the solver: per-kind target base name; the
  * final block name is `${base}${domainSize}D${nodesPerCell}N`. A plain string
  * applies to both domain sizes; the object form differs per size. Strings may
  * be "$field:<id>" (resolved against the flattened form values), letting e.g.
  * the structural formulation pick SmallDisplacementElement vs
- * TotalLagrangianElement.
+ * TotalLagrangianElement. The `FormulationMeshNaming` form adds a per-value
+ * table for formulations whose names no single base can describe.
  */
 export interface MeshNamingSpec {
-  elements?: string | { 2?: string; 3?: string };
-  conditions?: string | { 2?: string; 3?: string };
+  elements?: string | { 2?: string; 3?: string } | FormulationMeshNaming;
+  conditions?: string | { 2?: string; 3?: string } | FormulationMeshNaming;
+}
+
+/**
+ * One block kind's resolved naming for a case (see `resolveMeshNaming`).
+ * Exactly one of the three name sources is set:
+ * - `base`: every shape is named `${base}${dim}D${nodes}N`;
+ * - `template`: `{dim}`/`{nodes}` substituted per shape (verbatim without them);
+ * - `shapes`: the only names the formulation has, keyed "3D4N" (the GiD
+ *   convention) — a shape missing from the map has no name at all.
+ * `source` is the field value (or base) the names came from, for messages.
+ */
+export interface ResolvedMeshKind {
+  base?: string;
+  template?: string;
+  shapes?: { [shape: string]: string };
+  source?: string;
+}
+
+/** The resolved meshNaming of a case, one entry per block kind (see `resolveMeshNaming`). */
+export interface ResolvedMeshNaming {
+  elements?: ResolvedMeshKind;
+  conditions?: ResolvedMeshKind;
 }
 
 /** Hint for the SubModelPart picker; purely advisory in v1. */
@@ -263,6 +308,44 @@ export interface ConditionSpec {
   noProcess?: boolean;
   /** Mesh fields every assignment of this condition expects; see `FieldRequirement`. */
   requiresFields?: FieldRequirement[];
+  /**
+   * Load emission: assigning the condition synthesizes the Kratos conditions
+   * the load needs from the part's own entities into a sibling SubModelPart
+   * (`<part name><sibling>` under the same parent), and the process targets
+   * the sibling. Point and moment loads re-emit the part's nodes as one-node
+   * conditions; a moving load re-emits its line entities as
+   * `MovingLoadCondition`s. Meshes that already carry the conditions need no
+   * emission, but targeting the sibling is unconditional, so the documents
+   * never depend on what the mesh happened to contain.
+   */
+  emit?: ConditionEmitSpec;
+}
+
+/**
+ * How one load condition's Kratos conditions are synthesized (see
+ * `emitLoadConditions`): the sibling suffix, which part entities become
+ * conditions, and which condition family they become.
+ */
+export interface ConditionEmitSpec {
+  /** Suffix of the sibling part (`Support` + `"PointLoad"`). */
+  sibling: string;
+  /** The part entities re-emitted as conditions: its nodes, or its line entities. */
+  source: "nodes" | "lines";
+  /** Which Kratos condition family to emit. */
+  family: "point" | "moment" | "moving";
+  /**
+   * Values field holding the element formulation (default none). A value
+   * starting with `"Axisym"` selects `axisymmetricPoint` for the 2D point
+   * family; coupled problemtypes prefix it when they prefix their fields.
+   */
+  formulationField?: string;
+  /** 2D point-load name for axisymmetric formulations (`AxisymPointLoadCondition2D1N`). */
+  axisymmetricPoint?: string;
+  /**
+   * Base name of the emitted 1N conditions (`PointLoadCondition`): the
+   * imaginary point load emits `ImaginaryPointLoadCondition` blocks instead.
+   */
+  pointName?: string;
 }
 
 /**
@@ -310,6 +393,38 @@ export interface MaterialLawSpec {
   domainSize?: 2 | 3;
   /** The `DomainSpec` this law belongs to (coupled problemtypes only). */
   domain?: string;
+  /**
+   * Kratos application the law's name (or the factory it configures) comes
+   * from — `ConstitutiveLawsApplication` for the CLApp factories. A materials
+   * file carries no module path, so the document scan cannot see it: Generate
+   * requires the application of every law an assignment actually uses.
+   */
+  application?: string;
+  /**
+   * Materials-form heading the law is listed under (the picker's `<optgroup>`).
+   * Laws without one are listed first, in declaration order.
+   */
+  group?: string;
+  /**
+   * Extra keys of the generated `constitutive_law` block, written as they are:
+   * the ConstitutiveLawsApplication factories' settings (`law_type`,
+   * `yield_surface`, `plastic_potential`). `name` stays the law's own name.
+   */
+  parameters?: JsonObject;
+  /**
+   * Offer the law only while the case values satisfy these rules (an element
+   * formulation or solver whose constitutive law set this law belongs to). The
+   * form hides it; Generate refuses an assignment that still names it, so the
+   * laws never silently change meaning when the setup does.
+   */
+  when?: VisibleRule | VisibleRule[];
+  /**
+   * Property tables the law reads (e.g. a temperature–viscosity table): each
+   * names the generated `Tables` entry and the law variable holding the
+   * `input,output; …` pairs text. Table variables are not written to
+   * `Variables` — Kratos would reject the unknown variable.
+   */
+  tables?: { id: string; inputVariable: string; outputVariable: string; dataField: string }[];
 }
 
 export interface OutputSpec {

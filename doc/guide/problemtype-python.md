@@ -84,13 +84,14 @@ field_group(id, label, icon=None, collapsed=None)
 section(id, label, *fields, groups=None, icon=None)
 condition(id, label, list="constraints_process_list", target="any",
           fields=(), process_template=None, help=None, category=None,
-          icon=None, no_process=None)
+          icon=None, no_process=None, emit=None)
 domain(id, label, model_part_name, mdpa_suffix, parts_condition,
        condition_ids, materials_file_name=None, required=None,
        mesh_naming=None)                  # one physics of a coupled problemtype
 process(python_module, process_name=None, kratos_module="KratosMultiphysics",
         parameters=None)                  # process_template sugar
-material_law(id, name, variables=(), domain_size=None, domain=None)
+material_law(id, name, variables=(), domain_size=None, domain=None,
+             application=None, group=None, parameters=None, when=None)
 entry_type(id, label, *fields, parts=None, icon=None, help=None)
 collection(id, label, *entry_types, min=None, max=None, defaults=None,
            icon=None, help=None)          # a repeatable list of named entries
@@ -114,6 +115,7 @@ application(name, when=None)              # a required Kratos application
 mesh_naming={"elements": "$field:elementBase",           # or "Element"
              "conditions": {2: "LineLoadCondition", 3: "SurfaceLoadCondition"}}
 ```
+When no single base can describe a formulation's names (shells, cables, springs), a kind takes a `{"field": "<enum field>", "names": {<value>: <entry>}}` table, where an entry is a template (`"SpringDamperElement{dim}D"`), one exact name (`"CableElement3D2N"`) or a `{dim: {nodes: name}}` table of exact names; a value with no entry keeps the base meaning, and a shape a table omits makes Generate refuse that block instead of inventing a Kratos type.
 
 `icon` names a toolbar icon for the problemtype's forms (the built-ins use `ptStructural` / `ptFluid` / `ptThermal` / `ptPotentialFlow` / `ptShallowWater`). A condition's `list` may also be a custom process-list name (e.g. `boundary_conditions_process_list`).
 

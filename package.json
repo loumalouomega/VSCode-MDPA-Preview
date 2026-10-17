@@ -2,7 +2,7 @@
   "name": "vscode-mdpa",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "5.14.0",
+  "version": "5.15.0",
   "icon": "images/icon_transparency.png",
   "publisher": "kratos-multiphysics",
   "license": "AGPL-3.0-or-later",
@@ -581,6 +581,11 @@
       {
         "command": "kratos.mdpa.optimizationProgress",
         "title": "%command.kratos.mdpa.optimizationProgress.title%",
+        "category": "%category.KratosMdpa%"
+      },
+      {
+        "command": "kratos.mdpa.windTunnel",
+        "title": "%command.kratos.mdpa.windTunnel.title%",
         "category": "%category.KratosMdpa%"
       },
       {

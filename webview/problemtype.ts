@@ -57,6 +57,7 @@ import {
   snapshotOf,
   validateMaterialAssignment,
 } from "../src/problemtype/materialCatalog";
+import { rowsToText, tableTextProblem, textToRows } from "../src/problemtype/materialTables";
 import { hideFlowgraphPane } from "./flowgraphPane";
 import {
   cardBlock,
@@ -1100,7 +1101,8 @@ function appliedRow(
   values: Record<string, JsonValue>,
   onDelete: () => void,
   icon?: string,
-  onEdit?: () => void
+  onEdit?: () => void,
+  customField?: (f: FieldSpec) => HTMLElement | undefined
 ): HTMLElement {
   const box = document.createElement("div");
   box.className = "pt-assign";
@@ -1130,14 +1132,108 @@ function appliedRow(
   for (const f of fields) {
     if (values[f.id] === undefined) values[f.id] = fieldDefault(f);
     box.appendChild(
-      fieldInput(f, values[f.id], (v) => {
-        values[f.id] = v;
-        scheduleSend();
-        onEdit?.();
-      })
+      customField?.(f) ??
+        fieldInput(f, values[f.id], (v) => {
+          values[f.id] = v;
+          scheduleSend();
+          onEdit?.();
+        })
     );
   }
   return box;
+}
+
+/**
+ * A materials-table grid for a law variable that holds `"input,output; …"`
+ * text (see the law's `tables`). Rows edit in place without losing focus; the
+ * text, an error line when it does not parse, and the case update on every
+ * keystroke, exactly like a plain field.
+ */
+function tableFieldEditor(
+  f: FieldSpec,
+  table: { inputVariable: string; outputVariable: string },
+  get: () => JsonValue,
+  set: (v: string) => void
+): HTMLElement {
+  const wrap = document.createElement("label");
+  wrap.className = "edit-field pt-field";
+  wrap.dataset.field = f.id;
+  if (f.help) wrap.title = f.help;
+  const caption = document.createElement("span");
+  caption.textContent = f.label;
+  wrap.appendChild(caption);
+  const grid = document.createElement("div");
+  grid.className = "pt-table-grid";
+  const headIn = document.createElement("span");
+  headIn.className = "pt-table-head";
+  headIn.textContent = table.inputVariable;
+  const headOut = document.createElement("span");
+  headOut.className = "pt-table-head";
+  headOut.textContent = table.outputVariable;
+  const headDel = document.createElement("span");
+  grid.append(headIn, headOut, headDel);
+  const err = document.createElement("div");
+  err.className = "pt-preset-problem";
+  err.hidden = true;
+  const refreshError = (): void => {
+    const problem = tableTextProblem(get());
+    if (problem === undefined) err.hidden = true;
+    else {
+      err.hidden = false;
+      err.textContent = problem;
+    }
+  };
+  const commit = (): void => {
+    const rows: { input: string; output: string }[] = [];
+    for (const row of Array.from(grid.querySelectorAll(":scope > .pt-table-row"))) {
+      const cells = row.querySelectorAll("input");
+      rows.push({ input: cells[0]?.value ?? "", output: cells[1]?.value ?? "" });
+    }
+    set(rowsToText(rows));
+    refreshError();
+  };
+  const addRow = (input: string, output: string): void => {
+    const row = document.createElement("div");
+    row.className = "pt-table-row";
+    row.style.display = "contents";
+    const a = document.createElement("input");
+    a.type = "text";
+    a.className = "edit-num";
+    a.value = input;
+    a.setAttribute("aria-label", `${table.inputVariable} row value`);
+    a.addEventListener("input", commit);
+    const b = document.createElement("input");
+    b.type = "text";
+    b.className = "edit-num";
+    b.value = output;
+    b.setAttribute("aria-label", `${table.outputVariable} row value`);
+    b.addEventListener("input", commit);
+    const del = document.createElement("button");
+    del.type = "button";
+    del.className = "pt-assign-del";
+    del.textContent = "\u00d7";
+    del.title = "Remove row";
+    del.addEventListener("click", () => {
+      row.remove();
+      commit();
+    });
+    row.append(a, b, del);
+    grid.appendChild(row);
+  };
+  const { rows } = textToRows(get());
+  for (const r of rows) addRow(r.input, r.output);
+  const add = document.createElement("button");
+  add.type = "button";
+  add.className = "panel-btn";
+  add.textContent = "Add row";
+  add.addEventListener("click", () => {
+    addRow("", "");
+    const inputs = grid.querySelectorAll("input");
+    (inputs[inputs.length - 2] as HTMLInputElement | undefined)?.focus();
+  });
+  wrap.append(grid, err, add);
+  refreshError();
+  return wrap;
 }
 
 /**
@@ -1324,16 +1420,33 @@ function renderMaterials(decl: ProblemtypeDeclaration): void {
   body.appendChild(addHost);
   const lawSelect = document.createElement("select");
   lawSelect.className = "edit-sel pt-add-what";
-  for (const l of decl.materialLaws) {
+  // A law may carry `when` rules over the case values (the element formulation
+  // whose constitutive-law set it belongs to), so the picker offers only the
+  // laws the current setup has; `group` arranges them under headings, and
+  // ungrouped laws keep their declaration order ahead of the groups they open.
+  const laws = decl.materialLaws.filter((l) => isFieldVisible({ visibleWhen: l.when }, flattenValues(decl, state!)));
+  const lawGroups = new Map<string, HTMLOptGroupElement>();
+  for (const l of laws) {
     const opt = document.createElement("option");
     opt.value = l.id;
     const owner = decl.domains?.find((d) => d.id === l.domain);
     opt.textContent = `${owner ? `${owner.label} · ` : ""}${l.name || l.id}`;
-    lawSelect.appendChild(opt);
+    if (l.group) {
+      let group = lawGroups.get(l.group);
+      if (!group) {
+        group = document.createElement("optgroup");
+        group.label = l.group;
+        lawGroups.set(l.group, group);
+        lawSelect.appendChild(group);
+      }
+      group.appendChild(opt);
+    } else {
+      lawSelect.appendChild(opt);
+    }
   }
   // Keep the chosen law across the re-render the change below triggers; a
   // problemtype switch may have left an id this declaration does not offer.
-  if (!decl.materialLaws.some((l) => l.id === presetLaw)) presetLaw = decl.materialLaws[0]?.id ?? "";
+  if (!laws.some((l) => l.id === presetLaw)) presetLaw = laws[0]?.id ?? "";
   lawSelect.value = presetLaw;
   const whereSelect = document.createElement("select");
   whereSelect.className = "edit-sel pt-add-where";
@@ -1358,7 +1471,7 @@ function renderMaterials(decl: ProblemtypeDeclaration): void {
   add.className = "edit-apply";
   add.textContent = "+";
   add.title = "Assign the material to the SubModelPart";
-  add.disabled = smpPaths.length === 0 || decl.materialLaws.length === 0;
+  add.disabled = smpPaths.length === 0 || laws.length === 0;
   add.addEventListener("click", () => {
     const lawId = lawSelect.value;
     const smpPath = whereSelect.value;
@@ -1385,6 +1498,12 @@ function renderMaterials(decl: ProblemtypeDeclaration): void {
     render();
   });
   addRow.append(lawSelect, whereSelect, add);
+  if (laws.length === 0) {
+    const note = document.createElement("span");
+    note.className = "pt-preset-problem";
+    note.textContent = "No material law matches the current setup.";
+    addHost.appendChild(note);
+  }
   addHost.appendChild(addRow);
   // The preset dropdown follows the chosen law, so it only ever offers rows
   // that declare compatibility with it. It starts on the first match, because
@@ -1431,7 +1550,17 @@ function renderMaterials(decl: ProblemtypeDeclaration): void {
         render();
       },
       "material",
-      refreshDerived
+      refreshDerived,
+      (f) => {
+        const table = law?.tables?.find((t) => t.dataField === f.id);
+        return table === undefined
+          ? undefined
+          : tableFieldEditor(f, table, () => m.values[f.id], (v) => {
+              m.values[f.id] = v;
+              scheduleSend();
+              refreshDerived();
+            });
+      }
     );
     refreshDerived();
     body.appendChild(row);

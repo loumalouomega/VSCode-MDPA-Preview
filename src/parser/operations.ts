@@ -1603,7 +1603,7 @@ const KNOWN_OPS = new Set<OpName>([
 ]);
 
 const MMG_MODULES = new Set(["auto", "mmg3d", "mmgs", "mmg2d"]);
-const REMESH_MODES = new Set(["factor", "hsiz", "optimize", "expr", "aniso"]);
+const REMESH_MODES = new Set(["factor", "hsiz", "optimize", "expr", "aniso", "wall"]);
 const FROZEN_KINDS = new Set(["block", "part"]);
 const MESH_SIZE_TARGETS = new Set<MeshSizeTarget>(["nodal", "element", "both"]);
 const RADIUS_MODES = new Set<RadiusMode>(["absolute", "multiply"]);
@@ -2555,7 +2555,7 @@ export function opRecordFromMessage(
       const mode = typeof msg.mode === "string" && REMESH_MODES.has(msg.mode) ? msg.mode : "factor";
       const rec: Extract<OpRecord, { op: "remesh" }> = {
         op,
-        mode: mode as "factor" | "hsiz" | "optimize" | "expr" | "aniso",
+        mode: mode as "factor" | "hsiz" | "optimize" | "expr" | "aniso" | "wall",
       };
       const distanceSurfacePath =
         typeof msg.distanceSurfacePath === "string" ? msg.distanceSurfacePath.trim() : "";
@@ -2607,6 +2607,34 @@ export function opRecordFromMessage(
         if (msg.method !== undefined && msg.method !== "") {
           if (!GRADIENT_METHODS.includes(msg.method as GradientMethod)) return undefined;
           rec.method = msg.method as GradientMethod;
+        }
+      } else if (mode === "wall") {
+        const variable = typeof msg.variable === "string" ? msg.variable.trim() : "";
+        if (!variable) return undefined;
+        rec.variable = variable;
+        const firstHeight = Number(msg.firstHeight);
+        if (!(Number.isFinite(firstHeight) && firstHeight > 0)) return undefined;
+        rec.firstHeight = firstHeight;
+        const wallBounds: Record<"growth" | "tangentialSize" | "tangentialGrowth" | "maxAspect", (v: number) => boolean> = {
+          growth: (v) => v >= 1,
+          tangentialSize: (v) => v > 0,
+          tangentialGrowth: (v) => v >= 0,
+          maxAspect: (v) => v >= 1,
+        };
+        for (const k of Object.keys(wallBounds) as (keyof typeof wallBounds)[]) {
+          if (msg[k] === undefined || msg[k] === "") continue;
+          const v = Number(msg[k]);
+          if (!(Number.isFinite(v) && wallBounds[k](v))) return undefined;
+          rec[k] = v;
+        }
+        if (msg.method !== undefined && msg.method !== "") {
+          if (!GRADIENT_METHODS.includes(msg.method as GradientMethod)) return undefined;
+          rec.method = msg.method as GradientMethod;
+        }
+        const cap = typeof msg.sizeExpr === "string" ? msg.sizeExpr.trim() : "";
+        if (cap) {
+          if (validateSizeExpr(cap, allowedVars) !== undefined) return undefined;
+          rec.sizeExpr = cap;
         }
       }
       const frozen = parseFrozen(msg.frozen);
@@ -3271,6 +3299,23 @@ function validateParams(rec: OpRecord, warnings: string[]): boolean {
         }
         if (rec.method !== undefined && !GRADIENT_METHODS.includes(rec.method)) {
           return bad("invalid method");
+        }
+      }
+      if (rec.mode === "wall") {
+        if (typeof rec.variable !== "string" || rec.variable.length === 0) return bad("missing/invalid variable");
+        if (!(typeof rec.firstHeight === "number" && rec.firstHeight > 0)) return bad("missing/invalid firstHeight");
+        for (const k of ["growth", "maxAspect"] as const) {
+          if (rec[k] !== undefined && !(typeof rec[k] === "number" && (rec[k] as number) >= 1)) return bad(`invalid ${k}`);
+        }
+        for (const k of ["tangentialSize"] as const) {
+          if (rec[k] !== undefined && !(typeof rec[k] === "number" && (rec[k] as number) > 0)) return bad(`invalid ${k}`);
+        }
+        if (rec.tangentialGrowth !== undefined && !(typeof rec.tangentialGrowth === "number" && rec.tangentialGrowth >= 0)) {
+          return bad("invalid tangentialGrowth");
+        }
+        if (rec.method !== undefined && !GRADIENT_METHODS.includes(rec.method)) return bad("invalid method");
+        if (rec.sizeExpr !== undefined) {
+          if (typeof rec.sizeExpr !== "string" || validateSizeExprLenient(rec.sizeExpr, false) !== undefined) return bad("invalid sizeExpr");
         }
       }
       if (rec.frozen !== undefined) {

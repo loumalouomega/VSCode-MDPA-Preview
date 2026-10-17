@@ -2167,6 +2167,7 @@ input.outline-label-input {
   #flow-panel,
   #link-panel,
   #optimization-panel,
+  #wind-tunnel-panel,
   #lighting-panel,
   #bookmarks-panel,
   #record-panel,
@@ -2199,7 +2200,7 @@ input.outline-label-input {
    out of the top of the viewport. The panels scroll internally
    (`overflow-y: auto`), so the lost height costs nothing but a scrollbar on a
    short window. */
-:is(#quality-panel, #export-report-panel, #meshsize-panel, #sphere-panel, #beam-panel, #integral-panel, #streamline-panel, #flow-panel, #link-panel, #optimization-panel, #inspect-panel, #selection-panel) {
+:is(#quality-panel, #export-report-panel, #meshsize-panel, #sphere-panel, #beam-panel, #integral-panel, #streamline-panel, #flow-panel, #link-panel, #optimization-panel, #wind-tunnel-panel, #inspect-panel, #selection-panel) {
   bottom: calc(var(--nav-rest, 8px) + var(--nav-height, 0px) + var(--ui-s-3));
 }
 
@@ -2952,7 +2953,8 @@ input.outline-label-input {
 #streamline-panel,
 #flow-panel,
 #link-panel,
-#optimization-panel {
+#optimization-panel,
+#wind-tunnel-panel {
   position: absolute;
   top: 8px;
   left: 8px;
@@ -3843,6 +3845,21 @@ input.outline-label-input {
   flex: 1 1 0;
   min-width: 0;
 }
+.pt-table-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  gap: var(--ui-s-1);
+  align-items: center;
+  flex: 1 1 0;
+  min-width: 0;
+}
+.pt-table-head {
+  font-size: var(--ui-fs-label);
+  color: var(--ds-description-fg);
+}
+.pt-table-grid .edit-num {
+  width: 100%;
+}
 .pt-add-row {
   display: flex;
   align-items: center;
@@ -4386,8 +4403,28 @@ button.pt-preflight-row:hover,
    the same reason: five numeric columns do not fit 300px. */
 #integral-panel,
 #flow-panel,
-#optimization-panel {
+#optimization-panel,
+#wind-tunnel-panel {
   width: 420px;
+}
+
+/* The virtual wind tunnel wizard (windTunnelPanel.ts): a determinate build bar and a quiet warning line. */
+.wt-progress {
+  height: 3px;
+  margin: var(--ui-s-2) 0;
+  overflow: hidden;
+  border-radius: var(--ds-radius-sm);
+  background: var(--vscode-input-background, rgba(128, 128, 128, 0.25));
+}
+.wt-progress-bar {
+  height: 100%;
+  background: var(--vscode-progressBar-background, #0e70c0);
+}
+#wind-tunnel-panel .wt-warn {
+  color: var(--vscode-editorWarning-foreground, #cca700);
+}
+#wind-tunnel-panel .meshsize-summary {
+  white-space: normal;
 }
 
 /* Optimization progress (optimizationPanel.ts): two hand-drawn charts, a

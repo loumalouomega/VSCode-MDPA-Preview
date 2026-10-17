@@ -19,10 +19,10 @@ test("float64 and int64 arrays round-trip through the encoder", () => {
 test("refusals name what is unsupported", () => {
   assert.throws(() => parseNpy(new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])), /missing the \\x93NUMPY magic/);
   const big = encodeNpy([1]);
-  const text = new TextDecoder("latin1").decode(big).replace("<f8", ">f8");
-  assert.throws(() => parseNpy(Uint8Array.from(text, (c) => c.charCodeAt(0))), /Unsupported \.npy dtype ">f8"/);
-  const fortran = new TextDecoder("latin1").decode(big).replace("False", "True ");
-  assert.throws(() => parseNpy(Uint8Array.from(fortran, (c) => c.charCodeAt(0))), /Fortran-ordered/);
+  const text = Buffer.from(big).toString("latin1").replace("<f8", ">f8");
+  assert.throws(() => parseNpy(Uint8Array.from(Buffer.from(text, "latin1"))), /Unsupported \.npy dtype ">f8"/);
+  const fortran = Buffer.from(big).toString("latin1").replace("False", "True ");
+  assert.throws(() => parseNpy(Uint8Array.from(Buffer.from(fortran, "latin1"))), /Fortran-ordered/);
   assert.throws(() => parseNpy(encodeNpy([1, 2, 3]).subarray(0, 140)), /shorter than its header/);
 });
 

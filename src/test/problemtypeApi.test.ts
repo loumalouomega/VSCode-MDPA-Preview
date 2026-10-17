@@ -14,6 +14,7 @@ import {
   Assignment,
   ConditionSpec,
   GenContext,
+  JsonObject,
   ProblemtypeDeclaration,
 } from "../problemtype/types";
 
@@ -81,6 +82,77 @@ test("validateDeclaration flags missing metadata, duplicates and bad refs", () =
   assert.ok(errors.some((e) => e.includes('duplicate field id "endTime"')));
   assert.ok(errors.some((e) => e.includes('duplicate condition id "bc"')));
   assert.ok(errors.some((e) => e.includes('partsCondition "nope"')));
+});
+
+test("validateDeclaration checks meshNaming tables", () => {
+  const decl = minimalDecl();
+  decl.meshNaming = {
+    elements: {
+      field: "mode",
+      names: {
+        a: "Element{dim}D{nodes}N",
+        b: { 3: { 8: "Hexahedron3D8N", 4: "Tetrahedron3D4N" } },
+      },
+    },
+    conditions: { 2: "LineLoadCondition", 3: "SurfaceLoadCondition" },
+  };
+  assert.deepEqual(validateDeclaration(decl), []);
+
+  const bad = minimalDecl();
+  bad.meshNaming = {
+    elements: {
+      field: "mode",
+      names: {
+        c: "Element", // not an option of "mode"
+        a: "Element{dimX}", // unknown placeholder
+        b: { 3: { 8: "Hexahedron3D8N{dim}" } }, // a shape table holds exact names
+      },
+    },
+  };
+  const errors = validateDeclaration(bad);
+  assert.ok(errors.some((e) => e.includes('"c" is not an option of "mode"')));
+  assert.ok(errors.some((e) => e.includes("only {dim} and {nodes}")));
+  assert.ok(errors.some((e) => e.includes("exact names, not templates")));
+
+  const noField = minimalDecl();
+  noField.meshNaming = { conditions: { field: "nope", names: { a: "X" } } };
+  assert.ok(validateDeclaration(noField).some((e) => e.includes('field "nope" is not a section field')));
+});
+
+test("validateDeclaration checks material-law metadata", () => {
+  const decl = minimalDecl();
+  decl.materialLaws = [
+    {
+      id: "clapp",
+      name: "SmallStrainIsotropicPlasticityFactory",
+      variables: [],
+      application: "ConstitutiveLawsApplication",
+      group: "Plasticity",
+      parameters: { law_type: "SmallStrainIsotropicPlasticityFactory" },
+      when: { field: "mode", equals: "a" },
+    },
+  ];
+  assert.deepEqual(validateDeclaration(decl), []);
+
+  const bad = minimalDecl();
+  bad.materialLaws = [
+    {
+      id: "x",
+      name: "X",
+      variables: [],
+      application: "constitutive_laws",
+      group: "",
+      parameters: { name: "Y" },
+      when: [{ field: "nope", equals: 1 }],
+    },
+    { id: "y", name: "Y", variables: [], parameters: [] as unknown as JsonObject },
+  ];
+  const errors = validateDeclaration(bad).join("\n");
+  assert.match(errors, /application must be a Kratos application name/);
+  assert.match(errors, /group must be a non-empty name/);
+  assert.match(errors, /parameters may not set "name"/);
+  assert.match(errors, /"when" names unknown field "nope"/);
+  assert.match(errors, /parameters must be an object/);
 });
 
 test("defineProblemtype throws on an invalid declaration or missing solverSettings", () => {

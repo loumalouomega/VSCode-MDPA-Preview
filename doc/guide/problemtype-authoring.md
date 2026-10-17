@@ -123,6 +123,26 @@ The recognised quantities are density, length, time, mass, force, pressure and s
 
 A preset is applied against a law by variable **id**, and a law may also state a variable set a catalog row can fill by adding its id to the preset's `laws` array. A law that no shipped or user row names simply offers no presets in the form — the numeric fields still work.
 
+## Material laws
+
+A law carries more than its variables when its name (or the factory it configures) comes from a Kratos application and its `constitutive_law` block needs settings:
+
+```js
+materialLaws: [
+  { id: "linear_elastic_3d", name: "LinearElastic3DLaw", group: "Elastic", variables: [ /* … */ ] },
+  { id: "vm_plasticity", name: "SmallStrainIsotropicPlasticityFactory", group: "Plasticity",
+    application: "ConstitutiveLawsApplication",          // required by the driver when a material uses the law
+    parameters: { law_type: "SmallStrainIsotropicPlasticityFactory", yield_surface: "VonMises" },
+    when: { field: "solverType", equals: "static" },      // offered only for the setup it is written for
+    variables: [ /* … */ ] },
+]
+```
+
+- **`application`** names the Kratos application the law (or its factory) comes from. A materials file carries no module path, so the document scan cannot find it: the generated driver requires the application whenever a material actually uses the law.
+- **`group`** is the heading the law is listed under in the Materials form.
+- **`parameters`** are extra keys of the generated `constitutive_law` block, written as they are — the ConstitutiveLawsApplication factories' `law_type`, `yield_surface`, `plastic_potential`. The block's `name` stays the law's own name (a `parameters.name` is refused).
+- **`when`** is a visibility rule (or list) over the case's values — the element formulation or solver whose constitutive-law set the law belongs to. The form hides a law whose rules do not hold, and Generate refuses a material still assigned to it, so switching the setup can never silently change what a law means.
+
 ## Mesh naming, icons and custom process lists
 
 - **`meshNaming`** declares the element/condition block names the solver expects in the mdpa. When the previewed mesh differs, Generate writes a renamed `<stem>_case.mdpa` copy and points `input_filename` at it:
@@ -135,6 +155,23 @@ A preset is applied against a law by variable **id**, and a law may also state a
   ```
 
   The final block name is `<base><dim>D<nodesPerCell>N` (the GiD convention). Use generic bases (`"Element"`, `"WallCondition"`) when the solver replaces elements itself; concrete ones (structural) when it doesn't. Point (single-node) condition blocks are never renamed.
+
+  When no single base can describe a formulation's names (shells, membranes, cables, springs), the kind takes a **`{ field, names }` table**: an enum field's value picks that formulation's entry, which is a template (`"SpringDamperElement{dim}D"`, with `{dim}`/`{nodes}` placeholders), one exact name (`"CableElement3D2N"`), or a `{dim: {nodes: name}}` table of exact names. A value with no entry keeps the base meaning, so a table only lists the exceptions:
+
+  ```js
+  meshNaming: {
+    elements: {
+      field: "elementBase",
+      names: {
+        ShellThinElementCorotational: { 3: { 3: "ShellThinElementCorotational3D3N", 4: "ShellThinElementCorotational3D4N" } },
+        SpringDamperElement: "SpringDamperElement{dim}D",
+        CableElement: "CableElement3D2N",
+      },
+    },
+  }
+  ```
+
+  A shape table also says which shapes the formulation *has*: a mesh block of any other shape is refused (preflight reports it as an error) instead of being renamed to a Kratos type that does not exist. A shape table that names a one-node shape (`{3: {1: "NodalConcentratedElement3D1N"}}`) lifts the point-block guard for it.
 - **`icon`** names a toolbar icon shown on the problemtype's forms — the built-ins use their own logos (`ptStructural`, `ptFluid`, `ptThermal`, `ptPotentialFlow`, `ptShallowWater`, `ptCompressible`, `ptEmbedded`, `ptFreeSurface`, `ptBuoyancy`, `ptConjugateHeat`, `ptFsi`); concept icons for groups and conditions are `ptTime`, `ptSolver`, `ptConstraint`, `ptLoad`, `ptInitial`, `ptGravity`, `ptParallel`, `ptCoupling` and `ptParts`; unknown ids fall back to the generic problemtype glyph.
 - **`list`** on a condition may also be a custom process-list name (e.g. Shallow Water's `boundary_conditions_process_list`) — the three GiD-standard lists are always emitted alongside any custom ones.
 
@@ -145,6 +182,7 @@ All of these are optional and purely presentational — they change how the side
 - A section may declare `groups: [{ id, label, icon?, collapsed? }]`; a field joins one with `group: "<id>"`. Fields with no group are drawn first, `advanced: true` fields without a group fold under one collapsed *Advanced* group, and a group whose fields are all hidden by `visibleWhen` is not drawn. Keep existing field ids when regrouping — saved cases are keyed by `values[sectionId][fieldId]`.
 - A field may carry `min`, `max` and `step` (numeric inputs) and a `visibleWhen` that is one rule `{ field, equals }` / `{ field, oneOf }` or an array of rules that must all hold.
 - A condition has a `category` — `"initial"`, `"constraints"`, `"loads"` or `"other"` — that decides the branch it is listed under; when omitted it is derived from its process `list`. `icon` names its toolbar icon, and `noProcess: true` marks a condition that only labels a SubModelPart for the hooks (an interface) and emits no process.
+- A condition may declare `emit: { sibling, source, family }` to synthesize the Kratos conditions its load needs: assigning it re-emits the part's own entities into a sibling SubModelPart (`<part name><sibling>` under the same parent) — its nodes as one-node conditions (`source: "nodes"`, families `"point"`/`"moment"`, with `pointName` replacing the `PointLoadCondition` base when given), or its line entities as moving-load conditions (`source: "lines"`, family `"moving"`) — and the process targets the sibling. `family: "point"` picks `PointLoadCondition<dim>D1N`, or `axisymmetricPoint` for 2D axisymmetric formulations (named by `formulationField`). The mesh rarely carries these conditions, but targeting the sibling is unconditional, so the documents never depend on what the mesh happened to contain. The Python authoring API takes the same dict as `emit=`.
 - `family` (`"solid"`, `"fluid"`, `"thermal"`, `"coupled"`, `"reduced"`, `"optimization"`, `"particles"`, `"workflow"`) puts the problemtype in a dropdown group.
 
 ## Collections: named, repeatable entries

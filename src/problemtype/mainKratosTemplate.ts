@@ -73,7 +73,10 @@ if __name__ == "__main__":
 
     analysis_stage_module_name = parameters["analysis_stage"].GetString()
     analysis_stage_class_name = analysis_stage_module_name.split('.')[-1]
-    analysis_stage_class_name = ''.join(x.title() for x in analysis_stage_class_name.split('_'))
+    # Acronym stages: title-casing gives RansAnalysis, but the class is RANSAnalysis.
+    analysis_stage_class_name = {"rans_analysis": "RANSAnalysis"}.get(
+        analysis_stage_class_name,
+        ''.join(x.title() for x in analysis_stage_class_name.split('_')))
 
     analysis_stage_module = importlib.import_module(analysis_stage_module_name)
     analysis_stage_class = getattr(analysis_stage_module, analysis_stage_class_name)

@@ -49,8 +49,8 @@ import type {
   ProblemtypeRuntime,
 } from "../types";
 import { fluid } from "./fluid";
-import { structural } from "./structural";
-import { prefixFields, unprefixValues, vectorConstraint } from "./common";
+import { structural, STRUCTURAL_ELEMENT_NAMES } from "./structural";
+import { prefixFields, prefixLawRules, unprefixValues, vectorConstraint } from "./common";
 
 const F = "f_";
 const S = "s_";
@@ -208,11 +208,19 @@ const couplingFields: FieldSpec[] = [
 ];
 
 const fluidList = (cond: ConditionSpec): string =>
-  cond.category === "initial" ? "fluid_initial_conditions_process_list" : "fluid_boundary_conditions_process_list";
+  cond.category === "initial"
+    ? "fluid_initial_conditions_process_list"
+    : cond.list === "auxiliar_process_list"
+      ? "fluid_auxiliar_process_list"
+      : "fluid_boundary_conditions_process_list";
 const structList = (cond: ConditionSpec): string =>
   cond.list === "loads_process_list" ? "structure_loads_process_list" : "structure_constraints_process_list";
 
-const fluidConditions: ConditionSpec[] = fluid.decl.conditions.map((c) => ({
+// The integration-point statistics monitor merges in the Fluid problemtype's own
+// post-process; the coupled document has no such merge, so it stays fluid-only.
+const fluidConditions: ConditionSpec[] = fluid.decl.conditions
+  .filter((c) => c.id !== "integrationStats")
+  .map((c) => ({
   ...c,
   id: F + c.id,
   label: c.id === "parts" ? "Fluid body" : c.label,
@@ -223,6 +231,8 @@ const structConditions: ConditionSpec[] = structural.decl.conditions.map((c) => 
   id: S + c.id,
   label: c.id === "parts" ? "Structure body" : c.label,
   list: c.id === "parts" ? "list_other_processes" : structList(c),
+  // The load-emission rules read the formulation field, which carries the prefix here.
+  ...(c.emit?.formulationField ? { emit: { ...c.emit, formulationField: S + c.emit.formulationField } } : {}),
 }));
 
 const fluidInterface: ConditionSpec = {
@@ -309,7 +319,7 @@ const decl: ProblemtypeDeclaration = {
       partsCondition: STRUCT_PARTS,
       conditionIds: [...structConditions.map((c) => c.id), "structureInterface"],
       required: [{ conditionId: "structureInterface", message: 'mark the structure side of the interface: assign at least one SubModelPart as "Coupling interface (structure side)".' }],
-      meshNaming: { elements: "$field:s_elementBase", conditions: { 2: "LineLoadCondition", 3: "SurfaceLoadCondition" } },
+      meshNaming: { elements: { field: "s_elementBase", names: STRUCTURAL_ELEMENT_NAMES }, conditions: { 2: "LineLoadCondition", 3: "SurfaceLoadCondition" } },
       // The interface face reads PRESSURE / SURFACE_LOAD, so the mapped
       // POINT_LOAD needs one-node point conditions of its own. They go into a
       // sibling part (the interface part must stay a pure surface for the
@@ -348,8 +358,9 @@ const decl: ProblemtypeDeclaration = {
   ],
   conditions: [...fluidConditions, aleBC, fluidInterface, ...structConditions, structureInterface],
   materialLaws: [
-    ...fluid.decl.materialLaws.map((l) => ({ ...l, domain: "fluid" })),
-    ...structural.decl.materialLaws.map((l) => ({ ...l, domain: "structure" })),
+    ...prefixLawRules(fluid.decl.materialLaws, F).map((l) => ({ ...l, domain: "fluid" })),
+    // The structure's laws carry `when` rules over its prefixed fields.
+    ...prefixLawRules(structural.decl.materialLaws, S).map((l) => ({ ...l, domain: "structure" })),
   ],
   output: fluid.decl.output,
 };

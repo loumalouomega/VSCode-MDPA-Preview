@@ -82,7 +82,7 @@ const decl: ProblemtypeDeclaration = {
   ],
   conditions: [...BASE.conditions, ...thermalConditions],
   // The fluid laws already carry CONDUCTIVITY / SPECIFIC_HEAT for this app.
-  materialLaws: BASE.materialLaws.map((l) => ({
+  materialLaws: BASE.materialLaws.filter((l) => l.group !== "Non-Newtonian").map((l) => ({
     ...l,
     variables: [
       ...l.variables,

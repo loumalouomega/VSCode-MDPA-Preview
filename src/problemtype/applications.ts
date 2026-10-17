@@ -16,7 +16,7 @@
  */
 
 import { isFieldVisible } from "./layout";
-import type { JsonValue, ProblemtypeDeclaration, RequiredApplication } from "./types";
+import type { JsonValue, MaterialLawSpec, ProblemtypeDeclaration, RequiredApplication } from "./types";
 
 export const APPLICATION_NAME = /^[A-Z][A-Za-z0-9]*Application$/;
 
@@ -55,17 +55,28 @@ export function declaredApplications(
   return out;
 }
 
-/** The sorted union of the stage's, the declaration's and the documents' applications. */
+/** The sorted union of the stage's, the declaration's, the documents' and the assigned laws' applications. */
 export function requiredApplications(
-  decl: Pick<ProblemtypeDeclaration, "analysisStage" | "applications">,
+  decl: Pick<ProblemtypeDeclaration, "analysisStage" | "applications"> & {
+    /** Optional so callers without material laws (a composed runtime) need not fake an empty list. */
+    materialLaws?: readonly MaterialLawSpec[];
+  },
   values: Record<string, JsonValue>,
-  documents: JsonValue[]
+  documents: JsonValue[],
+  materials: readonly { lawId: string }[] = []
 ): string[] {
   const all = new Set<string>();
   const stage = applicationOfModule(decl.analysisStage);
   if (stage) all.add(stage);
   for (const app of declaredApplications(decl.applications, values)) all.add(app);
   for (const doc of documents) applicationsInDocument(doc, all);
+  // A materials file carries no module path, so the scan above cannot see a
+  // law's own application (`ConstitutiveLawsApplication`): add it for every
+  // assignment that uses the law, unless the law's `when` excludes the setup.
+  for (const m of materials) {
+    const law = decl.materialLaws?.find((l) => l.id === m.lawId);
+    if (law?.application && isFieldVisible({ visibleWhen: law.when }, values)) all.add(law.application);
+  }
   return [...all].sort();
 }
 

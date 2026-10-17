@@ -35,9 +35,9 @@ import type {
   JsonValue,
   ProblemtypeDeclaration,
 } from "../types";
-import { fluid } from "./fluid";
-import { structural } from "./structural";
-import { prefixFields, unprefixValues, vectorConstraint } from "./common";
+import { fluid, FLUID_NOT_BOUNDARY } from "./fluid";
+import { structural, STRUCTURAL_ELEMENT_NAMES } from "./structural";
+import { prefixFields, prefixLawRules, unprefixValues, vectorConstraint } from "./common";
 import { validateFluidTimeStepping } from "../timeStepEstimate";
 
 const F = "f_";
@@ -116,11 +116,19 @@ const couplingFields: FieldSpec[] = [
 ];
 
 const fluidList = (cond: ConditionSpec): string =>
-  cond.category === "initial" ? "fluid_initial_conditions_process_list" : "fluid_boundary_conditions_process_list";
+  cond.category === "initial"
+    ? "fluid_initial_conditions_process_list"
+    : cond.list === "auxiliar_process_list"
+      ? "fluid_auxiliar_process_list"
+      : "fluid_boundary_conditions_process_list";
 const structList = (cond: ConditionSpec): string =>
   cond.list === "loads_process_list" ? "structure_loads_process_list" : "structure_constraints_process_list";
 
-const fluidConditions: ConditionSpec[] = fluid.decl.conditions.map((c) => ({
+// The integration-point statistics monitor merges in the Fluid problemtype's own
+// post-process; the coupled document has no such merge, so it stays fluid-only.
+const fluidConditions: ConditionSpec[] = fluid.decl.conditions
+  .filter((c) => c.id !== "integrationStats")
+  .map((c) => ({
   ...c,
   id: F + c.id,
   label: c.id === "parts" ? "Fluid body" : c.label,
@@ -131,6 +139,8 @@ const structConditions: ConditionSpec[] = structural.decl.conditions.map((c) => 
   id: S + c.id,
   label: c.id === "parts" ? "Structure body" : c.label,
   list: c.id === "parts" ? "list_other_processes" : structList(c),
+  // The load-emission rules read the formulation field, which carries the prefix here.
+  ...(c.emit?.formulationField ? { emit: { ...c.emit, formulationField: S + c.emit.formulationField } } : {}),
 }));
 
 const aleBC: ConditionSpec = vectorConstraint("MESH_DISPLACEMENT", {
@@ -218,7 +228,7 @@ const decl: ProblemtypeDeclaration = {
       partsCondition: STRUCT_PARTS,
       conditionIds: [...structConditions.map((c) => c.id), "structureInterface"],
       required: [{ conditionId: "structureInterface", message: 'mark the structure side of the interface: assign at least one SubModelPart as "FSI structure interface".' }],
-      meshNaming: { elements: "$field:s_elementBase", conditions: { 2: "LineLoadCondition", 3: "SurfaceLoadCondition" } },
+      meshNaming: { elements: { field: "s_elementBase", names: STRUCTURAL_ELEMENT_NAMES }, conditions: { 2: "LineLoadCondition", 3: "SurfaceLoadCondition" } },
     },
   ],
   sections: [
@@ -251,8 +261,9 @@ const decl: ProblemtypeDeclaration = {
   ],
   conditions: [...fluidConditions, aleBC, { ...fluidInterface }, ...structConditions, structureInterface],
   materialLaws: [
-    ...fluid.decl.materialLaws.map((l) => ({ ...l, domain: "fluid" })),
-    ...structural.decl.materialLaws.map((l) => ({ ...l, domain: "structure" })),
+    ...prefixLawRules(fluid.decl.materialLaws, F).map((l) => ({ ...l, domain: "fluid" })),
+    // The structure's laws carry `when` rules over its prefixed fields.
+    ...prefixLawRules(structural.decl.materialLaws, S).map((l) => ({ ...l, domain: "structure" })),
   ],
   output: { nodalDefaults: ["VELOCITY", "PRESSURE", "MESH_DISPLACEMENT"] },
 };
@@ -299,13 +310,18 @@ export const fsi = defineProblemtype(decl, {
     const noSkin: string[] = [];
     for (const a of fluidCtx.assignments) {
       const id = a.conditionId.startsWith(F) ? a.conditionId.slice(F.length) : a.conditionId;
-      if (id === "parts" || id.startsWith("initial")) continue;
+      if (id === "parts" || id.startsWith("initial") || FLUID_NOT_BOUNDARY.has(id)) continue;
       (FLUID_NO_SKIN.has(id) ? noSkin : skin).push(`${fluidCtx.modelPartName}.${a.smpPath.split("/").join(".")}`);
     }
     fluidSettings.skin_parts = skin;
     fluidSettings.no_skin_parts = noSkin;
     const structValues = { ...unprefixValues(v, S), ...time, timeStep: asNum(v.f_timeStep, 0.01) };
-    const structSettings = (await structural.solverSettings(structValues, structCtx)) as JsonObject;
+    // The structural hook matches its own condition ids, so the domain's
+    // prefixed assignments are stripped first (as the fluid side already does).
+    const structSettings = (await structural.solverSettings(structValues, {
+      ...structCtx,
+      assignments: structCtx.assignments.map((a) => stripPrefix(a, a.conditionId.startsWith(S) ? S : "")),
+    })) as JsonObject;
     // Both solvers read their mesh from the model parts the importer creates; the case's mdpa files
     // are named in each nested solver's own import settings.
     structSettings.time_stepping = fluidSettings.time_stepping; // the structure takes the fluid's step

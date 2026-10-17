@@ -9,6 +9,10 @@ dist/
 media/
 out/
 
+# Python bytecode (assets/kratos_problemtype.py is authored, never compiled here)
+__pycache__/
+*.pyc
+
 # Packaged extension
 *.vsix
 
