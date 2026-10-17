@@ -4,6 +4,10 @@
  * solution types Static / Dynamic / eigen_value, the Newmark and Bossak
  * schemes, the nonlinear-iteration parameters of apps/Structural/xml/Strategies.xml
  * and the nodal conditions / loads of NodalConditions.xml and Conditions.xml.
+ * The element set is a superset of GiD's: it adds the app's newer and
+ * specialist families (mixed and Q1P0 solids, MITC and CS-DSG3 shells, curved
+ * beams, the legacy trusses, the membrane, and the discrete point/line/surface
+ * mass, spring and bushing elements).
  *
  * Keys that equal Kratos' own default are only written when they matter (the
  * nonlinear parameters only for a non-linear analysis, the linear solver only
@@ -13,7 +17,7 @@
 
 import { defineProblemtype, asNum, asStr, asBool } from "../api";
 import { STRUCTURAL_MAIN_KRATOS_PY } from "../mainKratosTemplate";
-import { JsonObject, JsonValue } from "../types";
+import { FieldSpec, JsonObject, JsonValue, MeshNamingEntry, VisibleRule } from "../types";
 import {
   INITIAL,
   broadcastConstrained,
@@ -27,25 +31,130 @@ import {
 } from "./common";
 
 /**
- * Element formulations whose Kratos block name is `${base}${dim}D${nodes}N`
- * (GiD's Elements.xml KratosName table), which is what `meshNaming` can express,
- * with the DOF flags each one switches on in `solver_settings`. Shells, the
- * membrane and the cable are not offered: their Kratos names differ between
- * triangles and quadrilaterals (or ignore the dimension), which one base name
- * cannot describe.
+ * The element formulations a case can choose: the families the app registers
+ * (GiD's Elements.xml names the same ones) with the DOF flags each switches on
+ * in `solver_settings`. One formulation is chosen per case — `meshNaming`
+ * renames every element block to that family's name for its shape, and a shape
+ * the family does not register is refused rather than renamed into a type
+ * Kratos never defined.
  */
-const FORMULATIONS: { value: string; label: string; rotation?: boolean; strain?: boolean; volumetricStrain?: boolean }[] = [
-  { value: "SmallDisplacementElement", label: "Solid small displacements" },
-  { value: "SmallDisplacementBbarElement", label: "Solid small displacements B-bar" },
-  { value: "SmallDisplacementMixedVolumetricStrainElement", label: "Solid small displacements mixed u-εvol", volumetricStrain: true },
-  { value: "SmallDisplacementMixedStrainElement", label: "Solid small displacements mixed u-ε", strain: true },
-  { value: "TotalLagrangianElement", label: "Solid total Lagrangian" },
-  { value: "UpdatedLagrangianElement", label: "Solid updated Lagrangian" },
-  { value: "LinearTimoshenkoBeamElement", label: "Beam small displacements", rotation: true },
-  { value: "CrBeamElement", label: "Beam large displacements (corotational)", rotation: true },
-  { value: "LinearTrussElement", label: "Truss small displacements" },
-  { value: "TotalLagrangianTrussElement", label: "Truss large displacements" },
+type FormulationKind = "solid" | "axisym" | "shell" | "membrane" | "beam" | "truss" | "discrete";
+
+interface FormulationSpec {
+  value: string;
+  label: string;
+  kind: FormulationKind;
+  rotation?: boolean;
+  strain?: boolean;
+  volumetricStrain?: boolean;
+}
+
+const FORMULATIONS: FormulationSpec[] = [
+  { value: "SmallDisplacementElement", label: "Solid small displacements", kind: "solid" },
+  { value: "SmallDisplacementBbarElement", label: "Solid small displacements B-bar", kind: "solid" },
+  { value: "SmallDisplacementMixedVolumetricStrainElement", label: "Solid small displacements mixed u-εvol", kind: "solid", volumetricStrain: true },
+  { value: "SmallDisplacementMixedVolumetricStrainOssElement", label: "Solid small displacements mixed u-εvol (OSS)", kind: "solid", volumetricStrain: true },
+  { value: "SmallDisplacementMixedVolumetricStrainOssNonLinearElement", label: "Solid small displacements mixed u-εvol (OSS, non-linear)", kind: "solid", volumetricStrain: true },
+  { value: "SmallDisplacementMixedStrainElement", label: "Solid small displacements mixed u-ε", kind: "solid", strain: true },
+  { value: "TotalLagrangianElement", label: "Solid total Lagrangian", kind: "solid" },
+  { value: "UpdatedLagrangianElement", label: "Solid updated Lagrangian", kind: "solid" },
+  { value: "TotalLagrangianMixedVolumetricStrainElement", label: "Solid total Lagrangian mixed u-εvol", kind: "solid", volumetricStrain: true },
+  { value: "TotalLagrangianQ1P0MixedElement", label: "Solid total Lagrangian Q1P0", kind: "solid" },
+  { value: "AxisymSmallDisplacementElement", label: "Axisymmetric small displacements", kind: "axisym" },
+  { value: "AxisymTotalLagrangianElement", label: "Axisymmetric total Lagrangian", kind: "axisym" },
+  { value: "AxisymUpdatedLagrangianElement", label: "Axisymmetric updated Lagrangian", kind: "axisym" },
+  { value: "SolidShellElementSprism", label: "Solid-shell (SPRISM 3D6N)", kind: "solid" },
+  { value: "LinearTimoshenkoBeamElement", label: "Beam small displacements (Timoshenko)", kind: "beam", rotation: true },
+  { value: "LinearTimoshenkoCurvedBeamElement", label: "Beam small displacements (curved Timoshenko)", kind: "beam", rotation: true },
+  { value: "CrBeamElement", label: "Beam large displacements (corotational)", kind: "beam", rotation: true },
+  { value: "CrLinearBeamElement", label: "Beam small displacements (corotational)", kind: "beam", rotation: true },
+  { value: "LinearTrussElement", label: "Truss small displacements", kind: "truss" },
+  { value: "TotalLagrangianTrussElement", label: "Truss large displacements", kind: "truss" },
+  { value: "TrussElement", label: "Truss large displacements (legacy)", kind: "truss" },
+  { value: "TrussLinearElement", label: "Truss small displacements (legacy)", kind: "truss" },
+  { value: "CableElement", label: "Cable", kind: "truss" },
+  { value: "ShellThinElementCorotational", label: "Shell thin corotational", kind: "shell", rotation: true },
+  { value: "ShellThickElementCorotational", label: "Shell thick corotational", kind: "shell", rotation: true },
+  { value: "ShellThinElement", label: "Shell thin", kind: "shell", rotation: true },
+  { value: "MITCThickShellElement", label: "Shell thick (MITC)", kind: "shell", rotation: true },
+  { value: "MITCThickShellCorotationalElement", label: "Shell thick corotational (MITC)", kind: "shell", rotation: true },
+  { value: "CSDSG3ThickShellLinearElement", label: "Shell thick CS-DSG3", kind: "shell", rotation: true },
+  { value: "CSDSG3ThickShellCorotationalElement", label: "Shell thick corotational CS-DSG3", kind: "shell", rotation: true },
+  { value: "MembraneElement", label: "Membrane", kind: "membrane" },
+  { value: "NodalConcentratedElement", label: "Point mass", kind: "discrete" },
+  { value: "NodalConcentratedDampedElement", label: "Point mass (damped)", kind: "discrete" },
+  { value: "LineMassElement", label: "Line mass", kind: "discrete" },
+  { value: "SurfaceMassElement", label: "Surface mass", kind: "discrete" },
+  { value: "BushingElement", label: "Bushing", kind: "discrete", rotation: true },
+  { value: "SpringDamperElement", label: "Spring / damper", kind: "discrete", rotation: true },
 ];
+
+/** The values of the given kinds — the pairing rules of the material laws. */
+const ofKind = (...kinds: FormulationKind[]): string[] =>
+  FORMULATIONS.filter((f) => kinds.includes(f.kind)).map((f) => f.value);
+
+/** A `when` rule offering a law only while the chosen formulation is one of `values`. */
+const forFormulations = (...values: string[]): VisibleRule => ({ field: "elementBase", oneOf: values });
+
+/** An exact-name `{dim: {nodes: name}}` table for a family whose names are `<value>{dim}D{nodes}N`. */
+const shapesOf = (value: string, dim2: number[], dim3: number[]): MeshNamingEntry => {
+  const table: { [dim: number]: { [nodes: number]: string } } = {};
+  for (const [dim, nodes] of [[2, dim2], [3, dim3]] as [number, number[]][]) {
+    if (nodes.length === 0) continue;
+    table[dim] = {};
+    for (const n of nodes) table[dim][n] = `${value}${dim}D${n}N`;
+  }
+  return table;
+};
+
+// The shapes each family registers as elements (SolidMechanicsApplication's
+// registration list). The legacy truss and the cable are the exception: each
+// registers one 3D2N element, which Kratos also accepts in a 2D mesh (the
+// solver adds the Z dofs either way), so both dimensions map to that name.
+// Exported so the coupled types name their structural domain's blocks the same
+// way (their `elementBase` field carries the `s_` prefix).
+const SOLID_2D = [3, 4, 6, 8, 9, 10, 15];
+const SOLID_3D = [4, 5, 6, 8, 10, 13, 15, 20, 27];
+const AXISYM_2D = [3, 4, 6, 8, 9];
+export const STRUCTURAL_ELEMENT_NAMES: { [value: string]: MeshNamingEntry } = {
+  SmallDisplacementElement: shapesOf("SmallDisplacementElement", SOLID_2D, SOLID_3D),
+  SmallDisplacementBbarElement: shapesOf("SmallDisplacementBbarElement", [4], [8]),
+  SmallDisplacementMixedVolumetricStrainElement: shapesOf("SmallDisplacementMixedVolumetricStrainElement", [3, 4], [4, 8]),
+  SmallDisplacementMixedVolumetricStrainOssElement: shapesOf("SmallDisplacementMixedVolumetricStrainOssElement", [3, 4], [4, 8]),
+  SmallDisplacementMixedVolumetricStrainOssNonLinearElement: shapesOf("SmallDisplacementMixedVolumetricStrainOssNonLinearElement", [3, 4], [4, 8]),
+  SmallDisplacementMixedStrainElement: shapesOf("SmallDisplacementMixedStrainElement", [3, 4], [4, 8]),
+  TotalLagrangianElement: shapesOf("TotalLagrangianElement", SOLID_2D, SOLID_3D),
+  UpdatedLagrangianElement: shapesOf("UpdatedLagrangianElement", SOLID_2D, SOLID_3D),
+  TotalLagrangianMixedVolumetricStrainElement: shapesOf("TotalLagrangianMixedVolumetricStrainElement", [3], [4]),
+  TotalLagrangianQ1P0MixedElement: shapesOf("TotalLagrangianQ1P0MixedElement", [3, 4], [4, 8, 10, 20]),
+  AxisymSmallDisplacementElement: shapesOf("AxisymSmallDisplacementElement", AXISYM_2D, []),
+  AxisymTotalLagrangianElement: shapesOf("AxisymTotalLagrangianElement", AXISYM_2D, []),
+  AxisymUpdatedLagrangianElement: shapesOf("AxisymUpdatedLagrangianElement", AXISYM_2D, []),
+  SolidShellElementSprism: shapesOf("SolidShellElementSprism", [], [6]),
+  LinearTimoshenkoBeamElement: shapesOf("LinearTimoshenkoBeamElement", [2, 3], [2]),
+  LinearTimoshenkoCurvedBeamElement: shapesOf("LinearTimoshenkoCurvedBeamElement", [3], [3]),
+  CrBeamElement: shapesOf("CrBeamElement", [2], [2]),
+  CrLinearBeamElement: shapesOf("CrLinearBeamElement", [2], [2]),
+  LinearTrussElement: shapesOf("LinearTrussElement", [2, 3], [2, 3]),
+  TotalLagrangianTrussElement: shapesOf("TotalLagrangianTrussElement", [2], [2]),
+  TrussElement: { 2: { 2: "TrussElement3D2N" }, 3: { 2: "TrussElement3D2N" } },
+  TrussLinearElement: { 2: { 2: "TrussLinearElement3D2N" }, 3: { 2: "TrussLinearElement3D2N" } },
+  CableElement: { 2: { 2: "CableElement3D2N" }, 3: { 2: "CableElement3D2N" } },
+  ShellThinElementCorotational: shapesOf("ShellThinElementCorotational", [], [3, 4]),
+  ShellThickElementCorotational: shapesOf("ShellThickElementCorotational", [], [3, 4]),
+  ShellThinElement: shapesOf("ShellThinElement", [], [3]),
+  MITCThickShellElement: shapesOf("MITCThickShellElement", [], [4]),
+  MITCThickShellCorotationalElement: shapesOf("MITCThickShellCorotationalElement", [], [4]),
+  CSDSG3ThickShellLinearElement: shapesOf("CSDSG3ThickShellLinearElement", [], [3]),
+  CSDSG3ThickShellCorotationalElement: shapesOf("CSDSG3ThickShellCorotationalElement", [], [3]),
+  MembraneElement: shapesOf("MembraneElement", [2], [3, 4]),
+  NodalConcentratedElement: shapesOf("NodalConcentratedElement", [1], [1]),
+  NodalConcentratedDampedElement: shapesOf("NodalConcentratedDampedElement", [1], [1]),
+  LineMassElement: shapesOf("LineMassElement", [], [2]),
+  SurfaceMassElement: shapesOf("SurfaceMassElement", [], [3, 4]),
+  BushingElement: shapesOf("BushingElement", [], [2]),
+  SpringDamperElement: { 2: { 2: "SpringDamperElement2D" }, 3: { 2: "SpringDamperElement3D" } },
+};
 
 const NONLINEAR = { field: "analysisType", equals: "non_linear" };
 const DYNAMIC = { field: "solverType", equals: "dynamic" };
@@ -54,18 +163,25 @@ const NOT_EIGEN = { field: "solverType", oneOf: ["static", "dynamic"] as JsonVal
 const RESIDUAL = { field: "convergenceCriterion", oneOf: ["residual_criterion", "and_criterion", "or_criterion"] as JsonValue[] };
 const DISPLACEMENT = { field: "convergenceCriterion", oneOf: ["displacement_criterion", "and_criterion", "or_criterion"] as JsonValue[] };
 
-const ELASTIC = [
-  { id: "DENSITY", label: "Density [kg/m³]", type: "number" as const, default: 7850, unit: "kg/m³" },
-  { id: "YOUNG_MODULUS", label: "Young modulus [Pa]", type: "number" as const, default: 2.1e11, unit: "Pa" },
-  { id: "POISSON_RATIO", label: "Poisson ratio", type: "number" as const, default: 0.29 },
-];
+const DENSITY = { id: "DENSITY", label: "Density [kg/m³]", type: "number" as const, default: 7850, unit: "kg/m³" };
+const YOUNG = { id: "YOUNG_MODULUS", label: "Young modulus [Pa]", type: "number" as const, default: 2.1e11, unit: "Pa" };
+const POISSON = { id: "POISSON_RATIO", label: "Poisson ratio", type: "number" as const, default: 0.29 };
+const ELASTIC = [DENSITY, YOUNG, POISSON];
 const THICKNESS = { id: "THICKNESS", label: "Thickness [m]", type: "number" as const, default: 1.0, unit: "m" };
+const CROSS_AREA = { id: "CROSS_AREA", label: "Cross area [m²]", type: "number" as const, default: 1.0, unit: "m²" };
+const I22 = { id: "I22", label: "Bending inertia I22 [m⁴]", type: "number" as const, default: 1.0, unit: "m⁴" };
+const I33 = { id: "I33", label: "Bending inertia I33 [m⁴]", type: "number" as const, default: 1.0, unit: "m⁴" };
+const TORSIONAL_INERTIA = { id: "TORSIONAL_INERTIA", label: "Torsional inertia [m⁴]", type: "number" as const, default: 1.0, unit: "m⁴" };
+const PRESTRESS = { id: "TRUSS_PRESTRESS_PK2", label: "Prestress [Pa]", type: "number" as const, default: 0, unit: "Pa" };
+const NODAL_MASS = { id: "NODAL_MASS", label: "Point mass [kg]", type: "number" as const, default: 1.0, unit: "kg" };
+/** A nodal stiffness/damping constant, one value per spatial direction (and moment). */
+const nodalConstant = (id: string, label: string, unit?: string): FieldSpec => ({ id, label, type: "vector3", unit });
 
 export const structural = defineProblemtype(
   {
     id: "structural",
     name: "Structural Mechanics",
-    description: "Static / dynamic / eigenvalue solid, beam and truss mechanics (StructuralMechanicsApplication)",
+    description: "Static / dynamic / eigenvalue solid, beam, truss, shell, membrane and mass/spring mechanics (StructuralMechanicsApplication)",
     icon: "ptStructural",
     family: "solid",
     analysisStage:
@@ -169,7 +285,7 @@ export const structural = defineProblemtype(
     ],
     partsCondition: "parts",
     meshNaming: {
-      elements: "$field:elementBase",
+      elements: { field: "elementBase", names: STRUCTURAL_ELEMENT_NAMES },
       conditions: { 2: "LineLoadCondition", 3: "SurfaceLoadCondition" },
     },
     conditions: [
@@ -232,6 +348,15 @@ export const structural = defineProblemtype(
         interval: INITIAL,
         fixed: false,
       }),
+      vectorConstraint("ANGULAR_ACCELERATION", {
+        id: "angularAcceleration",
+        label: "Angular acceleration",
+        unit: "rad/s²",
+        category: "initial",
+        icon: "ptInitial",
+        interval: INITIAL,
+        fixed: false,
+      }),
       vectorByDirection("VOLUME_ACCELERATION", {
         id: "selfWeight",
         label: "Self weight",
@@ -278,19 +403,58 @@ export const structural = defineProblemtype(
       }),
     ],
     materialLaws: [
-      { id: "linear_elastic_3d", name: "LinearElastic3DLaw", domainSize: 3, variables: ELASTIC },
-      {
-        id: "linear_elastic_plane_strain",
-        name: "LinearElasticPlaneStrain2DLaw",
-        domainSize: 2,
-        variables: [...ELASTIC, THICKNESS],
-      },
-      {
-        id: "linear_elastic_plane_stress",
-        name: "LinearElasticPlaneStress2DLaw",
-        domainSize: 2,
-        variables: [...ELASTIC, THICKNESS],
-      },
+      // The constitutive law must fit the element family that reads it: a beam
+      // calls a beam law with beam kinematics, a truss a 1D law, a shell and a
+      // membrane their own plane response. `when` offers a law only for the
+      // formulations it fits, and Generate refuses an assignment left on one of
+      // another family, so a section force is never computed from a law that
+      // means something else.
+      { id: "linear_elastic_3d", name: "LinearElastic3DLaw", domainSize: 3, group: "Elastic",
+        when: forFormulations(...ofKind("solid", "shell")), variables: ELASTIC },
+      { id: "linear_elastic_plane_strain", name: "LinearElasticPlaneStrain2DLaw", domainSize: 2, group: "Elastic",
+        when: forFormulations(...ofKind("solid")), variables: [...ELASTIC, THICKNESS] },
+      { id: "linear_elastic_plane_stress", name: "LinearElasticPlaneStress2DLaw", domainSize: 2, group: "Elastic",
+        when: forFormulations(...ofKind("solid")), variables: [...ELASTIC, THICKNESS] },
+      { id: "linear_elastic_axisym", name: "LinearElasticAxisym2DLaw", domainSize: 2, group: "Elastic",
+        when: forFormulations(...ofKind("axisym")), variables: ELASTIC },
+      { id: "beam_2d", name: "BeamConstitutiveLaw", domainSize: 2, group: "Beam",
+        when: forFormulations(...ofKind("beam")), variables: [...ELASTIC, CROSS_AREA, I33] },
+      { id: "beam_3d", name: "BeamConstitutiveLaw", domainSize: 3, group: "Beam",
+        when: forFormulations(...ofKind("beam")), variables: [...ELASTIC, CROSS_AREA, TORSIONAL_INERTIA, I22, I33] },
+      { id: "truss", name: "TrussConstitutiveLaw", group: "Truss & cable",
+        when: forFormulations(...ofKind("truss")), variables: [DENSITY, YOUNG, CROSS_AREA, PRESTRESS] },
+      { id: "shell", name: "ReissnerMindlinShellElasticConstitutiveLaw", domainSize: 3, group: "Shell",
+        when: forFormulations(...ofKind("shell")), variables: [...ELASTIC, THICKNESS] },
+      { id: "membrane", name: "LinearElasticPlaneStress2DLaw", group: "Membrane",
+        when: forFormulations(...ofKind("membrane")), variables: [...ELASTIC, THICKNESS] },
+      // Discrete elements carry no constitutive response: these laws are their
+      // properties (Kratos reads them off the material), so `name` stays empty.
+      { id: "point_mass", name: "", group: "Discrete",
+        when: forFormulations("NodalConcentratedElement", "NodalConcentratedDampedElement"),
+        variables: [
+          NODAL_MASS,
+          nodalConstant("NODAL_INERTIA", "Rotational inertia [kg·m²]", "kg·m²"),
+          nodalConstant("NODAL_DISPLACEMENT_STIFFNESS", "Spring stiffness [N/m]", "N/m"),
+          nodalConstant("NODAL_DAMPING_RATIO", "Damper coefficient [N·s/m]", "N·s/m"),
+        ] },
+      { id: "spring", name: "", group: "Discrete",
+        when: forFormulations("SpringDamperElement"),
+        variables: [
+          nodalConstant("NODAL_DISPLACEMENT_STIFFNESS", "Translational stiffness [N/m]", "N/m"),
+          nodalConstant("NODAL_ROTATIONAL_STIFFNESS", "Rotational stiffness [N·m/rad]", "N·m/rad"),
+          nodalConstant("NODAL_DAMPING_RATIO", "Translational damper [N·s/m]", "N·s/m"),
+          nodalConstant("NODAL_ROTATIONAL_DAMPING_RATIO", "Rotational damper [N·m·s/rad]", "N·m·s/rad"),
+        ] },
+      { id: "bushing", name: "", group: "Discrete", domainSize: 3,
+        when: forFormulations("BushingElement"),
+        variables: [
+          nodalConstant("NODAL_DISPLACEMENT_STIFFNESS", "Translational stiffness [N/m]", "N/m"),
+          nodalConstant("NODAL_ROTATIONAL_STIFFNESS", "Rotational stiffness [N·m/rad]", "N·m/rad"),
+        ] },
+      { id: "line_mass", name: "", group: "Discrete", domainSize: 3,
+        when: forFormulations("LineMassElement"), variables: [DENSITY, CROSS_AREA] },
+      { id: "surface_mass", name: "", group: "Discrete", domainSize: 3,
+        when: forFormulations("SurfaceMassElement"), variables: [DENSITY, THICKNESS] },
     ],
     output: { nodalDefaults: ["DISPLACEMENT", "REACTION"], gaussDefaults: ["VON_MISES_STRESS"] },
   },

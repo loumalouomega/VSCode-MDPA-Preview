@@ -115,7 +115,7 @@ application(name, when=None)              # a required Kratos application
 mesh_naming={"elements": "$field:elementBase",           # or "Element"
              "conditions": {2: "LineLoadCondition", 3: "SurfaceLoadCondition"}}
 ```
-When no single base can describe a formulation's names (shells, cables, springs), a kind takes a `{"field": "<enum field>", "names": {<value>: <entry>}}` table, where an entry is a template (`"SpringDamperElement{dim}"`), one exact name (`"CableElement3D2N"`) or a `{dim: {nodes: name}}` table of exact names; a value with no entry keeps the base meaning, and a shape a table omits makes Generate refuse that block instead of inventing a Kratos type.
+When no single base can describe a formulation's names (shells, cables, springs), a kind takes a `{"field": "<enum field>", "names": {<value>: <entry>}}` table, where an entry is a template (`"SpringDamperElement{dim}D"`), one exact name (`"CableElement3D2N"`) or a `{dim: {nodes: name}}` table of exact names; a value with no entry keeps the base meaning, and a shape a table omits makes Generate refuse that block instead of inventing a Kratos type.
 
 `icon` names a toolbar icon for the problemtype's forms (the built-ins use `ptStructural` / `ptFluid` / `ptThermal` / `ptPotentialFlow` / `ptShallowWater`). A condition's `list` may also be a custom process-list name (e.g. `boundary_conditions_process_list`).
 

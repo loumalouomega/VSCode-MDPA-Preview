@@ -49,8 +49,8 @@ import type {
   ProblemtypeRuntime,
 } from "../types";
 import { fluid } from "./fluid";
-import { structural } from "./structural";
-import { prefixFields, unprefixValues, vectorConstraint } from "./common";
+import { structural, STRUCTURAL_ELEMENT_NAMES } from "./structural";
+import { prefixFields, prefixLawRules, unprefixValues, vectorConstraint } from "./common";
 
 const F = "f_";
 const S = "s_";
@@ -309,7 +309,7 @@ const decl: ProblemtypeDeclaration = {
       partsCondition: STRUCT_PARTS,
       conditionIds: [...structConditions.map((c) => c.id), "structureInterface"],
       required: [{ conditionId: "structureInterface", message: 'mark the structure side of the interface: assign at least one SubModelPart as "Coupling interface (structure side)".' }],
-      meshNaming: { elements: "$field:s_elementBase", conditions: { 2: "LineLoadCondition", 3: "SurfaceLoadCondition" } },
+      meshNaming: { elements: { field: "s_elementBase", names: STRUCTURAL_ELEMENT_NAMES }, conditions: { 2: "LineLoadCondition", 3: "SurfaceLoadCondition" } },
       // The interface face reads PRESSURE / SURFACE_LOAD, so the mapped
       // POINT_LOAD needs one-node point conditions of its own. They go into a
       // sibling part (the interface part must stay a pure surface for the
@@ -349,7 +349,8 @@ const decl: ProblemtypeDeclaration = {
   conditions: [...fluidConditions, aleBC, fluidInterface, ...structConditions, structureInterface],
   materialLaws: [
     ...fluid.decl.materialLaws.map((l) => ({ ...l, domain: "fluid" })),
-    ...structural.decl.materialLaws.map((l) => ({ ...l, domain: "structure" })),
+    // The structure's laws carry `when` rules over its prefixed fields.
+    ...prefixLawRules(structural.decl.materialLaws, S).map((l) => ({ ...l, domain: "structure" })),
   ],
   output: fluid.decl.output,
 };

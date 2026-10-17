@@ -156,7 +156,7 @@ materialLaws: [
 
   The final block name is `<base><dim>D<nodesPerCell>N` (the GiD convention). Use generic bases (`"Element"`, `"WallCondition"`) when the solver replaces elements itself; concrete ones (structural) when it doesn't. Point (single-node) condition blocks are never renamed.
 
-  When no single base can describe a formulation's names (shells, membranes, cables, springs), the kind takes a **`{ field, names }` table**: an enum field's value picks that formulation's entry, which is a template (`"SpringDamperElement{dim}"`, with `{dim}`/`{nodes}` placeholders), one exact name (`"CableElement3D2N"`), or a `{dim: {nodes: name}}` table of exact names. A value with no entry keeps the base meaning, so a table only lists the exceptions:
+  When no single base can describe a formulation's names (shells, membranes, cables, springs), the kind takes a **`{ field, names }` table**: an enum field's value picks that formulation's entry, which is a template (`"SpringDamperElement{dim}D"`, with `{dim}`/`{nodes}` placeholders), one exact name (`"CableElement3D2N"`), or a `{dim: {nodes: name}}` table of exact names. A value with no entry keeps the base meaning, so a table only lists the exceptions:
 
   ```js
   meshNaming: {
@@ -164,7 +164,7 @@ materialLaws: [
       field: "elementBase",
       names: {
         ShellThinElementCorotational: { 3: { 3: "ShellThinElementCorotational3D3N", 4: "ShellThinElementCorotational3D4N" } },
-        SpringDamperElement: "SpringDamperElement{dim}",
+        SpringDamperElement: "SpringDamperElement{dim}D",
         CableElement: "CableElement3D2N",
       },
     },

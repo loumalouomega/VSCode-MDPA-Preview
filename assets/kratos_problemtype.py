@@ -93,7 +93,7 @@ Compact reference (mirrors the JavaScript API, spelled snake_case)::
         ("Element", "$field:<id>") or a per-dimension dict {2: ..., 3: ...}; a
         {"field": "<id>", "names": {<value>: <entry>}} table gives an enum
         field's values their own names, where <entry> is a template
-        ("SpringDamperElement{dim}"), one exact name ("CableElement3D2N") or a
+        ("SpringDamperElement{dim}D"), one exact name ("CableElement3D2N") or a
         {dim: {nodes: name}} table of exact names — a shape such a table omits
         is refused, because renaming it would invent a Kratos type. The final
         name is <base><dim>D<nnodes>N; when the mesh differs a renamed

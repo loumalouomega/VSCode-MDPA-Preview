@@ -143,7 +143,7 @@ export type ProcessList =
 
 /**
  * One formulation's block names, for `FormulationMeshNaming.names`:
- * - a string with `{dim}` / `{nodes}` is a template ("SpringDamperElement{dim}",
+ * - a string with `{dim}` / `{nodes}` is a template ("SpringDamperElement{dim}D",
  *   "Membrane{dim}D{nodes}N"); without them it is that exact name at every
  *   shape ("CableElement3D2N");
  * - an object lists the exact name per domain size → nodes per cell

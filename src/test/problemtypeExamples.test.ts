@@ -60,6 +60,46 @@ Begin SubModelPart Loaded
 End SubModelPart
 `;
 
+// Two 2-node beam elements sharing node 2: the mesh a beam formulation can
+// actually be adapted to (a tetrahedron mesh would be refused for it).
+const BEAM_MDPA = `Begin Nodes
+1 0.0 0.0 0.0
+2 1.0 0.0 0.0
+3 2.0 0.0 0.0
+End Nodes
+
+Begin Elements Element3D2N
+1 0 1 2
+2 0 2 3
+End Elements
+
+Begin SubModelPart Parts
+  Begin SubModelPart Solid
+    Begin SubModelPartNodes
+    1
+    2
+    3
+    End SubModelPartNodes
+    Begin SubModelPartElements
+    1
+    2
+    End SubModelPartElements
+  End SubModelPart
+End SubModelPart
+
+Begin SubModelPart Support
+  Begin SubModelPartNodes
+  1
+  End SubModelPartNodes
+End SubModelPart
+
+Begin SubModelPart Loaded
+  Begin SubModelPartNodes
+  3
+  End SubModelPartNodes
+End SubModelPart
+`;
+
 // Two tetrahedra (fluid above, solid below) sharing the interface triangle,
 // one interface face per side, an inlet node and a second pair for two-pair cases.
 const COUPLED_MDPA = `Begin Nodes
@@ -137,13 +177,14 @@ const CASES: ExampleCase[] = [
     label: "non-linear dynamic, newmark, cg solver, nodal vector conditions",
     file: "structural.py",
     builtinId: "structural",
+    mdpa: BEAM_MDPA,
     assignments: [
       { conditionId: "parts", smpPath: "Parts/Solid", values: {} },
       { conditionId: "rotation", smpPath: "Support", values: { value: [0, 0, 0.1], constrained: true } },
       { conditionId: "initialVelocity", smpPath: "Loaded", values: { value: [1, 0, 0], constrained: false } },
       { conditionId: "lineLoad", smpPath: "Support", values: { modulus: 5, direction: [0, 1, 0] } },
     ],
-    materials: [{ smpPath: "Parts/Solid", lawId: "linear_elastic_3d", values: {} }],
+    materials: [{ smpPath: "Parts/Solid", lawId: "beam_2d", values: {} }],
     values: {
       problem: {
         solverType: "dynamic",

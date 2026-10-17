@@ -3527,7 +3527,11 @@ test("case_generate writes the case files and the adapted _case.mdpa", async () 
 
 test("case_generate converts a non-.mdpa mesh to a _case.mdpa", async () => {
   const dir = tmpDir();
-  const src = writeFixture(dir);
+  // The .vtu round trip turns every block into generic VtkCell element blocks,
+  // so the conversion source carries no condition blocks: a triangle element
+  // block is not something any solid formulation can name.
+  const src = path.join(dir, "solid.mdpa");
+  fs.writeFileSync(src, MDPA_3D.replace(/Begin Conditions SurfaceCondition3D3N[\s\S]*?End Conditions\n/, ""));
   const vtu = path.join(dir, "beam.vtu");
   await meshConvert({ path: src, outputPath: vtu });
   const result = (await caseGenerate({ meshPath: vtu, state: structuralState() })) as {

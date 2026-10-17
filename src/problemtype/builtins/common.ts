@@ -16,8 +16,10 @@ import type {
   GenContext,
   JsonObject,
   JsonValue,
+  MaterialLawSpec,
   ProcessList,
   ConditionTarget,
+  VisibleRule,
 } from "../types";
 
 /** The whole-simulation interval most processes use. */
@@ -290,4 +292,13 @@ export function unprefixValues(values: Record<string, JsonValue>, prefix: string
   const out: Record<string, JsonValue> = {};
   for (const [k, v] of Object.entries(values)) if (k.startsWith(prefix)) out[k.slice(prefix.length)] = v;
   return out;
+}
+
+/** Returns a copy of `laws` with every `when` rule's field prefixed (the material-law half of `prefixFields`). */
+export function prefixLawRules(laws: MaterialLawSpec[], prefix: string): MaterialLawSpec[] {
+  const rename = (r: VisibleRule): VisibleRule => ({ ...r, field: prefix + r.field });
+  return laws.map((l) => {
+    if (l.when === undefined) return { ...l };
+    return { ...l, when: Array.isArray(l.when) ? l.when.map(rename) : rename(l.when) };
+  });
 }

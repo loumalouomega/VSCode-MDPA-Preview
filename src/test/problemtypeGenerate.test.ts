@@ -576,11 +576,12 @@ test("structural eigenvalue: eigensolver settings, no regular output, a GiD post
 test("structural formulations switch the DOF flags and the expected block names", async () => {
   const model = parseMdpa(MDPA_3D);
   const state = structuralState();
-  const settings = async (elementBase: string) => {
+  const settings = async (elementBase: string, lawId = "linear_elastic_3d") => {
     state.values.problem.elementBase = elementBase;
+    state.materials = [{ smpPath: "Parts/Solid", lawId, values: { YOUNG_MODULUS: 2.0e11 } }];
     return JSON.parse((await generateCase(structural, model, state, "beam")).projectParameters).solver_settings;
   };
-  assert.equal((await settings("CrBeamElement")).rotation_dofs, true);
+  assert.equal((await settings("ShellThickElementCorotational", "shell")).rotation_dofs, true);
   assert.equal((await settings("SmallDisplacementMixedStrainElement")).strain_dofs, true);
   assert.equal((await settings("SmallDisplacementMixedVolumetricStrainElement")).volumetric_strain_dofs, true);
   assert.equal((await settings("TotalLagrangianElement")).rotation_dofs, false);

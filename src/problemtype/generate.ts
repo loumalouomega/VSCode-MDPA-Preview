@@ -217,6 +217,14 @@ export function buildMaterials(
       );
       return;
     }
+    // A law restricted to one mesh dimension (`plane-strain` laws, the 2D beam
+    // law) means nothing on a mesh of the other size.
+    if (law.domainSize !== undefined && law.domainSize !== ctx.domainSize) {
+      problems.push(
+        `"${m.smpPath}": material law "${law.name || law.id}" is written for a ${law.domainSize}D mesh, but this case is ${ctx.domainSize}D.`
+      );
+      return;
+    }
     const label = `${m.smpPath} (${law.name || law.id})`;
     for (const issue of validateMaterialAssignment(law, m.values, m.preset)) {
       const message = `${label}: ${issue.message}`;

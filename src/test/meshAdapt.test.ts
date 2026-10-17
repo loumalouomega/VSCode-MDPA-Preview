@@ -96,12 +96,19 @@ test("adapted model round-trips through the mdpa writer with Properties preserve
   assert.equal(round.nodeCount, model.nodeCount);
 });
 
-test("resolveMeshNaming resolves $field and per-dimension bases", () => {
+test("resolveMeshNaming resolves $field values, formulation tables and per-dimension bases", () => {
+  // $field: pulls a base name out of the form values.
+  const fieldDecl = { ...structural.decl, meshNaming: { elements: "$field:elementBase" } };
+  const field = resolveMeshNaming(fieldDecl, { elementBase: "TotalLagrangianElement" }, 3);
+  assert.equal(field.elements?.base, "TotalLagrangianElement");
+  // Structural's own meshNaming tables the names each formulation registers.
   const values = { elementBase: "TotalLagrangianElement" };
   const bases3 = resolveMeshNaming(structural.decl, values, 3);
-  assert.equal(bases3.elements?.base, "TotalLagrangianElement");
+  assert.equal(bases3.elements?.shapes?.["3D4N"], "TotalLagrangianElement3D4N");
+  assert.equal(bases3.elements?.source, "TotalLagrangianElement");
   assert.equal(bases3.conditions?.base, "SurfaceLoadCondition");
   const bases2 = resolveMeshNaming(structural.decl, values, 2);
+  assert.equal(bases2.elements?.shapes?.["2D3N"], "TotalLagrangianElement2D3N");
   assert.equal(bases2.conditions?.base, "LineLoadCondition");
   // Plain-string spec applies to both sizes.
   const fluidNaming = resolveMeshNaming(fluid.decl, {}, 2);
@@ -141,7 +148,7 @@ const TABLE_DECL = {
         ShellThinElementCorotational: {
           3: { 3: "ShellThinElementCorotational3D3N", 4: "ShellThinElementCorotational3D4N" },
         },
-        SpringDamperElement: "SpringDamperElement{dim}",
+        SpringDamperElement: "SpringDamperElement{dim}D",
         CableElement: "CableElement3D2N",
       },
     },
@@ -157,7 +164,7 @@ test("resolveMeshNaming tables a formulation's names (shapes, template, verbatim
   assert.equal(shell?.source, "ShellThinElementCorotational");
   // The template is carried as written; the renamer substitutes per shape.
   const spring = resolveMeshNaming(TABLE_DECL, { elementBase: "SpringDamperElement" }, 2).elements;
-  assert.equal(spring?.template, "SpringDamperElement{dim}");
+  assert.equal(spring?.template, "SpringDamperElement{dim}D");
   const cable = resolveMeshNaming(TABLE_DECL, { elementBase: "CableElement" }, 3).elements;
   assert.equal(cable?.template, "CableElement3D2N");
   // A value with no entry keeps the legacy meaning: the value is a base.
@@ -198,7 +205,7 @@ Begin Elements Element3D3N
 End Elements
 
 Begin Elements Element3D8N
-2 0 1 2 3 4 1 2 3
+2 0 1 2 3 4 1 2 3 4
 End Elements
 `);
   const out = adaptMeshNames(model, resolveMeshNaming(TABLE_DECL, { elementBase: "ShellThinElementCorotational" }, 3), 3);

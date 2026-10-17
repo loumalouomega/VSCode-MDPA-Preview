@@ -36,8 +36,8 @@ import type {
   ProblemtypeDeclaration,
 } from "../types";
 import { fluid } from "./fluid";
-import { structural } from "./structural";
-import { prefixFields, unprefixValues, vectorConstraint } from "./common";
+import { structural, STRUCTURAL_ELEMENT_NAMES } from "./structural";
+import { prefixFields, prefixLawRules, unprefixValues, vectorConstraint } from "./common";
 import { validateFluidTimeStepping } from "../timeStepEstimate";
 
 const F = "f_";
@@ -218,7 +218,7 @@ const decl: ProblemtypeDeclaration = {
       partsCondition: STRUCT_PARTS,
       conditionIds: [...structConditions.map((c) => c.id), "structureInterface"],
       required: [{ conditionId: "structureInterface", message: 'mark the structure side of the interface: assign at least one SubModelPart as "FSI structure interface".' }],
-      meshNaming: { elements: "$field:s_elementBase", conditions: { 2: "LineLoadCondition", 3: "SurfaceLoadCondition" } },
+      meshNaming: { elements: { field: "s_elementBase", names: STRUCTURAL_ELEMENT_NAMES }, conditions: { 2: "LineLoadCondition", 3: "SurfaceLoadCondition" } },
     },
   ],
   sections: [
@@ -252,7 +252,8 @@ const decl: ProblemtypeDeclaration = {
   conditions: [...fluidConditions, aleBC, { ...fluidInterface }, ...structConditions, structureInterface],
   materialLaws: [
     ...fluid.decl.materialLaws.map((l) => ({ ...l, domain: "fluid" })),
-    ...structural.decl.materialLaws.map((l) => ({ ...l, domain: "structure" })),
+    // The structure's laws carry `when` rules over its prefixed fields.
+    ...prefixLawRules(structural.decl.materialLaws, S).map((l) => ({ ...l, domain: "structure" })),
   ],
   output: { nodalDefaults: ["VELOCITY", "PRESSURE", "MESH_DISPLACEMENT"] },
 };
