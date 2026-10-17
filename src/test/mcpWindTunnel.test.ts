@@ -36,6 +36,24 @@ test("wind_tunnel_plan reports the body, the tunnel, the boundary layer and the 
   await assert.rejects(windTunnelPlanTool({ ...request(bodyFile()), flow: { speed: 0 } }), /flow\.speed/);
 });
 
+test("a multi-body plan references the first body and refuses touching bodies", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "mcpvwt-"));
+  const a = path.join(dir, "a.stl");
+  const b = path.join(dir, "b.stl");
+  fs.writeFileSync(a, writeMeshFile(icosphere(0.5, 2), ".stl"));
+  fs.writeFileSync(b, writeMeshFile(icosphere(0.5, 2), ".stl"));
+  const base = { flow: { speed: 10 }, tunnel: { upstream: 1.5, downstream: 3, side: 2, top: 2, bottom: 2 }, mesh: { surfaceSize: 0.3, farSize: 1.5 } };
+  const plan = (await windTunnelPlanTool({ ...base, bodies: [{ path: a, name: "fore" }, { path: b, position: [3, 0, 0], name: "aft" }] })) as Record<string, any>;
+  assert.equal(plan.runnable, true, (plan.errors as string[]).join("; "));
+  assert.equal(plan.bodies.length, 2);
+  assert.equal(plan.bodies[0].name, "fore");
+  assert.ok(Math.abs(plan.reference.length - plan.bodies[0].size[0]) < 1e-9, "the first body gives the reference length");
+  assert.ok(plan.steps.some((s: { id: string }) => s.id === "split"), "the wall is split per body");
+  const touching = (await windTunnelPlanTool({ ...base, bodies: [{ path: a }, { path: b, position: [0.4, 0, 0] }] })) as Record<string, any>;
+  assert.equal(touching.runnable, false);
+  assert.ok((touching.errors as string[]).some((e) => /below the minimum gap|overlap/.test(e)), (touching.errors as string[]).join("; "));
+});
+
 test("wind_tunnel_generate writes the mesh, the case and the solver files, and refuses to overwrite", async () => {
   const body = bodyFile();
   const out = path.join(path.dirname(body), "out");

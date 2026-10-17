@@ -68,7 +68,7 @@ export interface WindTunnelPanelHandlers {
   onStep(index: number): void;
   /** A field changed: the host re-plans. */
   onChange(): void;
-  onPickBody(): void;
+  onPickBody(index?: number): void;
   onPickFolder(): void;
   onGenerate(): void;
   onCancel(): void;
@@ -246,7 +246,36 @@ export function renderWindTunnelPanel(container: HTMLElement, state: WindTunnelP
         const b = plan.body;
         note(`Measured: ${sig(b.size[0])} × ${sig(b.size[1])} × ${sig(b.size[2])} m, ${count(b.triangles)} triangles, frontal area ${sig(b.frontalArea)} m².`);
         if (!b.closed) note(`The surface is not clean: ${b.problems.join("; ")}.`, "warn");
+        for (const mb of plan.bodies ?? []) {
+          note(`${mb.name}: ${sig(mb.size[0])} × ${sig(mb.size[1])} × ${sig(mb.size[2])} m, centre [${mb.center.map((v) => sig(v)).join(", ")}].`, "info");
+        }
       }
+      form.extraBodies.forEach((eb, i) => {
+        section(`Body ${i + 2}${eb.name ? ` (${eb.name})` : ""}`);
+        const browseB = button("Browse\u2026", () => h.onPickBody(i), { disabled: busy });
+        row("Body", text(() => eb.bodyPath, (v) => { eb.bodyPath = v; }, "STL, OBJ or PLY file", "Another surface in the tunnel"), browseB, button("Remove", () => { form.extraBodies.splice(i, 1); h.onChange(); }, { disabled: busy }));
+        row(
+          "Unit",
+          select(
+            [
+              { value: "m", label: "metres" },
+              { value: "cm", label: "centimetres" },
+              { value: "mm", label: "millimetres" },
+              { value: "in", label: "inches" },
+              { value: "ft", label: "feet" },
+            ],
+            eb.unit,
+            (v) => { eb.unit = v; },
+            "The unit the file was authored in"
+          )
+        );
+        const erot = eb.rotation.map((_, k) => text(() => eb.rotation[k], (v) => { eb.rotation[k] = v; }, ["x\u00b0", "y\u00b0", "z\u00b0"][k], "Degrees, applied about x, then y, then z", "56px"));
+        row("Rotate", ...erot);
+        const epos = eb.position.map((_, k) => text(() => eb.position[k], (v) => { eb.position[k] = v; }, ["x m", "y m", "z m"][k], "Tunnel-frame position of the centre, metres (required: bodies must not touch)", "56px"));
+        row("Position", ...epos);
+        row("Name", text(() => eb.name, (v) => { eb.name = v; }, "Defaults to the file name", "Label for the plan and report"));
+      });
+      row("", button("Add another body", () => { form.extraBodies.push({ bodyPath: "", unit: "m", rotation: ["", "", ""], position: ["", "", ""], name: "" }); h.onChange(); }, { disabled: busy }));
       break;
     }
     case "tunnel": {

@@ -463,6 +463,13 @@ export function registerAllTools(server: McpServer): void {
     unit: z.union([z.enum(["m", "cm", "mm", "in", "ft"]), z.number().positive()]).optional()
       .describe("The body file's length unit, or metres per unit. Default metres. A model in millimetres read as metres is the usual mistake: the plan reports the measured size"),
     rotation: z.array(z.number()).length(3).optional().describe("Euler angles in degrees (about x, then y, then z) turning the body so the flow runs along +X and up is +Z"),
+    bodies: z.array(z.object({
+      path: z.string().describe("The body surface file (STL, OBJ, PLY, or any mesh with a surface)"),
+      unit: z.union([z.enum(["m", "cm", "mm", "in", "ft"]), z.number().positive()]).optional().describe("The body file's length unit, or metres per unit. Default metres"),
+      rotation: z.array(z.number()).length(3).optional().describe("Euler angles in degrees (about x, then y, then z) turning the body so the flow runs along +X and up is +Z"),
+      position: z.array(z.number()).length(3).optional().describe("Tunnel-frame position of the body centre in metres (default [0,0,0]). Bodies must not overlap or touch: a pair closer than twice the surface size is refused"),
+      name: z.string().optional().describe("Label for the plan and report; the wall parts are Body_1…n regardless"),
+    })).optional().describe("Several bodies instead of one: each is placed (unit, rotation, then position) and the tunnel is built around their union, with one wall part per body and per-body monitors. Either this or bodyPath"),
     tunnel: z.object({
       upstream: z.number().positive().optional().describe("Distance in front of the body, in body lengths (default 3)"),
       downstream: z.number().positive().optional().describe("Distance behind the body, in body lengths (default 6)"),

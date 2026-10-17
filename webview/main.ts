@@ -7670,7 +7670,7 @@ function renderWindTunnel(): void {
       if (windTunnelState.form.bodyPath) scheduleWindTunnelPlan(windTunnelState.plan ? 600 : 0);
     },
     onChange: () => scheduleWindTunnelPlan(),
-    onPickBody: () => vscode.postMessage({ type: "windTunnelPickBody" }),
+    onPickBody: (index?: number) => vscode.postMessage({ type: "windTunnelPickBody", ...(index === undefined ? {} : { index }) }),
     onPickFolder: () => vscode.postMessage({ type: "windTunnelPickFolder", folder: windTunnelState.form.outputFolder || undefined }),
     onGenerate: generateWindTunnel,
     onCancel: () => vscode.postMessage({ type: "windTunnelCancel" }),
@@ -7692,7 +7692,8 @@ function applyWindTunnelMessage(msg: Record<string, unknown>): void {
       break;
     case "windTunnelBody":
       if (typeof msg.path === "string") {
-        form.bodyPath = msg.path;
+        if (typeof msg.index === "number" && form.extraBodies[msg.index]) form.extraBodies[msg.index].bodyPath = msg.path;
+        else form.bodyPath = msg.path;
         windTunnelState = { ...windTunnelState, plan: undefined };
         renderWindTunnel();
         scheduleWindTunnelPlan(0);

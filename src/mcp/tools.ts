@@ -200,7 +200,8 @@ import {
   isSafeEntryName,
 } from "../parser/problemZip";
 import { collectProblemFiles } from "../problemFiles";
-import { planWindTunnel, summarizePlan } from "../problemtype/windTunnel/plan";
+import { planWindTunnel, summarizePlan, unitScale } from "../problemtype/windTunnel/plan";
+import { planTunnelBodies } from "../problemtype/windTunnel/bodies";
 import type { WindTunnelParams, WindTunnelPlan } from "../problemtype/windTunnel/plan";
 import { runWindTunnel } from "../problemtype/windTunnel/run";
 import { windTunnelCase } from "../problemtype/windTunnel/caseState";
@@ -2877,13 +2878,24 @@ export async function caseWriteState(args: {
 
 /** The inputs of a virtual wind tunnel, as the MCP tools and the wizard pass them. */
 export interface WindTunnelRequest extends WindTunnelParams {
-  /** The body surface file (STL, OBJ, PLY, or any mesh with a surface). */
-  bodyPath: string;
+  /** The body surface file (STL, OBJ, PLY, or any mesh with a surface). Not used with `bodies`. */
+  bodyPath?: string;
 }
 
 async function planFromRequest(args: WindTunnelRequest, signal?: AbortSignal): Promise<WindTunnelPlan> {
-  if (!args || typeof args.bodyPath !== "string" || !args.bodyPath) throw new Error("bodyPath is required.");
-  if (!args.flow || !(Number(args.flow.speed) > 0)) throw new Error("flow.speed (m/s) is required and must be above zero.");
+  if (!args || !args.flow || !(Number(args.flow.speed) > 0)) throw new Error("flow.speed (m/s) is required and must be above zero.");
+  if (args.bodies !== undefined) {
+    if (!Array.isArray(args.bodies) || args.bodies.length === 0) throw new Error("bodies needs at least one entry with a path.");
+    const models: MdpaModel[] = [];
+    for (const b of args.bodies) {
+      if (!b || typeof b.path !== "string" || !b.path) throw new Error("Every body needs a path.");
+      // eslint-disable-next-line no-await-in-loop
+      const src = await loadMesh(b.path, undefined, undefined, undefined, undefined, undefined, signal);
+      models.push(src.model);
+    }
+    return planTunnelBodies({ ...args, flow: args.flow }, models, (spec) => unitScale(spec.unit));
+  }
+  if (typeof args.bodyPath !== "string" || !args.bodyPath) throw new Error("bodyPath is required.");
   const src = await loadMesh(args.bodyPath, undefined, undefined, undefined, undefined, undefined, signal);
   return planWindTunnel({ ...args, flow: args.flow }, src.model);
 }

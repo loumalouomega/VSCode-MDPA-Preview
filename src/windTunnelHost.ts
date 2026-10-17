@@ -132,7 +132,7 @@ export function createWindTunnelHost(deps: WindTunnelHostDeps): WindTunnelHost {
           return true;
         case "windTunnelPickBody":
           void deps.pickBody().then((p) => {
-            if (p) post({ type: "windTunnelBody", path: p });
+            if (p) post({ type: "windTunnelBody", path: p, ...(typeof msg.index === "number" ? { index: msg.index } : {}) });
           });
           return true;
         case "windTunnelPickFolder":

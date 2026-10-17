@@ -7,15 +7,26 @@
  * `node:test`, so every decision lives here. Pure: no vscode, no DOM.
  */
 
-import type { WindTunnelParams } from "./plan";
+import type { WindTunnelBodySpec, WindTunnelParams } from "./plan";
 import { checkRegion } from "./plan";
 import type { RefinementRegion } from "./plan";
 import type { GroundMode } from "./domain";
+import type { Vec3 } from "./body";
+
+export interface WindTunnelBodyForm {
+  bodyPath: string;
+  unit: string;
+  rotation: [string, string, string];
+  position: [string, string, string];
+  name: string;
+}
 
 export interface WindTunnelForm {
   bodyPath: string;
   unit: string;
   rotation: [string, string, string];
+  /** Further bodies besides the one above; the first body stays centred. */
+  extraBodies: WindTunnelBodyForm[];
   // Tunnel
   upstream: string;
   downstream: string;
@@ -84,6 +95,7 @@ export function defaultWindTunnelForm(): WindTunnelForm {
     snap: true,
     regions: "",
     fit: "",
+    extraBodies: [],
     outputFolder: "",
     stem: "tunnel",
     generateCase: true,
@@ -95,7 +107,7 @@ export type FormResult<T> = { ok: true; value: T } | { ok: false; error: string;
 
 /** The request the tools and the host take: the plan inputs, plus the output choice. */
 export interface WindTunnelFormRequest extends WindTunnelParams {
-  bodyPath: string;
+  bodyPath?: string;
   outputFolder: string;
   stem: string;
   overwrite: boolean;
@@ -216,12 +228,39 @@ export function buildWindTunnelRequest(form: WindTunnelForm): FormResult<WindTun
   const regions = parseRegions(form.regions);
   if (!regions.ok) return regions;
   if (regions.value !== undefined) mesh.regions = regions.value;
+  const stemOf = (p: string): string => p.split(/[/\\]/).pop()!.split(".").slice(0, -1).join(".") || p;
+  const bodies: WindTunnelBodySpec[] = [];
+  if (form.extraBodies.length > 0) {
+    const rows: WindTunnelBodyForm[] = [
+      { bodyPath: form.bodyPath, unit: form.unit, rotation: form.rotation, position: ["", "", ""], name: "" },
+      ...form.extraBodies,
+    ];
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const label = i === 0 ? "Body 1" : `Body ${i + 1}${row.name.trim() ? ` ("${row.name.trim()}")` : ""}`;
+      if (!row.bodyPath.trim()) return { ok: false, error: `${label} needs a surface file.`, field: "extraBodies" };
+      const ru = row.unit.trim();
+      const runit: string | number | undefined = ru === "" ? undefined : /^[0-9.eE+-]+$/.test(ru) ? Number(ru) : ru;
+      if (typeof runit === "number" && !(runit > 0)) return { ok: false, error: `${label}: a unit given as a number is metres per unit and must be above zero.`, field: "extraBodies" };
+      const rot = row.rotation.map((r) => (r.trim() === "" ? 0 : Number(r)));
+      if (rot.some((r) => !Number.isFinite(r))) return { ok: false, error: `${label}: the rotation angles must be numbers in degrees.`, field: "extraBodies" };
+      const pos = row.position.map((v) => (v.trim() === "" ? NaN : Number(v)));
+      if (i === 0 && pos.every((v) => !Number.isFinite(v))) pos[0] = pos[1] = pos[2] = 0;
+      if (pos.some((v) => !Number.isFinite(v))) return { ok: false, error: `${label} needs a tunnel-frame position: three numbers in metres, e.g. 2, 0.5, 0.`, field: "extraBodies" };
+      bodies.push({
+        path: row.bodyPath.trim(),
+        ...(runit !== undefined ? { unit: runit } : {}),
+        ...(rot.some((r) => r !== 0) ? { rotation: rot as Vec3 } : {}),
+        position: pos as Vec3,
+        name: row.name.trim() || stemOf(row.bodyPath.trim()),
+      });
+    }
+  }
+  const single = bodies.length === 0;
   return {
     ok: true,
     value: {
-      bodyPath: form.bodyPath.trim(),
-      unit,
-      rotation: rotation as [number, number, number],
+      ...(single ? { bodyPath: form.bodyPath.trim(), unit, rotation: rotation as [number, number, number] } : { bodies }),
       tunnel,
       flow: {
         speed,
@@ -241,7 +280,7 @@ export function buildWindTunnelRequest(form: WindTunnelForm): FormResult<WindTun
 }
 
 /** The same request without the output choice: what a plan needs (the output is irrelevant to it). */
-export function planRequestOf(form: WindTunnelForm): FormResult<WindTunnelParams & { bodyPath: string }> {
+export function planRequestOf(form: WindTunnelForm): FormResult<WindTunnelParams & { bodyPath?: string }> {
   const r = buildWindTunnelRequest({ ...form, outputFolder: form.outputFolder.trim() || "-" });
   if (!r.ok) return r;
   const { outputFolder: _o, stem: _s, overwrite: _w, generateCase: _g, ...rest } = r.value;

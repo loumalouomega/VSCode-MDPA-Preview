@@ -23,6 +23,7 @@ import type { MdpaModel } from "../../parser/types";
 import { buildTunnelBackground, gradedAxis } from "./backgroundMesh";
 import { finishCarvedMesh, checkFluidMesh } from "./finish";
 import type { MeshCheck } from "./finish";
+import { splitWallByBodies } from "./bodies";
 import { invertedCells } from "../../parser/cellInversion";
 import { WIND_TUNNEL_VERSION } from "./plan";
 import type { WindTunnelPlan } from "./plan";
@@ -60,6 +61,8 @@ export interface WindTunnelReport {
   check: MeshCheck;
   /** Largest and mean gap between the wall nodes and the surface, as fractions of the body length. */
   wallFit?: { max: number; mean: number; nodes: number };
+  /** Per-body wall fits for a multi-body tunnel, in plan order. */
+  bodies?: { name: string; wallFit?: { max: number; mean: number; nodes: number } }[];
   /**
    * The Sobolev wall snap: the carve fit before, the fit right after the snap
    * (both as fractions of the body length), the sub-step fraction applied and
@@ -402,6 +405,17 @@ export async function runWindTunnel(plan: WindTunnelPlan, opts: WindTunnelRunOpt
         }
         break;
       }
+      case "split": {
+        // Multi-body only: the merged Body wall becomes one part per body
+        // (Body_1…n, matched by nearest centre) plus a Bodies parent holding
+        // the whole wall for the RANS wall function.
+        if (!plan.bodies) throw new Error("The split step needs bodies.");
+        const { model: splitModel, matched, problems } = splitWallByBodies(model!, plan.bodies);
+        if (problems.length > 0) throw new Error(`The wall split failed:\n- ${problems.join("\n- ")}`);
+        model = splitModel;
+        log.push(`Split the wall: ${matched.join(", ")}.`);
+        break;
+      }
       case "check":
       case "write":
         break;
@@ -417,7 +431,21 @@ export async function runWindTunnel(plan: WindTunnelPlan, opts: WindTunnelRunOpt
     await run({ op: "sdfDistance", path: sdfPath, sign: "winding", output: "d" } as OpRecord, { id: "check", label: "Measure the wall" });
   }
   const lastDistance = plan.mode === "embedded" ? "DISTANCE" : "d";
-  const fit = plan.mode === "bodyFitted" ? wallFit(model!, "Body", lastDistance, L) : undefined;
+  // Several bodies: one fit per Body_1…n wall, plus the worst over them.
+  const bodiesFit =
+    plan.mode === "bodyFitted" && plan.bodies
+      ? plan.bodies.map((b, bi) => ({ name: b.name, wallFit: wallFit(model!, `Body_${bi + 1}`, lastDistance, L) }))
+      : undefined;
+  const fit =
+    plan.mode !== "bodyFitted"
+      ? undefined
+      : bodiesFit !== undefined
+        ? {
+            max: Math.max(...bodiesFit.map((b) => b.wallFit?.max ?? 0)),
+            mean: bodiesFit.reduce((s, b) => s + (b.wallFit?.mean ?? 0) * (b.wallFit?.nodes ?? 0), 0) / Math.max(1, bodiesFit.reduce((s, b) => s + (b.wallFit?.nodes ?? 0), 0)),
+            nodes: bodiesFit.reduce((s, b) => s + (b.wallFit?.nodes ?? 0), 0),
+          }
+        : wallFit(model!, "Body", lastDistance, L);
   const achieved = plan.mode === "bodyFitted" ? firstRow(model!, lastDistance, plan.wall.firstHeight) : undefined;
   // The carried distance is a working field, not part of the result.
   if (plan.mode === "bodyFitted") model = { ...model!, fields: model!.fields.filter((f) => f.variable !== "d") };
@@ -441,6 +469,7 @@ export async function runWindTunnel(plan: WindTunnelPlan, opts: WindTunnelRunOpt
     estimate: { expectedTetrahedra: plan.estimate.expectedTetrahedra, ratio: check.tetrahedra / Math.max(1, plan.estimate.expectedTetrahedra) },
     check,
     wallFit: fit,
+    ...(bodiesFit !== undefined ? { bodies: bodiesFit } : {}),
     ...(snap !== undefined ? { snap } : {}),
     firstLayer:
       achieved !== undefined

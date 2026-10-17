@@ -87,6 +87,19 @@ export interface WindTunnelMesh {
   sdfMaxTriangles?: number;
 }
 
+export interface WindTunnelBodySpec {
+  /** The body surface file as given. Not read by the planner (models come in). */
+  path?: string;
+  /** Unit of the body file: a key of LENGTH_UNITS or metres per unit. Default metres. */
+  unit?: string | number;
+  /** Euler angles (degrees) turning the body so the flow runs along +X and up is +Z. */
+  rotation?: Vec3;
+  /** Tunnel-frame position of the body centre in metres, after unit and rotation. Default [0, 0, 0]. */
+  position?: Vec3;
+  /** Label for the report and the plan summary; the wall parts are Body_1…n regardless. Defaults to the file stem. */
+  name?: string;
+}
+
 export interface WindTunnelParams {
   version?: number;
   /** The body surface file as given. Not read by the planner. */
@@ -95,9 +108,29 @@ export interface WindTunnelParams {
   unit?: string | number;
   /** Euler angles (degrees) turning the body so the flow runs along +X and up is +Z. */
   rotation?: Vec3;
+  /**
+   * Several bodies instead of one: each is placed (unit, rotation, then
+   * position) and the tunnel is built around their union. Either this or
+   * `bodyPath`, never both.
+   */
+  bodies?: WindTunnelBodySpec[];
   tunnel?: TunnelSpec;
   flow: WindTunnelFlow;
   mesh?: WindTunnelMesh;
+}
+
+/** One placed body, as the plan summary and the runner see it. */
+export interface PlacedBodySummary {
+  name: string;
+  size: Vec3;
+  surfaceArea: number;
+  frontalArea: number;
+  /** Tunnel-frame centre (bounding-box centre) in metres. */
+  center: Vec3;
+  unitScale: number;
+  triangles: number;
+  closed: boolean;
+  problems: string[];
 }
 
 export interface WindTunnelSizes {
@@ -127,6 +160,8 @@ export interface WindTunnelPlan {
   /** The body in the tunnel frame (centred, flow along +X). */
   placed: MdpaModel;
   body: BodyMetrics;
+  /** One entry per body when `bodies` is given; absent for the single-body plan. */
+  bodies?: PlacedBodySummary[];
   domain: TunnelDomain;
   flow: Required<WindTunnelFlow>;
   boundaryLayer: BoundaryLayerEstimate;
@@ -146,7 +181,7 @@ export interface WindTunnelPlan {
 
 const SDF_FIELD = "d";
 
-function unitScale(unit: string | number | undefined): number {
+export function unitScale(unit: string | number | undefined): number {
   if (unit === undefined) return 1;
   if (typeof unit === "number") {
     if (!(unit > 0)) throw new Error("A unit scale must be above zero.");
@@ -265,6 +300,7 @@ export function checkRegion(region: RefinementRegion): string | undefined {
 export function planWindTunnel(params: WindTunnelParams, bodyModel: MdpaModel): WindTunnelPlan {
   const warnings: string[] = [];
   const errors: string[] = [];
+  if (params.bodies !== undefined) throw new Error("Give either one body (bodyPath) or several (bodies with their models), not both.");
   const scale = unitScale(params.unit);
   const raw = bodyMetrics(bodyModel);
   if (!raw.closed) {
@@ -273,7 +309,26 @@ export function planWindTunnel(params: WindTunnelParams, bodyModel: MdpaModel): 
   if (raw.signedVolume < 0) warnings.push("The body is wound inward; this does not matter here (the sign comes from the winding number).");
   const placed = placeBody(bodyModel, { scale, rotation: params.rotation });
   const body = bodyMetrics(placed);
-  const [L, W, H] = body.size;
+  return planPlacedTunnel(params, placed, body, body.size[0], warnings, errors, scale);
+}
+
+/**
+ * The shared planner over an already placed body: the tunnel, the flow, the
+ * sizes, the estimate and the steps. `refLength` is the reference length the
+ * sizes derive from — the body's own for a single body, the first body's for
+ * several. Single-body plans go through `planWindTunnel`, which keeps their
+ * bytes.
+ */
+export function planPlacedTunnel(
+  params: WindTunnelParams,
+  placed: MdpaModel,
+  body: BodyMetrics,
+  refLength: number,
+  warnings: string[] = [],
+  errors: string[] = [],
+  scale = 1
+): WindTunnelPlan {
+  const L = refLength;
   if (L < 0.01 || L > 500) {
     warnings.push(`The body measures ${L.toPrecision(3)} m along the flow after the "${params.unit ?? "m"}" unit: check the unit — a model in millimetres read as metres is the usual mistake.`);
   }
@@ -451,9 +506,11 @@ export function planWindTunnel(params: WindTunnelParams, bodyModel: MdpaModel): 
 
 /** The reference quantities a force coefficient needs, from the plan. */
 export function referenceQuantities(plan: WindTunnelPlan): { area: number; length: number; dynamicPressure: number } {
+  // Several bodies: the first gives the reference length and area.
+  const first = plan.bodies?.[0];
   return {
-    area: plan.body.frontalArea,
-    length: plan.body.size[0],
+    area: first?.frontalArea ?? plan.body.frontalArea,
+    length: first?.size[0] ?? plan.body.size[0],
     dynamicPressure: 0.5 * plan.flow.density * plan.flow.speed ** 2,
   };
 }
@@ -493,6 +550,7 @@ export function summarizePlan(plan: WindTunnelPlan): Record<string, unknown> {
       frictionVelocity: sig(plan.boundaryLayer.uTau),
       basis: plan.boundaryLayer.basis,
     },
+    ...(plan.bodies !== undefined ? { bodies: plan.bodies.map((b) => ({ name: b.name, size: b.size.map(sig), surfaceArea: sig(b.surfaceArea), frontalArea: sig(b.frontalArea), center: b.center.map(sig), triangles: b.triangles, closed: b.closed, problems: b.problems, unitScale: sig(b.unitScale) })) } : {}),
     sizes: Object.fromEntries(Object.entries(plan.sizes).map(([k, v]) => [k, sig(v)])),
     refinement:
       plan.params.mesh?.regions !== undefined

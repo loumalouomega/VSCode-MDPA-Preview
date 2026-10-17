@@ -71,27 +71,34 @@ export function windTunnelCase(plan: WindTunnelPlan): WindTunnelCase {
 
   // A wall function needs y+ above the viscous sub-layer; below 5 the wall is resolved and no-slip is the honest condition.
   const wallModelled = plan.boundaryLayer.regime === "turbulent" && (plan.params.mesh?.yPlus ?? 50) >= 5;
+  // Several bodies: one wall part per body (Body_1…n), the first giving the
+  // reference quantities, and a Bodies parent holding the whole wall for the
+  // RANS wall function (which applies to one part).
+  const wallParts = plan.bodies !== undefined ? plan.bodies.map((_, i) => `Body_${i + 1}`) : ["Body"];
+  const momentPoint = plan.bodies !== undefined ? plan.bodies[0].center.map((v) => round(v)) : [0, 0, 0];
   if (!embedded) {
     if (turbulent) {
-      add("ransWall", "Body");
+      add("ransWall", plan.bodies !== undefined ? "Bodies" : "Body");
       notes.push(`The body wall uses the RANS logarithmic wall function; its first node row is ${round(plan.wall.firstHeight * 1000)} mm.`);
     } else if (wallModelled) {
-      add("wallLaw", "Body", { wallModel: "linear_log", yWall: round(plan.wall.firstHeight) });
+      for (const w of wallParts) add("wallLaw", w, { wallModel: "linear_log", yWall: round(plan.wall.firstHeight) });
       notes.push(`The body wall uses the linear-logarithmic wall law with the first node row at ${round(plan.wall.firstHeight * 1000)} mm.`);
     } else {
-      add("noSlip", "Body");
+      for (const w of wallParts) add("noSlip", w);
     }
-    add("flowForces", "Body", { referencePoint: [0, 0, 0], writeMoments: true });
-    add("aerodynamicCoefficients", "Body", {
-      referenceArea: round(area * (half ? 0.5 : 1)),
-      referenceChord: round(length),
-      dynamicPressure: round(dynamicPressure),
-      referencePoint: [0, 0, 0],
-    });
-    add("pressureCoefficient", "Body", { freestreamDensity: round(plan.flow.density), freestreamVelocity: round(U), freestreamPressure: 0 });
-    add("yPlus", "Body");
+    for (const w of wallParts) {
+      add("flowForces", w, { referencePoint: momentPoint, writeMoments: true });
+      add("aerodynamicCoefficients", w, {
+        referenceArea: round(area * (half ? 0.5 : 1)),
+        referenceChord: round(length),
+        dynamicPressure: round(dynamicPressure),
+        referencePoint: momentPoint,
+      });
+      add("pressureCoefficient", w, { freestreamDensity: round(plan.flow.density), freestreamVelocity: round(U), freestreamPressure: 0 });
+      add("yPlus", w);
+    }
     notes.push(
-      `Force coefficients use the frontal area ${round(area * (half ? 0.5 : 1))} m², the body length ${round(length)} m and the dynamic pressure ${round(dynamicPressure)} Pa${half ? " (half model: half the area, half the force)" : ""}.`
+      `Force coefficients use the frontal area ${round(area * (half ? 0.5 : 1))} m², the body length ${round(length)} m and the dynamic pressure ${round(dynamicPressure)} Pa${half ? " (half model: half the area, half the force)" : ""}${plan.bodies !== undefined ? ` (first body "${plan.bodies[0].name}": one monitor set per body, moments about its centre)` : ""}.`
     );
   } else {
     notes.push("The embedded body has no wall part: forces come from the embedded force process, and the wall is the zero level of the DISTANCE field.");
@@ -103,7 +110,7 @@ export function windTunnelCase(plan: WindTunnelPlan): WindTunnelCase {
     lawId: turbulent ? "rans_newtonian_3d" : "newtonian_3d",
     values: { DENSITY: round(plan.flow.density), DYNAMIC_VISCOSITY: plan.flow.viscosity },
   };
-  state.materials = turbulent ? [material, { smpPath: "Body", lawId: "rans_wall", values: {} }] : [material];
+  state.materials = turbulent ? [material, { smpPath: plan.bodies !== undefined ? "Bodies" : "Body", lawId: "rans_wall", values: {} }] : [material];
 
   const problem = state.values.problem;
   // Time: adaptive on the Courant number, bounded in flow-through times of the body.
