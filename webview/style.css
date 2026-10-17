@@ -3845,6 +3845,21 @@ input.outline-label-input {
   flex: 1 1 0;
   min-width: 0;
 }
+.pt-table-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  gap: var(--ui-s-1);
+  align-items: center;
+  flex: 1 1 0;
+  min-width: 0;
+}
+.pt-table-head {
+  font-size: var(--ui-fs-label);
+  color: var(--ds-description-fg);
+}
+.pt-table-grid .edit-num {
+  width: 100%;
+}
 .pt-add-row {
   display: flex;
   align-items: center;

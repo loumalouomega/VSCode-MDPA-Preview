@@ -22,6 +22,7 @@ import {
 } from "./types";
 import { asNum, dottedModelPart, fieldDefault, flattenValues } from "./api";
 import { validateMaterialAssignment } from "./materialCatalog";
+import { parseTableText as parseTableData } from "./materialTables";
 import { validateFluidTimeStepping } from "./timeStepEstimate";
 import { collectionProblems, resolveCollections } from "./collections";
 import { applicationCheckPy, requiredApplications } from "./applications";
@@ -192,17 +193,7 @@ export function vtkOutputProcess(ctx: GenContext, state: CaseState, gauss: strin
  * problemtype with no material laws legitimately produces an empty file.
  */
 
-/** Parses a `"input,output; …"` table text into Kratos `[[in, out], …]` rows. */
-export function parseTableData(raw: unknown): number[][] {
-  if (typeof raw !== "string" || raw.trim() === "") throw new Error("enter one `input,output` pair per `;`");
-  const rows = raw.split(";").map((r) => r.trim()).filter((r) => r !== "");
-  if (rows.length < 2) throw new Error("at least two pairs are needed to interpolate");
-  return rows.map((r) => {
-    const pair = r.split(",").map((x) => Number(x.trim()));
-    if (pair.length !== 2 || pair.some((x) => !Number.isFinite(x))) throw new Error(`"${r}" is not an "input,output" pair of numbers`);
-    return pair;
-  });
-}
+export { parseTableData };
 export function buildMaterials(
   ctx: GenContext | DomainContext,
   state: Pick<CaseState, "materials">,
