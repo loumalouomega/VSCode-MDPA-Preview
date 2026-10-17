@@ -140,6 +140,17 @@ If the mesh already matches, no copy is made and the case points at the original
 
 All three actions are also available from the Command Palette: **Kratos Case: Generate Case Files**, **Kratos Case: Run Case**, **Kratos Case: Open Results**.
 
+## Verifying the fluid cases against a solver
+
+`scripts/verify-fluid/run.mjs` runs one small case per fluid family through the same `caseRun` path the sidebar uses — generate, launch, `case_status` — and reports pass/fail/skip per family:
+
+```
+node scripts/verify-fluid/run.mjs --list
+node scripts/verify-fluid/run.mjs --install ~/src/Kratos/bin/Release --timeout 180
+```
+
+The families are the monolithic, fractional-step, Stokes and weakly compressible Fluid formulations, the embedded and two-fluids cases, the three RANS turbulence models on a channel, and the wind-tunnel sphere on the wizard's mesh. Each uses a tiny mesh and a few steps: a smoke run proving the generated `ProjectParameters.json`, materials and `MainKratos.py` are accepted and run to completion, not a physics benchmark. A family whose Kratos applications are not installed is skipped with the missing names (exit 0); a family that fails exits 1 with the log; no Kratos at all exits 2. The report is written to `verify-fluid.json` in the output directory.
+
 ## Notes
 
 - Process `model_part_name`s are derived as `<RootModelPart>.<SubModelPart.Path.With.Dots>` — e.g. assigning to `Parts/Solid` in the Structural problemtype produces `Structure.Parts.Solid`.
