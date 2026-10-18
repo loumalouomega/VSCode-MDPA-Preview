@@ -8,6 +8,8 @@ import { potentialFlow } from "./potentialFlow";
 import { shallowWater } from "./shallowWater";
 import { compressibleFluid } from "./compressibleFluid";
 import { embeddedFluid } from "./embeddedFluid";
+import { rans } from "./rans";
+import { twoFluids } from "./twoFluids";
 import { freeSurface } from "./freeSurface";
 import { buoyancy } from "./buoyancy";
 import { fsi } from "./fsi";
@@ -27,6 +29,8 @@ export const BUILTIN_PROBLEMTYPES: ProblemtypeRuntime[] = [
   fluid,
   compressibleFluid,
   embeddedFluid,
+  rans,
+  twoFluids,
   freeSurface,
   potentialFlow,
   shallowWater,

@@ -53,9 +53,14 @@ Compact reference (mirrors the JavaScript API, spelled snake_case)::
         A physics domain of a coupled problemtype: its own mesh slice
         <stem>_<mdpa_suffix>.mdpa and materials file, owning condition_ids.
 
-    material_law(id, name, variables=(), domain_size=None, domain=None)
+    material_law(id, name, variables=(), domain_size=None, domain=None,
+                 application=None, group=None, parameters=None, when=None)
         A constitutive law (domain = the domain id it belongs to, coupled only). Empty name omits the constitutive_law block
         (e.g. thermal materials). domain_size (2|3) restricts availability.
+        application = Kratos application the law needs (required when a material
+        uses it); group = Materials-form heading; parameters = extra
+        constitutive_law keys (CLApp factory settings); when = visibility rule
+        over case values the law is offered for.
 
     INTERVAL_TOTAL
         The whole-simulation interval ``[0.0, "End"]`` for process Parameters.
@@ -83,11 +88,16 @@ Compact reference (mirrors the JavaScript API, spelled snake_case)::
         them before running. output = {"nodal_defaults": [...],
         "gauss_defaults": [...]}. parts_condition names the pseudo-condition
         whose assignments mark the computing domain (emits no process).
-        mesh_naming = {"elements": <base>, "conditions": <base>} declares the
-        block names the solver expects in the mdpa; <base> is a string
-        ("Element", "$field:<id>") or a per-dimension dict {2: ..., 3: ...}.
-        The final name is <base><dim>D<nnodes>N; when the mesh differs a
-        renamed <stem>_case.mdpa copy is generated automatically.
+        mesh_naming = {"elements": <names>, "conditions": <names>} declares the
+        block names the solver expects in the mdpa. <names> is a string
+        ("Element", "$field:<id>") or a per-dimension dict {2: ..., 3: ...}; a
+        {"field": "<id>", "names": {<value>: <entry>}} table gives an enum
+        field's values their own names, where <entry> is a template
+        ("SpringDamperElement{dim}D"), one exact name ("CableElement3D2N") or a
+        {dim: {nodes: name}} table of exact names — a shape such a table omits
+        is refused, because renaming it would invent a Kratos type. The final
+        name is <base><dim>D<nnodes>N; when the mesh differs a renamed
+        <stem>_case.mdpa copy is generated automatically.
 
 Hooks (plain JSON data in and out — no interpreter objects cross the boundary)::
 
@@ -140,6 +150,28 @@ def _require_str(value, what):
         raise ValueError(f"{what} must be a non-empty string (got {value!r})")
 
 
+def _normalize_when(when, what):
+    """A ``{"field", "equals"|"one_of"}`` rule or list of them, in JS spelling.
+
+    ``field(visible_when=...)``, ``application(when=...)`` and
+    ``material_law(when=...)`` share the spelling; a single rule keeps the
+    plain-object form, a list means "all must hold".
+    """
+    rules = when if isinstance(when, (list, tuple)) else [when]
+    out = []
+    for rule in rules:
+        if (not isinstance(rule, dict) or "field" not in rule
+                or ("equals" not in rule and "one_of" not in rule)):
+            raise ValueError(f'{what} needs {{"field", "equals"}} or {{"field", "one_of"}}')
+        r = {"field": rule["field"]}
+        if "equals" in rule:
+            r["equals"] = rule["equals"]
+        else:
+            r["oneOf"] = list(rule["one_of"])
+        out.append(r)
+    return out[0] if not isinstance(when, (list, tuple)) else out
+
+
 def field(id, label, type, default=None, options=None, visible_when=None, unit=None, help=None,
           group=None, min=None, max=None, step=None, advanced=None, ref_collection=None):
     """A form field spec (mirrors the JS ``FieldSpec``). See the module docstring.
@@ -177,20 +209,8 @@ def field(id, label, type, default=None, options=None, visible_when=None, unit=N
     if default is not None:
         f["default"] = default
     if visible_when is not None:
-        rules = visible_when if isinstance(visible_when, (list, tuple)) else [visible_when]
-        out = []
-        for rule in rules:
-            if (not isinstance(rule, dict) or "field" not in rule
-                    or ("equals" not in rule and "one_of" not in rule)):
-                raise ValueError(f'field "{id}": visible_when needs {{"field", "equals"}} or {{"field", "one_of"}}')
-            r = {"field": rule["field"]}
-            if "equals" in rule:
-                r["equals"] = rule["equals"]
-            else:
-                r["oneOf"] = list(rule["one_of"])
-            out.append(r)
         # A single rule keeps the plain-object spelling; several mean "all must hold".
-        f["visibleWhen"] = out[0] if not isinstance(visible_when, (list, tuple)) else out
+        f["visibleWhen"] = _normalize_when(visible_when, f'field "{id}": visible_when')
     if unit is not None:
         if not isinstance(unit, str) or not unit:
             raise ValueError(f'field "{id}": unit must be a non-empty string')
@@ -285,12 +305,15 @@ def section(id, label, *fields, groups=None, icon=None):
 
 def condition(id, label, list="constraints_process_list", target="any",
               fields=(), process_template=None, help=None, category=None, icon=None,
-              no_process=None):
+              no_process=None, emit=None):
     """A condition / boundary-condition spec (mirrors the JS ``ConditionSpec``).
 
     ``category`` (``"initial"`` / ``"constraints"`` / ``"loads"`` / ``"other"``) is the
     tree branch the condition is listed under; it is derived from ``list`` when
-    absent. ``icon`` is a toolbar icon id drawn on its rows.
+    absent. ``icon`` is a toolbar icon id drawn on its rows. ``emit`` is an
+    ``{"sibling", "source", "family"}`` dict (plus ``formulationField`` and
+    ``axisymmetricPoint`` for the 2D point variant) telling Generate to
+    synthesize the load's Kratos conditions into a sibling SubModelPart.
     """
     _require_str(id, "condition id")
     # Custom list names are allowed (e.g. boundary_conditions_process_list);
@@ -318,6 +341,15 @@ def condition(id, label, list="constraints_process_list", target="any",
     if no_process:
         # Marks a SubModelPart for the hooks (e.g. an FSI interface); emits no process.
         c["noProcess"] = True
+    if emit is not None:
+        if (not isinstance(emit, dict) or not emit.get("sibling")
+                or emit.get("source") not in ("nodes", "lines")
+                or emit.get("family") not in ("point", "moment", "moving")):
+            raise ValueError(f'condition "{id}": emit needs sibling/source/family')
+        for key in ("formulationField", "axisymmetricPoint", "pointName"):
+            if key in emit and (not isinstance(emit[key], str) or not emit[key]):
+                raise ValueError(f'condition "{id}": emit {key} must be a non-empty string')
+        c["emit"] = dict(emit)
     return c
 
 
@@ -378,11 +410,21 @@ def domain(id, label, model_part_name, mdpa_suffix, parts_condition, condition_i
     return d
 
 
-def material_law(id, name, variables=(), domain_size=None, domain=None):
+def material_law(id, name, variables=(), domain_size=None, domain=None,
+                 application=None, group=None, parameters=None, when=None,
+                 tables=None):
     """A constitutive-law spec (mirrors the JS ``MaterialLawSpec``).
 
     An empty ``name`` omits the ``constitutive_law`` block in the materials file
-    (used e.g. for thermal materials that carry variables only).
+    (used e.g. for thermal materials that carry variables only). ``application``
+    is the Kratos application the law's name comes from (the generated driver
+    then requires it when a material uses the law); ``group`` is the Materials
+    form heading the law is listed under. ``parameters`` are extra keys of the
+    ``constitutive_law`` block, written as they are (the ConstitutiveLaws
+    Application factories' ``law_type``/``yield_surface``/``plastic_potential``),
+    and ``when`` a visibility rule ({"field", "equals"} or {"field", "one_of"}) or
+    list of them over the case values: the form offers the law only while they
+    hold, and Generate refuses an assignment left on a law the setup excludes.
     """
     _require_str(id, "material law id")
     if domain_size is not None and domain_size not in (2, 3):
@@ -392,6 +434,33 @@ def material_law(id, name, variables=(), domain_size=None, domain=None):
         m["domainSize"] = domain_size
     if domain is not None:
         m["domain"] = domain
+    if application is not None:
+        _require_str(application, f'material law "{id}" application')
+        m["application"] = application
+    if group is not None:
+        _require_str(group, f'material law "{id}" group')
+        m["group"] = group
+    if parameters is not None:
+        if not isinstance(parameters, dict):
+            raise ValueError(f'material law "{id}": parameters must be a dict')
+        if "name" in parameters:
+            raise ValueError(f'material law "{id}": parameters may not set "name"')
+        m["parameters"] = dict(parameters)
+    if when is not None:
+        m["when"] = _normalize_when(when, f'material law "{id}": when')
+    if tables is not None:
+        if not isinstance(tables, (list, tuple)):
+            raise ValueError(f'material law "{id}": tables must be a list')
+        normed = []
+        for t in tables:
+            if not isinstance(t, dict):
+                raise ValueError(f'material law "{id}": each table must be a dict')
+            for k in ("id", "input_variable", "output_variable", "data_field"):
+                if k not in t or not isinstance(t[k], str) or not t[k]:
+                    raise ValueError(f'material law "{id}": each table needs string "id", "input_variable", "output_variable" and "data_field"')
+            normed.append({"id": t["id"], "inputVariable": t["input_variable"],
+                           "outputVariable": t["output_variable"], "dataField": t["data_field"]})
+        m["tables"] = normed
     return m
 
 
@@ -401,6 +470,55 @@ def _check_unique(ids, what):
         if i in seen:
             raise ValueError(f'duplicate {what} id "{i}"')
         seen.add(i)
+
+
+def _normalize_naming_entry(entry, where, ptid):
+    """One formulation's names: a template/verbatim string, or a {dim: {nodes: name}} table."""
+    if isinstance(entry, str):
+        if not entry:
+            raise ValueError(f'problemtype "{ptid}": {where} must be non-empty')
+        return entry
+    if not isinstance(entry, dict):
+        raise ValueError(
+            f'problemtype "{ptid}": {where} must be a name or a {{dim: {{nodes: name}}}} table'
+        )
+    shapes = {}
+    for dim, by_nodes in entry.items():
+        if str(dim) not in ("2", "3"):
+            raise ValueError(f'problemtype "{ptid}": {where} keys must be 2/3')
+        if not isinstance(by_nodes, dict) or not by_nodes:
+            raise ValueError(f'problemtype "{ptid}": {where}[{dim}] must map node counts to names')
+        counts = {}
+        for nodes, name in by_nodes.items():
+            if not str(nodes).isdigit() or int(nodes) < 1:
+                raise ValueError(
+                    f'problemtype "{ptid}": {where}[{dim}] node counts must be positive integers'
+                )
+            if not isinstance(name, str) or not name:
+                raise ValueError(
+                    f'problemtype "{ptid}": {where}[{dim}][{nodes}] must be a non-empty name'
+                )
+            counts[str(nodes)] = name
+        shapes[str(dim)] = counts
+    return shapes
+
+
+def _normalize_formulation_naming(value, kind, ptid):
+    """A {"field", "names"} mesh_naming table: the field value picks the entry."""
+    field = value.get("field")
+    if not isinstance(field, str) or not field:
+        raise ValueError(f'problemtype "{ptid}": mesh_naming.{kind}.field must name a section field')
+    names = value.get("names")
+    if not isinstance(names, dict) or not names:
+        raise ValueError(
+            f'problemtype "{ptid}": mesh_naming.{kind}.names must map field values to names'
+        )
+    out = {}
+    for entry_value, entry in names.items():
+        out[str(entry_value)] = _normalize_naming_entry(
+            entry, f'mesh_naming.{kind}.names.{entry_value}', ptid
+        )
+    return {"field": field, "names": out}
 
 
 def _normalize_mesh_naming(mesh_naming, ptid):
@@ -418,6 +536,9 @@ def _normalize_mesh_naming(mesh_naming, ptid):
                 raise ValueError(f'problemtype "{ptid}": mesh_naming.{kind} must be non-empty')
             out[kind] = value
         elif isinstance(value, dict):
+            if "field" in value:
+                out[kind] = _normalize_formulation_naming(value, kind, ptid)
+                continue
             sizes = {}
             for k, base in value.items():
                 if str(k) not in ("2", "3") or not isinstance(base, str) or not base:
@@ -444,19 +565,7 @@ def application(name, when=None):
         raise ValueError(f'application {name!r}: expected a Kratos application name such as "FluidDynamicsApplication"')
     if when is None:
         return name
-    rules = when if isinstance(when, (list, tuple)) else [when]
-    out = []
-    for rule in rules:
-        if (not isinstance(rule, dict) or "field" not in rule
-                or ("equals" not in rule and "one_of" not in rule)):
-            raise ValueError(f'application {name!r}: when needs {{"field", "equals"}} or {{"field", "one_of"}}')
-        r = {"field": rule["field"]}
-        if "equals" in rule:
-            r["equals"] = rule["equals"]
-        else:
-            r["oneOf"] = list(rule["one_of"])
-        out.append(r)
-    return {"application": name, "when": out[0] if not isinstance(when, (list, tuple)) else out}
+    return {"application": name, "when": _normalize_when(when, f"application {name!r}: when")}
 
 
 def define_problemtype(id, name, analysis_stage, model_part_name,

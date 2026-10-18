@@ -22,10 +22,13 @@ import {
 } from "./types";
 import { asNum, dottedModelPart, fieldDefault, flattenValues } from "./api";
 import { validateMaterialAssignment } from "./materialCatalog";
+import { parseTableText as parseTableData } from "./materialTables";
 import { validateFluidTimeStepping } from "./timeStepEstimate";
 import { collectionProblems, resolveCollections } from "./collections";
 import { applicationCheckPy, requiredApplications } from "./applications";
+import { isFieldVisible } from "./layout";
 import { interfacePairProblems } from "./interfaceCheck";
+import { periodicPairProblems } from "./periodicCheck";
 
 /** Flattens the SubModelPart tree into slash-separated paths (depth-first). */
 export function subModelPartPaths(parts: SubModelPart[]): string[] {
@@ -190,6 +193,8 @@ export function vtkOutputProcess(ctx: GenContext, state: CaseState, gauss: strin
  * Generate can never disagree with them. Warnings still collect, and a
  * problemtype with no material laws legitimately produces an empty file.
  */
+
+export { parseTableData };
 export function buildMaterials(
   ctx: GenContext | DomainContext,
   state: Pick<CaseState, "materials">,
@@ -207,19 +212,50 @@ export function buildMaterials(
       );
       return;
     }
+    // A law's `when` rules say which setup it was written for (a formulation's
+    // constitutive-law set). An assignment left on a law the setup excludes
+    // must be fixed, not written out under another meaning.
+    if (law.when !== undefined && !isFieldVisible({ visibleWhen: law.when }, ctx.values)) {
+      problems.push(
+        `"${m.smpPath}": material law "${law.name || law.id}" is not available for the current setup — its "when" rules do not hold for the case values.`
+      );
+      return;
+    }
+    // A law restricted to one mesh dimension (`plane-strain` laws, the 2D beam
+    // law) means nothing on a mesh of the other size.
+    if (law.domainSize !== undefined && law.domainSize !== ctx.domainSize) {
+      problems.push(
+        `"${m.smpPath}": material law "${law.name || law.id}" is written for a ${law.domainSize}D mesh, but this case is ${ctx.domainSize}D.`
+      );
+      return;
+    }
     const label = `${m.smpPath} (${law.name || law.id})`;
     for (const issue of validateMaterialAssignment(law, m.values, m.preset)) {
       const message = `${label}: ${issue.message}`;
       if (issue.severity === "error") problems.push(message);
       else warnings.push(message);
     }
+    const tableFields = new Set((law.tables ?? []).map((t) => t.dataField));
     const variables: JsonObject = {};
     for (const v of law.variables) {
+      if (tableFields.has(v.id)) continue;
       variables[v.id] = m.values[v.id] !== undefined ? m.values[v.id] : fieldDefault(v);
     }
-    const material: JsonObject = { Variables: variables, Tables: {} };
+    const tables: JsonObject = {};
+    for (const t of law.tables ?? []) {
+      try {
+        tables[t.id] = { input_variable: t.inputVariable, output_variable: t.outputVariable, data: parseTableData(m.values[t.dataField]) };
+      } catch (err) {
+        problems.push(`${label}: table "${t.id}" is not "input,output; …" pairs of numbers (${err instanceof Error ? err.message : String(err)}).`);
+      }
+    }
+    if (problems.length > 0 && !(tables[tables ? Object.keys(tables)[0] ?? "" : ""] === undefined && (law.tables ?? []).length === 0)) {
+      // A failed table already recorded its problem above; the material is
+      // still written so one bad table does not hide the other findings.
+    }
+    const material: JsonObject = { Variables: variables, Tables: tables };
     if (law.name.length > 0) {
-      material.constitutive_law = { name: law.name };
+      material.constitutive_law = { name: law.name, ...(law.parameters ?? {}) };
     }
     properties.push({
       model_part_name: dottedModelPart(ctx.modelPartName, m.smpPath),
@@ -337,6 +373,7 @@ export async function generateCase(
   const missing = [
     ...domainProblems(decl, state.assignments),
     ...interfacePairProblems(decl, model, state.assignments, ctx.domainSize),
+    ...periodicPairProblems(model, state.assignments),
     ...collectionIssues,
     ...(collectionIssues.length === 0 ? await runtime.validate(ctx) : []),
   ];
@@ -386,10 +423,15 @@ export async function generateCase(
     materialsText = materialJson(materials, runtime);
   }
   extraFiles.push(...(await runtime.extraFiles(ctx, materials)));
-  const applications = requiredApplications(decl, values, [
-    projectParameters,
-    ...extraFiles.filter((f) => f.name.toLowerCase().endsWith(".json")).map((f) => parseJsonOrNull(f.content)),
-  ]);
+  const applications = requiredApplications(
+    decl,
+    values,
+    [
+      projectParameters,
+      ...extraFiles.filter((f) => f.name.toLowerCase().endsWith(".json")).map((f) => parseJsonOrNull(f.content)),
+    ],
+    state.materials
+  );
   // The prelude checks the applications before the driver reads or writes anything.
   const mainScript = applicationCheckPy(applications) + (await runtime.mainScript(ctx));
 

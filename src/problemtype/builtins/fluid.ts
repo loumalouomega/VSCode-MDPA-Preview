@@ -11,7 +11,7 @@ import { monitoredMainScript } from "../mainKratosTemplate";
  */
 
 import { defineProblemtype, asBool, asNum, asStr, dottedModelPart, resolveProcessTemplate } from "../api";
-import { JsonObject, JsonValue } from "../types";
+import { JsonObject, JsonValue, MaterialLawSpec } from "../types";
 import {
   INITIAL,
   broadcastConstrained,
@@ -21,10 +21,128 @@ import {
   vectorConstraint,
 } from "./common";
 
+/** A viscosity that follows the nodal temperature through a property table. */
+const temperatureDependent = (size: 2 | 3): MaterialLawSpec => ({
+  id: `temperature_dependent_${size}d`,
+  name: size === 3 ? "NewtonianTemperatureDependent3DLaw" : "NewtonianTemperatureDependent2DLaw",
+  domainSize: size,
+  group: "Temperature dependent",
+  when: MONOLITHIC,
+  variables: [
+    { id: "DENSITY", label: "Density [kg/m³]", type: "number", default: 1000, unit: "kg/m³" },
+    {
+      id: "TEMPERATURE_TABLE",
+      label: "Viscosity table [K, Pa·s]",
+      type: "string",
+      default: "293.15,1e-3; 373.15,2.8e-4",
+      help: "Temperature–viscosity pairs, one `T,mu` per `;`, read as the TEMPERATURE–DYNAMIC_VISCOSITY table. Set the nodal TEMPERATURE (initial temperature) or every node reads the table at 0 K.",
+    },
+  ],
+  tables: [{ id: "Table1", inputVariable: "TEMPERATURE", outputVariable: "DYNAMIC_VISCOSITY", dataField: "TEMPERATURE_TABLE" }],
+});
+
 /** Conditions that are not boundary skin: GiD lists them in `no_skin_parts`. */
-const NO_SKIN = new Set(["velocityConstraints", "pressureConstraints"]);
+export const NO_SKIN = new Set(["velocityConstraints", "pressureConstraints"]);
+
+/**
+ * Conditions that name a SubModelPart without being a boundary condition of the
+ * solver: monitors read results off a part and a periodic pair is constrained
+ * by a process, so neither belongs in `skin_parts` or `no_skin_parts`.
+ */
+export const FLUID_NOT_BOUNDARY = new Set(["flowForces", "aerodynamicCoefficients", "pressureCoefficient", "yPlus", "periodic", "integrationStats"]);
+
+/** Kratos' `formulation.element_type` for each element choice whose key differs from ours. */
+const FORMULATION_KEY: Record<string, string> = { axisymmetric: "axisymmetric_navier_stokes" };
+
+interface StatsEntry {
+  part: string;
+  type: "average" | "variance" | "third_order_moment";
+  variables: string[];
+  tags: string[];
+  outputFile: string;
+  startTime: number;
+}
+
+/**
+ * The `integrationStats` assignments grouped by part, with the problems that
+ * refuse them. A variance or third-order moment reads the average sampled in
+ * the SAME process, so entries on one part merge into a single process and
+ * every higher moment needs its average beside it — the same rule the C++
+ * process enforces, reported here before anything is written.
+ */
+function statsByPart(ctx: { assignments: { conditionId: string; smpPath: string; values: Record<string, JsonValue> }[]; domainSize: number }): {
+  byPart: Map<string, StatsEntry[]>;
+  problems: string[];
+} {
+  const byPart = new Map<string, StatsEntry[]>();
+  const problems: string[] = [];
+  const pretty = (t: string): string => t.replace(/_/g, " ");
+  for (const a of ctx.assignments) {
+    if (a.conditionId !== "integrationStats") continue;
+    const type = asStr(a.values.statisticType, "average");
+    if (type !== "average" && type !== "variance" && type !== "third_order_moment") {
+      problems.push(`"${a.smpPath}": unknown statistic "${type}" (average, variance or third_order_moment).`);
+      continue;
+    }
+    const variables = asStr(a.values.variable, "").split(",").map((s) => s.trim()).filter((s) => s !== "");
+    const tags = asStr(a.values.tags, "").split(",").map((s) => s.trim()).filter((s) => s !== "");
+    const entry: StatsEntry = {
+      part: a.smpPath, type, variables, tags,
+      outputFile: asStr(a.values.outputFile, "statistics").trim() || "statistics",
+      startTime: asNum(a.values.startTime, 0),
+    };
+    const need = type === "average" ? "one variable" : type === "variance" ? "one or two variables" : "three variables";
+    const okCount = type === "average" ? variables.length === 1 : type === "variance" ? variables.length >= 1 && variables.length <= 2 : variables.length === 3;
+    if (!okCount) {
+      problems.push(`"${a.smpPath}": a ${pretty(type)} needs ${need} (got ${variables.length}).`);
+      continue;
+    }
+    if (type !== "average" && tags.length > 0) {
+      problems.push(`"${a.smpPath}": tags belong to an average, not to a ${pretty(type)}.`);
+      continue;
+    }
+    if (type === "average") {
+      if (variables[0] === "VELOCITY") {
+        if (tags.length === 0) entry.tags = ctx.domainSize === 2 ? ["VELOCITY_X", "VELOCITY_Y"] : ["VELOCITY_X", "VELOCITY_Y", "VELOCITY_Z"];
+        else if (tags.length !== ctx.domainSize) {
+          problems.push(`"${a.smpPath}": a vector average needs one tag per component (${ctx.domainSize} for VELOCITY).`);
+          continue;
+        }
+      } else if (tags.length > 1) {
+        problems.push(`"${a.smpPath}": a scalar average takes at most one tag.`);
+        continue;
+      }
+    }
+    const list = byPart.get(a.smpPath) ?? [];
+    list.push(entry);
+    byPart.set(a.smpPath, list);
+  }
+  for (const [part, entries] of byPart) {
+    if (new Set(entries.map((e) => e.outputFile)).size > 1) {
+      problems.push(`"${part}": one statistics file per part — the entries name ${[...new Set(entries.map((e) => e.outputFile))].join(", ")}.`);
+    }
+    if (new Set(entries.map((e) => e.startTime)).size > 1) problems.push(`"${part}": one start time per part.`);
+    const averages = new Set(entries.filter((e) => e.type === "average").map((e) => e.variables[0]));
+    for (const e of entries) {
+      if (e.type === "average") continue;
+      for (const v of e.variables) {
+        const base = /_[XYZ]$/.test(v) ? v.slice(0, -2) : v;
+        if (!averages.has(base) && !averages.has(v)) {
+          problems.push(`"${part}": the ${pretty(e.type)} of "${v}" needs its average on the same part.`);
+        }
+      }
+    }
+  }
+  return { byPart, problems };
+}
+
+/** Output variables a monitor writes as non-historical nodal data, by condition. */
+const MONITOR_OUTPUT: Record<string, string> = { pressureCoefficient: "PRESSURE_COEFFICIENT", yPlus: "Y_PLUS" };
 
 const MONOLITHIC = { field: "strategy", equals: "monolithic" };
+const STOKES = { field: "strategy", equals: "stokes" };
+const ELEMENT_IS = (v: string) => ({ field: "elementType", equals: v });
+const BOSSAK = { field: "timeScheme", equals: "bossak" };
 const FRACTIONAL = { field: "strategy", equals: "fractional_step" };
 const ADAPTIVE = { field: "timeStepMode", equals: "adaptive" };
 const OSS_ELEMENTS = { field: "elementType", oneOf: ["qsvms", "dvms"] as JsonValue[] };
@@ -61,6 +179,7 @@ export const fluid = defineProblemtype(
             options: [
               { value: "monolithic", label: "Monolithic" },
               { value: "fractional_step", label: "Fractional step" },
+              { value: "stokes", label: "Stokes (monolithic, linear)" },
             ],
           },
           {
@@ -75,13 +194,28 @@ export const fluid = defineProblemtype(
               { value: "dvms", label: "Dynamic VMS" },
               { value: "fic", label: "FIC" },
               { value: "vms", label: "Classic VMS (legacy)" },
+              { value: "weakly_compressible", label: "Weakly compressible" },
+              { value: "axisymmetric", label: "Axisymmetric (2D)" },
+              { value: "p2p1", label: "P2-P1 continuous (quadratic)" },
             ],
           },
+          { id: "timeIntegrated", label: "Element integrates in time", type: "bool", default: false, group: "formulation", visibleWhen: [MONOLITHIC, ELEMENT_IS("qsvms")], help: "TimeIntegratedQSVMS: the element applies the time scheme itself instead of the strategy." },
+          { id: "ficBeta", label: "FIC beta", type: "number", default: 0.8, min: 0, group: "formulation", visibleWhen: [MONOLITHIC, ELEMENT_IS("fic")] },
+          { id: "soundVelocity", label: "Speed of sound", type: "number", default: 1e12, min: 0, unit: "m/s", group: "formulation", visibleWhen: [MONOLITHIC, ELEMENT_IS("weakly_compressible")], help: "The default is effectively incompressible; use the real speed of sound for a compressible-limit study." },
+          { id: "nonNewtonian", label: "Non-Newtonian (Herschel-Bulkley)", type: "bool", default: false, group: "formulation", visibleWhen: [MONOLITHIC, ELEMENT_IS("vms")], help: "The legacy VMS element takes its power-law parameters from the solver; the other elements read a constitutive law from the material." },
+          { id: "powerLawK", label: "Consistency index K", type: "number", default: 1e-6, min: 0, group: "formulation", visibleWhen: [MONOLITHIC, ELEMENT_IS("vms"), { field: "nonNewtonian", equals: true }] },
+          { id: "powerLawN", label: "Power-law index n", type: "number", default: 1.0, min: 0, group: "formulation", visibleWhen: [MONOLITHIC, ELEMENT_IS("vms"), { field: "nonNewtonian", equals: true }] },
+          { id: "yieldStress", label: "Yield stress", type: "number", default: 0, min: 0, unit: "Pa", group: "formulation", visibleWhen: [MONOLITHIC, ELEMENT_IS("vms"), { field: "nonNewtonian", equals: true }] },
+          { id: "regularization", label: "Regularization coefficient", type: "number", default: 100, min: 0, group: "formulation", visibleWhen: [MONOLITHIC, ELEMENT_IS("vms"), { field: "nonNewtonian", equals: true }] },
+          { id: "forceSteadyState", label: "Force steady state", type: "bool", default: false, group: "formulation", visibleWhen: STOKES },
+          { id: "timeOrder", label: "Time order", type: "int", default: 2, min: 1, max: 2, group: "formulation", visibleWhen: FRACTIONAL },
+          { id: "useSlipConditions", label: "Slip conditions on the skin", type: "bool", default: true, group: "formulation", visibleWhen: FRACTIONAL },
+          { id: "considerPeriodic", label: "Periodic boundaries", type: "bool", default: false, group: "formulation", help: "Turn on when a Periodic boundary condition is assigned." },
           {
             id: "timeScheme",
             label: "Time scheme",
             type: "enum",
-            default: "bdf2",
+            default: "bossak",
             group: "formulation",
             visibleWhen: MONOLITHIC,
             options: [
@@ -89,6 +223,7 @@ export const fluid = defineProblemtype(
               { value: "bossak", label: "Bossak" },
             ],
           },
+          { id: "bossakAlpha", label: "Bossak alpha", type: "number", default: -0.3, min: -0.5, max: 0, group: "formulation", visibleWhen: [MONOLITHIC, BOSSAK] },
           { id: "oss", label: "Orthogonal subscales", type: "bool", default: false, group: "formulation", visibleWhen: [MONOLITHIC, OSS_ELEMENTS] },
           { id: "dynamicTau", label: "Dynamic tau", type: "number", default: 1.0, min: 0, group: "formulation" },
           {
@@ -165,6 +300,17 @@ export const fluid = defineProblemtype(
         id: "initialPressure",
         label: "Initial pressure",
         unit: "Pa",
+        category: "initial",
+        list: "initial_conditions_process_list",
+        icon: "ptInitial",
+        interval: INITIAL,
+        fixed: false,
+      }),
+      scalarConstraint("TEMPERATURE", {
+        id: "initialTemperature",
+        label: "Initial temperature",
+        unit: "K",
+        dflt: 293.15,
         category: "initial",
         list: "initial_conditions_process_list",
         icon: "ptInitial",
@@ -334,6 +480,151 @@ export const fluid = defineProblemtype(
         icon: "ptConstraint",
         help: "Imposes pressure on a SubModelPart that is not a skin boundary.",
       }),
+      {
+        id: "periodic",
+        label: "Periodic boundary",
+        list: "constraints_process_list",
+        target: "surface",
+        category: "constraints",
+        icon: "ptConstraint",
+        help: "Ties this boundary (the slave) to the master boundary a translation away, for velocity and pressure. Assign it to the slave only and turn on Periodic boundaries. The translation runs from the master to the slave, and Generate checks that the master moved by it lands on the slave.",
+        fields: [
+          { id: "master", label: "Master boundary", type: "smp", default: "" },
+          { id: "translation", label: "Translation direction", type: "vector3", default: [1, 0, 0], help: "From the master to the slave." },
+          { id: "magnitude", label: "Translation distance [m]", type: "number", default: 1.0, min: 0 },
+        ],
+        processTemplate: {},
+      },
+      {
+        id: "flowForces",
+        label: "Forces and moments on a body",
+        list: "auxiliar_process_list",
+        target: "surface",
+        category: "other",
+        icon: "ptResults",
+        help: "Integrates pressure and viscous traction over this wall and writes Fx Fy Fz (and moments) per step to <model part>_drag.dat.",
+        fields: [
+          { id: "referencePoint", label: "Moment reference point", type: "vector3", default: [0, 0, 0] },
+          { id: "writeMoments", label: "Write moments", type: "bool", default: true },
+          { id: "printToScreen", label: "Print to screen", type: "bool", default: false },
+        ],
+        processTemplate: {
+          python_module: "compute_body_fitted_flow_forces_and_moments_process",
+          kratos_module: "KratosMultiphysics.FluidDynamicsApplication",
+          process_name: "ComputeBodyFittedFlowForcesAndMomentsProcess",
+          Parameters: {
+            model_part_name: "$path",
+            interval: [0.0, "End"],
+            print_to_screen: "$field:printToScreen",
+            write_forces_output_file: true,
+            write_moments_output_file: "$field:writeMoments",
+            reference_point: "$field:referencePoint",
+          },
+        },
+      },
+      {
+        id: "aerodynamicCoefficients",
+        label: "Aerodynamic coefficients",
+        list: "auxiliar_process_list",
+        target: "surface",
+        category: "other",
+        icon: "ptResults",
+        help: "Writes drag, lift and moment coefficients of this wall: force over the dynamic pressure times the reference area (moments also times the reference chord).",
+        fields: [
+          { id: "referenceArea", label: "Reference area [m²]", type: "number", default: 1.0, min: 0 },
+          { id: "referenceChord", label: "Reference chord [m]", type: "number", default: 1.0, min: 0 },
+          { id: "dynamicPressure", label: "Dynamic pressure [Pa]", type: "number", default: 1.0, min: 0, help: "0.5 · density · speed²." },
+          { id: "referencePoint", label: "Moment reference point", type: "vector3", default: [0, 0, 0] },
+          { id: "printToScreen", label: "Print to screen", type: "bool", default: false },
+        ],
+        processTemplate: {
+          python_module: "compute_aerodynamic_coefficients_process",
+          kratos_module: "KratosMultiphysics.FluidDynamicsApplication",
+          process_name: "ComputeAerodynamicCoefficientsProcess",
+          Parameters: {
+            model_part_name: "$path",
+            interval: [0.0, "End"],
+            print_coefficients_to_screen: "$field:printToScreen",
+            write_output_file: true,
+            is_embedded: false,
+            reference_point: "$field:referencePoint",
+            reference_area: "$field:referenceArea",
+            reference_chord: "$field:referenceChord",
+            dynamic_pressure: "$field:dynamicPressure",
+          },
+        },
+      },
+      {
+        id: "pressureCoefficient",
+        label: "Pressure coefficient",
+        list: "auxiliar_process_list",
+        target: "surface",
+        category: "other",
+        icon: "ptResults",
+        help: "Writes PRESSURE_COEFFICIENT on this part's nodes for the output: (p − p∞) over the free-stream dynamic pressure.",
+        fields: [
+          { id: "freestreamDensity", label: "Free-stream density [kg/m³]", type: "number", default: 1.204, min: 0 },
+          { id: "freestreamVelocity", label: "Free-stream speed [m/s]", type: "number", default: 1.0, min: 0 },
+          { id: "freestreamPressure", label: "Free-stream pressure [Pa]", type: "number", default: 0.0 },
+        ],
+        processTemplate: {
+          python_module: "compute_pressure_coefficient_process",
+          kratos_module: "KratosMultiphysics.FluidDynamicsApplication",
+          process_name: "ComputePressureCoefficientProcess",
+          Parameters: {
+            model_part_name: "$path",
+            freestream_density: "$field:freestreamDensity",
+            freestream_velocity: "$field:freestreamVelocity",
+            freestream_pressure: "$field:freestreamPressure",
+            pressure_is_historical: true,
+            execution_step: "ExecuteBeforeOutputStep",
+          },
+        },
+      },
+      {
+        id: "yPlus",
+        label: "Wall y+",
+        list: "auxiliar_process_list",
+        target: "surface",
+        category: "other",
+        icon: "ptResults",
+        help: "Writes Y_PLUS on this wall's nodes for the output, to check the first cell height against the wall model.",
+        fields: [],
+        processTemplate: {
+          python_module: "compute_y_plus_process",
+          kratos_module: "KratosMultiphysics.FluidDynamicsApplication",
+          process_name: "ComputeYPlusProcess",
+          Parameters: { model_part_name: "$path", output_variable_name: "Y_PLUS", output_to_elements: false, calculate_normals_every_time_step: false, echo_level: 0 },
+        },
+      },
+      {
+        id: "integrationStats",
+        label: "Integration-point statistics",
+        list: "auxiliar_process_list",
+        target: "volume",
+        category: "other",
+        icon: "ptResults",
+        noProcess: true,
+        help: "Samples a statistic at the integration points over time (average, variance or third-order moment) and writes it to a file. One entry per assignment on the same part merges into a single process; a variance or third-order moment needs its average on the same part, and a vector average needs a tag per component (VELOCITY tags itself).",
+        fields: [
+          {
+            id: "statisticType",
+            label: "Statistic",
+            type: "enum",
+            default: "average",
+            options: [
+              { value: "average", label: "Average" },
+              { value: "variance", label: "Variance" },
+              { value: "third_order_moment", label: "Third-order moment" },
+            ],
+          },
+          { id: "variable", label: "Variable(s)", type: "string", default: "VELOCITY", help: "One variable for an average, one or two for a variance, three for a third-order moment, comma-separated." },
+          { id: "tags", label: "Tags", type: "string", default: "", help: "Comma-separated output names for a vector average (VELOCITY fills VELOCITY_X, VELOCITY_Y, VELOCITY_Z itself); empty for a scalar." },
+          { id: "outputFile", label: "Output file", type: "string", default: "statistics" },
+          { id: "startTime", label: "Start time [s]", type: "number", default: 0, min: 0 },
+        ],
+        processTemplate: {},
+      },
     ],
     materialLaws: [
       {
@@ -354,6 +645,51 @@ export const fluid = defineProblemtype(
           { id: "DYNAMIC_VISCOSITY", label: "Dynamic viscosity [Pa·s]", type: "number", default: 1e-3, unit: "Pa·s" },
         ],
       },
+      // Non-Newtonian fluids: a viscosity that follows the strain rate. The element
+      // reads the law from the material, so these are offered to the monolithic
+      // strategy; the legacy VMS element uses the solver's own power-law settings.
+      {
+        id: "bingham_3d",
+        name: "Bingham3DLaw",
+        domainSize: 3,
+        group: "Non-Newtonian",
+        when: MONOLITHIC,
+        variables: [
+          { id: "DENSITY", label: "Density [kg/m³]", type: "number", default: 1000, unit: "kg/m³" },
+          { id: "DYNAMIC_VISCOSITY", label: "Plastic viscosity [Pa·s]", type: "number", default: 1e-3, unit: "Pa·s" },
+          { id: "YIELD_STRESS", label: "Yield stress [Pa]", type: "number", default: 1.0, unit: "Pa" },
+          { id: "REGULARIZATION_COEFFICIENT", label: "Regularization coefficient", type: "number", default: 100 },
+        ],
+      },
+      {
+        id: "bingham_2d",
+        name: "Bingham2DLaw",
+        domainSize: 2,
+        group: "Non-Newtonian",
+        when: MONOLITHIC,
+        variables: [
+          { id: "DENSITY", label: "Density [kg/m³]", type: "number", default: 1000, unit: "kg/m³" },
+          { id: "DYNAMIC_VISCOSITY", label: "Plastic viscosity [Pa·s]", type: "number", default: 1e-3, unit: "Pa·s" },
+          { id: "YIELD_STRESS", label: "Yield stress [Pa]", type: "number", default: 1.0, unit: "Pa" },
+          { id: "REGULARIZATION_COEFFICIENT", label: "Regularization coefficient", type: "number", default: 100 },
+        ],
+      },
+      {
+        id: "herschel_bulkley_3d",
+        name: "HerschelBulkley3DLaw",
+        domainSize: 3,
+        group: "Non-Newtonian",
+        when: MONOLITHIC,
+        variables: [
+          { id: "DENSITY", label: "Density [kg/m³]", type: "number", default: 1000, unit: "kg/m³" },
+          { id: "YIELD_STRESS", label: "Yield stress [Pa]", type: "number", default: 1.0, unit: "Pa" },
+          { id: "POWER_LAW_K", label: "Consistency index K", type: "number", default: 1e-3 },
+          { id: "POWER_LAW_N", label: "Power-law index n", type: "number", default: 1.0 },
+          { id: "REGULARIZATION_COEFFICIENT", label: "Regularization coefficient", type: "number", default: 100 },
+        ],
+      },
+      temperatureDependent(3),
+      temperatureDependent(2),
     ],
     output: { nodalDefaults: ["VELOCITY", "PRESSURE"] },
   },
@@ -382,6 +718,28 @@ export const fluid = defineProblemtype(
         if (direction === "z") params.direction = [0, 0, 1];
         return result;
       }
+      if (cond.id === "periodic") {
+        const master = asStr(a.values.master, "");
+        const direction = Array.isArray(a.values.translation) ? a.values.translation : [1, 0, 0];
+        return {
+          python_module: "apply_periodic_condition_process",
+          kratos_module: "KratosMultiphysics",
+          process_name: "ApplyPeriodicConditionProcess",
+          // The wrapper resolves both parts as `<model_part_name>.<name>`, so they are given RELATIVE to the
+          // main model part (a full dotted name was looked up as `FluidModelPart.FluidModelPart.<part>` and
+          // the run died at start), and the constraints must land in the solver's computing model part.
+          Parameters: {
+            model_part_name: ctx.modelPartName,
+            computing_model_part_name: "fluid_computational_model_part",
+            first_model_part_name: master.split("/").join("."),
+            second_model_part_name: a.smpPath.split("/").join("."),
+            variable_names: ["VELOCITY", "PRESSURE"],
+            transformation_settings: {
+              translation_settings: { dir_of_translation: direction, magnitude: asNum(a.values.magnitude, 1) },
+            },
+          },
+        };
+      }
       if (cond.id === "wallLaw") {
         const result = resolveProcessTemplate(cond, a, ctx);
         const params = result.Parameters as JsonObject;
@@ -395,6 +753,22 @@ export const fluid = defineProblemtype(
       return broadcastConstrained(cond, a, ctx);
     },
     mainScript: () => monitoredMainScript("fluid"),
+    validate: (ctx) => {
+      const problems: string[] = [...statsByPart(ctx).problems];
+      const v = ctx.values;
+      if (v.elementType === "axisymmetric" && v.strategy === "monolithic" && ctx.domainSize !== 2) {
+        problems.push("The axisymmetric element is two-dimensional: use a 2D mesh or another element.");
+      }
+      const periodic = ctx.assignments.filter((a) => a.conditionId === "periodic");
+      if (periodic.length > 0 && !asBool(v.considerPeriodic, false)) {
+        problems.push('A Periodic boundary is assigned but "Periodic boundaries" is off in Problem data: the solver would ignore the pairing.');
+      }
+      for (const a of periodic) {
+        if (!asStr(a.values.master, "")) problems.push(`The periodic boundary "${a.smpPath}" has no master boundary.`);
+        if (a.values.master === a.smpPath) problems.push(`The periodic boundary "${a.smpPath}" is its own master.`);
+      }
+      return problems;
+    },
     solverSettings: (v, ctx) => {
       const fractional = v.strategy === "fractional_step";
       // skin_parts / no_skin_parts split the assignments by whether the
@@ -402,13 +776,14 @@ export const fluid = defineProblemtype(
       const skin: string[] = [];
       const noSkin: string[] = [];
       for (const a of ctx.assignments) {
-        if (a.conditionId === "parts" || a.conditionId.startsWith("initial")) continue;
+        if (a.conditionId === "parts" || a.conditionId.startsWith("initial") || FLUID_NOT_BOUNDARY.has(a.conditionId)) continue;
         (NO_SKIN.has(a.conditionId) ? noSkin : skin).push(dottedModelPart(ctx.modelPartName, a.smpPath));
       }
+      const strategy = asStr(v.strategy, "monolithic");
       const settings: JsonObject = {
         model_part_name: ctx.modelPartName,
         domain_size: ctx.domainSize,
-        solver_type: fractional ? "FractionalStep" : "Monolithic",
+        solver_type: fractional ? "FractionalStep" : strategy === "stokes" ? "monolithic_stokes" : "Monolithic",
         model_import_settings: { input_type: "mdpa", input_filename: ctx.mdpaStem },
         material_import_settings: { materials_filename: ctx.materialsFileName },
         echo_level: asNum(v.echoLevel, 0),
@@ -424,10 +799,12 @@ export const fluid = defineProblemtype(
                 CFL_number: asNum(v.courantTarget, 1.0),
                 minimum_delta_time: asNum(v.minDeltaTime, 1e-4),
                 maximum_delta_time: asNum(v.maxDeltaTime, 0.1),
-                time_step: asNum(v.timeStep, 0.01),
+                // No time_step in adaptive mode: EstimateDtUtility rejects keys
+                // outside its defaults; the solver starts from the minimum.
               }
             : { automatic_time_step: false, time_step: asNum(v.timeStep, 0.01) },
       };
+      if (asBool(v.considerPeriodic, false)) settings.consider_periodic_conditions = true;
       const linear = linearSolverSettings(v);
       if (fractional) {
         settings.dynamic_tau = asNum(v.dynamicTau, 1.0);
@@ -438,10 +815,18 @@ export const fluid = defineProblemtype(
         }
         settings.velocity_tolerance = asNum(v.velocityTolerance, 1e-3);
         settings.maximum_velocity_iterations = asNum(v.maxVelocityIterations, 4);
+        settings.time_order = asNum(v.timeOrder, 2);
+        settings.use_slip_conditions = asBool(v.useSlipConditions, true);
         if (linear) {
           settings.velocity_linear_solver_settings = { ...linear };
           settings.pressure_linear_solver_settings = { ...linear };
         }
+      } else if (strategy === "stokes") {
+        // The Stokes solver is linear, steady-capable and takes the symbolic Stokes element.
+        settings.formulation = { element_type: "symbolic_stokes" };
+        settings.analysis_type = "linear";
+        settings.force_steady_state = asBool(v.forceSteadyState, false);
+        if (linear) settings.linear_solver_settings = linear;
       } else {
         const elementType = asStr(v.elementType, "qsvms");
         settings.maximum_iterations = asNum(v.maxIterations, 10);
@@ -449,11 +834,24 @@ export const fluid = defineProblemtype(
         settings.absolute_velocity_tolerance = asNum(v.absVelTol, 1e-5);
         settings.relative_pressure_tolerance = asNum(v.relPresTol, 1e-3);
         settings.absolute_pressure_tolerance = asNum(v.absPresTol, 1e-5);
-        settings.time_scheme = asStr(v.timeScheme, "bdf2");
-        const formulation: JsonObject = { element_type: elementType };
-        // Only the VMS family has an orthogonal-subscales switch (GiD checks the same).
+        settings.time_scheme = asStr(v.timeScheme, "bossak");
+        // Kratos' own defaults (alpha -0.3, FIC beta 0.8) are not written, so recorded cases keep their bytes.
+        if (settings.time_scheme === "bossak" && asNum(v.bossakAlpha, -0.3) !== -0.3) settings.alpha = asNum(v.bossakAlpha, -0.3);
+        // Each formulation validates its own key set, so only its keys are written.
+        const formulation: JsonObject = { element_type: FORMULATION_KEY[elementType] ?? elementType };
         if (elementType === "qsvms" || elementType === "dvms" || elementType === "vms") {
           formulation.use_orthogonal_subscales = asBool(v.oss, false);
+        }
+        if (elementType === "qsvms" && asBool(v.timeIntegrated, false)) formulation.element_manages_time_integration = true;
+        if (elementType === "fic" && asNum(v.ficBeta, 0.8) !== 0.8) formulation.beta = asNum(v.ficBeta, 0.8);
+        if (elementType === "weakly_compressible") formulation.sound_velocity = asNum(v.soundVelocity, 1e12);
+        if (elementType === "vms" && asBool(v.nonNewtonian, false)) {
+          formulation.non_newtonian_fluid_parameters = {
+            power_law_k: asNum(v.powerLawK, 1e-6),
+            power_law_n: asNum(v.powerLawN, 1.0),
+            yield_stress: asNum(v.yieldStress, 0),
+            regularization_coefficient: asNum(v.regularization, 100),
+          };
         }
         formulation.dynamic_tau = asNum(v.dynamicTau, 1.0);
         settings.formulation = formulation;
@@ -463,6 +861,42 @@ export const fluid = defineProblemtype(
       return settings;
     },
     postProcess: (pp, ctx) => {
+      // One statistics process per part: higher moments read the average
+      // sampled in the same process, so the entries merge here (validation
+      // above already refused the incomplete ones).
+      const { byPart } = statsByPart(ctx);
+      if (byPart.size > 0) {
+        const processes = pp.processes as JsonObject;
+        const auxiliar = (processes.auxiliar_process_list as JsonObject[] | undefined) ?? [];
+        processes.auxiliar_process_list = auxiliar;
+        for (const [part, entries] of byPart) {
+          auxiliar.push({
+            python_module: "integration_point_statistics_process",
+            kratos_module: "KratosMultiphysics.FluidDynamicsApplication",
+            process_name: "IntegrationPointStatisticsProcess",
+            Parameters: {
+              model_part_name: dottedModelPart(ctx.modelPartName, part),
+              output_file_name: entries[0].outputFile,
+              dimension: ctx.domainSize,
+              start_time: entries[0].startTime,
+              statistics: entries.map((e): JsonObject => {
+                const stat: JsonObject = e.type === "average" ? { type: e.type, variable: e.variables[0] } : { type: e.type, variables: [...e.variables] };
+                if (e.type === "average" && e.tags.length > 0) stat.tags = [...e.tags];
+                return stat;
+              }),
+            },
+          });
+        }
+      }
+      // A monitor that writes a nodal result needs it in the output's non-historical list.
+      const wanted = [...new Set(ctx.assignments.map((a) => MONITOR_OUTPUT[a.conditionId]).filter((n): n is string => Boolean(n)))];
+      const vtk = (((pp.output_processes as JsonObject | undefined)?.vtk_output as JsonObject[] | undefined) ?? [])[0];
+      if (wanted.length > 0 && vtk) {
+        const parameters = vtk.Parameters as JsonObject;
+        const list = Array.isArray(parameters.nodal_data_value_variables) ? [...(parameters.nodal_data_value_variables as string[])] : [];
+        for (const n of wanted) if (!list.includes(n)) list.push(n);
+        parameters.nodal_data_value_variables = list;
+      }
       const modulus = asNum(ctx.values.gravityValue, 0);
       if (modulus === 0) return pp;
       // GiD writes gravity as its own process list on the fluid part.

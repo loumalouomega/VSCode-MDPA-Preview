@@ -31,6 +31,7 @@ import { packSeries } from "./sequenceExport";
 import { runBatchCommand } from "./batchCommand";
 import { previewLinks } from "./parser/previewLinkHub";
 import { openPlotBuilder } from "./plotController";
+import { previewMaterialTables } from "./materialsPreview";
 
 export function activate(context: vscode.ExtensionContext): void {
   // Linked previews: the hub relays view state between two open previews; the
@@ -229,6 +230,7 @@ export function activate(context: vscode.ExtensionContext): void {
       }
     ),
     vscode.commands.registerCommand("kratos.mesh.open", () => openMesh()),
+    vscode.commands.registerCommand("kratos.materials.previewTables", (arg?: unknown) => previewMaterialTables(context, arg)),
     vscode.commands.registerCommand("kratos.mesh.plotBuilder", () => {
       if (!postToActive({ type: "uiAction", action: "plots" })) openPlotBuilder(context);
     }),
@@ -455,6 +457,7 @@ export function activate(context: vscode.ExtensionContext): void {
         ["flowBalance", "compute a flow balance"],
         ["linkPreviews", "link previews"],
         ["optimizationProgress", "follow an optimization run"],
+        ["windTunnel", "build a virtual wind tunnel"],
         ["compareSplit", "compare another mesh in a split pane"],
         ["dataTable", "open the data table"],
         ["lighting", "adjust lighting"],

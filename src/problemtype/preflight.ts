@@ -28,6 +28,8 @@ import { CaseState, FieldRequirement, ProblemtypeRuntime } from "./types";
 import { fieldDefault } from "./api";
 import { isFieldVisible } from "./layout";
 import { planCaseMesh } from "./caseMesh";
+import { ransPeriodicIdProblems } from "./periodicCheck";
+import { FLUID_NOT_BOUNDARY, NO_SKIN } from "./builtins/fluid";
 import {
   domainOfCondition,
   domainOfLaw,
@@ -248,6 +250,14 @@ export async function preflightCase(
     }
   }
 
+  // --- 2b. RANS periodic: the formulation's own condition ids must not meet the mesh's. ---
+  if (decl.id === "rans" && state.assignments.some((a) => a.conditionId === "periodic")) {
+    const skinPaths = state.assignments
+      .filter((a) => a.conditionId !== "parts" && !a.conditionId.startsWith("initial") && !FLUID_NOT_BOUNDARY.has(a.conditionId) && !NO_SKIN.has(a.conditionId))
+      .map((a) => a.smpPath);
+    for (const message of ransPeriodicIdProblems(model, state.assignments, skinPaths)) add("warning", "periodic-condition-ids", message);
+  }
+
   // --- 3. Computing parts and their materials. ---
   const computing = state.assignments.filter((a) => partIds.has(a.conditionId));
   const lawsOf = (domainId: string | undefined): string[] =>
@@ -301,7 +311,12 @@ export async function preflightCase(
       surface: ["conditionIds", "geometryIds", "elementIds"],
     };
     const lists = need[cond.target];
-    if (lists && !partHas(part, lists)) {
+    // An emitted load is synthesized from the part's own entities, so a part
+    // the plain target check rejects may still feed the emitter.
+    const emittable =
+      cond.emit !== undefined &&
+      partHas(part, cond.emit.source === "nodes" ? ["nodeIds", "conditionIds"] : ["elementIds", "conditionIds"]);
+    if (lists && !partHas(part, lists) && !emittable) {
       const what = cond.target === "nodes" ? "nodes" : cond.target === "volume" ? "elements" : "conditions or elements";
       add("warning", "part-wrong-kind",
         `"${cond.label}" targets ${cond.target === "nodes" ? "nodes" : cond.target}, but "${a.smpPath}" has no ${what}, so it would have nothing to act on.`,

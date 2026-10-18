@@ -45,6 +45,13 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      # typecheck cannot see what a bundle may not import: a Node-only module
+      # pulled into the browser webview bundle (the wind-tunnel form once did)
+      # type-checks fine and only fails in esbuild, i.e. at release time.
+      - name: Bundle extension and webview
+        if: runner.os == 'Linux'
+        run: npm run compile
+
       - name: Build tests
         run: npm run build:tests
 

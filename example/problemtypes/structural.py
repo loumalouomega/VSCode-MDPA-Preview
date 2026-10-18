@@ -19,15 +19,30 @@ it cannot drift; only the hooks are hand-written. They show:
 """
 
 from kratos_problemtype import (define_problemtype, section, field, field_group,
-                                condition, material_law)
+                                condition, material_law, application)
+import math
 
 NAME = "Structural Mechanics (Python example)"
 
 # Element formulations and the DOF flags each switches on in solver_settings.
 FORMULATIONS = {
     "LinearTimoshenkoBeamElement": {"rotation": True},
+    "LinearTimoshenkoCurvedBeamElement": {"rotation": True},
     "CrBeamElement": {"rotation": True},
+    "CrLinearBeamElement": {"rotation": True},
+    "ShellThinElementCorotational": {"rotation": True},
+    "ShellThickElementCorotational": {"rotation": True},
+    "ShellThinElement": {"rotation": True},
+    "MITCThickShellElement": {"rotation": True},
+    "MITCThickShellCorotationalElement": {"rotation": True},
+    "CSDSG3ThickShellLinearElement": {"rotation": True},
+    "CSDSG3ThickShellCorotationalElement": {"rotation": True},
+    "BushingElement": {"rotation": True},
+    "SpringDamperElement": {"rotation": True},
     "SmallDisplacementMixedVolumetricStrainElement": {"volumetric_strain": True},
+    "SmallDisplacementMixedVolumetricStrainOssElement": {"volumetric_strain": True},
+    "SmallDisplacementMixedVolumetricStrainOssNonLinearElement": {"volumetric_strain": True},
+    "TotalLagrangianMixedVolumetricStrainElement": {"volumetric_strain": True},
     "SmallDisplacementMixedStrainElement": {"strain": True},
 }
 
@@ -36,9 +51,12 @@ def solver_settings(values, ctx):
     kind = values["solverType"]
     dynamic = kind == "dynamic"
     eigen = kind == "eigen_value"
+    harmonic = kind == "harmonic_analysis"
+    harmonic_type = values.get("harmonicType", "modal")
+    explicit = dynamic and values.get("timeIntegration", "implicit") == "explicit"
     flags = FORMULATIONS.get(values["elementBase"], {})
     settings = {
-        "solver_type": "eigen_value" if eigen else "Dynamic" if dynamic else "Static",
+        "solver_type": "eigen_value" if eigen else "harmonic_analysis" if harmonic else "Dynamic" if dynamic else "Static",
         "model_part_name": ctx["model_part_name"],
         "domain_size": ctx["domain_size"],
         "echo_level": values["echoLevel"],
@@ -53,19 +71,35 @@ def solver_settings(values, ctx):
         settings["volumetric_strain_dofs"] = True
     if eigen:
         settings["eigensolver_settings"] = {
-            "solver_type": "eigen_eigensystem",
+            "solver_type": values["eigenSolver"],
             "max_iteration": values["eigenMaxIteration"],
             "tolerance": values["eigenTolerance"],
             "number_of_eigenvalues": values["eigenCount"],
             "echo_level": 1,
         }
+        settings["compute_modal_decomposition"] = values["eigenModalDecomposition"]
+        settings["normalize_eigenvectors_with_mass_matrix"] = values["eigenNormalizeEigenvectors"]
         settings["builder_and_solver_settings"] = {"use_block_builder": False}
+        return settings
+    if harmonic:
+        settings["harmonic_analysis_type"] = harmonic_type
+        if harmonic_type == "modal":
+            settings["modal_harmonic_analysis_settings"] = {
+                "use_effective_material_damping": values["harmonicDamping"],
+            }
+        else:
+            settings["direct_harmonic_analysis_settings"] = {
+                "assemble_damping_matrix": values["harmonicAssembleDamping"],
+                "real_load_sub_model_part_list": [_load_sibling(ctx, "pointLoad", a["smpPath"]) for a in ctx["assignments"] if a["conditionId"] == "pointLoad"],
+                "imaginary_load_sub_model_part_list": [_load_sibling(ctx, "imaginaryPointLoad", a["smpPath"]) for a in ctx["assignments"] if a["conditionId"] == "imaginaryPointLoad"],
+                "complex_linear_solver_settings": {"solver_type": "pardiso_lu_complex"},
+            }
         return settings
     non_linear = values["analysisType"] == "non_linear"
     settings["analysis_type"] = "non_linear" if non_linear else "linear"
     if dynamic:
-        settings["time_integration_method"] = "implicit"
-        settings["scheme_type"] = values["schemeType"]
+        settings["time_integration_method"] = "explicit" if explicit else "implicit"
+        settings["scheme_type"] = values["explicitScheme"] if explicit else values["schemeType"]
         settings["rayleigh_alpha"] = values["rayleighAlpha"]
         settings["rayleigh_beta"] = values["rayleighBeta"]
     if non_linear:
@@ -111,10 +145,55 @@ def _resolve(node, assignment, ctx):
     return node
 
 
+def _sibling(assignment, emit):
+    """The emitted sibling part of an assignment (mirrors siblingPathFor)."""
+    path = assignment["smpPath"]
+    parent, _, name = path.rpartition("/")
+    return (parent + "/" if parent else "") + name + emit["sibling"]
+
+
+_LOAD_SIBLING = {"pointLoad": "PointLoad", "imaginaryPointLoad": "ImaginaryPointLoad"}
+
+
+def _load_sibling(ctx, condition_id, smp_path):
+    """The dotted sibling part a load assignment's conditions were emitted into."""
+    return ctx["model_part_name"] + "." + _sibling({"smpPath": smp_path}, {"sibling": _LOAD_SIBLING[condition_id]}).replace("/", ".")
+
+
+def _moving_load_process(cond, assignment, ctx):
+    values = assignment["values"]
+    modulus = values.get("modulus", 0)
+    direction = values.get("direction", [0, 0, -1])
+    norm = math.sqrt(sum(x * x for x in direction))
+    unit = [x / norm for x in direction] if norm >= 1e-12 else [0.0, 0.0, 0.0]
+    motion = values.get("motionDirection", [1, 0, 0])
+    return {
+        "python_module": "set_moving_load_process",
+        "kratos_module": "KratosMultiphysics.StructuralMechanicsApplication",
+        "process_name": "SetMovingLoadProcess",
+        "Parameters": {
+            "model_part_name": ctx["model_part_name"] + "." + _sibling(assignment, cond["emit"]).replace("/", "."),
+            "variable_name": "POINT_LOAD",
+            "load": [modulus * x for x in unit],
+            "direction": list(motion),
+            "velocity": values.get("velocity", 1),
+            "origin": list(values.get("origin", [0, 0, 0])),
+            "motion_type": values.get("motionType", "base"),
+        },
+    }
+
+
 def build_process(cond, assignment, ctx):
+    if cond["id"] == "movingLoad":
+        return _moving_load_process(cond, assignment, ctx)
     template = cond["processTemplate"]
     if template.get("python_module") != "assign_vector_variable_process":
-        return None  # every other condition uses its declarative template
+        if not cond.get("emit"):
+            return None  # every other condition uses its declarative template
+        process = _resolve(template, assignment, ctx)
+        process["Parameters"]["model_part_name"] = (
+            ctx["model_part_name"] + "." + _sibling(assignment, cond["emit"]).replace("/", "."))
+        return process
     process = _resolve(template, assignment, ctx)
     fixed = assignment["values"].get("constrained", True)
     fixed = fixed if isinstance(fixed, bool) else True
@@ -122,6 +201,22 @@ def build_process(cond, assignment, ctx):
     process["Parameters"]["constrained"] = [fixed, fixed, fixed]
     process["Parameters"]["value"] = value if isinstance(value, list) else [0, 0, 0]
     return process
+
+
+def validate(ctx):
+    problems = []
+    for a in ctx["assignments"]:
+        if a["conditionId"] != "movingLoad":
+            continue
+        for field_id, what, dflt in (("direction", "load direction", [0, 0, -1]),
+                                   ("motionDirection", "motion direction", [1, 0, 0])):
+            v = a["values"].get(field_id, dflt)
+            if math.sqrt(sum(x * x for x in v)) < 1e-12:
+                problems.append(f'Moving load on "{a["smpPath"]}": the {what} is zero — give it a direction.')
+    if ctx["values"].get("solverType") == "harmonic_analysis" and ctx["values"].get("harmonicType", "modal") == "direct":
+        if not any(a["conditionId"] == "pointLoad" for a in ctx["assignments"]):
+            problems.append('Direct harmonic analysis assembles its real load from point loads, so assign at least one "Point load".')
+    return problems
 
 
 def post_process(project_parameters, ctx):
@@ -145,10 +240,15 @@ def post_process(project_parameters, ctx):
 
 # --- declaration of "structural" generated by scripts/problemtype-to-python.mjs ---
 SECTION_0 = section("problem", "Problem data",
-    field("solverType", "Analysis", "enum", default="static", options=[{"value": "static", "label": "Static"}, {"value": "dynamic", "label": "Dynamic"}, {"value": "eigen_value", "label": "Eigenvalues"}], group="analysis"),
-    field("analysisType", "Linearity", "enum", default="linear", options=[{"value": "linear", "label": "Linear"}, {"value": "non_linear", "label": "Non-linear"}], visible_when={"field": "solverType", "one_of": ["static", "dynamic"]}, group="analysis"),
-    field("elementBase", "Element formulation", "enum", default="SmallDisplacementElement", options=[{"value": "SmallDisplacementElement", "label": "Solid small displacements"}, {"value": "SmallDisplacementBbarElement", "label": "Solid small displacements B-bar"}, {"value": "SmallDisplacementMixedVolumetricStrainElement", "label": "Solid small displacements mixed u-εvol"}, {"value": "SmallDisplacementMixedStrainElement", "label": "Solid small displacements mixed u-ε"}, {"value": "TotalLagrangianElement", "label": "Solid total Lagrangian"}, {"value": "UpdatedLagrangianElement", "label": "Solid updated Lagrangian"}, {"value": "LinearTimoshenkoBeamElement", "label": "Beam small displacements"}, {"value": "CrBeamElement", "label": "Beam large displacements (corotational)"}, {"value": "LinearTrussElement", "label": "Truss small displacements"}, {"value": "TotalLagrangianTrussElement", "label": "Truss large displacements"}], group="analysis"),
-    field("schemeType", "Scheme", "enum", default="bossak", options=[{"value": "newmark", "label": "Newmark"}, {"value": "bossak", "label": "Bossak"}], visible_when={"field": "solverType", "equals": "dynamic"}, help="Bossak damps high-frequency accelerations; Newmark does not.", group="analysis"),
+    field("solverType", "Analysis", "enum", default="static", options=[{"value": "static", "label": "Static"}, {"value": "dynamic", "label": "Dynamic"}, {"value": "eigen_value", "label": "Eigenvalues"}, {"value": "harmonic_analysis", "label": "Harmonic"}], group="analysis"),
+    field("analysisType", "Linearity", "enum", default="linear", options=[{"value": "linear", "label": "Linear"}, {"value": "non_linear", "label": "Non-linear"}], visible_when={"field": "solverType", "one_of": ["static", "dynamic", "harmonic_analysis"]}, group="analysis"),
+    field("elementBase", "Element formulation", "enum", default="SmallDisplacementElement", options=[{"value": "SmallDisplacementElement", "label": "Solid small displacements"}, {"value": "SmallDisplacementBbarElement", "label": "Solid small displacements B-bar"}, {"value": "SmallDisplacementMixedVolumetricStrainElement", "label": "Solid small displacements mixed u-εvol"}, {"value": "SmallDisplacementMixedVolumetricStrainOssElement", "label": "Solid small displacements mixed u-εvol (OSS)"}, {"value": "SmallDisplacementMixedVolumetricStrainOssNonLinearElement", "label": "Solid small displacements mixed u-εvol (OSS, non-linear)"}, {"value": "SmallDisplacementMixedStrainElement", "label": "Solid small displacements mixed u-ε"}, {"value": "TotalLagrangianElement", "label": "Solid total Lagrangian"}, {"value": "UpdatedLagrangianElement", "label": "Solid updated Lagrangian"}, {"value": "TotalLagrangianMixedVolumetricStrainElement", "label": "Solid total Lagrangian mixed u-εvol"}, {"value": "TotalLagrangianQ1P0MixedElement", "label": "Solid total Lagrangian Q1P0"}, {"value": "AxisymSmallDisplacementElement", "label": "Axisymmetric small displacements"}, {"value": "AxisymTotalLagrangianElement", "label": "Axisymmetric total Lagrangian"}, {"value": "AxisymUpdatedLagrangianElement", "label": "Axisymmetric updated Lagrangian"}, {"value": "SolidShellElementSprism", "label": "Solid-shell (SPRISM 3D6N)"}, {"value": "LinearTimoshenkoBeamElement", "label": "Beam small displacements (Timoshenko)"}, {"value": "LinearTimoshenkoCurvedBeamElement", "label": "Beam small displacements (curved Timoshenko)"}, {"value": "CrBeamElement", "label": "Beam large displacements (corotational)"}, {"value": "CrLinearBeamElement", "label": "Beam small displacements (corotational)"}, {"value": "LinearTrussElement", "label": "Truss small displacements"}, {"value": "TotalLagrangianTrussElement", "label": "Truss large displacements"}, {"value": "TrussElement", "label": "Truss large displacements (legacy)"}, {"value": "TrussLinearElement", "label": "Truss small displacements (legacy)"}, {"value": "CableElement", "label": "Cable"}, {"value": "ShellThinElementCorotational", "label": "Shell thin corotational"}, {"value": "ShellThickElementCorotational", "label": "Shell thick corotational"}, {"value": "ShellThinElement", "label": "Shell thin"}, {"value": "MITCThickShellElement", "label": "Shell thick (MITC)"}, {"value": "MITCThickShellCorotationalElement", "label": "Shell thick corotational (MITC)"}, {"value": "CSDSG3ThickShellLinearElement", "label": "Shell thick CS-DSG3"}, {"value": "CSDSG3ThickShellCorotationalElement", "label": "Shell thick corotational CS-DSG3"}, {"value": "MembraneElement", "label": "Membrane"}, {"value": "NodalConcentratedElement", "label": "Point mass"}, {"value": "NodalConcentratedDampedElement", "label": "Point mass (damped)"}, {"value": "LineMassElement", "label": "Line mass"}, {"value": "SurfaceMassElement", "label": "Surface mass"}, {"value": "BushingElement", "label": "Bushing"}, {"value": "SpringDamperElement", "label": "Spring / damper"}], group="analysis"),
+    field("schemeType", "Scheme", "enum", default="bossak", options=[{"value": "newmark", "label": "Newmark"}, {"value": "bossak", "label": "Bossak"}], visible_when=[{"field": "solverType", "equals": "dynamic"}, {"field": "timeIntegration", "equals": "implicit"}], help="Bossak damps high-frequency accelerations; Newmark does not.", group="analysis"),
+    field("timeIntegration", "Time integration", "enum", default="implicit", options=[{"value": "implicit", "label": "Implicit"}, {"value": "explicit", "label": "Explicit"}], visible_when={"field": "solverType", "equals": "dynamic"}, help="Explicit advances with central differences and no system solve; the step must resolve the shortest wave transit.", group="analysis"),
+    field("explicitScheme", "Explicit scheme", "enum", default="central_differences", options=[{"value": "central_differences", "label": "Central differences"}, {"value": "multi_stage", "label": "Multi-stage"}], visible_when=[{"field": "solverType", "equals": "dynamic"}, {"field": "timeIntegration", "equals": "explicit"}], group="analysis"),
+    field("harmonicType", "Harmonic analysis", "enum", default="modal", options=[{"value": "modal", "label": "Modal (superposition)"}, {"value": "direct", "label": "Direct (complex solve)"}], visible_when={"field": "solverType", "equals": "harmonic_analysis"}, help="Modal superposes the eigenmodes for the steady-state response; direct solves the complex system at each frequency and needs a real load list.", group="harmonic"),
+    field("harmonicDamping", "Use effective material damping", "bool", default=False, visible_when=[{"field": "solverType", "equals": "harmonic_analysis"}, {"field": "harmonicType", "equals": "modal"}], group="harmonic"),
+    field("harmonicAssembleDamping", "Assemble damping matrix", "bool", default=False, visible_when=[{"field": "solverType", "equals": "harmonic_analysis"}, {"field": "harmonicType", "equals": "direct"}], group="harmonic"),
     field("startTime", "Start time", "number", default=0, unit="s", group="time"),
     field("timeStep", "Time step", "number", default=0.1, unit="s", group="time", min=0),
     field("endTime", "End time", "number", default=1, unit="s", group="time"),
@@ -165,12 +265,15 @@ SECTION_0 = section("problem", "Problem data",
     field("eigenCount", "Number of eigenvalues", "int", default=5, visible_when={"field": "solverType", "equals": "eigen_value"}, group="eigen", min=1),
     field("eigenMaxIteration", "Max iterations", "int", default=1000, visible_when={"field": "solverType", "equals": "eigen_value"}, group="eigen", min=1),
     field("eigenTolerance", "Tolerance", "number", default=0.000001, visible_when={"field": "solverType", "equals": "eigen_value"}, group="eigen", min=0),
+    field("eigenSolver", "Eigensolver", "enum", default="eigen_eigensystem", options=[{"value": "eigen_eigensystem", "label": "Eigensystem (Spectra shift-invert)"}, {"value": "spectra_sym_g_eigs_shift", "label": "Spectra shift-invert"}, {"value": "dense_eigensolver", "label": "Dense"}, {"value": "power_iteration_eigenvalue_solver", "label": "Power iteration"}, {"value": "power_iteration_highest_eigenvalue_solver", "label": "Power iteration (highest)"}], visible_when={"field": "solverType", "equals": "eigen_value"}, help="All but the dense solver need LinearSolversApplication, which the driver then requires.", group="eigen"),
+    field("eigenModalDecomposition", "Compute modal decomposition", "bool", default=False, visible_when={"field": "solverType", "equals": "eigen_value"}, group="eigen"),
+    field("eigenNormalizeEigenvectors", "Normalize eigenvectors with mass matrix", "bool", default=False, visible_when={"field": "solverType", "equals": "eigen_value"}, group="eigen"),
     field("linearSolver", "Solver", "enum", default="automatic", options=[{"value": "automatic", "label": "Automatic"}, {"value": "LinearSolversApplication.sparse_lu", "label": "Sparse LU"}, {"value": "cg", "label": "Conjugate gradients"}, {"value": "bicgstab", "label": "BiCGStab"}], visible_when={"field": "solverType", "one_of": ["static", "dynamic"]}, help="Automatic lets Kratos pick the default solver of the selected strategy.", group="linear"),
     field("linearMaxIteration", "Max iterations", "int", default=200, visible_when=[{"field": "solverType", "one_of": ["static", "dynamic"]}, {"field": "linearSolver", "one_of": ["cg", "bicgstab"]}], group="linear", min=1),
     field("linearTolerance", "Tolerance", "number", default=1e-7, visible_when=[{"field": "solverType", "one_of": ["static", "dynamic"]}, {"field": "linearSolver", "one_of": ["cg", "bicgstab"]}], group="linear", min=0),
     field("preconditioner", "Preconditioner", "enum", default="none", options=["none", "diagonal", "ilu", "ilu0"], visible_when=[{"field": "solverType", "one_of": ["static", "dynamic"]}, {"field": "linearSolver", "one_of": ["cg", "bicgstab"]}], group="linear"),
     field("echoLevel", "Echo level", "int", default=1, min=0, max=3, advanced=True),
-    groups=[field_group("analysis", "Analysis", icon="ptSolver"), field_group("time", "Time", icon="ptTime"), field_group("nonlinear", "Non-linear iteration", icon="ptSolver"), field_group("dynamic", "Dynamic damping", icon="ptTime"), field_group("eigen", "Eigenvalue solver", icon="ptSolver"), field_group("linear", "Linear solver", icon="ptSolver", collapsed=True)])
+    groups=[field_group("analysis", "Analysis", icon="ptSolver"), field_group("time", "Time", icon="ptTime"), field_group("nonlinear", "Non-linear iteration", icon="ptSolver"), field_group("dynamic", "Dynamic damping", icon="ptTime"), field_group("eigen", "Eigenvalue solver", icon="ptSolver"), field_group("harmonic", "Harmonic analysis", icon="ptSolver"), field_group("linear", "Linear solver", icon="ptSolver", collapsed=True)])
 
 CONDITIONS = [
     condition("parts", "Body / Parts", list="list_other_processes", target="volume",
@@ -291,6 +394,22 @@ CONDITIONS = [
                   },
               },
               category="initial", icon="ptInitial"),
+    condition("angularAcceleration", "Angular acceleration", list="constraints_process_list", target="any",
+              fields=[field("value", "Value [rad/s²]", "vector3", default=[0, 0, 0]),
+                      field("constrained", "Fixed", "bool", default=False)],
+              process_template={
+                  "python_module": "assign_vector_variable_process",
+                  "kratos_module": "KratosMultiphysics",
+                  "process_name": "AssignVectorVariableProcess",
+                  "Parameters": {
+                      "model_part_name": "$path",
+                      "variable_name": "ANGULAR_ACCELERATION",
+                      "interval": [0, 0],
+                      "constrained": "$field:constrained",
+                      "value": "$field:value",
+                  },
+              },
+              category="initial", icon="ptInitial"),
     condition("selfWeight", "Self weight", list="loads_process_list", target="volume",
               fields=[field("modulus", "Modulus [m/s²]", "number", default=9.81),
                       field("direction", "Direction", "vector3", default=[0, 0, -1])],
@@ -323,7 +442,7 @@ CONDITIONS = [
                       "interval": [0, "End"],
                   },
               },
-              category="loads", icon="ptLoad"),
+              category="loads", icon="ptLoad", emit={"sibling":"PointLoad","source":"nodes","family":"point","formulationField":"elementBase","axisymmetricPoint":"AxisymPointLoadCondition2D1N"}),
     condition("pointMoment", "Point moment", list="loads_process_list", target="nodes",
               fields=[field("modulus", "Modulus [N·m]", "number", default=0),
                       field("direction", "Direction", "vector3", default=[0, 0, -1])],
@@ -339,7 +458,40 @@ CONDITIONS = [
                       "interval": [0, "End"],
                   },
               },
-              help="3D only.", category="loads", icon="ptLoad"),
+              help="3D only.", category="loads", icon="ptLoad", emit={"sibling":"PointMoment","source":"nodes","family":"moment"}),
+    condition("imaginaryPointLoad", "Imaginary point load", list="loads_process_list", target="nodes",
+              fields=[field("modulus", "Modulus [N]", "number", default=0),
+                      field("direction", "Direction", "vector3", default=[0, 0, -1])],
+              process_template={
+                  "python_module": "assign_vector_by_direction_to_condition_process",
+                  "kratos_module": "KratosMultiphysics",
+                  "process_name": "AssignVectorByDirectionToConditionProcess",
+                  "Parameters": {
+                      "model_part_name": "$path",
+                      "variable_name": "POINT_LOAD_IMAGINARY",
+                      "modulus": "$field:modulus",
+                      "direction": "$field:direction",
+                      "interval": [0, "End"],
+                  },
+              },
+              help="Direct harmonic analysis: the imaginary part of a point load.", category="loads", icon="ptLoad", emit={"sibling":"ImaginaryPointLoad","source":"nodes","family":"point","formulationField":"elementBase","pointName":"ImaginaryPointLoadCondition"}),
+    condition("movingLoad", "Moving load", list="loads_process_list", target="surface",
+              fields=[field("modulus", "Modulus [N]", "number", default=0),
+                      field("direction", "Direction", "vector3", default=[0, 0, -1]),
+                      field("velocity", "Velocity [m/s]", "number", default=1),
+                      field("motionDirection", "Motion direction", "vector3", default=[1, 0, 0]),
+                      field("origin", "Origin [m]", "vector3", default=[0, 0, 0]),
+                      field("motionType", "Motion type", "enum", default="base", options=[{"value": "base", "label": "Base"}, {"value": "total", "label": "Total"}])],
+              process_template={
+                  "python_module": "set_moving_load_process",
+                  "kratos_module": "KratosMultiphysics.StructuralMechanicsApplication",
+                  "process_name": "SetMovingLoadProcess",
+                  "Parameters": {
+                      "model_part_name": "$path",
+                      "variable_name": "POINT_LOAD",
+                  },
+              },
+              help="A load travelling along the part's line entities (bridge traffic): the lines are re-emitted as MovingLoadCondition blocks in a sibling part.", category="loads", icon="ptLoad", emit={"sibling":"MovingLoad","source":"lines","family":"moving"}),
     condition("lineLoad", "Line load", list="loads_process_list", target="surface",
               fields=[field("modulus", "Modulus [N/m]", "number", default=0),
                       field("direction", "Direction", "vector3", default=[0, 0, -1])],
@@ -393,22 +545,407 @@ MATERIAL_LAWS = [
                  variables=[field("DENSITY", "Density [kg/m³]", "number", default=7850, unit="kg/m³"),
                             field("YOUNG_MODULUS", "Young modulus [Pa]", "number", default=210000000000, unit="Pa"),
                             field("POISSON_RATIO", "Poisson ratio", "number", default=0.29)],
+                 group="Elastic",
+                 when={"field": "elementBase", "one_of": ["SmallDisplacementElement", "SmallDisplacementBbarElement", "SmallDisplacementMixedVolumetricStrainElement", "SmallDisplacementMixedVolumetricStrainOssElement", "SmallDisplacementMixedVolumetricStrainOssNonLinearElement", "SmallDisplacementMixedStrainElement", "TotalLagrangianElement", "UpdatedLagrangianElement", "TotalLagrangianMixedVolumetricStrainElement", "TotalLagrangianQ1P0MixedElement", "SolidShellElementSprism", "ShellThinElementCorotational", "ShellThickElementCorotational", "ShellThinElement", "MITCThickShellElement", "MITCThickShellCorotationalElement", "CSDSG3ThickShellLinearElement", "CSDSG3ThickShellCorotationalElement"]},
                  domain_size=3),
     material_law("linear_elastic_plane_strain", "LinearElasticPlaneStrain2DLaw",
                  variables=[field("DENSITY", "Density [kg/m³]", "number", default=7850, unit="kg/m³"),
                             field("YOUNG_MODULUS", "Young modulus [Pa]", "number", default=210000000000, unit="Pa"),
                             field("POISSON_RATIO", "Poisson ratio", "number", default=0.29),
                             field("THICKNESS", "Thickness [m]", "number", default=1, unit="m")],
+                 group="Elastic",
+                 when={"field": "elementBase", "one_of": ["SmallDisplacementElement", "SmallDisplacementBbarElement", "SmallDisplacementMixedVolumetricStrainElement", "SmallDisplacementMixedVolumetricStrainOssElement", "SmallDisplacementMixedVolumetricStrainOssNonLinearElement", "SmallDisplacementMixedStrainElement", "TotalLagrangianElement", "UpdatedLagrangianElement", "TotalLagrangianMixedVolumetricStrainElement", "TotalLagrangianQ1P0MixedElement", "SolidShellElementSprism"]},
                  domain_size=2),
     material_law("linear_elastic_plane_stress", "LinearElasticPlaneStress2DLaw",
                  variables=[field("DENSITY", "Density [kg/m³]", "number", default=7850, unit="kg/m³"),
                             field("YOUNG_MODULUS", "Young modulus [Pa]", "number", default=210000000000, unit="Pa"),
                             field("POISSON_RATIO", "Poisson ratio", "number", default=0.29),
                             field("THICKNESS", "Thickness [m]", "number", default=1, unit="m")],
+                 group="Elastic",
+                 when={"field": "elementBase", "one_of": ["SmallDisplacementElement", "SmallDisplacementBbarElement", "SmallDisplacementMixedVolumetricStrainElement", "SmallDisplacementMixedVolumetricStrainOssElement", "SmallDisplacementMixedVolumetricStrainOssNonLinearElement", "SmallDisplacementMixedStrainElement", "TotalLagrangianElement", "UpdatedLagrangianElement", "TotalLagrangianMixedVolumetricStrainElement", "TotalLagrangianQ1P0MixedElement", "SolidShellElementSprism"]},
                  domain_size=2),
+    material_law("linear_elastic_axisym", "LinearElasticAxisym2DLaw",
+                 variables=[field("DENSITY", "Density [kg/m³]", "number", default=7850, unit="kg/m³"),
+                            field("YOUNG_MODULUS", "Young modulus [Pa]", "number", default=210000000000, unit="Pa"),
+                            field("POISSON_RATIO", "Poisson ratio", "number", default=0.29)],
+                 group="Elastic",
+                 when={"field": "elementBase", "one_of": ["AxisymSmallDisplacementElement", "AxisymTotalLagrangianElement", "AxisymUpdatedLagrangianElement"]},
+                 domain_size=2),
+    material_law("beam_2d", "BeamConstitutiveLaw",
+                 variables=[field("DENSITY", "Density [kg/m³]", "number", default=7850, unit="kg/m³"),
+                            field("YOUNG_MODULUS", "Young modulus [Pa]", "number", default=210000000000, unit="Pa"),
+                            field("POISSON_RATIO", "Poisson ratio", "number", default=0.29),
+                            field("CROSS_AREA", "Cross area [m²]", "number", default=1, unit="m²"),
+                            field("I33", "Bending inertia I33 [m⁴]", "number", default=1, unit="m⁴")],
+                 group="Beam",
+                 when={"field": "elementBase", "one_of": ["LinearTimoshenkoBeamElement", "LinearTimoshenkoCurvedBeamElement", "CrBeamElement", "CrLinearBeamElement"]},
+                 domain_size=2),
+    material_law("beam_3d", "BeamConstitutiveLaw",
+                 variables=[field("DENSITY", "Density [kg/m³]", "number", default=7850, unit="kg/m³"),
+                            field("YOUNG_MODULUS", "Young modulus [Pa]", "number", default=210000000000, unit="Pa"),
+                            field("POISSON_RATIO", "Poisson ratio", "number", default=0.29),
+                            field("CROSS_AREA", "Cross area [m²]", "number", default=1, unit="m²"),
+                            field("TORSIONAL_INERTIA", "Torsional inertia [m⁴]", "number", default=1, unit="m⁴"),
+                            field("I22", "Bending inertia I22 [m⁴]", "number", default=1, unit="m⁴"),
+                            field("I33", "Bending inertia I33 [m⁴]", "number", default=1, unit="m⁴")],
+                 group="Beam",
+                 when={"field": "elementBase", "one_of": ["LinearTimoshenkoBeamElement", "LinearTimoshenkoCurvedBeamElement", "CrBeamElement", "CrLinearBeamElement"]},
+                 domain_size=3),
+    material_law("truss", "TrussConstitutiveLaw",
+                 variables=[field("DENSITY", "Density [kg/m³]", "number", default=7850, unit="kg/m³"),
+                            field("YOUNG_MODULUS", "Young modulus [Pa]", "number", default=210000000000, unit="Pa"),
+                            field("CROSS_AREA", "Cross area [m²]", "number", default=1, unit="m²"),
+                            field("TRUSS_PRESTRESS_PK2", "Prestress [Pa]", "number", default=0, unit="Pa")],
+                 group="Truss & cable",
+                 when={"field": "elementBase", "one_of": ["LinearTrussElement", "TotalLagrangianTrussElement", "TrussElement", "TrussLinearElement", "CableElement"]}),
+    material_law("shell", "ReissnerMindlinShellElasticConstitutiveLaw",
+                 variables=[field("DENSITY", "Density [kg/m³]", "number", default=7850, unit="kg/m³"),
+                            field("YOUNG_MODULUS", "Young modulus [Pa]", "number", default=210000000000, unit="Pa"),
+                            field("POISSON_RATIO", "Poisson ratio", "number", default=0.29),
+                            field("THICKNESS", "Thickness [m]", "number", default=1, unit="m")],
+                 group="Shell",
+                 when={"field": "elementBase", "one_of": ["ShellThinElementCorotational", "ShellThickElementCorotational", "ShellThinElement", "MITCThickShellElement", "MITCThickShellCorotationalElement", "CSDSG3ThickShellLinearElement", "CSDSG3ThickShellCorotationalElement"]},
+                 domain_size=3),
+    material_law("membrane", "LinearElasticPlaneStress2DLaw",
+                 variables=[field("DENSITY", "Density [kg/m³]", "number", default=7850, unit="kg/m³"),
+                            field("YOUNG_MODULUS", "Young modulus [Pa]", "number", default=210000000000, unit="Pa"),
+                            field("POISSON_RATIO", "Poisson ratio", "number", default=0.29),
+                            field("THICKNESS", "Thickness [m]", "number", default=1, unit="m")],
+                 group="Membrane",
+                 when={"field": "elementBase", "one_of": ["MembraneElement"]}),
+    material_law("hyperelastic_3d", "HyperElastic3DLaw",
+                 variables=[field("DENSITY", "Density [kg/m³]", "number", default=7850, unit="kg/m³"),
+                            field("YOUNG_MODULUS", "Young modulus [Pa]", "number", default=210000000000, unit="Pa"),
+                            field("POISSON_RATIO", "Poisson ratio", "number", default=0.29)],
+                 application="ConstitutiveLawsApplication",
+                 group="Hyperelastic",
+                 when={"field": "elementBase", "one_of": ["SmallDisplacementElement", "SmallDisplacementBbarElement", "SmallDisplacementMixedVolumetricStrainElement", "SmallDisplacementMixedVolumetricStrainOssElement", "SmallDisplacementMixedVolumetricStrainOssNonLinearElement", "SmallDisplacementMixedStrainElement", "TotalLagrangianElement", "UpdatedLagrangianElement", "TotalLagrangianMixedVolumetricStrainElement", "TotalLagrangianQ1P0MixedElement", "SolidShellElementSprism", "ShellThinElementCorotational", "ShellThickElementCorotational", "ShellThinElement", "MITCThickShellElement", "MITCThickShellCorotationalElement", "CSDSG3ThickShellLinearElement", "CSDSG3ThickShellCorotationalElement"]},
+                 domain_size=3),
+    material_law("hyperelastic_plane_strain", "HyperElasticPlaneStrain2DLaw",
+                 variables=[field("DENSITY", "Density [kg/m³]", "number", default=7850, unit="kg/m³"),
+                            field("YOUNG_MODULUS", "Young modulus [Pa]", "number", default=210000000000, unit="Pa"),
+                            field("POISSON_RATIO", "Poisson ratio", "number", default=0.29)],
+                 application="ConstitutiveLawsApplication",
+                 group="Hyperelastic",
+                 when={"field": "elementBase", "one_of": ["SmallDisplacementElement", "SmallDisplacementBbarElement", "SmallDisplacementMixedVolumetricStrainElement", "SmallDisplacementMixedVolumetricStrainOssElement", "SmallDisplacementMixedVolumetricStrainOssNonLinearElement", "SmallDisplacementMixedStrainElement", "TotalLagrangianElement", "UpdatedLagrangianElement", "TotalLagrangianMixedVolumetricStrainElement", "TotalLagrangianQ1P0MixedElement", "SolidShellElementSprism"]},
+                 domain_size=2),
+    material_law("kirchhoff_3d", "KirchhoffSaintVenant3DLaw",
+                 variables=[field("DENSITY", "Density [kg/m³]", "number", default=7850, unit="kg/m³"),
+                            field("YOUNG_MODULUS", "Young modulus [Pa]", "number", default=210000000000, unit="Pa"),
+                            field("POISSON_RATIO", "Poisson ratio", "number", default=0.29)],
+                 application="ConstitutiveLawsApplication",
+                 group="Hyperelastic",
+                 when={"field": "elementBase", "one_of": ["SmallDisplacementElement", "SmallDisplacementBbarElement", "SmallDisplacementMixedVolumetricStrainElement", "SmallDisplacementMixedVolumetricStrainOssElement", "SmallDisplacementMixedVolumetricStrainOssNonLinearElement", "SmallDisplacementMixedStrainElement", "TotalLagrangianElement", "UpdatedLagrangianElement", "TotalLagrangianMixedVolumetricStrainElement", "TotalLagrangianQ1P0MixedElement", "SolidShellElementSprism", "ShellThinElementCorotational", "ShellThickElementCorotational", "ShellThinElement", "MITCThickShellElement", "MITCThickShellCorotationalElement", "CSDSG3ThickShellLinearElement", "CSDSG3ThickShellCorotationalElement"]},
+                 domain_size=3),
+    material_law("kirchhoff_plane_strain", "KirchhoffSaintVenantPlaneStrain2DLaw",
+                 variables=[field("DENSITY", "Density [kg/m³]", "number", default=7850, unit="kg/m³"),
+                            field("YOUNG_MODULUS", "Young modulus [Pa]", "number", default=210000000000, unit="Pa"),
+                            field("POISSON_RATIO", "Poisson ratio", "number", default=0.29)],
+                 application="ConstitutiveLawsApplication",
+                 group="Hyperelastic",
+                 when={"field": "elementBase", "one_of": ["SmallDisplacementElement", "SmallDisplacementBbarElement", "SmallDisplacementMixedVolumetricStrainElement", "SmallDisplacementMixedVolumetricStrainOssElement", "SmallDisplacementMixedVolumetricStrainOssNonLinearElement", "SmallDisplacementMixedStrainElement", "TotalLagrangianElement", "UpdatedLagrangianElement", "TotalLagrangianMixedVolumetricStrainElement", "TotalLagrangianQ1P0MixedElement", "SolidShellElementSprism"]},
+                 domain_size=2),
+    material_law("kirchhoff_plane_stress", "KirchhoffSaintVenantPlaneStress2DLaw",
+                 variables=[field("DENSITY", "Density [kg/m³]", "number", default=7850, unit="kg/m³"),
+                            field("YOUNG_MODULUS", "Young modulus [Pa]", "number", default=210000000000, unit="Pa"),
+                            field("POISSON_RATIO", "Poisson ratio", "number", default=0.29),
+                            field("THICKNESS", "Thickness [m]", "number", default=1, unit="m")],
+                 application="ConstitutiveLawsApplication",
+                 group="Hyperelastic",
+                 when={"field": "elementBase", "one_of": ["SmallDisplacementElement", "SmallDisplacementBbarElement", "SmallDisplacementMixedVolumetricStrainElement", "SmallDisplacementMixedVolumetricStrainOssElement", "SmallDisplacementMixedVolumetricStrainOssNonLinearElement", "SmallDisplacementMixedStrainElement", "TotalLagrangianElement", "UpdatedLagrangianElement", "TotalLagrangianMixedVolumetricStrainElement", "TotalLagrangianQ1P0MixedElement", "SolidShellElementSprism"]},
+                 domain_size=2),
+    material_law("plasticity_iso_3d", "SmallStrainIsotropicPlasticityFactory",
+                 variables=[field("DENSITY", "Density [kg/m³]", "number", default=7850, unit="kg/m³"),
+                            field("YOUNG_MODULUS", "Young modulus [Pa]", "number", default=210000000000, unit="Pa"),
+                            field("POISSON_RATIO", "Poisson ratio", "number", default=0.29),
+                            field("YIELD_STRESS", "Yield stress [Pa]", "number", default=1000000, unit="Pa"),
+                            field("FRACTURE_ENERGY", "Fracture energy [J/m²]", "number", default=100, unit="J/m²"),
+                            field("HARDENING_CURVE", "Hardening curve", "int", default=0),
+                            field("MAXIMUM_STRESS_POSITION", "Peak stress position", "number", default=0.3),
+                            field("MAXIMUM_STRESS", "Peak stress [Pa]", "number", default=2000000, unit="Pa")],
+                 application="ConstitutiveLawsApplication",
+                 group="Plasticity",
+                 parameters={
+                     "law_type": "3D",
+                     "yield_surface": "VonMises",
+                     "plastic_potential": "VonMises",
+                 },
+                 when={"field": "elementBase", "one_of": ["SmallDisplacementElement", "SmallDisplacementBbarElement", "SmallDisplacementMixedVolumetricStrainElement", "SmallDisplacementMixedVolumetricStrainOssElement", "SmallDisplacementMixedVolumetricStrainOssNonLinearElement", "SmallDisplacementMixedStrainElement", "TotalLagrangianElement", "UpdatedLagrangianElement", "TotalLagrangianMixedVolumetricStrainElement", "TotalLagrangianQ1P0MixedElement", "SolidShellElementSprism", "ShellThinElementCorotational", "ShellThickElementCorotational", "ShellThinElement", "MITCThickShellElement", "MITCThickShellCorotationalElement", "CSDSG3ThickShellLinearElement", "CSDSG3ThickShellCorotationalElement"]},
+                 domain_size=3),
+    material_law("plasticity_iso_plane_strain", "SmallStrainIsotropicPlasticityFactory",
+                 variables=[field("DENSITY", "Density [kg/m³]", "number", default=7850, unit="kg/m³"),
+                            field("YOUNG_MODULUS", "Young modulus [Pa]", "number", default=210000000000, unit="Pa"),
+                            field("POISSON_RATIO", "Poisson ratio", "number", default=0.29),
+                            field("YIELD_STRESS", "Yield stress [Pa]", "number", default=1000000, unit="Pa"),
+                            field("FRACTURE_ENERGY", "Fracture energy [J/m²]", "number", default=100, unit="J/m²"),
+                            field("HARDENING_CURVE", "Hardening curve", "int", default=0),
+                            field("MAXIMUM_STRESS_POSITION", "Peak stress position", "number", default=0.3),
+                            field("MAXIMUM_STRESS", "Peak stress [Pa]", "number", default=2000000, unit="Pa")],
+                 application="ConstitutiveLawsApplication",
+                 group="Plasticity",
+                 parameters={
+                     "law_type": "PlaneStrain",
+                     "yield_surface": "VonMises",
+                     "plastic_potential": "VonMises",
+                 },
+                 when={"field": "elementBase", "one_of": ["SmallDisplacementElement", "SmallDisplacementBbarElement", "SmallDisplacementMixedVolumetricStrainElement", "SmallDisplacementMixedVolumetricStrainOssElement", "SmallDisplacementMixedVolumetricStrainOssNonLinearElement", "SmallDisplacementMixedStrainElement", "TotalLagrangianElement", "UpdatedLagrangianElement", "TotalLagrangianMixedVolumetricStrainElement", "TotalLagrangianQ1P0MixedElement", "SolidShellElementSprism"]},
+                 domain_size=2),
+    material_law("plasticity_iso_plane_stress", "SmallStrainIsotropicPlasticityFactory",
+                 variables=[field("DENSITY", "Density [kg/m³]", "number", default=7850, unit="kg/m³"),
+                            field("YOUNG_MODULUS", "Young modulus [Pa]", "number", default=210000000000, unit="Pa"),
+                            field("POISSON_RATIO", "Poisson ratio", "number", default=0.29),
+                            field("YIELD_STRESS", "Yield stress [Pa]", "number", default=1000000, unit="Pa"),
+                            field("FRACTURE_ENERGY", "Fracture energy [J/m²]", "number", default=100, unit="J/m²"),
+                            field("HARDENING_CURVE", "Hardening curve", "int", default=0),
+                            field("MAXIMUM_STRESS_POSITION", "Peak stress position", "number", default=0.3),
+                            field("MAXIMUM_STRESS", "Peak stress [Pa]", "number", default=2000000, unit="Pa"),
+                            field("THICKNESS", "Thickness [m]", "number", default=1, unit="m")],
+                 application="ConstitutiveLawsApplication",
+                 group="Plasticity",
+                 parameters={
+                     "law_type": "PlaneStress",
+                     "yield_surface": "VonMises",
+                     "plastic_potential": "VonMises",
+                 },
+                 when={"field": "elementBase", "one_of": ["SmallDisplacementElement", "SmallDisplacementBbarElement", "SmallDisplacementMixedVolumetricStrainElement", "SmallDisplacementMixedVolumetricStrainOssElement", "SmallDisplacementMixedVolumetricStrainOssNonLinearElement", "SmallDisplacementMixedStrainElement", "TotalLagrangianElement", "UpdatedLagrangianElement", "TotalLagrangianMixedVolumetricStrainElement", "TotalLagrangianQ1P0MixedElement", "SolidShellElementSprism"]},
+                 domain_size=2),
+    material_law("plasticity_kin_3d", "SmallStrainKinematicPlasticityFactory",
+                 variables=[field("DENSITY", "Density [kg/m³]", "number", default=7850, unit="kg/m³"),
+                            field("YOUNG_MODULUS", "Young modulus [Pa]", "number", default=210000000000, unit="Pa"),
+                            field("POISSON_RATIO", "Poisson ratio", "number", default=0.29),
+                            field("YIELD_STRESS", "Yield stress [Pa]", "number", default=1000000, unit="Pa"),
+                            field("FRACTURE_ENERGY", "Fracture energy [J/m²]", "number", default=100, unit="J/m²"),
+                            field("HARDENING_CURVE", "Hardening curve", "int", default=0),
+                            field("MAXIMUM_STRESS_POSITION", "Peak stress position", "number", default=0.3),
+                            field("MAXIMUM_STRESS", "Peak stress [Pa]", "number", default=2000000, unit="Pa"),
+                            field("KINEMATIC_HARDENING_TYPE", "Kinematic hardening type", "int", default=0),
+                            field("KINEMATIC_PLASTICITY_PARAMETERS", "Kinematic hardening parameters", "vector3", default=[1000000000, 0, 0])],
+                 application="ConstitutiveLawsApplication",
+                 group="Plasticity",
+                 parameters={
+                     "law_type": "3D",
+                     "yield_surface": "VonMises",
+                     "plastic_potential": "VonMises",
+                 },
+                 when={"field": "elementBase", "one_of": ["SmallDisplacementElement", "SmallDisplacementBbarElement", "SmallDisplacementMixedVolumetricStrainElement", "SmallDisplacementMixedVolumetricStrainOssElement", "SmallDisplacementMixedVolumetricStrainOssNonLinearElement", "SmallDisplacementMixedStrainElement", "TotalLagrangianElement", "UpdatedLagrangianElement", "TotalLagrangianMixedVolumetricStrainElement", "TotalLagrangianQ1P0MixedElement", "SolidShellElementSprism", "ShellThinElementCorotational", "ShellThickElementCorotational", "ShellThinElement", "MITCThickShellElement", "MITCThickShellCorotationalElement", "CSDSG3ThickShellLinearElement", "CSDSG3ThickShellCorotationalElement"]},
+                 domain_size=3),
+    material_law("plasticity_kin_plane_stress", "SmallStrainKinematicPlasticityFactory",
+                 variables=[field("DENSITY", "Density [kg/m³]", "number", default=7850, unit="kg/m³"),
+                            field("YOUNG_MODULUS", "Young modulus [Pa]", "number", default=210000000000, unit="Pa"),
+                            field("POISSON_RATIO", "Poisson ratio", "number", default=0.29),
+                            field("YIELD_STRESS", "Yield stress [Pa]", "number", default=1000000, unit="Pa"),
+                            field("FRACTURE_ENERGY", "Fracture energy [J/m²]", "number", default=100, unit="J/m²"),
+                            field("HARDENING_CURVE", "Hardening curve", "int", default=0),
+                            field("MAXIMUM_STRESS_POSITION", "Peak stress position", "number", default=0.3),
+                            field("MAXIMUM_STRESS", "Peak stress [Pa]", "number", default=2000000, unit="Pa"),
+                            field("KINEMATIC_HARDENING_TYPE", "Kinematic hardening type", "int", default=0),
+                            field("KINEMATIC_PLASTICITY_PARAMETERS", "Kinematic hardening parameters", "vector3", default=[1000000000, 0, 0]),
+                            field("THICKNESS", "Thickness [m]", "number", default=1, unit="m")],
+                 application="ConstitutiveLawsApplication",
+                 group="Plasticity",
+                 parameters={
+                     "law_type": "PlaneStress",
+                     "yield_surface": "VonMises",
+                     "plastic_potential": "VonMises",
+                 },
+                 when={"field": "elementBase", "one_of": ["SmallDisplacementElement", "SmallDisplacementBbarElement", "SmallDisplacementMixedVolumetricStrainElement", "SmallDisplacementMixedVolumetricStrainOssElement", "SmallDisplacementMixedVolumetricStrainOssNonLinearElement", "SmallDisplacementMixedStrainElement", "TotalLagrangianElement", "UpdatedLagrangianElement", "TotalLagrangianMixedVolumetricStrainElement", "TotalLagrangianQ1P0MixedElement", "SolidShellElementSprism"]},
+                 domain_size=2),
+    material_law("plasticity_finite_iso_3d", "FiniteStrainIsotropicPlasticity3DVonMisesVonMises",
+                 variables=[field("DENSITY", "Density [kg/m³]", "number", default=7850, unit="kg/m³"),
+                            field("YOUNG_MODULUS", "Young modulus [Pa]", "number", default=210000000000, unit="Pa"),
+                            field("POISSON_RATIO", "Poisson ratio", "number", default=0.29),
+                            field("YIELD_STRESS", "Yield stress [Pa]", "number", default=1000000, unit="Pa"),
+                            field("FRACTURE_ENERGY", "Fracture energy [J/m²]", "number", default=100, unit="J/m²"),
+                            field("HARDENING_CURVE", "Hardening curve", "int", default=0),
+                            field("MAXIMUM_STRESS_POSITION", "Peak stress position", "number", default=0.3),
+                            field("MAXIMUM_STRESS", "Peak stress [Pa]", "number", default=2000000, unit="Pa")],
+                 application="ConstitutiveLawsApplication",
+                 group="Plasticity",
+                 when={"field": "elementBase", "one_of": ["SmallDisplacementElement", "SmallDisplacementBbarElement", "SmallDisplacementMixedVolumetricStrainElement", "SmallDisplacementMixedVolumetricStrainOssElement", "SmallDisplacementMixedVolumetricStrainOssNonLinearElement", "SmallDisplacementMixedStrainElement", "TotalLagrangianElement", "UpdatedLagrangianElement", "TotalLagrangianMixedVolumetricStrainElement", "TotalLagrangianQ1P0MixedElement", "SolidShellElementSprism", "ShellThinElementCorotational", "ShellThickElementCorotational", "ShellThinElement", "MITCThickShellElement", "MITCThickShellCorotationalElement", "CSDSG3ThickShellLinearElement", "CSDSG3ThickShellCorotationalElement"]},
+                 domain_size=3),
+    material_law("plasticity_finite_iso_plane_stress", "FiniteStrainIsotropicPlasticityPlaneStressVonMisesVonMises",
+                 variables=[field("DENSITY", "Density [kg/m³]", "number", default=7850, unit="kg/m³"),
+                            field("YOUNG_MODULUS", "Young modulus [Pa]", "number", default=210000000000, unit="Pa"),
+                            field("POISSON_RATIO", "Poisson ratio", "number", default=0.29),
+                            field("YIELD_STRESS", "Yield stress [Pa]", "number", default=1000000, unit="Pa"),
+                            field("FRACTURE_ENERGY", "Fracture energy [J/m²]", "number", default=100, unit="J/m²"),
+                            field("HARDENING_CURVE", "Hardening curve", "int", default=0),
+                            field("MAXIMUM_STRESS_POSITION", "Peak stress position", "number", default=0.3),
+                            field("MAXIMUM_STRESS", "Peak stress [Pa]", "number", default=2000000, unit="Pa"),
+                            field("THICKNESS", "Thickness [m]", "number", default=1, unit="m")],
+                 application="ConstitutiveLawsApplication",
+                 group="Plasticity",
+                 when={"field": "elementBase", "one_of": ["SmallDisplacementElement", "SmallDisplacementBbarElement", "SmallDisplacementMixedVolumetricStrainElement", "SmallDisplacementMixedVolumetricStrainOssElement", "SmallDisplacementMixedVolumetricStrainOssNonLinearElement", "SmallDisplacementMixedStrainElement", "TotalLagrangianElement", "UpdatedLagrangianElement", "TotalLagrangianMixedVolumetricStrainElement", "TotalLagrangianQ1P0MixedElement", "SolidShellElementSprism"]},
+                 domain_size=2),
+    material_law("plasticity_finite_kin_3d", "FiniteStrainKinematicPlasticity3DVonMisesVonMises",
+                 variables=[field("DENSITY", "Density [kg/m³]", "number", default=7850, unit="kg/m³"),
+                            field("YOUNG_MODULUS", "Young modulus [Pa]", "number", default=210000000000, unit="Pa"),
+                            field("POISSON_RATIO", "Poisson ratio", "number", default=0.29),
+                            field("YIELD_STRESS", "Yield stress [Pa]", "number", default=1000000, unit="Pa"),
+                            field("FRACTURE_ENERGY", "Fracture energy [J/m²]", "number", default=100, unit="J/m²"),
+                            field("HARDENING_CURVE", "Hardening curve", "int", default=0),
+                            field("MAXIMUM_STRESS_POSITION", "Peak stress position", "number", default=0.3),
+                            field("MAXIMUM_STRESS", "Peak stress [Pa]", "number", default=2000000, unit="Pa"),
+                            field("KINEMATIC_HARDENING_TYPE", "Kinematic hardening type", "int", default=0),
+                            field("KINEMATIC_PLASTICITY_PARAMETERS", "Kinematic hardening parameters", "vector3", default=[1000000000, 0, 0])],
+                 application="ConstitutiveLawsApplication",
+                 group="Plasticity",
+                 when={"field": "elementBase", "one_of": ["SmallDisplacementElement", "SmallDisplacementBbarElement", "SmallDisplacementMixedVolumetricStrainElement", "SmallDisplacementMixedVolumetricStrainOssElement", "SmallDisplacementMixedVolumetricStrainOssNonLinearElement", "SmallDisplacementMixedStrainElement", "TotalLagrangianElement", "UpdatedLagrangianElement", "TotalLagrangianMixedVolumetricStrainElement", "TotalLagrangianQ1P0MixedElement", "SolidShellElementSprism", "ShellThinElementCorotational", "ShellThickElementCorotational", "ShellThinElement", "MITCThickShellElement", "MITCThickShellCorotationalElement", "CSDSG3ThickShellLinearElement", "CSDSG3ThickShellCorotationalElement"]},
+                 domain_size=3),
+    material_law("plasticity_finite_kin_plane_stress", "FiniteStrainKinematicPlasticityPlaneStressVonMisesVonMises",
+                 variables=[field("DENSITY", "Density [kg/m³]", "number", default=7850, unit="kg/m³"),
+                            field("YOUNG_MODULUS", "Young modulus [Pa]", "number", default=210000000000, unit="Pa"),
+                            field("POISSON_RATIO", "Poisson ratio", "number", default=0.29),
+                            field("YIELD_STRESS", "Yield stress [Pa]", "number", default=1000000, unit="Pa"),
+                            field("FRACTURE_ENERGY", "Fracture energy [J/m²]", "number", default=100, unit="J/m²"),
+                            field("HARDENING_CURVE", "Hardening curve", "int", default=0),
+                            field("MAXIMUM_STRESS_POSITION", "Peak stress position", "number", default=0.3),
+                            field("MAXIMUM_STRESS", "Peak stress [Pa]", "number", default=2000000, unit="Pa"),
+                            field("KINEMATIC_HARDENING_TYPE", "Kinematic hardening type", "int", default=0),
+                            field("KINEMATIC_PLASTICITY_PARAMETERS", "Kinematic hardening parameters", "vector3", default=[1000000000, 0, 0]),
+                            field("THICKNESS", "Thickness [m]", "number", default=1, unit="m")],
+                 application="ConstitutiveLawsApplication",
+                 group="Plasticity",
+                 when={"field": "elementBase", "one_of": ["SmallDisplacementElement", "SmallDisplacementBbarElement", "SmallDisplacementMixedVolumetricStrainElement", "SmallDisplacementMixedVolumetricStrainOssElement", "SmallDisplacementMixedVolumetricStrainOssNonLinearElement", "SmallDisplacementMixedStrainElement", "TotalLagrangianElement", "UpdatedLagrangianElement", "TotalLagrangianMixedVolumetricStrainElement", "TotalLagrangianQ1P0MixedElement", "SolidShellElementSprism"]},
+                 domain_size=2),
+    material_law("plasticity_j2_3d", "SmallStrainJ2Plasticity3DLaw",
+                 variables=[field("DENSITY", "Density [kg/m³]", "number", default=7850, unit="kg/m³"),
+                            field("YOUNG_MODULUS", "Young modulus [Pa]", "number", default=210000000000, unit="Pa"),
+                            field("POISSON_RATIO", "Poisson ratio", "number", default=0.29),
+                            field("YIELD_STRESS", "Yield stress [Pa]", "number", default=5500000, unit="Pa"),
+                            field("REFERENCE_HARDENING_MODULUS", "Reference hardening modulus", "number", default=1),
+                            field("ISOTROPIC_HARDENING_MODULUS", "Isotropic hardening modulus", "number", default=0.12924),
+                            field("INFINITY_HARDENING_MODULUS", "Saturation hardening modulus", "number", default=0),
+                            field("HARDENING_EXPONENT", "Hardening exponent", "number", default=1)],
+                 application="ConstitutiveLawsApplication",
+                 group="Plasticity",
+                 when={"field": "elementBase", "one_of": ["SmallDisplacementElement", "SmallDisplacementBbarElement", "SmallDisplacementMixedVolumetricStrainElement", "SmallDisplacementMixedVolumetricStrainOssElement", "SmallDisplacementMixedVolumetricStrainOssNonLinearElement", "SmallDisplacementMixedStrainElement", "TotalLagrangianElement", "UpdatedLagrangianElement", "TotalLagrangianMixedVolumetricStrainElement", "TotalLagrangianQ1P0MixedElement", "SolidShellElementSprism", "ShellThinElementCorotational", "ShellThickElementCorotational", "ShellThinElement", "MITCThickShellElement", "MITCThickShellCorotationalElement", "CSDSG3ThickShellLinearElement", "CSDSG3ThickShellCorotationalElement"]},
+                 domain_size=3),
+    material_law("plasticity_j2_plane_strain", "SmallStrainJ2PlasticityPlaneStrain2DLaw",
+                 variables=[field("DENSITY", "Density [kg/m³]", "number", default=7850, unit="kg/m³"),
+                            field("YOUNG_MODULUS", "Young modulus [Pa]", "number", default=210000000000, unit="Pa"),
+                            field("POISSON_RATIO", "Poisson ratio", "number", default=0.29),
+                            field("YIELD_STRESS", "Yield stress [Pa]", "number", default=5500000, unit="Pa"),
+                            field("REFERENCE_HARDENING_MODULUS", "Reference hardening modulus", "number", default=1),
+                            field("ISOTROPIC_HARDENING_MODULUS", "Isotropic hardening modulus", "number", default=0.12924),
+                            field("INFINITY_HARDENING_MODULUS", "Saturation hardening modulus", "number", default=0),
+                            field("HARDENING_EXPONENT", "Hardening exponent", "number", default=1)],
+                 application="ConstitutiveLawsApplication",
+                 group="Plasticity",
+                 when={"field": "elementBase", "one_of": ["SmallDisplacementElement", "SmallDisplacementBbarElement", "SmallDisplacementMixedVolumetricStrainElement", "SmallDisplacementMixedVolumetricStrainOssElement", "SmallDisplacementMixedVolumetricStrainOssNonLinearElement", "SmallDisplacementMixedStrainElement", "TotalLagrangianElement", "UpdatedLagrangianElement", "TotalLagrangianMixedVolumetricStrainElement", "TotalLagrangianQ1P0MixedElement", "SolidShellElementSprism"]},
+                 domain_size=2),
+    material_law("damage_iso_3d", "SmallStrainIsotropicDamageFactory",
+                 variables=[field("DENSITY", "Density [kg/m³]", "number", default=7850, unit="kg/m³"),
+                            field("YOUNG_MODULUS", "Young modulus [Pa]", "number", default=210000000000, unit="Pa"),
+                            field("POISSON_RATIO", "Poisson ratio", "number", default=0.29),
+                            field("YIELD_STRESS", "Yield stress [Pa]", "number", default=1000000, unit="Pa"),
+                            field("FRACTURE_ENERGY", "Fracture energy [J/m²]", "number", default=100, unit="J/m²"),
+                            field("SOFTENING_TYPE", "Softening type", "int", default=0)],
+                 application="ConstitutiveLawsApplication",
+                 group="Damage",
+                 parameters={
+                     "law_type": "3D",
+                     "yield_surface": "VonMises",
+                     "plastic_potential": "VonMises",
+                 },
+                 when={"field": "elementBase", "one_of": ["SmallDisplacementElement", "SmallDisplacementBbarElement", "SmallDisplacementMixedVolumetricStrainElement", "SmallDisplacementMixedVolumetricStrainOssElement", "SmallDisplacementMixedVolumetricStrainOssNonLinearElement", "SmallDisplacementMixedStrainElement", "TotalLagrangianElement", "UpdatedLagrangianElement", "TotalLagrangianMixedVolumetricStrainElement", "TotalLagrangianQ1P0MixedElement", "SolidShellElementSprism", "ShellThinElementCorotational", "ShellThickElementCorotational", "ShellThinElement", "MITCThickShellElement", "MITCThickShellCorotationalElement", "CSDSG3ThickShellLinearElement", "CSDSG3ThickShellCorotationalElement"]},
+                 domain_size=3),
+    material_law("damage_iso_plane_strain", "SmallStrainIsotropicDamageFactory",
+                 variables=[field("DENSITY", "Density [kg/m³]", "number", default=7850, unit="kg/m³"),
+                            field("YOUNG_MODULUS", "Young modulus [Pa]", "number", default=210000000000, unit="Pa"),
+                            field("POISSON_RATIO", "Poisson ratio", "number", default=0.29),
+                            field("YIELD_STRESS", "Yield stress [Pa]", "number", default=1000000, unit="Pa"),
+                            field("FRACTURE_ENERGY", "Fracture energy [J/m²]", "number", default=100, unit="J/m²"),
+                            field("SOFTENING_TYPE", "Softening type", "int", default=0)],
+                 application="ConstitutiveLawsApplication",
+                 group="Damage",
+                 parameters={
+                     "law_type": "PlaneStrain",
+                     "yield_surface": "VonMises",
+                     "plastic_potential": "VonMises",
+                 },
+                 when={"field": "elementBase", "one_of": ["SmallDisplacementElement", "SmallDisplacementBbarElement", "SmallDisplacementMixedVolumetricStrainElement", "SmallDisplacementMixedVolumetricStrainOssElement", "SmallDisplacementMixedVolumetricStrainOssNonLinearElement", "SmallDisplacementMixedStrainElement", "TotalLagrangianElement", "UpdatedLagrangianElement", "TotalLagrangianMixedVolumetricStrainElement", "TotalLagrangianQ1P0MixedElement", "SolidShellElementSprism"]},
+                 domain_size=2),
+    material_law("damage_iso_plane_stress", "SmallStrainIsotropicDamageFactory",
+                 variables=[field("DENSITY", "Density [kg/m³]", "number", default=7850, unit="kg/m³"),
+                            field("YOUNG_MODULUS", "Young modulus [Pa]", "number", default=210000000000, unit="Pa"),
+                            field("POISSON_RATIO", "Poisson ratio", "number", default=0.29),
+                            field("YIELD_STRESS", "Yield stress [Pa]", "number", default=1000000, unit="Pa"),
+                            field("FRACTURE_ENERGY", "Fracture energy [J/m²]", "number", default=100, unit="J/m²"),
+                            field("SOFTENING_TYPE", "Softening type", "int", default=0),
+                            field("THICKNESS", "Thickness [m]", "number", default=1, unit="m")],
+                 application="ConstitutiveLawsApplication",
+                 group="Damage",
+                 parameters={
+                     "law_type": "PlaneStress",
+                     "yield_surface": "VonMises",
+                     "plastic_potential": "VonMises",
+                 },
+                 when={"field": "elementBase", "one_of": ["SmallDisplacementElement", "SmallDisplacementBbarElement", "SmallDisplacementMixedVolumetricStrainElement", "SmallDisplacementMixedVolumetricStrainOssElement", "SmallDisplacementMixedVolumetricStrainOssNonLinearElement", "SmallDisplacementMixedStrainElement", "TotalLagrangianElement", "UpdatedLagrangianElement", "TotalLagrangianMixedVolumetricStrainElement", "TotalLagrangianQ1P0MixedElement", "SolidShellElementSprism"]},
+                 domain_size=2),
+    material_law("damage_plastic_3d", "AssociativePlasticDamageModel3DVonMises",
+                 variables=[field("DENSITY", "Density [kg/m³]", "number", default=7850, unit="kg/m³"),
+                            field("YOUNG_MODULUS", "Young modulus [Pa]", "number", default=210000000000, unit="Pa"),
+                            field("POISSON_RATIO", "Poisson ratio", "number", default=0.29),
+                            field("YIELD_STRESS", "Yield stress [Pa]", "number", default=1000000, unit="Pa"),
+                            field("FRACTURE_ENERGY", "Fracture energy [J/m²]", "number", default=100, unit="J/m²"),
+                            field("HARDENING_CURVE", "Hardening curve", "int", default=0)],
+                 application="ConstitutiveLawsApplication",
+                 group="Damage",
+                 when={"field": "elementBase", "one_of": ["SmallDisplacementElement", "SmallDisplacementBbarElement", "SmallDisplacementMixedVolumetricStrainElement", "SmallDisplacementMixedVolumetricStrainOssElement", "SmallDisplacementMixedVolumetricStrainOssNonLinearElement", "SmallDisplacementMixedStrainElement", "TotalLagrangianElement", "UpdatedLagrangianElement", "TotalLagrangianMixedVolumetricStrainElement", "TotalLagrangianQ1P0MixedElement", "SolidShellElementSprism", "ShellThinElementCorotational", "ShellThickElementCorotational", "ShellThinElement", "MITCThickShellElement", "MITCThickShellCorotationalElement", "CSDSG3ThickShellLinearElement", "CSDSG3ThickShellCorotationalElement"]},
+                 domain_size=3),
+    material_law("viscous_maxwell_3d", "ViscousGeneralizedMaxwell3D",
+                 variables=[field("DENSITY", "Density [kg/m³]", "number", default=7850, unit="kg/m³"),
+                            field("YOUNG_MODULUS", "Young modulus [Pa]", "number", default=210000000000, unit="Pa"),
+                            field("POISSON_RATIO", "Poisson ratio", "number", default=0.29),
+                            field("VISCOUS_PARAMETER", "Viscous parameter", "number", default=0.15),
+                            field("DELAY_TIME", "Delay time [s]", "number", default=100, unit="s")],
+                 application="ConstitutiveLawsApplication",
+                 group="Viscous",
+                 when={"field": "elementBase", "one_of": ["SmallDisplacementElement", "SmallDisplacementBbarElement", "SmallDisplacementMixedVolumetricStrainElement", "SmallDisplacementMixedVolumetricStrainOssElement", "SmallDisplacementMixedVolumetricStrainOssNonLinearElement", "SmallDisplacementMixedStrainElement", "TotalLagrangianElement", "UpdatedLagrangianElement", "TotalLagrangianMixedVolumetricStrainElement", "TotalLagrangianQ1P0MixedElement", "SolidShellElementSprism", "ShellThinElementCorotational", "ShellThickElementCorotational", "ShellThinElement", "MITCThickShellElement", "MITCThickShellCorotationalElement", "CSDSG3ThickShellLinearElement", "CSDSG3ThickShellCorotationalElement"]},
+                 domain_size=3),
+    material_law("viscous_kelvin_3d", "ViscousGeneralizedKelvin3D",
+                 variables=[field("DENSITY", "Density [kg/m³]", "number", default=7850, unit="kg/m³"),
+                            field("YOUNG_MODULUS", "Young modulus [Pa]", "number", default=210000000000, unit="Pa"),
+                            field("POISSON_RATIO", "Poisson ratio", "number", default=0.29),
+                            field("DELAY_TIME", "Delay time [s]", "number", default=1, unit="s")],
+                 application="ConstitutiveLawsApplication",
+                 group="Viscous",
+                 when={"field": "elementBase", "one_of": ["SmallDisplacementElement", "SmallDisplacementBbarElement", "SmallDisplacementMixedVolumetricStrainElement", "SmallDisplacementMixedVolumetricStrainOssElement", "SmallDisplacementMixedVolumetricStrainOssNonLinearElement", "SmallDisplacementMixedStrainElement", "TotalLagrangianElement", "UpdatedLagrangianElement", "TotalLagrangianMixedVolumetricStrainElement", "TotalLagrangianQ1P0MixedElement", "SolidShellElementSprism", "ShellThinElementCorotational", "ShellThickElementCorotational", "ShellThinElement", "MITCThickShellElement", "MITCThickShellCorotationalElement", "CSDSG3ThickShellLinearElement", "CSDSG3ThickShellCorotationalElement"]},
+                 domain_size=3),
+    material_law("point_mass", "",
+                 variables=[field("NODAL_MASS", "Point mass [kg]", "number", default=1, unit="kg"),
+                            field("NODAL_INERTIA", "Rotational inertia [kg·m²]", "vector3", unit="kg·m²"),
+                            field("NODAL_DISPLACEMENT_STIFFNESS", "Spring stiffness [N/m]", "vector3", unit="N/m"),
+                            field("NODAL_DAMPING_RATIO", "Damper coefficient [N·s/m]", "vector3", unit="N·s/m")],
+                 group="Discrete",
+                 when={"field": "elementBase", "one_of": ["NodalConcentratedElement", "NodalConcentratedDampedElement"]}),
+    material_law("spring", "",
+                 variables=[field("NODAL_DISPLACEMENT_STIFFNESS", "Translational stiffness [N/m]", "vector3", unit="N/m"),
+                            field("NODAL_ROTATIONAL_STIFFNESS", "Rotational stiffness [N·m/rad]", "vector3", unit="N·m/rad"),
+                            field("NODAL_DAMPING_RATIO", "Translational damper [N·s/m]", "vector3", unit="N·s/m"),
+                            field("NODAL_ROTATIONAL_DAMPING_RATIO", "Rotational damper [N·m·s/rad]", "vector3", unit="N·m·s/rad")],
+                 group="Discrete",
+                 when={"field": "elementBase", "one_of": ["SpringDamperElement"]}),
+    material_law("bushing", "",
+                 variables=[field("NODAL_DISPLACEMENT_STIFFNESS", "Translational stiffness [N/m]", "vector3", unit="N/m"),
+                            field("NODAL_ROTATIONAL_STIFFNESS", "Rotational stiffness [N·m/rad]", "vector3", unit="N·m/rad")],
+                 group="Discrete",
+                 when={"field": "elementBase", "one_of": ["BushingElement"]},
+                 domain_size=3),
+    material_law("line_mass", "",
+                 variables=[field("DENSITY", "Density [kg/m³]", "number", default=7850, unit="kg/m³"),
+                            field("CROSS_AREA", "Cross area [m²]", "number", default=1, unit="m²")],
+                 group="Discrete",
+                 when={"field": "elementBase", "one_of": ["LineMassElement"]},
+                 domain_size=3),
+    material_law("surface_mass", "",
+                 variables=[field("DENSITY", "Density [kg/m³]", "number", default=7850, unit="kg/m³"),
+                            field("THICKNESS", "Thickness [m]", "number", default=1, unit="m")],
+                 group="Discrete",
+                 when={"field": "elementBase", "one_of": ["SurfaceMassElement"]},
+                 domain_size=3),
 ]
-
-
 
 define_problemtype(
     id="structural_py",
@@ -418,17 +955,354 @@ define_problemtype(
     material_laws=MATERIAL_LAWS,
     solver_settings=solver_settings,
     build_process=build_process,
+    validate=validate,
     post_process=post_process,
-    description="Static / dynamic / eigenvalue solid, beam and truss mechanics (StructuralMechanicsApplication)",
+    description="Static / dynamic / eigenvalue / harmonic solid, beam, truss, shell, membrane and mass/spring mechanics (StructuralMechanicsApplication)",
     icon="ptStructural",
     family="solid",
     analysis_stage="KratosMultiphysics.StructuralMechanicsApplication.structural_mechanics_analysis",
+    applications=[
+        application("LinearSolversApplication", when={"field": "solverType", "equals": "eigen_value"}),
+        application("LinearSolversApplication", when=[{"field": "solverType", "equals": "harmonic_analysis"},
+                                                      {"field": "harmonicType", "equals": "direct"}]),
+    ],
     model_part_name="Structure",
     materials_file_name="StructuralMaterials.json",
     domain_sizes=[2, 3],
     parts_condition="parts",
     mesh_naming={
-        "elements": "$field:elementBase",
+        "elements": {
+            "field": "elementBase",
+            "names": {
+                "SmallDisplacementElement": {
+                    "2": {
+                        "3": "SmallDisplacementElement2D3N",
+                        "4": "SmallDisplacementElement2D4N",
+                        "6": "SmallDisplacementElement2D6N",
+                        "8": "SmallDisplacementElement2D8N",
+                        "9": "SmallDisplacementElement2D9N",
+                        "10": "SmallDisplacementElement2D10N",
+                        "15": "SmallDisplacementElement2D15N",
+                    },
+                    "3": {
+                        "4": "SmallDisplacementElement3D4N",
+                        "5": "SmallDisplacementElement3D5N",
+                        "6": "SmallDisplacementElement3D6N",
+                        "8": "SmallDisplacementElement3D8N",
+                        "10": "SmallDisplacementElement3D10N",
+                        "13": "SmallDisplacementElement3D13N",
+                        "15": "SmallDisplacementElement3D15N",
+                        "20": "SmallDisplacementElement3D20N",
+                        "27": "SmallDisplacementElement3D27N",
+                    },
+                },
+                "SmallDisplacementBbarElement": {
+                    "2": {
+                        "4": "SmallDisplacementBbarElement2D4N",
+                    },
+                    "3": {
+                        "8": "SmallDisplacementBbarElement3D8N",
+                    },
+                },
+                "SmallDisplacementMixedVolumetricStrainElement": {
+                    "2": {
+                        "3": "SmallDisplacementMixedVolumetricStrainElement2D3N",
+                        "4": "SmallDisplacementMixedVolumetricStrainElement2D4N",
+                    },
+                    "3": {
+                        "4": "SmallDisplacementMixedVolumetricStrainElement3D4N",
+                        "8": "SmallDisplacementMixedVolumetricStrainElement3D8N",
+                    },
+                },
+                "SmallDisplacementMixedVolumetricStrainOssElement": {
+                    "2": {
+                        "3": "SmallDisplacementMixedVolumetricStrainOssElement2D3N",
+                        "4": "SmallDisplacementMixedVolumetricStrainOssElement2D4N",
+                    },
+                    "3": {
+                        "4": "SmallDisplacementMixedVolumetricStrainOssElement3D4N",
+                        "8": "SmallDisplacementMixedVolumetricStrainOssElement3D8N",
+                    },
+                },
+                "SmallDisplacementMixedVolumetricStrainOssNonLinearElement": {
+                    "2": {
+                        "3": "SmallDisplacementMixedVolumetricStrainOssNonLinearElement2D3N",
+                        "4": "SmallDisplacementMixedVolumetricStrainOssNonLinearElement2D4N",
+                    },
+                    "3": {
+                        "4": "SmallDisplacementMixedVolumetricStrainOssNonLinearElement3D4N",
+                        "8": "SmallDisplacementMixedVolumetricStrainOssNonLinearElement3D8N",
+                    },
+                },
+                "SmallDisplacementMixedStrainElement": {
+                    "2": {
+                        "3": "SmallDisplacementMixedStrainElement2D3N",
+                        "4": "SmallDisplacementMixedStrainElement2D4N",
+                    },
+                    "3": {
+                        "4": "SmallDisplacementMixedStrainElement3D4N",
+                        "8": "SmallDisplacementMixedStrainElement3D8N",
+                    },
+                },
+                "TotalLagrangianElement": {
+                    "2": {
+                        "3": "TotalLagrangianElement2D3N",
+                        "4": "TotalLagrangianElement2D4N",
+                        "6": "TotalLagrangianElement2D6N",
+                        "8": "TotalLagrangianElement2D8N",
+                        "9": "TotalLagrangianElement2D9N",
+                        "10": "TotalLagrangianElement2D10N",
+                        "15": "TotalLagrangianElement2D15N",
+                    },
+                    "3": {
+                        "4": "TotalLagrangianElement3D4N",
+                        "5": "TotalLagrangianElement3D5N",
+                        "6": "TotalLagrangianElement3D6N",
+                        "8": "TotalLagrangianElement3D8N",
+                        "10": "TotalLagrangianElement3D10N",
+                        "13": "TotalLagrangianElement3D13N",
+                        "15": "TotalLagrangianElement3D15N",
+                        "20": "TotalLagrangianElement3D20N",
+                        "27": "TotalLagrangianElement3D27N",
+                    },
+                },
+                "UpdatedLagrangianElement": {
+                    "2": {
+                        "3": "UpdatedLagrangianElement2D3N",
+                        "4": "UpdatedLagrangianElement2D4N",
+                        "6": "UpdatedLagrangianElement2D6N",
+                        "8": "UpdatedLagrangianElement2D8N",
+                        "9": "UpdatedLagrangianElement2D9N",
+                        "10": "UpdatedLagrangianElement2D10N",
+                        "15": "UpdatedLagrangianElement2D15N",
+                    },
+                    "3": {
+                        "4": "UpdatedLagrangianElement3D4N",
+                        "5": "UpdatedLagrangianElement3D5N",
+                        "6": "UpdatedLagrangianElement3D6N",
+                        "8": "UpdatedLagrangianElement3D8N",
+                        "10": "UpdatedLagrangianElement3D10N",
+                        "13": "UpdatedLagrangianElement3D13N",
+                        "15": "UpdatedLagrangianElement3D15N",
+                        "20": "UpdatedLagrangianElement3D20N",
+                        "27": "UpdatedLagrangianElement3D27N",
+                    },
+                },
+                "TotalLagrangianMixedVolumetricStrainElement": {
+                    "2": {
+                        "3": "TotalLagrangianMixedVolumetricStrainElement2D3N",
+                    },
+                    "3": {
+                        "4": "TotalLagrangianMixedVolumetricStrainElement3D4N",
+                    },
+                },
+                "TotalLagrangianQ1P0MixedElement": {
+                    "2": {
+                        "3": "TotalLagrangianQ1P0MixedElement2D3N",
+                        "4": "TotalLagrangianQ1P0MixedElement2D4N",
+                    },
+                    "3": {
+                        "4": "TotalLagrangianQ1P0MixedElement3D4N",
+                        "8": "TotalLagrangianQ1P0MixedElement3D8N",
+                        "10": "TotalLagrangianQ1P0MixedElement3D10N",
+                        "20": "TotalLagrangianQ1P0MixedElement3D20N",
+                    },
+                },
+                "AxisymSmallDisplacementElement": {
+                    "2": {
+                        "3": "AxisymSmallDisplacementElement2D3N",
+                        "4": "AxisymSmallDisplacementElement2D4N",
+                        "6": "AxisymSmallDisplacementElement2D6N",
+                        "8": "AxisymSmallDisplacementElement2D8N",
+                        "9": "AxisymSmallDisplacementElement2D9N",
+                    },
+                },
+                "AxisymTotalLagrangianElement": {
+                    "2": {
+                        "3": "AxisymTotalLagrangianElement2D3N",
+                        "4": "AxisymTotalLagrangianElement2D4N",
+                        "6": "AxisymTotalLagrangianElement2D6N",
+                        "8": "AxisymTotalLagrangianElement2D8N",
+                        "9": "AxisymTotalLagrangianElement2D9N",
+                    },
+                },
+                "AxisymUpdatedLagrangianElement": {
+                    "2": {
+                        "3": "AxisymUpdatedLagrangianElement2D3N",
+                        "4": "AxisymUpdatedLagrangianElement2D4N",
+                        "6": "AxisymUpdatedLagrangianElement2D6N",
+                        "8": "AxisymUpdatedLagrangianElement2D8N",
+                        "9": "AxisymUpdatedLagrangianElement2D9N",
+                    },
+                },
+                "SolidShellElementSprism": {
+                    "3": {
+                        "6": "SolidShellElementSprism3D6N",
+                    },
+                },
+                "LinearTimoshenkoBeamElement": {
+                    "2": {
+                        "2": "LinearTimoshenkoBeamElement2D2N",
+                        "3": "LinearTimoshenkoBeamElement2D3N",
+                    },
+                    "3": {
+                        "2": "LinearTimoshenkoBeamElement3D2N",
+                    },
+                },
+                "LinearTimoshenkoCurvedBeamElement": {
+                    "2": {
+                        "3": "LinearTimoshenkoCurvedBeamElement2D3N",
+                    },
+                    "3": {
+                        "3": "LinearTimoshenkoCurvedBeamElement3D3N",
+                    },
+                },
+                "CrBeamElement": {
+                    "2": {
+                        "2": "CrBeamElement2D2N",
+                    },
+                    "3": {
+                        "2": "CrBeamElement3D2N",
+                    },
+                },
+                "CrLinearBeamElement": {
+                    "2": {
+                        "2": "CrLinearBeamElement2D2N",
+                    },
+                    "3": {
+                        "2": "CrLinearBeamElement3D2N",
+                    },
+                },
+                "LinearTrussElement": {
+                    "2": {
+                        "2": "LinearTrussElement2D2N",
+                        "3": "LinearTrussElement2D3N",
+                    },
+                    "3": {
+                        "2": "LinearTrussElement3D2N",
+                        "3": "LinearTrussElement3D3N",
+                    },
+                },
+                "TotalLagrangianTrussElement": {
+                    "2": {
+                        "2": "TotalLagrangianTrussElement2D2N",
+                    },
+                    "3": {
+                        "2": "TotalLagrangianTrussElement3D2N",
+                    },
+                },
+                "TrussElement": {
+                    "2": {
+                        "2": "TrussElement3D2N",
+                    },
+                    "3": {
+                        "2": "TrussElement3D2N",
+                    },
+                },
+                "TrussLinearElement": {
+                    "2": {
+                        "2": "TrussLinearElement3D2N",
+                    },
+                    "3": {
+                        "2": "TrussLinearElement3D2N",
+                    },
+                },
+                "CableElement": {
+                    "2": {
+                        "2": "CableElement3D2N",
+                    },
+                    "3": {
+                        "2": "CableElement3D2N",
+                    },
+                },
+                "ShellThinElementCorotational": {
+                    "3": {
+                        "3": "ShellThinElementCorotational3D3N",
+                        "4": "ShellThinElementCorotational3D4N",
+                    },
+                },
+                "ShellThickElementCorotational": {
+                    "3": {
+                        "3": "ShellThickElementCorotational3D3N",
+                        "4": "ShellThickElementCorotational3D4N",
+                    },
+                },
+                "ShellThinElement": {
+                    "3": {
+                        "3": "ShellThinElement3D3N",
+                    },
+                },
+                "MITCThickShellElement": {
+                    "3": {
+                        "4": "MITCThickShellElement3D4N",
+                    },
+                },
+                "MITCThickShellCorotationalElement": {
+                    "3": {
+                        "4": "MITCThickShellCorotationalElement3D4N",
+                    },
+                },
+                "CSDSG3ThickShellLinearElement": {
+                    "3": {
+                        "3": "CSDSG3ThickShellLinearElement3D3N",
+                    },
+                },
+                "CSDSG3ThickShellCorotationalElement": {
+                    "3": {
+                        "3": "CSDSG3ThickShellCorotationalElement3D3N",
+                    },
+                },
+                "MembraneElement": {
+                    "2": {
+                        "2": "MembraneElement2D2N",
+                    },
+                    "3": {
+                        "3": "MembraneElement3D3N",
+                        "4": "MembraneElement3D4N",
+                    },
+                },
+                "NodalConcentratedElement": {
+                    "2": {
+                        "1": "NodalConcentratedElement2D1N",
+                    },
+                    "3": {
+                        "1": "NodalConcentratedElement3D1N",
+                    },
+                },
+                "NodalConcentratedDampedElement": {
+                    "2": {
+                        "1": "NodalConcentratedDampedElement2D1N",
+                    },
+                    "3": {
+                        "1": "NodalConcentratedDampedElement3D1N",
+                    },
+                },
+                "LineMassElement": {
+                    "3": {
+                        "2": "LineMassElement3D2N",
+                    },
+                },
+                "SurfaceMassElement": {
+                    "3": {
+                        "3": "SurfaceMassElement3D3N",
+                        "4": "SurfaceMassElement3D4N",
+                    },
+                },
+                "BushingElement": {
+                    "3": {
+                        "2": "BushingElement3D2N",
+                    },
+                },
+                "SpringDamperElement": {
+                    "2": {
+                        "2": "SpringDamperElement2D",
+                    },
+                    "3": {
+                        "2": "SpringDamperElement3D",
+                    },
+                },
+            },
+        },
         "conditions": {
             "2": "LineLoadCondition",
             "3": "SurfaceLoadCondition",

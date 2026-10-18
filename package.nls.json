@@ -1,6 +1,7 @@
 {
   "displayName": "Kratos MDPA Preview",
   "description": "Preview, organize, and manage Kratos Multiphysics .mdpa model-part files: 3D mesh viewer with a navigable ModelPart/SubModelPart outline and toggleable layers.",
+  "command.kratos.materials.previewTables.title": "Preview Material Tables",
   "command.kratos.mesh.plotBuilder.title": "Kratos Mesh: Scientific Plot Builder",
   "command.kratos.mdpa.openPreview.title": "Open MDPA Preview",
   "category.KratosMdpa": "Kratos MDPA",
@@ -36,6 +37,7 @@
   "command.kratos.mdpa.fieldIntegrals.title": "Field Integrals…",
   "command.kratos.mdpa.streamlines.title": "Streamlines…",
   "command.kratos.mdpa.flowBalance.title": "Flow Balance…",
+  "command.kratos.mdpa.windTunnel.title": "Virtual Wind Tunnel…",
   "command.kratos.mdpa.optimizationProgress.title": "Optimization Progress…",
   "command.kratos.mdpa.linkPreviews.title": "Link Previews…",
   "command.kratos.mdpa.compareInSplit.title": "Compare in Split…",

@@ -878,6 +878,8 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
         void session.ptController?.importPresets();
       } else if (msg?.type === "ptPresetExport") {
         void session.ptController?.exportPreset(String(msg.preset ?? ""));
+      } else if (msg?.type === "ptPreviewTables") {
+        session.ptController?.previewMaterialTables();
       } else if (msg?.type === "flowgraphStart") {
         void session.startFlowgraph();
       } else if (msg?.type === "flowgraphStop") {
@@ -931,7 +933,9 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
         void runFlowSeries(msg as Record<string, unknown>);
       } else if (session.handleLinkMessage(msg as Record<string, unknown>)) {
         // Linked previews: relayed by the hub (parser/previewLinkHub.ts).
-      } else if (session.handleOptimizationMessage(msg as Record<string, unknown>)) {
+      } else if (session.handleWindTunnelMessage(msg as Record<string, unknown>)) {
+      // Virtual wind tunnel wizard (windTunnelHost.ts)
+    } else if (session.handleOptimizationMessage(msg as Record<string, unknown>)) {
         // handled by the session (Optimization progress panel)
       } else if (session.handleCompareMessage(msg as Record<string, unknown>)) {
         // In-preview comparison: the peer file is picked and parsed here

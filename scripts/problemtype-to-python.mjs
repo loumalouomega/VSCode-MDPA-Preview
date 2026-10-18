@@ -38,6 +38,18 @@ function py(v, indent = 0) {
   return `{\n${entries.join("\n")}\n${" ".repeat(indent)}}`;
 }
 
+function ruleSrc(r) {
+  const kv = [`"field": ${JSON.stringify(r.field)}`];
+  if (r.equals !== undefined) kv.push(`"equals": ${py(r.equals)}`);
+  else kv.push(`"one_of": ${py(r.oneOf)}`);
+  return `{${kv.join(", ")}}`;
+}
+
+/** A single visible/when rule, or a list meaning "all must hold". */
+function whenSrc(when) {
+  return Array.isArray(when) ? `[${when.map(ruleSrc).join(", ")}]` : ruleSrc(when);
+}
+
 function fieldSrc(f, indent) {
   const pad = " ".repeat(indent);
   const args = [JSON.stringify(f.id), JSON.stringify(f.label), JSON.stringify(f.type)];
@@ -47,13 +59,7 @@ function fieldSrc(f, indent) {
     args.push(`options=[${opts.join(", ")}]`);
   }
   if (f.visibleWhen !== undefined) {
-    const rule = (r) => {
-      const kv = [`"field": ${JSON.stringify(r.field)}`];
-      if (r.equals !== undefined) kv.push(`"equals": ${py(r.equals)}`);
-      else kv.push(`"one_of": ${py(r.oneOf)}`);
-      return `{${kv.join(", ")}}`;
-    };
-    args.push(`visible_when=${Array.isArray(f.visibleWhen) ? `[${f.visibleWhen.map(rule).join(", ")}]` : rule(f.visibleWhen)}`);
+    args.push(`visible_when=${whenSrc(f.visibleWhen)}`);
   }
   if (f.unit !== undefined) args.push(`unit=${JSON.stringify(f.unit)}`);
   if (f.help !== undefined) args.push(`help=${JSON.stringify(f.help)}`);
@@ -93,6 +99,7 @@ for (const c of decl.conditions) {
   if (c.category !== undefined) rest.push(`category=${JSON.stringify(c.category)}`);
   if (c.icon !== undefined) rest.push(`icon=${JSON.stringify(c.icon)}`);
   if (c.noProcess) rest.push("no_process=True");
+  if (c.emit !== undefined) rest.push(`emit=${JSON.stringify(c.emit)}`);
   if (rest.length) out.push(`              ${rest.join(", ")}),`);
   else out.push("              ),");
 }
@@ -101,8 +108,16 @@ out.push("");
 out.push("MATERIAL_LAWS = [");
 for (const l of decl.materialLaws) {
   const a = [JSON.stringify(l.id), JSON.stringify(l.name)];
+  const extra = [];
+  if (l.application) extra.push(`application=${JSON.stringify(l.application)}`);
+  if (l.group) extra.push(`group=${JSON.stringify(l.group)}`);
+  if (l.parameters) extra.push(`parameters=${py(l.parameters, 17)}`);
+  if (l.when) extra.push(`when=${whenSrc(l.when)}`);
+  if (l.tables) extra.push(`tables=${py(l.tables.map((t) => ({ id: t.id, input_variable: t.inputVariable, output_variable: t.outputVariable, data_field: t.dataField })), 17)}`);
+  if (l.domainSize) extra.push(`domain_size=${l.domainSize}`);
+  if (l.domain) extra.push(`domain=${JSON.stringify(l.domain)}`);
   out.push(`    material_law(${a.join(", ")},`);
-  out.push(`                 variables=[${l.variables.map((f) => fieldSrc(f, 0)).join(",\n                            ")}]${l.domainSize ? `,\n                 domain_size=${l.domainSize}` : ""}${l.domain ? `,\n                 domain=${JSON.stringify(l.domain)}` : ""}),`);
+  out.push(`                 variables=[${l.variables.map((f) => fieldSrc(f, 0)).join(",\n                            ")}]${extra.length ? ",\n                 " + extra.join(",\n                 ") : ""}),`);
 }
 out.push("]");
 out.push("");

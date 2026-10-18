@@ -405,9 +405,10 @@ function updateRemeshModeUI(): void {
   const anisoBlock = document.getElementById("remesh-aniso-block");
   if (valueLabel) valueLabel.textContent = m === "hsiz" ? "size" : "factor";
   // The numeric value only matters for factor/hsiz; the other modes hide it.
-  valueField?.classList.toggle("hidden", m === "optimize" || m === "expr" || m === "aniso");
+  valueField?.classList.toggle("hidden", m === "optimize" || m === "expr" || m === "aniso" || m === "wall");
   exprBlock?.classList.toggle("hidden", m !== "expr");
   anisoBlock?.classList.toggle("hidden", m !== "aniso");
+  document.getElementById("remesh-wall-block")?.classList.toggle("hidden", m !== "wall");
   if (m === "expr") validateExprInputs();
 }
 
@@ -774,6 +775,21 @@ function buildRemeshMsg(): Record<string, unknown> | undefined {
     )?.value;
     if (method) msg.method = method;
   }
+  if (mode === "wall") {
+    const variable = (document.getElementById("remesh-wall-variable") as HTMLSelectElement | null)?.value;
+    const first = optNum("remesh-wall-first");
+    if (!variable || !(first !== undefined && first > 0)) return undefined;
+    msg.variable = variable;
+    msg.firstHeight = first;
+    const growth = optNum("remesh-wall-growth");
+    if (growth !== undefined) msg.growth = growth;
+    const aspect = optNum("remesh-wall-aspect");
+    if (aspect !== undefined) msg.maxAspect = aspect;
+    const along = optNum("remesh-wall-tangential");
+    if (along !== undefined) msg.tangentialSize = along;
+    const alongGrowth = optNum("remesh-wall-tgrowth");
+    if (alongGrowth !== undefined) msg.tangentialGrowth = alongGrowth;
+  }
   // Frozen entities: comma-separated names → {kind, target} rows; blanks dropped.
   const frozen = selectorRows("remesh-frozen-blocks", "remesh-frozen-parts");
   if (frozen.length) msg.frozen = frozen;
@@ -894,6 +910,12 @@ export function setMeshModFields(
     nodal.filter((f) => f.components === 1),
     (f) => f.variable,
     document.getElementById("remesh-aniso-block")
+  );
+  fillNodalSelect(
+    "remesh-wall-variable",
+    nodal.filter((f) => f.components === 1),
+    (f) => f.variable,
+    document.getElementById("remesh-wall-block")
   );
   fillNodalSelect("errest-variable", nodal, (f) =>
     f.components > 1 ? `${f.variable} (${f.components})` : f.variable

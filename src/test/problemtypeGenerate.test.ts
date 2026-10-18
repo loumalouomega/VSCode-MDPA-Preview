@@ -185,6 +185,43 @@ test("structural: materials file carries law, merged variables and dotted part n
   });
 });
 
+test("a law's application, parameters and when rules shape the materials file and the driver", async () => {
+  const base = structural.decl.materialLaws[0];
+  const decl = {
+    ...structural.decl,
+    materialLaws: [
+      base,
+      {
+        ...base,
+        id: "vm_plasticity",
+        name: "SmallStrainIsotropicPlasticityFactory",
+        application: "ConstitutiveLawsApplication",
+        parameters: { law_type: "SmallStrainIsotropicPlasticityFactory", yield_surface: "VonMises" },
+        when: { field: "solverType", equals: "dynamic" },
+      },
+    ],
+  };
+  const runtime = { ...structural, decl };
+  const model = parseMdpa(MDPA_3D);
+
+  const dynamic = structuralState();
+  dynamic.values.problem.solverType = "dynamic";
+  dynamic.materials = [{ smpPath: "Parts/Solid", lawId: "vm_plasticity", values: { YOUNG_MODULUS: 2.0e11 } }];
+  const out = await generateCase(runtime, model, dynamic, "beam");
+  assert.deepEqual(JSON.parse(out.materials).properties[0].Material.constitutive_law, {
+    name: "SmallStrainIsotropicPlasticityFactory",
+    law_type: "SmallStrainIsotropicPlasticityFactory",
+    yield_surface: "VonMises",
+  });
+  assert.deepEqual(out.applications, ["ConstitutiveLawsApplication", "StructuralMechanicsApplication"]);
+
+  // The setup the law was not written for refuses the assignment instead of
+  // writing it out under a meaning it never had.
+  const stat = structuralState();
+  stat.materials = dynamic.materials;
+  await assert.rejects(generateCase(runtime, model, stat, "beam"), /not available for the current setup/);
+});
+
 test("structural dynamic: solver gains the implicit bossak scheme", async () => {
   const model = parseMdpa(MDPA_3D);
   const state = structuralState();
@@ -539,11 +576,12 @@ test("structural eigenvalue: eigensolver settings, no regular output, a GiD post
 test("structural formulations switch the DOF flags and the expected block names", async () => {
   const model = parseMdpa(MDPA_3D);
   const state = structuralState();
-  const settings = async (elementBase: string) => {
+  const settings = async (elementBase: string, lawId = "linear_elastic_3d") => {
     state.values.problem.elementBase = elementBase;
+    state.materials = [{ smpPath: "Parts/Solid", lawId, values: { YOUNG_MODULUS: 2.0e11 } }];
     return JSON.parse((await generateCase(structural, model, state, "beam")).projectParameters).solver_settings;
   };
-  assert.equal((await settings("CrBeamElement")).rotation_dofs, true);
+  assert.equal((await settings("ShellThickElementCorotational", "shell")).rotation_dofs, true);
   assert.equal((await settings("SmallDisplacementMixedStrainElement")).strain_dofs, true);
   assert.equal((await settings("SmallDisplacementMixedVolumetricStrainElement")).volumetric_strain_dofs, true);
   assert.equal((await settings("TotalLagrangianElement")).rotation_dofs, false);
@@ -584,17 +622,20 @@ function fluidState(): CaseState {
   return state;
 }
 
-test("fluid monolithic: QSVMS formulation, BDF2 scheme and the orthogonal-subscales switch only for the VMS family", async () => {
+test("fluid monolithic: QSVMS formulation, Bossak scheme by default and the orthogonal-subscales switch only for the VMS family", async () => {
   const model = parseMdpa(MDPA_3D);
   const state = fluidState();
   const ss = async () => JSON.parse((await generateCase(fluid, model, state, "flow")).projectParameters).solver_settings;
   let s = await ss();
   assert.equal(s.solver_type, "Monolithic");
-  assert.equal(s.time_scheme, "bdf2");
-  assert.deepEqual(s.formulation, { element_type: "qsvms", use_orthogonal_subscales: false, dynamic_tau: 1 });
-  Object.assign(state.values.problem, { elementType: "fic", timeScheme: "bossak", oss: true });
-  s = await ss();
+  // Bossak is the default: BDF2 with a classic (non-time-integrated) element
+  // segfaults stock Kratos (its BDF2 scheme reads BDF coefficients the solver
+  // only computes for time-integrated elements), so the default must not emit it.
   assert.equal(s.time_scheme, "bossak");
+  assert.deepEqual(s.formulation, { element_type: "qsvms", use_orthogonal_subscales: false, dynamic_tau: 1 });
+  Object.assign(state.values.problem, { elementType: "fic", timeScheme: "bdf2", oss: true });
+  s = await ss();
+  assert.equal(s.time_scheme, "bdf2");
   assert.deepEqual(s.formulation, { element_type: "fic", dynamic_tau: 1 });
   Object.assign(state.values.problem, { elementType: "dvms" });
   assert.equal((await ss()).formulation.use_orthogonal_subscales, true);

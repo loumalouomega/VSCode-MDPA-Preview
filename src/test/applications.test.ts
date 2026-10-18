@@ -76,6 +76,31 @@ test("declared applications follow their when rule; the union is sorted and dedu
   assert.deepEqual(requiredApplications({ analysisStage: "KratosMultiphysics.analysis_stage" }, {}, []), []);
 });
 
+test("an assigned law's application joins the list, gated by the law's when rule", () => {
+  const decl = {
+    analysisStage: "KratosMultiphysics.StructuralMechanicsApplication.structural_mechanics_analysis",
+    materialLaws: [
+      {
+        id: "clapp",
+        name: "SmallStrainIsotropicPlasticityFactory",
+        variables: [],
+        application: "ConstitutiveLawsApplication",
+        when: { field: "solverType", equals: "dynamic" },
+      },
+      { id: "plain", name: "LinearElastic3DLaw", variables: [] },
+    ],
+  };
+  assert.deepEqual(requiredApplications(decl, { solverType: "dynamic" }, [], [{ lawId: "clapp" }, { lawId: "plain" }]), [
+    "ConstitutiveLawsApplication",
+    "StructuralMechanicsApplication",
+  ]);
+  // The rule excludes the assignment, and an undeclared law contributes nothing.
+  assert.deepEqual(requiredApplications(decl, { solverType: "static" }, [], [{ lawId: "clapp" }]), [
+    "StructuralMechanicsApplication",
+  ]);
+  assert.deepEqual(requiredApplications(decl, {}, [], [{ lawId: "nope" }]), ["StructuralMechanicsApplication"]);
+});
+
 test("a declaration's applications list is validated by name", () => {
   assert.deepEqual(applicationDeclarationProblems(undefined), []);
   assert.deepEqual(applicationDeclarationProblems(["FSIApplication", { application: "MappingApplication", when: { field: "x", equals: 1 } }]), []);

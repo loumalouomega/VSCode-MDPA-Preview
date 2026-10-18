@@ -16,11 +16,12 @@
 
 import { MdpaModel } from "../parser/types";
 import { extractSubModelParts } from "../parser/subModelPartExtract";
-import { CaseState, ProblemtypeRuntime } from "./types";
-import { flattenValues, resolveMeshNaming } from "./api";
+import { CaseState, ConditionEmitSpec, JsonValue, ProblemtypeRuntime } from "./types";
+import { asStr, flattenValues, resolveMeshNaming } from "./api";
 import { domainOfLaw, resolveDomainSize } from "./generate";
-import { adaptMeshNames, BlockRename } from "./meshAdapt";
+import { adaptMeshNames, BlockRename, MeshAdaptProblem } from "./meshAdapt";
 import { addInterfacePointLoads } from "./interfacePointLoad";
+import { emitLoadConditions, LoadEmitRequest } from "./emitLoadConditions";
 
 /** One physics domain's own mesh file, sliced from the source (coupled problemtypes). */
 export interface DomainMesh {
@@ -50,6 +51,54 @@ export interface CaseMeshPlan {
 }
 
 /**
+ * Runs load-condition emission (point, moment and moving loads) over `model`:
+ * every assignment whose condition declares `emit` synthesizes the Kratos
+ * conditions into a sibling part. `values` are the flattened case values the
+ * formulation field is read from; `prefix` labels the warnings per domain.
+ */
+function emitLoads(
+  model: MdpaModel,
+  decl: { conditions: { id: string; emit?: ConditionEmitSpec }[] },
+  values: Record<string, JsonValue>,
+  assignments: { smpPath: string; conditionId: string }[],
+  domainSize: 2 | 3,
+  prefix = ""
+): { model: MdpaModel; warnings: string[] } {
+  const requests: LoadEmitRequest[] = [];
+  for (const a of assignments) {
+    if (decl.conditions.some((c) => c.id === a.conditionId && c.emit !== undefined)) {
+      requests.push({ smpPath: a.smpPath, conditionId: a.conditionId });
+    }
+  }
+  if (requests.length === 0) return { model, warnings: [] };
+  const emitOf = (id: string) => decl.conditions.find((c) => c.id === id)?.emit;
+  const applied = emitLoadConditions(model, requests, {
+    domainSize,
+    emitOf,
+    formulationOf: (id: string) => {
+      const field = emitOf(id)?.formulationField;
+      return field ? asStr(values[field], "") : "";
+    },
+  });
+  return {
+    model: applied.model,
+    warnings: applied.warnings.map((w) => (prefix ? `${prefix}: ${w}` : w)),
+  };
+}
+
+/**
+ * Throws the Generate refusal for blocks the resolved naming cannot name, one
+ * bullet per block, so preflight reports each as its own error finding.
+ */
+function refuseMesh(problems: MeshAdaptProblem[], domain?: string): void {
+  if (problems.length === 0) return;
+  const bullets = problems.map((p) => (domain ? `Domain "${domain}": ${p.message}` : p.message));
+  throw new Error(
+    `The mesh cannot be adapted to the selected formulation, so no case files were written:\n- ${bullets.join("\n- ")}`
+  );
+}
+
+/**
  * Plans the case mesh for a source mesh of stem `stem`.
  *
  * `isMdpaSource` selects the policy: an `.mdpa` source is referenced directly
@@ -67,9 +116,16 @@ export function planCaseMesh(
 ): CaseMeshPlan {
   const scratch: string[] = []; // generateCase re-reports these warnings
   const domainSize = resolveDomainSize(runtime, model, scratch);
-  const bases = resolveMeshNaming(runtime.decl, flattenValues(runtime.decl, state), domainSize);
-  const adapted = adaptMeshNames(model, bases, domainSize);
+  const decl = runtime.decl;
+  const values = flattenValues(decl, state);
+  const naming = resolveMeshNaming(decl, values, domainSize);
+  const adapted = adaptMeshNames(model, naming, domainSize);
+  refuseMesh(adapted.problems);
   const warnings = [...adapted.warnings];
+  // Point, moment and moving loads synthesize their Kratos conditions from
+  // the assigned parts into sibling parts (the mesh rarely carries them).
+  const emitted = emitLoads(adapted.model, decl, values, state.assignments, domainSize);
+  warnings.push(...emitted.warnings);
   if (
     model.subModelParts.length === 0 &&
     (state.assignments.length > 0 || state.materials.length > 0)
@@ -79,16 +135,15 @@ export function planCaseMesh(
         "nothing to attach to — the solver will see an unloaded model."
     );
   }
-  const decl = runtime.decl;
   if (decl.domains && decl.domains.length > 0) {
     // Slice the source into one mesh per domain by the SubModelParts assigned
     // there (its conditions' and its materials'), keeping the original paths so
     // a path assigned in the source still addresses the same part in the slice.
-    const values = flattenValues(decl, state);
     const domainMeshes: DomainMesh[] = [];
     for (const d of decl.domains) {
+      const own = state.assignments.filter((a) => d.conditionIds.includes(a.conditionId));
       const paths = [
-        ...state.assignments.filter((a) => d.conditionIds.includes(a.conditionId)).map((a) => a.smpPath),
+        ...own.map((a) => a.smpPath),
         ...state.materials.filter((m) => domainOfLaw(decl, m.lawId)?.id === d.id).map((m) => m.smpPath),
       ];
       const slice = extractSubModelParts(model, paths, { keepTree: true });
@@ -96,10 +151,16 @@ export function planCaseMesh(
         warnings.push(`Domain "${d.label}": none of its assigned SubModelParts exist in the mesh, so its mesh file is empty.`);
       }
       const base = slice ?? { ...model, nodeCount: 0, nodeIds: new Int32Array(0), coords: new Float32Array(0), blocks: [], subModelParts: [], fields: [] };
-      const bases = resolveMeshNaming({ ...decl, meshNaming: d.meshNaming ?? decl.meshNaming }, values, domainSize);
-      const renamed = adaptMeshNames(base, bases, domainSize);
+      const naming = resolveMeshNaming({ ...decl, meshNaming: d.meshNaming ?? decl.meshNaming }, values, domainSize);
+      const renamed = adaptMeshNames(base, naming, domainSize);
+      refuseMesh(renamed.problems, d.label);
       warnings.push(...renamed.warnings.map((w) => `${d.label}: ${w}`));
       let domainModel = renamed.model;
+      // The domain's own point, moment and moving loads, before the mapped
+      // interface load tops the same sibling up (see interfacePointLoad.ts).
+      const loads = emitLoads(domainModel, decl, values, own, domainSize, d.label);
+      domainModel = loads.model;
+      warnings.push(...loads.warnings);
       if (d.pointLoadInterface) {
         // The coupling's mapped POINT_LOAD is assembled by one-node point
         // conditions in a sibling of the interface part (see interfacePointLoad.ts).
@@ -122,9 +183,9 @@ export function planCaseMesh(
       domainMeshes,
     };
   }
-  const shouldWriteMesh = !isMdpaSource || adapted.renames.length > 0;
+  const shouldWriteMesh = !isMdpaSource || adapted.renames.length > 0 || emitted.model !== adapted.model;
   return {
-    caseModel: adapted.model,
+    caseModel: emitted.model,
     caseStem: shouldWriteMesh ? `${stem}_case` : stem,
     shouldWriteMesh,
     domainSize,

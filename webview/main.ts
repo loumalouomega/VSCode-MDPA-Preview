@@ -27,6 +27,9 @@ import {
 } from "../src/parser/streamlineForm";
 import { buildStreamlineTubes } from "../src/parser/streamlineTubes";
 import { renderFlowBalancePanel, FlowBalancePanelState } from "./flowBalancePanel";
+import { renderWindTunnelPanel } from "./windTunnelPanel";
+import type { WindTunnelPanelState, WindTunnelPlanView, WindTunnelResultView } from "./windTunnelPanel";
+import { buildWindTunnelRequest, defaultWindTunnelForm, planRequestOf, WIZARD_STEPS } from "../src/problemtype/windTunnel/form";
 import { emptyOptimizationPanelState, renderOptimizationPanel, OptimizationPanelState } from "./optimizationPanel";
 import { optimizationSummaryToCsv } from "../src/problemtype/optimization/summaryLog";
 import { buildFlowBalanceRequest, defaultFlowBalanceForm } from "../src/parser/flowBalanceForm";
@@ -516,6 +519,10 @@ const linkPanelEl = document.createElement("div");
 linkPanelEl.id = "link-panel";
 linkPanelEl.style.display = "none";
 vtkSub.appendChild(linkPanelEl);
+const windTunnelPanelEl = document.createElement("div");
+windTunnelPanelEl.id = "wind-tunnel-panel";
+windTunnelPanelEl.style.display = "none";
+vtkSub.appendChild(windTunnelPanelEl);
 const optimizationPanelEl = document.createElement("div");
 optimizationPanelEl.id = "optimization-panel";
 optimizationPanelEl.style.display = "none";
@@ -1763,6 +1770,14 @@ function handleHostMessage(event: MessageEvent): void {
       break;
     case "optimizationProgress":
       applyOptimizationProgress(msg as Record<string, unknown>);
+      break;
+    case "windTunnelState":
+    case "windTunnelPlanResult":
+    case "windTunnelProgress":
+    case "windTunnelResult":
+    case "windTunnelBody":
+    case "windTunnelFolder":
+      applyWindTunnelMessage(msg as Record<string, unknown>);
       break;
     case "selectionSeed":
       applySelectionSeed(msg as Record<string, unknown>);
@@ -3479,6 +3494,7 @@ function dispatchToolbarAction(action: string | undefined, _target?: HTMLElement
   else if (action === "flowBalance") toggleFlowPanel();
   else if (action === "linkPreviews") toggleLinkPanel();
   else if (action === "optimizationProgress") toggleOptimizationPanel();
+  else if (action === "windTunnel") toggleWindTunnelPanel();
   else if (action === "compareSplit") toggleCompare();
   else if (action === "dataTable") toggleDataTablePanel();
   else if (action === "plots") void plotPane.open();
@@ -3702,6 +3718,7 @@ const LEFT_DOCK: { action: string; dismiss: () => void }[] = [
   { action: "flowBalance", dismiss: () => dismissFlowPanel() },
   { action: "linkPreviews", dismiss: () => dismissLinkPanel() },
   { action: "optimizationProgress", dismiss: () => dismissOptimizationPanel() },
+  { action: "windTunnel", dismiss: () => dismissWindTunnelPanel() },
 ];
 
 function closeLeftDockExcept(action: string): void {
@@ -7571,6 +7588,153 @@ function applyOptimizationProgress(msg: Record<string, unknown>): void {
     warnings: Array.isArray(msg.warnings) ? (msg.warnings as string[]) : [],
   };
   if (optimizationVisible) renderOptimization();
+}
+
+// --- Virtual wind tunnel wizard -------------------------------------------
+// Nothing is computed here: the host plans and builds through the same
+// functions MCP `wind_tunnel_plan` / `wind_tunnel_generate` call (see
+// src/windTunnelHost.ts); the form and its validation are in
+// src/problemtype/windTunnel/form.ts. A newer plan supersedes an older one by
+// its sequence tag, and the build keeps running if the panel is only dismissed.
+let windTunnelVisible = false;
+let windTunnelSeq = 0;
+let windTunnelPlanTimer: ReturnType<typeof setTimeout> | undefined;
+let windTunnelBuildSeq = 0;
+let windTunnelState: WindTunnelPanelState = { form: defaultWindTunnelForm(), step: 0, planning: false, building: false };
+
+function toggleWindTunnelPanel(): void {
+  if (windTunnelVisible) hideWindTunnelPanel();
+  else showWindTunnelPanel();
+}
+
+function showWindTunnelPanel(): void {
+  closeLeftDockExcept("windTunnel");
+  windTunnelPanelEl.style.display = "";
+  windTunnelVisible = true;
+  document.querySelector('[data-action="windTunnel"]')?.classList.add("active");
+  renderWindTunnel();
+  vscode.postMessage({ type: "windTunnelHello" });
+  if (windTunnelState.form.bodyPath) scheduleWindTunnelPlan(0);
+}
+
+/** Off screen only: the form, the plan and a running build stay. */
+function dismissWindTunnelPanel(): void {
+  windTunnelPanelEl.style.display = "none";
+  windTunnelVisible = false;
+  document.querySelector('[data-action="windTunnel"]')?.classList.remove("active");
+}
+
+function hideWindTunnelPanel(): void {
+  dismissWindTunnelPanel();
+  if (windTunnelPlanTimer) clearTimeout(windTunnelPlanTimer);
+}
+
+function scheduleWindTunnelPlan(delay = 600): void {
+  if (windTunnelPlanTimer) clearTimeout(windTunnelPlanTimer);
+  windTunnelPlanTimer = setTimeout(requestWindTunnelPlan, delay);
+}
+
+function requestWindTunnelPlan(): void {
+  const built = planRequestOf(windTunnelState.form);
+  if (!built.ok) {
+    // An incomplete form is not an error yet: the plan waits for a body and a speed.
+    windTunnelState = { ...windTunnelState, planning: false, plan: undefined, planError: built.field === "bodyPath" ? undefined : built.error };
+    if (windTunnelVisible) renderWindTunnel();
+    return;
+  }
+  windTunnelSeq += 1;
+  windTunnelState = { ...windTunnelState, planning: true, planError: undefined };
+  vscode.postMessage({ type: "windTunnelPlan", seq: windTunnelSeq, request: built.value });
+  if (windTunnelVisible) renderWindTunnel();
+}
+
+function generateWindTunnel(): void {
+  const built = buildWindTunnelRequest(windTunnelState.form);
+  if (!built.ok) {
+    windTunnelState = { ...windTunnelState, resultError: built.error, result: undefined };
+    renderWindTunnel();
+    return;
+  }
+  windTunnelBuildSeq += 1;
+  windTunnelState = { ...windTunnelState, building: true, resultError: undefined, result: undefined, progress: { done: 0, total: 1, label: "Starting…" } };
+  renderWindTunnel();
+  vscode.postMessage({ type: "windTunnelRun", seq: windTunnelBuildSeq, request: built.value });
+}
+
+function renderWindTunnel(): void {
+  renderWindTunnelPanel(windTunnelPanelEl, windTunnelState, {
+    onClose: hideWindTunnelPanel,
+    onStep: (index) => {
+      windTunnelState = { ...windTunnelState, step: Math.max(0, Math.min(WIZARD_STEPS.length - 1, index)) };
+      renderWindTunnel();
+      if (windTunnelState.form.bodyPath) scheduleWindTunnelPlan(windTunnelState.plan ? 600 : 0);
+    },
+    onChange: () => scheduleWindTunnelPlan(),
+    onPickBody: (index?: number) => vscode.postMessage({ type: "windTunnelPickBody", ...(index === undefined ? {} : { index }) }),
+    onPickFolder: () => vscode.postMessage({ type: "windTunnelPickFolder", folder: windTunnelState.form.outputFolder || undefined }),
+    onGenerate: generateWindTunnel,
+    onCancel: () => vscode.postMessage({ type: "windTunnelCancel" }),
+    onOpen: (meshPath) => vscode.postMessage({ type: "windTunnelOpen", path: meshPath }),
+  });
+}
+
+function applyWindTunnelMessage(msg: Record<string, unknown>): void {
+  const form = windTunnelState.form;
+  switch (msg.type) {
+    case "windTunnelState":
+      // Offer the previewed surface and a folder beside it, but never over what the user typed.
+      if (!form.bodyPath && typeof msg.bodyPath === "string") form.bodyPath = msg.bodyPath;
+      if (!form.outputFolder && typeof msg.folder === "string") form.outputFolder = msg.folder;
+      if (form.stem === "tunnel" && typeof msg.stem === "string" && msg.stem) form.stem = msg.stem;
+      if (msg.building === true && !windTunnelState.building) windTunnelState = { ...windTunnelState, building: true };
+      if (windTunnelVisible) renderWindTunnel();
+      if (form.bodyPath) scheduleWindTunnelPlan(0);
+      break;
+    case "windTunnelBody":
+      if (typeof msg.path === "string") {
+        if (typeof msg.index === "number" && form.extraBodies[msg.index]) form.extraBodies[msg.index].bodyPath = msg.path;
+        else form.bodyPath = msg.path;
+        windTunnelState = { ...windTunnelState, plan: undefined };
+        renderWindTunnel();
+        scheduleWindTunnelPlan(0);
+      }
+      break;
+    case "windTunnelFolder":
+      if (typeof msg.path === "string") {
+        form.outputFolder = msg.path;
+        renderWindTunnel();
+      }
+      break;
+    case "windTunnelPlanResult":
+      if (msg.seq !== windTunnelSeq) return; // superseded
+      windTunnelState = {
+        ...windTunnelState,
+        planning: false,
+        plan: msg.plan ? (msg.plan as WindTunnelPlanView) : undefined,
+        planError: typeof msg.message === "string" ? msg.message : undefined,
+      };
+      if (windTunnelVisible) renderWindTunnel();
+      break;
+    case "windTunnelProgress":
+      if (msg.seq !== windTunnelBuildSeq) return;
+      windTunnelState = {
+        ...windTunnelState,
+        progress: { done: Number(msg.done) || 0, total: Number(msg.total) || 1, label: typeof msg.label === "string" ? msg.label : "" },
+      };
+      if (windTunnelVisible) renderWindTunnel();
+      break;
+    case "windTunnelResult":
+      if (msg.seq !== windTunnelBuildSeq) return;
+      windTunnelState = {
+        ...windTunnelState,
+        building: false,
+        progress: undefined,
+        result: msg.result ? (msg.result as WindTunnelResultView) : undefined,
+        resultError: msg.cancelled ? "Cancelled." : typeof msg.message === "string" ? `${msg.message}${/already exist/.test(msg.message) ? " Tick Overwrite to replace them." : ""}` : undefined,
+      };
+      if (windTunnelVisible) renderWindTunnel();
+      break;
+  }
 }
 
 function toggleLinkPanel(): void {

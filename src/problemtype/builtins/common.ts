@@ -11,13 +11,16 @@ import { asBool, asNum, asStr, dottedModelPart, resolveProcessTemplate } from ".
 import type {
   Assignment,
   ConditionCategory,
+  ConditionEmitSpec,
   ConditionSpec,
   FieldSpec,
   GenContext,
   JsonObject,
   JsonValue,
+  MaterialLawSpec,
   ProcessList,
   ConditionTarget,
+  VisibleRule,
 } from "../types";
 
 /** The whole-simulation interval most processes use. */
@@ -88,6 +91,8 @@ interface ConditionBase {
   help?: string;
   list?: ProcessList;
   interval?: JsonValue;
+  /** Load emission into a sibling part; see `ConditionEmitSpec`. */
+  emit?: ConditionEmitSpec;
 }
 
 /** `AssignVectorVariableProcess` on nodes: value + a single Fixed checkbox broadcast per component. */
@@ -191,6 +196,7 @@ export function vectorLoadOnConditions(variable: string, o: ConditionBase & { un
     category: o.category ?? "loads",
     icon: o.icon,
     help: o.help,
+    emit: o.emit,
     fields: [
       { id: "modulus", label: `Modulus${o.unit ? ` [${o.unit}]` : ""}`, type: "number", default: o.dflt ?? 0 },
       { id: "direction", label: "Direction", type: "vector3", default: o.direction ?? [0, 0, -1] },
@@ -290,4 +296,13 @@ export function unprefixValues(values: Record<string, JsonValue>, prefix: string
   const out: Record<string, JsonValue> = {};
   for (const [k, v] of Object.entries(values)) if (k.startsWith(prefix)) out[k.slice(prefix.length)] = v;
   return out;
+}
+
+/** Returns a copy of `laws` with every `when` rule's field prefixed (the material-law half of `prefixFields`). */
+export function prefixLawRules(laws: MaterialLawSpec[], prefix: string): MaterialLawSpec[] {
+  const rename = (r: VisibleRule): VisibleRule => ({ ...r, field: prefix + r.field });
+  return laws.map((l) => {
+    if (l.when === undefined) return { ...l };
+    return { ...l, when: Array.isArray(l.when) ? l.when.map(rename) : rename(l.when) };
+  });
 }

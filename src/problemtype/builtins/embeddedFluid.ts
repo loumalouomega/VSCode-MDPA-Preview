@@ -18,7 +18,7 @@
  */
 
 import { defineProblemtype, asBool, asNum, asStr } from "../api";
-import type { JsonObject, ProblemtypeDeclaration } from "../types";
+import type { JsonObject, JsonValue, ProblemtypeDeclaration } from "../types";
 import { fluid } from "./fluid";
 import { withoutRulesOn } from "./common";
 import { monitoredMainScript } from "../mainKratosTemplate";
@@ -26,10 +26,16 @@ import { monitoredMainScript } from "../mainKratosTemplate";
 const BASE = fluid.decl;
 const BASE_SECTION = BASE.sections[0];
 const DROPPED = ["strategy", "elementType", "timeScheme", "oss", "predictorCorrector", "pressureTolerance",
-  "maxPressureIterations", "velocityTolerance", "maxVelocityIterations"];
+  "maxPressureIterations", "velocityTolerance", "maxVelocityIterations",
+  "timeIntegrated", "ficBeta", "soundVelocity", "nonNewtonian", "powerLawK", "powerLawN", "yieldStress", "regularization",
+  "forceSteadyState", "timeOrder", "useSlipConditions", "bossakAlpha"];
 const MESH_ADAPTIVITY = { field: "meshAdaptivity", equals: true };
 const DISTANCE_FILE = { field: "distanceMode", equals: "from_GiD_file" };
 const DRAG = { field: "computeDrag", equals: true };
+/** The embedded elements Kratos registers; the weakly compressible pair reads SOUND_VELOCITY from the material. */
+const WEAKLY = { field: "embeddedFormulation", oneOf: ["embedded_weakly_compressible_navier_stokes", "embedded_weakly_compressible_navier_stokes_discontinuous"] as JsonValue[] };
+const NOT_WEAKLY = { field: "embeddedFormulation", oneOf: ["embedded_navier_stokes", "embedded_ausas_navier_stokes"] as JsonValue[] };
+const NOT_AUSAS = { field: "embeddedFormulation", oneOf: ["embedded_navier_stokes", "embedded_weakly_compressible_navier_stokes", "embedded_weakly_compressible_navier_stokes_discontinuous"] as JsonValue[] };
 
 const decl: ProblemtypeDeclaration = {
   ...BASE,
@@ -39,6 +45,21 @@ const decl: ProblemtypeDeclaration = {
   icon: "ptEmbedded",
   family: "fluid",
   domainSizes: [3],
+  // The embedded element reads a Newtonian viscosity only.
+  materialLaws: [
+    ...BASE.materialLaws.filter((l) => l.group !== "Non-Newtonian").map((l) => ({ ...l, when: NOT_WEAKLY })),
+    {
+      id: "newtonian_3d_weakly_compressible",
+      name: "Newtonian3DLaw",
+      domainSize: 3 as const,
+      when: WEAKLY,
+      variables: [
+        { id: "DENSITY", label: "Density [kg/m³]", type: "number" as const, default: 1000, unit: "kg/m³" },
+        { id: "DYNAMIC_VISCOSITY", label: "Dynamic viscosity [Pa·s]", type: "number" as const, default: 1e-3, unit: "Pa·s" },
+        { id: "SOUND_VELOCITY", label: "Speed of sound [m/s]", type: "number" as const, default: 1500, unit: "m/s" },
+      ],
+    },
+  ],
   sections: [
     {
       id: "problem",
@@ -63,9 +84,23 @@ const decl: ProblemtypeDeclaration = {
           DROPPED
         ),
         { id: "timeOrder", label: "Time order", type: "int", default: 2, min: 1, max: 2, group: "formulation" },
+        {
+          id: "embeddedFormulation",
+          label: "Embedded element",
+          type: "enum",
+          default: "embedded_navier_stokes",
+          group: "formulation",
+          options: [
+            { value: "embedded_navier_stokes", label: "Embedded Navier-Stokes (continuous)" },
+            { value: "embedded_weakly_compressible_navier_stokes", label: "Weakly compressible (continuous)" },
+            { value: "embedded_ausas_navier_stokes", label: "Ausas (discontinuous, slip)" },
+            { value: "embedded_weakly_compressible_navier_stokes_discontinuous", label: "Weakly compressible (discontinuous)" },
+          ],
+          help: "The Ausas and discontinuous elements use a discontinuous level set: the body may cut the elements anywhere. The weakly compressible ones read the speed of sound from the material.",
+        },
         { id: "isSlip", label: "Slip embedded boundary", type: "bool", default: false, group: "embedded" },
         { id: "penaltyCoefficient", label: "Penalty coefficient", type: "number", default: 10.0, min: 0, group: "embedded", visibleWhen: { field: "isSlip", equals: true } },
-        { id: "slipLength", label: "Slip length [m]", type: "number", default: 0.001, min: 0, group: "embedded", visibleWhen: { field: "isSlip", equals: true } },
+        { id: "slipLength", label: "Slip length [m]", type: "number", default: 0.001, min: 0, group: "embedded", visibleWhen: [{ field: "isSlip", equals: true }, NOT_AUSAS] },
         {
           id: "distanceMode",
           label: "Distance field",
@@ -114,13 +149,17 @@ export const embeddedFluid = defineProblemtype(decl, {
     const settings: JsonObject = { ...base };
     settings.time_order = asNum(v.timeOrder, 2);
     if (asBool(v.computeDrag, false)) settings.compute_reactions = true;
+    const variant = asStr(v.embeddedFormulation, "embedded_navier_stokes");
+    // The embedded solver (not the monolithic one) builds these elements.
+    settings.solver_type = "Embedded";
     const formulation: JsonObject = {
-      element_type: "embedded_navier_stokes",
+      element_type: variant,
       dynamic_tau: asNum(v.dynamicTau, 0.01),
       is_slip: asBool(v.isSlip, false),
       penalty_coefficient: asNum(v.penaltyCoefficient, 10),
     };
-    if (formulation.is_slip) formulation.slip_length = asNum(v.slipLength, 0.001);
+    // The Ausas formulation defines no slip length; the others take one when slip.
+    if (formulation.is_slip && variant !== "embedded_ausas_navier_stokes") formulation.slip_length = asNum(v.slipLength, 0.001);
     settings.formulation = formulation;
     const reading: JsonObject = { import_mode: asStr(v.distanceMode, "from_mdpa") };
     if (reading.import_mode !== "from_mdpa") reading.distance_file_name = asStr(v.distanceFile, "");
@@ -163,13 +202,15 @@ export const embeddedFluid = defineProblemtype(decl, {
     ];
     if (asBool(v.computeDrag, false)) {
       auxiliar.push({
-        python_module: "compute_embedded_drag_process",
+        // GiDInterface still writes compute_embedded_drag_process, which Kratos no
+        // longer ships; its replacement takes the force-and-moment keys.
+        python_module: "compute_embedded_flow_forces_and_moments_process",
         kratos_module: "KratosMultiphysics.FluidDynamicsApplication",
-        process_name: "ComputeEmbeddedDragProcess",
+        process_name: "ComputeEmbeddedFlowForcesAndMomentsProcess",
         Parameters: {
           model_part_name: part,
-          write_drag_output_file: asBool(v.writeDragFile, true),
-          print_drag_to_screen: asBool(v.printDrag, false),
+          write_forces_output_file: asBool(v.writeDragFile, true),
+          print_to_screen: asBool(v.printDrag, false),
           interval: [0.0, "End"],
         },
       });

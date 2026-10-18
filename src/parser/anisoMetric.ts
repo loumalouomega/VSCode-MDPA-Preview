@@ -132,3 +132,89 @@ export function metricFromHessian(
   }
   return out;
 }
+
+// --- wall-layer metric --------------------------------------------------------
+
+/**
+ * A boundary-layer size law, as a function of the distance `d` to the wall.
+ *
+ * MMG makes tetrahedra, not prisms, so a "layer" here is a stretch: the size
+ * across the wall (along the distance gradient) is small and grows with the
+ * distance the way a geometric layer stack does, while the size along the wall
+ * stays larger. For a first height `h1` and a growth ratio `r`, the layer
+ * thickness at distance `d` is `h1 + (r - 1) d` — the continuous form of the
+ * geometric series, which is what a metric (a field, not a count of layers) can
+ * express.
+ */
+export interface WallLayerSpec {
+  /** Cell height across the wall, at the wall. */
+  firstHeight: number;
+  /** Layer growth ratio r >= 1 (default 1.2). */
+  growth?: number;
+  /** Cell size along the wall, at the wall. Default `maxAspect * firstHeight`. */
+  tangentialSize?: number;
+  /** Growth of the along-wall size per unit distance (default 0.25). */
+  tangentialGrowth?: number;
+  /** Largest size anywhere (the far field). */
+  hmax: number;
+  /** Largest allowed ratio between the along-wall and across-wall size (default 50). */
+  maxAspect?: number;
+}
+
+export interface WallSizes {
+  /** Size across the wall. */
+  normal: number;
+  /** Size along the wall. */
+  tangential: number;
+}
+
+export function wallLayerSizes(distance: number, spec: WallLayerSpec, cap?: number): WallSizes {
+  const d = Math.abs(distance);
+  const growth = Math.max(1, spec.growth ?? 1.2);
+  const aspect = Math.max(1, spec.maxAspect ?? 50);
+  const normal = Math.min(spec.hmax, spec.firstHeight + (growth - 1) * d);
+  const wall = spec.tangentialSize ?? aspect * spec.firstHeight;
+  let tangential = Math.min(spec.hmax, wall + (spec.tangentialGrowth ?? 0.25) * d);
+  // Never narrower than across, never more stretched than the aspect limit.
+  tangential = Math.max(normal, Math.min(tangential, aspect * normal));
+  // An outside size field (a refined wake, say) can only make cells smaller.
+  if (cap !== undefined && Number.isFinite(cap) && cap > 0) {
+    return { normal: Math.min(normal, cap), tangential: Math.min(tangential, cap) };
+  }
+  return { normal, tangential };
+}
+
+/**
+ * One MMG tensor row [m11, m12, m13, m22, m23, m33] for a node at distance
+ * `distance` from the wall, whose distance gradient is `gradient`:
+ * `M = n nᵀ / h_n² + (I - n nᵀ) / h_t²`. A gradient that is zero or not finite
+ * (the medial axis, a failed node) has no wall direction, so it gets the
+ * isotropic metric of the along-wall size.
+ */
+export function metricFromWall(gradient: ArrayLike<number>, distance: number, spec: WallLayerSpec, cap?: number): Float64Array {
+  const { normal, tangential } = wallLayerSizes(distance, spec, cap);
+  const lt = 1 / (tangential * tangential);
+  const gx = gradient[0];
+  const gy = gradient[1];
+  const gz = gradient[2];
+  const len = Math.hypot(gx, gy, gz);
+  if (!Number.isFinite(len) || len < 0.3) return new Float64Array([lt, 0, 0, lt, 0, lt]);
+  const n = [gx / len, gy / len, gz / len];
+  const ln = 1 / (normal * normal);
+  const k = ln - lt;
+  return new Float64Array([
+    lt + k * n[0] * n[0],
+    k * n[0] * n[1],
+    k * n[0] * n[2],
+    lt + k * n[1] * n[1],
+    k * n[1] * n[2],
+    lt + k * n[2] * n[2],
+  ]);
+}
+
+/** Cell count of a geometric stack that reaches `thickness` from `firstHeight` with ratio `growth`. */
+export function layersToThickness(firstHeight: number, growth: number, thickness: number): number {
+  if (!(firstHeight > 0) || !(thickness > 0)) return 0;
+  if (growth <= 1 + 1e-9) return Math.ceil(thickness / firstHeight);
+  return Math.ceil(Math.log(1 + (thickness * (growth - 1)) / firstHeight) / Math.log(growth));
+}
