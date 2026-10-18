@@ -444,10 +444,14 @@ function longRunState(kind) {
 async function checkTunnelWall(fam, { caseDir, built }) {
   const latest = await readLatest(caseDir);
   if (!latest) throw new Error("no readable result in vtk_output");
-  const variable = fam.turbulence ? "RANS_Y_PLUS" : "Y_PLUS";
+  // The wizard's case writes the classic nodal Y_PLUS (its yPlus monitor), not RANS_Y_PLUS: Kratos' RANS
+  // y+ is a CONDITION variable (RANSApplication formulations/utilities.py sets it on model_part.Conditions).
+  const variable = "Y_PLUS";
   const stats = wallStats(latest.model, variable);
   if (!stats) throw new Error(`${variable} is not in ${latest.fileName}; the output list the case writes lacks it`);
-  if (!(stats.count > 0) || !Number.isFinite(stats.mean)) throw new Error(`${variable} has no positive wall values in ${latest.fileName}`);
+  if (!(stats.count > 0) || !Number.isFinite(stats.mean)) {
+    throw new Error(`${variable} is zero on every node of ${latest.fileName}: the wall y+ monitor was never evaluated in this case`);
+  }
   const planned = built.report.firstLayer?.yPlus;
   const ratio = planned ? stats.mean / planned : NaN;
   return `${variable} mean ${stats.mean.toFixed(1)} on ${stats.count} nodes, ${(stats.inLog * 100).toFixed(0)}% in 30–300; report y+ ${planned?.toFixed(1) ?? "?"} (solver/report ${Number.isFinite(ratio) ? ratio.toFixed(2) : "?"})`;
