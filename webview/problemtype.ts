@@ -58,6 +58,7 @@ import {
   validateMaterialAssignment,
 } from "../src/problemtype/materialCatalog";
 import { rowsToText, tableTextProblem, textToRows } from "../src/problemtype/materialTables";
+import { createTablePlot } from "./materialTablePlot";
 import { hideFlowgraphPane } from "./flowgraphPane";
 import {
   cardBlock,
@@ -1155,8 +1156,9 @@ function tableFieldEditor(
   get: () => JsonValue,
   set: (v: string) => void
 ): HTMLElement {
-  const wrap = document.createElement("label");
-  wrap.className = "edit-field pt-field";
+  // A div, not a label: the plot holds focusable points a label would hijack.
+  const wrap = document.createElement("div");
+  wrap.className = "edit-field pt-field pt-table-field";
   wrap.dataset.field = f.id;
   if (f.help) wrap.title = f.help;
   const caption = document.createElement("span");
@@ -1183,11 +1185,37 @@ function tableFieldEditor(
       err.textContent = problem;
     }
   };
-  const commit = (): void => {
+  const readRows = (): { input: string; output: string }[] => {
     const rows: { input: string; output: string }[] = [];
     for (const row of Array.from(grid.querySelectorAll(":scope > .pt-table-row"))) {
       const cells = row.querySelectorAll("input");
       rows.push({ input: cells[0]?.value ?? "", output: cells[1]?.value ?? "" });
+    }
+    return rows;
+  };
+  const plot = createTablePlot({
+    inputLabel: table.inputVariable,
+    outputLabel: table.outputVariable,
+    getRows: readRows,
+    onRows: (rows) => writeRows(rows),
+  });
+  const commit = (): void => {
+    set(rowsToText(readRows()));
+    refreshError();
+    plot.refresh();
+  };
+  /** Rewrites the grid from the plot. Same row count: values change in place, so focus survives. */
+  const writeRows = (rows: { input: string; output: string }[]): void => {
+    const existing = Array.from(grid.querySelectorAll(":scope > .pt-table-row"));
+    if (existing.length === rows.length) {
+      rows.forEach((r, i) => {
+        const cells = existing[i].querySelectorAll("input");
+        cells[0].value = r.input;
+        cells[1].value = r.output;
+      });
+    } else {
+      for (const row of existing) row.remove();
+      for (const r of rows) addRow(r.input, r.output);
     }
     set(rowsToText(rows));
     refreshError();
@@ -1231,8 +1259,9 @@ function tableFieldEditor(
     const inputs = grid.querySelectorAll("input");
     (inputs[inputs.length - 2] as HTMLInputElement | undefined)?.focus();
   });
-  wrap.append(grid, err, add);
+  wrap.append(grid, err, add, plot.element);
   refreshError();
+  plot.refresh();
   return wrap;
 }
 
@@ -1407,6 +1436,17 @@ function renderMaterials(decl: ProblemtypeDeclaration): void {
   importBtn.title = "Add a JSON preset file to this workspace's material library";
   importBtn.addEventListener("click", () => post({ type: "ptPresetImport" }));
   tools.appendChild(importBtn);
+  // Only when a material on screen carries a table: the plot opens in the Plots workspace.
+  const hasTables = state.materials.some((m) => (decl.materialLaws.find((l) => l.id === m.lawId)?.tables?.length ?? 0) > 0);
+  if (hasTables) {
+    const previewBtn = document.createElement("button");
+    previewBtn.type = "button";
+    previewBtn.className = "pt-preset-link";
+    previewBtn.textContent = "preview tables";
+    previewBtn.title = "Plot every material table of this case in the Scientific plots workspace";
+    previewBtn.addEventListener("click", () => post({ type: "ptPreviewTables" }));
+    tools.appendChild(previewBtn);
+  }
   for (const problem of presetProblems) {
     const note = document.createElement("span");
     note.className = "pt-preset-problem";

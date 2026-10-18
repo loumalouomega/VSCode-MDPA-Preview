@@ -862,6 +862,8 @@ function attachEmptyPanel(
       await session.ptController?.importPresets();
     } else if (msg?.type === "ptPresetExport") {
       await session.ptController?.exportPreset(String(msg.preset ?? ""));
+    } else if (msg?.type === "ptPreviewTables") {
+      session.ptController?.previewMaterialTables();
     } else if (msg?.type === "flowgraphStart") {
       await session.startFlowgraph();
     } else if (msg?.type === "flowgraphStop") {

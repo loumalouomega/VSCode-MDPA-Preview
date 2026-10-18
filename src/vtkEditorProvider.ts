@@ -1093,6 +1093,8 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
         void session.ptController?.importPresets();
       } else if (msg?.type === "ptPresetExport") {
         void session.ptController?.exportPreset(String(msg.preset ?? ""));
+      } else if (msg?.type === "ptPreviewTables") {
+        session.ptController?.previewMaterialTables();
       } else if (msg?.type === "flowgraphStart") {
         void session.startFlowgraph();
       } else if (msg?.type === "flowgraphStop") {

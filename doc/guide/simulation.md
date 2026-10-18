@@ -122,6 +122,17 @@ Choose a preset, choose a law and a SubModelPart, and press **+**. The water and
 A row that names a SubModelPart is clickable and frames that part in the viewport. Quality checks are skipped above 50 000 cells in the sidebar (the Quality panel still gives the full report). Headlessly, `case_validate` returns the same findings.
 
 
+## Material tables: plot, drag to edit, preview
+
+A law variable that holds a table (the temperature-dependent viscosity's `T,mu; …` text) edits as a grid **and** as a plot beneath it, with the table's own variables on the axes. The two are one table: typing in the grid moves the points, and dragging a point rewrites the grid and the saved case.
+
+- **Drag** a point to move it. The input column must increase (Kratos interpolates the table in order), so a point stops before its neighbours; the output is free. The axes are held still while you drag and re-fit when you let go.
+- **Keyboard**: tab to a point, then the arrow keys nudge it (Shift for ten times the step) and **Delete** removes it. The readout under the plot names the values.
+- **Double-click** empty space inside the plot to add a point at that position, in input order. A second point at an input that already has one is refused, because a table cannot give two outputs for one input.
+- A row that does not parse stays in the grid, flagged, but is not drawn; with fewer than two drawable rows the plot shows a hint instead of an empty frame. Values written back are rounded to six significant digits so a drag leaves tidy text.
+
+**Preview tables** (on the Materials form, when a material has a table) plots every table of the case on screen in the Scientific plots workspace, before anything is generated — zoom, hover and PNG/CSV export included. The command **Kratos MDPA: Preview Material Tables** does the same for any Kratos materials JSON file: run it from the palette on the open file (or pick one), or right-click a `*material*.json` file in the Explorer or editor. Tables that share an input and output variable share a chart, one line per table; a file with several variable pairs opens one chart each (it asks which when there are more than four). A malformed table or row is skipped with a note and never stops the others, a table whose inputs do not increase is drawn as written and flagged, and no unit is claimed because a materials file declares none.
+
 ## Element types and the case mesh
 
 Kratos solvers expect specific element/condition block names in the mdpa, and your mesh may be named for different physics (or come from a generic mesher). Each problemtype declares what its solver needs, and **Generate checks the mesh**: when any block name differs, a renamed copy **`<name>_case.mdpa`** is written next to the original (which stays untouched) and `model_import_settings.input_filename` points at it. A notification lists the renames; `Properties` blocks are preserved verbatim.

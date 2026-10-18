@@ -23,6 +23,7 @@ import { generateCase } from "./problemtype/generate";
 import { writePreparedCase } from "./problemtype/preparation";
 import { planCaseMesh } from "./problemtype/caseMesh";
 import { preflightCase } from "./problemtype/preflight";
+import { materialTablesFromCase } from "./problemtype/materialsJsonPlot";
 import { writeMdpa } from "./parser/writers/mdpaWriter";
 import { caseFilePath, parseCaseJson, serializeCase } from "./problemtype/caseFile";
 import {
@@ -246,6 +247,24 @@ export class PtController {
   }
 
   /** Writes a catalog row out as a shareable preset file. */
+  /**
+   * Plots the tables of the materials on screen (the Materials form's
+   * "Preview tables"): read from the case state, so it works before anything is
+   * generated and shows exactly what the grid holds.
+   */
+  previewMaterialTables(): void {
+    const state = this.state;
+    const runtime = state ? this.runtimeFor(state) : undefined;
+    if (!state || !runtime) {
+      void vscode.window.showInformationMessage("Pick a problemtype first: the materials come from it.");
+      return;
+    }
+    void vscode.commands.executeCommand("kratos.materials.previewTables", {
+      read: materialTablesFromCase(runtime.decl.materialLaws, state.materials),
+      label: `${this.stem} (case on screen)`,
+    });
+  }
+
   async exportPreset(presetId: string): Promise<void> {
     const library = discoverMaterialLibrary(this.workspaceRoots(), this.libraryPaths());
     const preset = [...BUILTIN_PRESETS, ...library.presets].find((p) => p.id === presetId);

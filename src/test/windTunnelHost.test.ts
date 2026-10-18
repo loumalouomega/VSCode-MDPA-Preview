@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import * as path from "node:path";
 
 import { createWindTunnelHost } from "../windTunnelHost";
 import { buildWindTunnelRequest, defaultWindTunnelForm, planRequestOf } from "../problemtype/windTunnel/form";
@@ -27,7 +28,7 @@ const tick = () => new Promise((r) => setImmediate(r));
 test("hello offers a surface file as the body and a folder beside it", () => {
   const h = harness();
   assert.equal(h.host.handle({ type: "windTunnelHello" }), true);
-  assert.deepEqual(h.posted[0], { type: "windTunnelState", bodyPath: "/data/car.stl", folder: "/data/car_tunnel", stem: "car", building: false });
+  assert.deepEqual(h.posted[0], { type: "windTunnelState", bodyPath: "/data/car.stl", folder: path.join("/data", "car_tunnel"), stem: "car", building: false });
   const mdpa = harness({ fsPath: () => "/data/m.mdpa" });
   mdpa.host.handle({ type: "windTunnelHello" });
   assert.equal(mdpa.posted[0].bodyPath, undefined, "a volume mesh is not offered as a body");

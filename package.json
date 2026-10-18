@@ -416,6 +416,11 @@
     },
     "commands": [
       {
+        "command": "kratos.materials.previewTables",
+        "title": "%command.kratos.materials.previewTables.title%",
+        "category": "%category.KratosMdpa%"
+      },
+      {
         "command": "kratos.mesh.plotBuilder",
         "title": "%command.kratos.mesh.plotBuilder.title%"
       },
@@ -1019,7 +1024,19 @@
           "group": "navigation"
         }
       ],
+      "editor/context": [
+        {
+          "command": "kratos.materials.previewTables",
+          "when": "resourceExtname == .json && resourceFilename =~ /material/i",
+          "group": "navigation"
+        }
+      ],
       "explorer/context": [
+        {
+          "command": "kratos.materials.previewTables",
+          "when": "resourceExtname == .json && resourceFilename =~ /material/i",
+          "group": "navigation"
+        },
         {
           "command": "kratos.mdpa.openPreview",
           "when": "resourceExtname == .mdpa",

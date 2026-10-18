@@ -3860,6 +3860,77 @@ input.outline-label-input {
 .pt-table-grid .edit-num {
   width: 100%;
 }
+.pt-table-field {
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+.pt-table-field > span:first-child,
+.pt-table-field > .pt-table-grid,
+.pt-table-field > .pt-preset-problem,
+.pt-table-field > .pt-tplot {
+  flex: 1 1 100%;
+}
+.pt-table-field > .panel-btn {
+  flex: 0 0 auto;
+}
+/* The table plot: a hand-drawn SVG whose points drag-edit the grid. */
+.pt-tplot {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-s-1);
+  min-width: 0;
+}
+.pt-tplot-svg {
+  width: 100%;
+  height: auto;
+  touch-action: none;
+  user-select: none;
+}
+.pt-tplot-svg.dragging {
+  cursor: grabbing;
+}
+.pt-tplot-frame {
+  fill: none;
+  stroke: var(--ds-hairline);
+}
+.pt-tplot-grid {
+  stroke: var(--ds-hairline);
+  stroke-opacity: 0.5;
+}
+.pt-tplot-tick,
+.pt-tplot-title {
+  fill: var(--ds-description-fg);
+  font-size: var(--ui-fs-label);
+  font-family: var(--ds-font);
+}
+.pt-tplot-line {
+  fill: none;
+  stroke: var(--ds-primary);
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+}
+.pt-tplot-point {
+  fill: var(--ds-primary);
+  stroke: var(--ds-fg);
+  stroke-width: 1;
+  cursor: grab;
+  outline: none;
+}
+.pt-tplot-point:hover,
+.pt-tplot-point:focus-visible {
+  stroke: var(--ds-focus);
+  stroke-width: 2.5;
+}
+.pt-tplot-readout,
+.pt-tplot-hint {
+  font-size: var(--ui-fs-label);
+  color: var(--ds-description-fg);
+  font-family: var(--ui-font-mono);
+  min-height: 1.2em;
+}
+.pt-tplot-hint {
+  font-family: var(--ds-font);
+}
 .pt-add-row {
   display: flex;
   align-items: center;

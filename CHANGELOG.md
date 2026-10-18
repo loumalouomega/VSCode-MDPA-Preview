@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- **Materials tables: plot, drag-to-edit and preview.** A table-valued law variable (the temperature-dependent viscosity) now shows a plot beneath its grid: drag a point to edit the table (the input column stays increasing), arrow keys nudge a focused point and Delete removes it, a double-click adds one, and the grid and the plot stay one table. **Preview tables** on the Materials form, and the new **Kratos MDPA: Preview Material Tables** command (palette, Explorer and editor context menu on `*material*.json`), open the tables of the case on screen or of any Kratos materials JSON in the Scientific plots workspace, grouped by their input/output variable pair. Malformed tables or rows are skipped with a note. UI-only; no MCP change. Chromium check `scripts/screenshots/check-material-table-plot.mjs`.
+
+### Fixed
+
+- **The webview bundle no longer imports Node-only code.** The wind-tunnel form reached the meshio++ loader through `plan.ts` (for `checkRegion`), so `npm run compile` failed on the browser bundle even though typecheck and the tests passed. The region type and check now live in a leaf module (`windTunnel/regions.ts`), and CI compiles the bundles on Linux so this cannot go unnoticed again.
+- **Windows CI**: the wind-tunnel host test hardcoded a forward-slash folder; it now builds the expected path with `path.join`.
+
 ## [5.15.0] - 2026-10-17
 
 ### Added

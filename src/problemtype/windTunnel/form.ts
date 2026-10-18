@@ -8,8 +8,8 @@
  */
 
 import type { WindTunnelBodySpec, WindTunnelParams } from "./plan";
-import { checkRegion } from "./plan";
-import type { RefinementRegion } from "./plan";
+import { checkRegion } from "./regions";
+import type { RefinementRegion } from "./regions";
 import type { GroundMode } from "./domain";
 import type { Vec3 } from "./body";
 
