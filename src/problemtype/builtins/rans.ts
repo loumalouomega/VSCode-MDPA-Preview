@@ -116,7 +116,7 @@ const ransFields: FieldSpec[] = [
       { value: "bdf2", label: "BDF2" },
       { value: "bossak", label: "Bossak" },
     ],
-    help: "A steady run iterates the pseudo-time steps to convergence; Kratos stops the loop when the solver reports convergence.",
+    help: "A steady run iterates the pseudo-time steps to convergence; Kratos stops the loop when the solver reports convergence. The monolithic flow solver takes steady or Bossak, the fractional-step one steady or BDF2.",
   },
   { id: "bossakAlpha", label: "Bossak alpha", type: "number", default: -0.3, min: -0.5, max: 0, group: "time", visibleWhen: { field: "scheme", equals: "bossak" } },
   {
@@ -198,7 +198,7 @@ const conditions: ConditionSpec[] = [
       c.id === "periodic"
         ? {
             ...c,
-            help: "Ties this boundary (the slave) to the master boundary a translation away, exactly node for node, for the flow and the turbulence variables. Assign it to the slave only and turn on Periodic boundaries.",
+            help: "Ties this boundary (the slave) to the master boundary a translation away, exactly node for node, for the flow and the turbulence variables. Assign it to the slave only and turn on Periodic boundaries. Generate checks that the master moved by the translation lands on the slave.",
             fields: c.fields.map((f) => (f.id === "translation" ? { ...f, help: "From the master to the slave." } : f)),
           }
         : c
@@ -353,6 +353,19 @@ export const rans = defineProblemtype(decl, {
     }
     formulation[`${model.key}_solver_settings`] = turbulence;
 
+    // The formulation numbers its periodic conditions after the computing part's own condition count, so a
+    // periodic pair's facets must be IN the computing part (a part in neither list is outside it and the
+    // new ids collide with the mesh's: "a condition with the same Id already exists"). `no_skin_parts` is the
+    // list that adds a part to the computing model part without treating it as skin.
+    const noSkin = [...((base.no_skin_parts as string[] | undefined) ?? [])];
+    const skinned = new Set((base.skin_parts as string[] | undefined) ?? []);
+    for (const a of ctx.assignments) {
+      if (a.conditionId !== "periodic") continue;
+      for (const part of [asStr(a.values.master, ""), a.smpPath]) {
+        const name = part === "" ? "" : dottedModelPart(ctx.modelPartName, part);
+        if (name !== "" && !skinned.has(name) && !noSkin.includes(name)) noSkin.push(name);
+      }
+    }
     const scheme = asStr(v.scheme, "steady");
     const settings: JsonObject = {
       model_part_name: base.model_part_name,
@@ -362,7 +375,7 @@ export const rans = defineProblemtype(decl, {
       material_import_settings: base.material_import_settings,
       volume_model_part_name: base.volume_model_part_name,
       skin_parts: base.skin_parts,
-      no_skin_parts: base.no_skin_parts,
+      no_skin_parts: noSkin,
       time_stepping: base.time_stepping,
       echo_level: asNum(v.echoLevel, 0),
       assign_neighbour_elements_to_conditions: true,
@@ -436,6 +449,15 @@ export const rans = defineProblemtype(decl, {
       problems.push(`RANS applies the wall function to ONE part, but ${walls.length} are assigned (${walls.map((w) => w.smpPath).join(", ")}). Group the walls into one SubModelPart.`);
     } else if (!ctx.materials.some((m) => m.lawId === RANS_WALL_LAW_ID && m.smpPath === walls[0].smpPath)) {
       problems.push(`The wall "${walls[0].smpPath}" needs the "Wall function / ${RANS_WALL_LAW_ID}" material: it carries the wall smoothness constant the wall function reads.`);
+    }
+    // Read from the formulations: monolithic accepts "steady" and "bossak", fractional step "steady" and "bdf2";
+    // any other pairing stops the run at start ("Only steady and bossak scheme types supported").
+    const fractionalStep = asStr(v.flowSolver, "monolithic") === "fractional_step";
+    const scheme = asStr(v.scheme, "steady");
+    if (!fractionalStep && scheme === "bdf2") {
+      problems.push("The monolithic flow solver supports the steady and Bossak time schemes; BDF2 belongs to the fractional-step one. Choose Bossak, or switch the flow solver.");
+    } else if (fractionalStep && scheme === "bossak") {
+      problems.push("The fractional-step flow solver supports the steady and BDF2 time schemes; Bossak belongs to the monolithic one. Choose BDF2, or switch the flow solver.");
     }
     const periodic = ctx.assignments.filter((a) => a.conditionId === "periodic");
     if (periodic.length > 0 && !asBool(v.considerPeriodic, false)) {

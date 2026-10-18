@@ -214,14 +214,21 @@ test("monitors are processes of the right module, stay out of the skin lists and
   assert.deepEqual(vtk.nodal_data_value_variables, ["PRESSURE_COEFFICIENT", "Y_PLUS"]);
 });
 
+// One master node and its slave 3 m above it: the translation runs from the master to the slave.
+const PAIRED = MDPA.replace("4 0.0 0.0 1.0\nEnd Nodes", "4 0.0 0.0 1.0\n5 0.0 0.0 3.0\nEnd Nodes")
+  .replace("Begin SubModelPart Left\n  Begin SubModelPartNodes\n  1\n  3\n", "Begin SubModelPart Left\n  Begin SubModelPartNodes\n  1\n")
+  .replace("Begin SubModelPart Right\n  Begin SubModelPartNodes\n  2\n  4\n", "Begin SubModelPart Right\n  Begin SubModelPartNodes\n  5\n");
+
 test("a periodic pair writes the core process on the slave with the master and the translation", async () => {
-  const { pp } = await generate({ considerPeriodic: true }, [{ conditionId: "periodic", smpPath: "Right", values: { master: "Left", translation: [0, 0, 1], magnitude: 3 } }]);
+  const { pp } = await generate({ considerPeriodic: true }, [{ conditionId: "periodic", smpPath: "Right", values: { master: "Left", translation: [0, 0, 1], magnitude: 3 } }], undefined, PAIRED);
   const process = pp.processes.constraints_process_list[0] as JsonObject;
   assert.equal(process.python_module, "apply_periodic_condition_process");
   assert.deepEqual(process.Parameters, {
     model_part_name: "FluidModelPart",
-    first_model_part_name: "FluidModelPart.Left",
-    second_model_part_name: "FluidModelPart.Right",
+    // Relative to the main model part: the wrapper prefixes it itself (a full dotted name was looked up twice).
+    computing_model_part_name: "fluid_computational_model_part",
+    first_model_part_name: "Left",
+    second_model_part_name: "Right",
     variable_names: ["VELOCITY", "PRESSURE"],
     transformation_settings: { translation_settings: { dir_of_translation: [0, 0, 1], magnitude: 3 } },
   });
@@ -230,8 +237,13 @@ test("a periodic pair writes the core process on the slave with the master and t
 });
 
 test("generation refuses what the solver would ignore or reject", async () => {
-  await assert.rejects(generate({}, [{ conditionId: "periodic", smpPath: "Right", values: { master: "Left" } }]), /Periodic boundaries/);
-  await assert.rejects(generate({ considerPeriodic: true }, [{ conditionId: "periodic", smpPath: "Right", values: {} }]), /no master boundary/);
+  await assert.rejects(generate({}, [{ conditionId: "periodic", smpPath: "Right", values: { master: "Left" } }], undefined, PAIRED), /Periodic boundaries/);
+  await assert.rejects(generate({ considerPeriodic: true }, [{ conditionId: "periodic", smpPath: "Right", values: {} }], undefined, PAIRED), /no master boundary/);
+  // A pair the translation does not match is refused, naming the reversed direction when that is the fix.
+  await assert.rejects(
+    generate({ considerPeriodic: true }, [{ conditionId: "periodic", smpPath: "Right", values: { master: "Left", translation: [0, 0, -1], magnitude: 3 } }], undefined, PAIRED),
+    /no master node at that distance[\s\S]*reversed/
+  );
   await assert.rejects(generate({ elementType: "axisymmetric" }), /two-dimensional/);
   await generate({ elementType: "axisymmetric" }, [], [{ smpPath: "Parts/Fluid", lawId: "newtonian_2d", values: {} }], MDPA_2D);
 });

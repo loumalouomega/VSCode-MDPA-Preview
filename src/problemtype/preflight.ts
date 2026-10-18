@@ -28,6 +28,8 @@ import { CaseState, FieldRequirement, ProblemtypeRuntime } from "./types";
 import { fieldDefault } from "./api";
 import { isFieldVisible } from "./layout";
 import { planCaseMesh } from "./caseMesh";
+import { ransPeriodicIdProblems } from "./periodicCheck";
+import { FLUID_NOT_BOUNDARY, NO_SKIN } from "./builtins/fluid";
 import {
   domainOfCondition,
   domainOfLaw,
@@ -246,6 +248,14 @@ export async function preflightCase(
         `Material law "${m.lawId}" on "${m.smpPath}" belongs to no domain, so it is written to no materials file.`,
         { smpPath: m.smpPath, lawId: m.lawId });
     }
+  }
+
+  // --- 2b. RANS periodic: the formulation's own condition ids must not meet the mesh's. ---
+  if (decl.id === "rans" && state.assignments.some((a) => a.conditionId === "periodic")) {
+    const skinPaths = state.assignments
+      .filter((a) => a.conditionId !== "parts" && !a.conditionId.startsWith("initial") && !FLUID_NOT_BOUNDARY.has(a.conditionId) && !NO_SKIN.has(a.conditionId))
+      .map((a) => a.smpPath);
+    for (const message of ransPeriodicIdProblems(model, state.assignments, skinPaths)) add("warning", "periodic-condition-ids", message);
   }
 
   // --- 3. Computing parts and their materials. ---

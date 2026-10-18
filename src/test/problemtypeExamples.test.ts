@@ -60,6 +60,11 @@ Begin SubModelPart Loaded
 End SubModelPart
 `;
 
+// MDPA with a periodic pair that really pairs: Support is the single master node 1, Loaded its slave 2 m along y.
+const PERIODIC_MDPA = MDPA.replace("4 0.0 0.0 1.0\nEnd Nodes", "4 0.0 0.0 1.0\n5 0.0 2.0 0.0\nEnd Nodes")
+  .replace("Begin SubModelPart Support\n  Begin SubModelPartNodes\n  1\n  2\n  3\n", "Begin SubModelPart Support\n  Begin SubModelPartNodes\n  1\n")
+  .replace("Begin SubModelPart Loaded\n  Begin SubModelPartNodes\n  4\n", "Begin SubModelPart Loaded\n  Begin SubModelPartNodes\n  5\n");
+
 // Two 2-node beam elements sharing node 2: the mesh a beam formulation can
 // actually be adapted to (a tetrahedron mesh would be refused for it).
 const BEAM_MDPA = `Begin Nodes
@@ -307,6 +312,7 @@ const CASES: ExampleCase[] = [
     label: "weakly compressible with bossak, periodic pair, force and coefficient monitors, Bingham fluid",
     file: "fluid.py",
     builtinId: "fluid",
+    mdpa: PERIODIC_MDPA,
     assignments: [
       { conditionId: "parts", smpPath: "Parts/Solid", values: {} },
       { conditionId: "noSlip", smpPath: "Support", values: {} },

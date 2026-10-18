@@ -54,6 +54,11 @@ Begin SubModelPart Wall
 End SubModelPart
 `;
 
+// A periodic pair that really pairs: Inlet is the master node 1 and Outlet its slave 6.28 along x.
+const PAIRED = MDPA.replace("3 0.0 1.0 0.0\nEnd Nodes", "3 0.0 1.0 0.0\n4 6.28 0.0 0.0\nEnd Nodes")
+  .replace("Begin SubModelPart Inlet\n  Begin SubModelPartNodes\n  1\n  3\n", "Begin SubModelPart Inlet\n  Begin SubModelPartNodes\n  1\n")
+  .replace("Begin SubModelPart Outlet\n  Begin SubModelPartNodes\n  2\n", "Begin SubModelPart Outlet\n  Begin SubModelPartNodes\n  4\n");
+
 /** What Kratos' RANSApplication validates, read from the formulation classes' default settings. */
 const SOLVER_KEYS = new Set([
   "solver_type", "model_part_name", "domain_size", "model_import_settings", "material_import_settings", "consider_periodic_conditions",
@@ -95,8 +100,8 @@ function state(problem: Record<string, JsonValue>, extra: Assignment[] = [], wal
   return s;
 }
 
-async function generate(problem: Record<string, JsonValue> = {}, extra: Assignment[] = [], wall = true) {
-  const out = await generateCase(rans, parseMdpa(MDPA), state(problem, extra, wall), "case");
+async function generate(problem: Record<string, JsonValue> = {}, extra: Assignment[] = [], wall = true, mesh = MDPA) {
+  const out = await generateCase(rans, parseMdpa(mesh), state(problem, extra, wall), "case");
   return { out, pp: JSON.parse(out.projectParameters) as JsonObject & { solver_settings: JsonObject; processes: Record<string, JsonObject[]>; output_processes: JsonObject } };
 }
 
@@ -183,7 +188,7 @@ test("the free-stream relations are the standard ones", () => {
 });
 
 test("a periodic pair uses the exact nodal periodic process of RANS", async () => {
-  const { pp } = await generate({ considerPeriodic: true }, [{ conditionId: "periodic", smpPath: "Outlet", values: { master: "Inlet", translation: [1, 0, 0], magnitude: 6.28 } }]);
+  const { pp } = await generate({ considerPeriodic: true }, [{ conditionId: "periodic", smpPath: "Outlet", values: { master: "Inlet", translation: [1, 0, 0], magnitude: 6.28 } }], true, PAIRED);
   const p = pp.processes.constraints_process_list.find((q) => q.process_name === "ApplyExactNodalPeriodicConditionProcess")!;
   assert.equal(p.python_module, "cpp_process_factory");
   assert.equal(p.kratos_module, "KratosMultiphysics.RANSApplication");
@@ -196,6 +201,10 @@ test("a periodic pair uses the exact nodal periodic process of RANS", async () =
     reorder: false,
   });
   assert.equal(pp.solver_settings.consider_periodic_conditions, true);
+  // Both parts of the pair join the computing model part, as skin or as no-skin: the formulation numbers the
+  // periodic conditions it creates after that part's own, and a part outside it left the ids colliding with the mesh's.
+  const listed = [...(pp.solver_settings.skin_parts as string[]), ...(pp.solver_settings.no_skin_parts as string[])];
+  for (const part of ["FluidModelPart.Inlet", "FluidModelPart.Outlet"]) assert.ok(listed.includes(part), `${part} is in neither list`);
 });
 
 test("generation refuses a case the wall function cannot work with", async () => {
@@ -206,6 +215,11 @@ test("generation refuses a case the wall function cannot work with", async () =>
   await assert.rejects(generateCase(rans, parseMdpa(MDPA), s, "case"), /smoothness/);
   await assert.rejects(generate({}, [{ conditionId: "periodic", smpPath: "Outlet", values: { master: "Inlet" } }]), /Periodic boundaries/);
   await assert.rejects(generate({ turbulenceLength: 0 }), /length scale/);
+  // Each flow solver accepts only its own transient scheme (read from the formulations; a solver run rejected the other).
+  await assert.rejects(generate({ flowSolver: "monolithic", scheme: "bdf2" }), /monolithic flow solver supports the steady and Bossak/);
+  await assert.rejects(generate({ flowSolver: "fractional_step", scheme: "bossak" }), /fractional-step flow solver supports the steady and BDF2/);
+  await assert.doesNotReject(generate({ flowSolver: "fractional_step", scheme: "bdf2" }));
+  await assert.doesNotReject(generate({ flowSolver: "monolithic", scheme: "bossak" }));
 });
 
 test("the monitors and gravity of the Fluid problemtype carry over", async () => {

@@ -42,7 +42,7 @@ const temperatureDependent = (size: 2 | 3): MaterialLawSpec => ({
 });
 
 /** Conditions that are not boundary skin: GiD lists them in `no_skin_parts`. */
-const NO_SKIN = new Set(["velocityConstraints", "pressureConstraints"]);
+export const NO_SKIN = new Set(["velocityConstraints", "pressureConstraints"]);
 
 /**
  * Conditions that name a SubModelPart without being a boundary condition of the
@@ -487,10 +487,10 @@ export const fluid = defineProblemtype(
         target: "surface",
         category: "constraints",
         icon: "ptConstraint",
-        help: "Ties this boundary (the slave) to the master boundary a translation away, for velocity and pressure. Assign it to the slave only and turn on Periodic boundaries.",
+        help: "Ties this boundary (the slave) to the master boundary a translation away, for velocity and pressure. Assign it to the slave only and turn on Periodic boundaries. The translation runs from the master to the slave, and Generate checks that the master moved by it lands on the slave.",
         fields: [
           { id: "master", label: "Master boundary", type: "smp", default: "" },
-          { id: "translation", label: "Translation direction", type: "vector3", default: [1, 0, 0], help: "From the slave to the master." },
+          { id: "translation", label: "Translation direction", type: "vector3", default: [1, 0, 0], help: "From the master to the slave." },
           { id: "magnitude", label: "Translation distance [m]", type: "number", default: 1.0, min: 0 },
         ],
         processTemplate: {},
@@ -725,10 +725,14 @@ export const fluid = defineProblemtype(
           python_module: "apply_periodic_condition_process",
           kratos_module: "KratosMultiphysics",
           process_name: "ApplyPeriodicConditionProcess",
+          // The wrapper resolves both parts as `<model_part_name>.<name>`, so they are given RELATIVE to the
+          // main model part (a full dotted name was looked up as `FluidModelPart.FluidModelPart.<part>` and
+          // the run died at start), and the constraints must land in the solver's computing model part.
           Parameters: {
             model_part_name: ctx.modelPartName,
-            first_model_part_name: dottedModelPart(ctx.modelPartName, master),
-            second_model_part_name: dottedModelPart(ctx.modelPartName, a.smpPath),
+            computing_model_part_name: "fluid_computational_model_part",
+            first_model_part_name: master.split("/").join("."),
+            second_model_part_name: a.smpPath.split("/").join("."),
             variable_names: ["VELOCITY", "PRESSURE"],
             transformation_settings: {
               translation_settings: { dir_of_translation: direction, magnitude: asNum(a.values.magnitude, 1) },

@@ -16,6 +16,15 @@ const EXPECTED = [
   "rans-k-omega",
   "rans-k-omega-sst",
   "tunnel-sphere",
+  "tunnel-sphere-rans-k-epsilon",
+  "tunnel-sphere-rans-k-omega",
+  "tunnel-sphere-rans-k-omega-sst",
+  "fluid-periodic",
+  "rans-periodic-k-epsilon",
+  "rans-periodic-k-omega",
+  "watch-bdf2-classic",
+  "stop-fluid",
+  "stop-rans",
 ];
 
 function run(args: string[]): { code: number | null; stdout: string; stderr: string } {

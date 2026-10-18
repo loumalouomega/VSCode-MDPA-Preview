@@ -28,6 +28,7 @@ import { collectionProblems, resolveCollections } from "./collections";
 import { applicationCheckPy, requiredApplications } from "./applications";
 import { isFieldVisible } from "./layout";
 import { interfacePairProblems } from "./interfaceCheck";
+import { periodicPairProblems } from "./periodicCheck";
 
 /** Flattens the SubModelPart tree into slash-separated paths (depth-first). */
 export function subModelPartPaths(parts: SubModelPart[]): string[] {
@@ -372,6 +373,7 @@ export async function generateCase(
   const missing = [
     ...domainProblems(decl, state.assignments),
     ...interfacePairProblems(decl, model, state.assignments, ctx.domainSize),
+    ...periodicPairProblems(model, state.assignments),
     ...collectionIssues,
     ...(collectionIssues.length === 0 ? await runtime.validate(ctx) : []),
   ];

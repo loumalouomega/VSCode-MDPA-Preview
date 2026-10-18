@@ -247,8 +247,9 @@ def fluid_build_process(cond, assignment, ctx):
             "process_name": "ApplyPeriodicConditionProcess",
             "Parameters": {
                 "model_part_name": ctx["model_part_name"],
-                "first_model_part_name": ctx["model_part_name"] + "." + _dotted(master),
-                "second_model_part_name": ctx["model_part_name"] + "." + _dotted(assignment["smpPath"]),
+                "computing_model_part_name": "fluid_computational_model_part",
+                "first_model_part_name": _dotted(master),
+                "second_model_part_name": _dotted(assignment["smpPath"]),
                 "variable_names": ["VELOCITY", "PRESSURE"],
                 "transformation_settings": {
                     "translation_settings": {
@@ -1252,12 +1253,12 @@ FLUID_CONDITIONS = [
               help="Imposes pressure on a SubModelPart that is not a skin boundary.", category="constraints", icon="ptConstraint"),
     condition("f_periodic", "Periodic boundary", list="fluid_boundary_conditions_process_list", target="surface",
               fields=[field("master", "Master boundary", "smp", default=""),
-                      field("translation", "Translation direction", "vector3", default=[1, 0, 0], help="From the slave to the master."),
+                      field("translation", "Translation direction", "vector3", default=[1, 0, 0], help="From the master to the slave."),
                       field("magnitude", "Translation distance [m]", "number", default=1, min=0)],
               process_template={
 
               },
-              help="Ties this boundary (the slave) to the master boundary a translation away, for velocity and pressure. Assign it to the slave only and turn on Periodic boundaries.", category="constraints", icon="ptConstraint"),
+              help="Ties this boundary (the slave) to the master boundary a translation away, for velocity and pressure. Assign it to the slave only and turn on Periodic boundaries. The translation runs from the master to the slave, and Generate checks that the master moved by it lands on the slave.", category="constraints", icon="ptConstraint"),
     condition("f_flowForces", "Forces and moments on a body", list="fluid_auxiliar_process_list", target="surface",
               fields=[field("referencePoint", "Moment reference point", "vector3", default=[0, 0, 0]),
                       field("writeMoments", "Write moments", "bool", default=True),
