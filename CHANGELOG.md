@@ -6,19 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [5.15.0] - 2026-10-18
+
 ### Added
 
 - **Materials tables: plot, drag-to-edit and preview.** A table-valued law variable (the temperature-dependent viscosity) now shows a plot beneath its grid: drag a point to edit the table (the input column stays increasing), arrow keys nudge a focused point and Delete removes it, a double-click adds one, and the grid and the plot stay one table. **Preview tables** on the Materials form, and the new **Kratos MDPA: Preview Material Tables** command (palette, Explorer and editor context menu on `*material*.json`), open the tables of the case on screen or of any Kratos materials JSON in the Scientific plots workspace, grouped by their input/output variable pair. Malformed tables or rows are skipped with a note. UI-only; no MCP change. Chromium check `scripts/screenshots/check-material-table-plot.mjs`.
-
-### Fixed
-
-- **The webview bundle no longer imports Node-only code.** The wind-tunnel form reached the meshio++ loader through `plan.ts` (for `checkRegion`), so `npm run compile` failed on the browser bundle even though typecheck and the tests passed. The region type and check now live in a leaf module (`windTunnel/regions.ts`), and CI compiles the bundles on Linux so this cannot go unnoticed again.
-- **Windows CI**: the wind-tunnel host test hardcoded a forward-slash folder; it now builds the expected path with `path.join`.
-
-## [5.15.0] - 2026-10-17
-
-### Added
-
 - **Virtual wind tunnel: Sobolev wall snap** (body-fitted, on by default): after the carve, the wall is projected onto the surface and the Body displacement smoothed with the far-field and tunnel faces pinned — a size-preserving quality pass, an exact attempt, smoothed sub-steps coarse-to-fine, and a raw polish of the residual, keeping the largest move that inverts no cell and falling back to the carve with a reported gap. The report carries the carve fit before and the fit after (sharp box: 1.67% down to 0.29% of the body length). Wizard checkbox, `snap` in `wind_tunnel_plan`/`wind_tunnel_generate`.
 - **Fluid: integration-point statistics monitor and temperature-dependent viscosity.** *Integration-point statistics* samples an average, variance or third-order moment at the integration points with the exact keys Kratos validates, merging entries on one part into a single process and refusing an incomplete set (a higher moment without its average) at Generate. The 2D/3D temperature-dependent Newtonian laws read the viscosity from a `TEMPERATURE`–`DYNAMIC_VISCOSITY` materials table (written from `T,mu; …` text, never as a variable), with an *Initial temperature* condition for the frozen field. No CFL monitor: Kratos only implements `Execute()`, which the analysis stage never calls.
 - **Materials table editor.** Law variables that hold a materials table (the temperature-dependent viscosity laws' `T,mu; …` text today) edit as a grid — one row per pair, add/remove rows, malformed rows flagged in place — with the same validation in Generate, preflight and `case_material_assign`. Table text never lands in `Variables`.
@@ -42,9 +34,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **Load-condition emission**: a condition may declare `emit: { sibling, source, family }` so assigning it synthesizes the Kratos conditions the load needs from the part's own entities into a sibling SubModelPart that the process targets. The Structural problemtype uses it for **point loads** (one `PointLoadCondition` per node, `AxisymPointLoadCondition2D1N` for axisymmetric formulations), **point moments** (`PointMomentCondition3D1N`) and the new **moving load** (`MovingLoadCondition` per line entity via `SetMovingLoadProcess`, with load, velocity, motion direction, origin and motion type); a moving load with a zero load or motion direction is refused at generate time. The Python authoring API takes the same dict as `emit=`.
 - **Nonlinear constitutive laws**: the Structural problemtype (and the structural side of FSI and CoSimulation) now offers GiD's curated `ConstitutiveLawsApplication` set — hyperelastic Neo-Hookean and Kirchhoff Saint-Venant, small/finite-strain isotropic and kinematic plasticity, J2 plasticity, isotropic and plastic damage, and generalized Maxwell/Kelvin viscous laws — grouped in the Materials picker, offered only for the solid and shell formulations they fit, with the factory rows writing their `law_type`/`yield_surface`/`plastic_potential` keys. Using one pulls `ConstitutiveLawsApplication` into the generated driver's requirements. The Python example ports mirror the 36 rows and stay byte-identical on the parity cases.
 - **Extended structural analyses**: explicit dynamics (central-differences or multi-stage, no system solve), eigenvalue analysis with a choosable eigensolver plus optional modal decomposition and mass normalization, and harmonic response — modal superposition for the regular loads, or a direct complex solve (`pardiso_lu_complex`) over the assigned real (`Point load`) and imaginary (`Imaginary point load`, emitted as `ImaginaryPointLoadCondition` siblings) load parts. The eigensolver and the direct harmonic solve pull `LinearSolversApplication` into the driver's requirements; a direct harmonic case without a real load is refused at generate time.
+- **Periodic boundaries are checked against the mesh.** Before a case is written, translating the master part by the declared direction and magnitude must land every slave node on a master node. A mismatched pair is refused at Generate, in preflight and through MCP, and a reversed direction is named as the likely fix, because both solvers take the translation from the master to the slave.
+- **RANS time schemes are validated.** Monolithic takes steady or Bossak, fractional step takes steady or BDF2, and the other pairings are refused at Generate, since Kratos rejects them at start.
+- **Preflight warns about RANS periodic condition ids.** RANS numbers the periodic conditions it creates after the skin conditions, from k+1 to k+m. A mesh that already uses those ids stops the run with "a condition with the same Id already exists", so preflight names the range and the ids in the way.
 
 ### Fixed
 
+- **The webview bundle no longer imports Node-only code.** The wind-tunnel form reached the meshio++ loader through `plan.ts` (for `checkRegion`), so `npm run compile` failed on the browser bundle even though typecheck and the tests passed. The region type and check now live in a leaf module (`windTunnel/regions.ts`), and CI compiles the bundles on Linux so this cannot go unnoticed again.
+- **Windows CI**: the wind-tunnel host test hardcoded a forward-slash folder; it now builds the expected path with `path.join`.
+- **Periodic parts resolve in Kratos.** The Fluid periodic process takes relative part names and targets the fluid computing part, because Kratos prefixes the model part name itself and a full dotted name stopped the run at start. RANS keeps both periodic parts out of the skin lists.
 - **Fluid solver fixes from the verification harness.** The monolithic default time scheme is **Bossak** (was BDF2): stock Kratos segfaults on BDF2 with a classic element (plain QSVMS/DVMS/VMS/FIC), whose BDF2 scheme reads BDF coefficients the solver only computes for time-integrated elements — the harness caught it, and Bossak is Kratos' own solver default. BDF2 stays offered (it applies to time-integrated elements). Adaptive time stepping no longer writes `time_step` (Kratos' step estimator rejects keys outside its defaults; it starts from the minimum). The generated driver resolves `rans_analysis` to the `RANSAnalysis` class (title-casing gives a name the module does not have).
 - **Embedded Fluid** wrote `solver_type: "Monolithic"`, which builds the monolithic solver and rejects an embedded element; it now writes `"Embedded"`, as GiD's strategy does. Its drag option wrote `compute_embedded_drag_process`, a module Kratos no longer ships, with keys the replacement does not read; it now writes `compute_embedded_flow_forces_and_moments_process` with `write_forces_output_file` and `print_to_screen`.
 
@@ -1212,6 +1210,8 @@ Four silent-correctness fixes. None of them threw, and none was visible in the m
 
 - Initial release: custom editor preview for `.mdpa` files.
 
+[Unreleased]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.15.0...HEAD
+[5.15.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.14.0...v5.15.0
 [4.20.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.19.0...v4.20.0
 [4.19.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.18.0...v4.19.0
 [4.18.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.17.0...v4.18.0
