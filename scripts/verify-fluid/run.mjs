@@ -560,6 +560,7 @@ const FAMILIES = [
     windTunnel: true,
     turbulence: model,
     timeout: 1800,
+    endTime: 6,
     maxTetrahedra: 150000,
     describe: `body-fitted tunnel sphere, RANS ${model}, first row at y+ 50`,
     state: null,
@@ -785,12 +786,17 @@ async function runFamily(fam, { python, install, timeout, root }) {
     meshPath,
     ...(python ? { python } : {}),
     ...(install ? { installPath: install } : {}),
-    waitSeconds: timeout,
+    // case_run caps its own wait at 600 s (a handoff, not a failure): a longer family polls case_status itself.
+    waitSeconds: Math.min(timeout, 600),
     generate: true,
     force: true,
     ...(problemtype ? { problemtype } : {}),
   });
-  const status = await caseStatus({ meshPath });
+  let status = await caseStatus({ meshPath });
+  for (const deadline = Date.now() + timeout * 1000; status.status === "detached" && Date.now() < deadline; ) {
+    await new Promise((r) => setTimeout(r, 5000));
+    status = await caseStatus({ meshPath });
+  }
   const seconds = Math.round((Date.now() - started) / 1000);
   const st = String(status.status ?? reply.status ?? "?");
   if (st !== "finished") {
