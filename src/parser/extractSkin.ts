@@ -75,20 +75,34 @@ export function extractSkinModel(model: MdpaModel): ExtractSkinResult {
   const faces: Face[] = [];
   const faceRecords = new Map<string, { nodeIds: number[]; type: number; parentId: number; count: number }>();
 
+  // A CAD-exported volume mesh carries its boundary twice: the boundary
+  // Conditions as surface cells and the tets' own outer faces, with opposite
+  // winding. Without cross-dedup the skin holds every triangle twice, which
+  // reads as a non-manifold surface with zero enclosed volume downstream
+  // (the virtual wind tunnel's distance sign fails on exactly this shape).
+  // First pass records the surface cells' keys; the volume pass skips any
+  // face coinciding with one.
+  const surfaceKeys = new Set<string>();
   for (const block of model.blocks) {
-    const cat = cellCategory(block.vtkCellType);
-    if (cat !== "surface" && cat !== "volume") continue;
+    if (cellCategory(block.vtkCellType) !== "surface") continue;
     const corners = Math.min(cornerCount(block.vtkCellType) || block.stride, block.stride);
     for (let c = 0; c < block.count; c++) {
       const ids = cornerIds(block, c, corners);
       if (!ids) continue;
-      if (cat === "surface") {
-        faces.push({ nodeIds: ids, type: block.vtkCellType! });
-        continue;
-      }
+      faces.push({ nodeIds: ids, type: block.vtkCellType! });
+      surfaceKeys.add([...ids].sort((a, b) => a - b).join(","));
+    }
+  }
+  for (const block of model.blocks) {
+    if (cellCategory(block.vtkCellType) !== "volume") continue;
+    const corners = Math.min(cornerCount(block.vtkCellType) || block.stride, block.stride);
+    for (let c = 0; c < block.count; c++) {
+      const ids = cornerIds(block, c, corners);
+      if (!ids) continue;
       for (const face of volumeFaces(block.vtkCellType) ?? []) {
         const nodeIds = face.map((li) => ids[li]);
         const key = [...nodeIds].sort((a, b) => a - b).join(",");
+        if (surfaceKeys.has(key)) continue;
         const rec = faceRecords.get(key);
         if (rec) rec.count++;
         else {

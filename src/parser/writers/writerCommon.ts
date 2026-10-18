@@ -271,24 +271,40 @@ export function surfaceTriangles(
     return out;
   };
 
+  // A volume mesh that also carries its boundary as surface cells (the
+  // usual CAD-export layout: boundary Conditions over the same triangles)
+  // would otherwise emit every triangle twice with opposite winding — a
+  // non-manifold, zero-volume soup. The first pass records the surface
+  // cells' keys; the volume pass skips any face coinciding with one.
+  const surfaceKeys = new Set<string>();
   for (const block of model.blocks) {
     const type = block.vtkCellType;
-    const cat = cellCategory(type);
-    if (cat !== "surface" && cat !== "volume") continue;
+    if (cellCategory(type) !== "surface") continue;
     const corners = Math.min(cornerCount(type) || block.stride, block.stride);
     for (let c = 0; c < block.count; c++) {
       const ci = cornerIndices(block, c, corners);
       if (!ci) continue;
-      if (cat === "surface") {
-        if (!opts.volumeOnly) surfacePolys.push(ci);
-      } else {
-        for (const face of volumeFaces(type) ?? []) {
-          const poly = face.map((li) => ci[li]);
-          const key = [...poly].sort((a, b) => a - b).join(",");
-          const rec = faceRecords.get(key);
-          if (rec) rec.count++;
-          else faceRecords.set(key, { poly, count: 1 });
-        }
+      if (!opts.volumeOnly) surfacePolys.push(ci);
+      surfaceKeys.add([...ci].sort((a, b) => a - b).join(","));
+    }
+  }
+  for (const block of model.blocks) {
+    const type = block.vtkCellType;
+    if (cellCategory(type) !== "volume") continue;
+    const corners = Math.min(cornerCount(type) || block.stride, block.stride);
+    for (let c = 0; c < block.count; c++) {
+      const ci = cornerIndices(block, c, corners);
+      if (!ci) continue;
+      for (const face of volumeFaces(type) ?? []) {
+        const poly = face.map((li) => ci[li]);
+        const key = [...poly].sort((a, b) => a - b).join(",");
+        // volumeOnly callers (OBJ) want the volume boundary as-is, surface
+        // cells or not; otherwise a face the surface cells already cover
+        // would come out twice with opposite winding.
+        if (!opts.volumeOnly && surfaceKeys.has(key)) continue;
+        const rec = faceRecords.get(key);
+        if (rec) rec.count++;
+        else faceRecords.set(key, { poly, count: 1 });
       }
     }
   }

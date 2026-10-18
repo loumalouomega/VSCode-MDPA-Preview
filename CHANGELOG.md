@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed
+
+- **Skin extraction dedups boundary Conditions against volume faces.** A volume mesh that also carries its boundary as surface cells (every CAD MDPA export: boundary Conditions over the same triangles as the tets' outer faces) came out of `extractSkinModel` — and of the STL/OBJ/PLY/STEP writers through `surfaceTriangles` — with every triangle twice, opposite winding: a non-manifold, zero-volume soup the distance oracles and the wind-tunnel carve cannot use. Volume faces coinciding with a pre-existing surface cell are now skipped (volume-only callers keep the old behaviour), with a regression test; the export fidelity table regenerated accordingly (STEP hex/simplicial references now measure instead of reporting unmeasurable).
+
 ## [5.15.0] - 2026-10-18
 
 ### Added
