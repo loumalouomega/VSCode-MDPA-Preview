@@ -767,7 +767,7 @@ async function runFamily(fam, { python, install, timeout, root }) {
     if (saved.state && turbulent) {
       // Steady RANS: pseudo-time steps of one; stop at the solver's own convergence or the step cap.
       Object.assign(saved.state.values.problem, { endTime: fam.endTime ?? 60 });
-      saved.state.output = { ...saved.state.output, controlType: "step", interval: 20 };
+      saved.state.output = { ...saved.state.output, controlType: "step", interval: fam.endTime ? 1 : 20 };
       fs.writeFileSync(caseFilePath(meshPath), serializeCase(saved.state));
     } else if (saved.state) {
       Object.assign(saved.state.values.problem, {
