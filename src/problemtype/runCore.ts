@@ -102,6 +102,26 @@ export interface RunRecord {
   meshFsPath: string;
   caseDir: string;
   stem: string;
+  /**
+   * The isolated run workspace this run executes in (roadmap item 6). Absent
+   * for an ordinary run in the case's own folder; when present, `caseDir` is
+   * this directory, so results, logs and convergence resolve beside the
+   * executed mesh while the case's own evidence stays where the user keeps it.
+   */
+  runDirectory?: string;
+  /**
+   * The source mesh an isolated run was snapshotted from. The run belongs to
+   * THIS case — `caseKey` is derived from it — so switching the active case,
+   * or reloading the window, never re-attaches the run to a filename match.
+   */
+  sourceMeshFsPath?: string;
+  /**
+   * The owning request recorded in the run's execution receipt, with the owner
+   * that must echo it to read or settle the receipt (see runReceiptWriter).
+   * Absent for an in-folder run, which has no receipt.
+   */
+  requestId?: string;
+  ownerId?: string;
   /** argv, never a shell string — which is also what fixes quoting. */
   argv: string[];
   launchMode: LaunchMode;

@@ -50,6 +50,7 @@ import {
   caseGenerate,
   caseRun,
   caseStatus,
+  caseCompare,
   caseConvergence,
   caseExportResults,
   caseOptimization,
@@ -1118,6 +1119,7 @@ export function registerAllTools(server: McpServer): void {
         requestId: z.string().optional().describe("Stable queue request ID. Requires ownerId and runDirectory; retries never dispatch twice."),
         ownerId: z.string().optional().describe("Owner identity required for request lookup and cancellation."),
         runDirectory: z.string().optional().describe("Fresh isolated workspace for this run; mesh and case state are snapshotted here."),
+        isolate: z.boolean().optional().describe("Plan a fresh per-run workspace from requestId instead of naming runDirectory: <case folder>/runs/<stem>-<requestId>. Requires requestId and ownerId; the requestId must also be usable as a folder name (letters, digits, . _ -, no colon); a retry with the same requestId finds the same workspace and never dispatches twice."),
         studyId: z.string().optional().describe("Study label recorded with the run in kkss-preparation-v1.json (isolated runs only)."),
         clonedFrom: z.string().optional().describe("requestId of an earlier run these settings were cloned from; recorded as a label. The earlier run's files are never touched."),
       },
@@ -1159,6 +1161,23 @@ export function registerAllTools(server: McpServer): void {
       },
     },
     run(caseStatus)
+  );
+
+  server.registerTool(
+    "case_compare",
+    {
+      description:
+        "Compare two saved isolated runs of a case (or of cases sharing a source folder) without confusing them by file name. " +
+        "Each side is a run directory (or its .kkss-execution.json): the comparison reads the execution receipt and the kkss-preparation-v1.json manifest that run wrote, so it is meaningful after a window reload and after switching the active case. " +
+        "Reports: the identity each side records (requestId, ownerId, jobId, state), whether both describe the same source mesh bytes, problemtype, settings and CAD export revision, every differing setting as a dotted path with its two values, per-role artifact counts, artifacts that only one side has, outputs whose frozen revision differs (same name, different bytes), and paired outputs whose bytes neither side pinned a revision for (unverified, never reported as unchanged). " +
+        "Refuses (comparable:false with problems) when a side is not a terminal isolated run, has no receipt, or both sides name the same directory: a live run's outputs are still changing and a legacy in-folder sidecar never recorded which bytes belonged to it. " +
+        "Read-only: it never hashes today's outputs to upgrade a legacy receipt, and never starts, stops or rewrites anything.",
+      inputSchema: {
+        left: z.string().describe("First run directory, or the path of its .kkss-execution.json"),
+        right: z.string().describe("Second run directory, or the path of its .kkss-execution.json"),
+      },
+    },
+    run(caseCompare)
   );
 
   server.registerTool(

@@ -35,6 +35,13 @@ import {
 } from "./problemtype/runCore";
 import { runFilePath, runLogPath } from "./problemtype/caseFile";
 import { parseRunJson, reconcileStatus, serializeRun, sidecarFromRecord } from "./problemtype/runFile";
+import {
+  collectExecutionArtifacts,
+  executionReceiptForRun,
+  readExecution,
+  writeExecution,
+  type OwnedRun,
+} from "./problemtype/runReceiptWriter";
 import { RunHandle, isPidAlive, spawnRun, stopPid, stopRungFromOutcome } from "./problemtype/runProcess";
 import { PreparedStopSentinel, prepareStopSentinel, removeStopFile, writeStopFile } from "./problemtype/stopSentinel";
 import { RUN_SIDECAR_INDEX_KEY } from "./problemtype/runReceipt";
@@ -44,6 +51,9 @@ import { describeMissingApplications } from "./problemtype/applications";
 
 /** Keep a bounded tail of output in memory for the row tooltip. */
 const TAIL_LINES = 500;
+
+/** The owner a run started by this window records in its execution receipt. */
+const RECEIPT_OWNER = "extension";
 
 export interface RunRequest {
   threads?: number;
@@ -56,6 +66,20 @@ export interface RunRequest {
   envDelta: Record<string, string>;
   launchMode: LaunchMode;
   scriptName?: string;
+  /**
+   * The id to register this run under. An isolated run must KNOW its id before
+   * `start()` — its workspace is planned and snapshotted first — so the caller
+   * allocates it with `allocateRunId()`. Absent: the manager allocates one.
+   */
+  runId?: string;
+  /** The per-run workspace this run executes in (problemtype/runWorkspace.ts). */
+  runDirectory?: string;
+  /**
+   * The source mesh an isolated run was snapshotted from. It is the CASE's
+   * identity: `activeFor`/`latestFor` and the sidebar's status line stay keyed
+   * to it, while `meshFsPath`/`caseDir` are the executed snapshot.
+   */
+  sourceMeshFsPath?: string;
 }
 
 export interface RunPreflight {
@@ -111,6 +135,15 @@ export class RunManager implements vscode.Disposable {
     return [...this.records].reverse(); // newest first
   }
 
+  /**
+   * Allocates the next registry id. Public because an isolated run must plan
+   * its workspace — and snapshot its inputs — BEFORE `start()`, so it needs
+   * the id up front; the format stays the manager's business.
+   */
+  allocateRunId(): string {
+    return `${Date.now().toString(36)}-${++this.counter}`;
+  }
+
   get(id: string): RunRecord | undefined {
     return this.records.find((r) => r.id === id);
   }
@@ -134,7 +167,9 @@ export class RunManager implements vscode.Disposable {
 
   async start(req: RunRequest): Promise<RunRecord | undefined> {
     const meshFsPath = path.resolve(req.meshFsPath);
-    const preflight = await this.checkStart(meshFsPath, req.problemtypeId, true);
+    const sourceMeshFsPath = req.sourceMeshFsPath ? path.resolve(req.sourceMeshFsPath) : undefined;
+    // The capability check is about the CASE, not the snapshot it runs in.
+    const preflight = await this.checkStart(sourceMeshFsPath ?? meshFsPath, req.problemtypeId, true);
     if (!preflight.allowed) {
       const reason = preflight.reason ?? "The configured simulation environment is unavailable.";
       vscode.window.showErrorMessage(`Run unavailable: ${reason}`);
@@ -155,13 +190,15 @@ export class RunManager implements vscode.Disposable {
         return undefined;
       }
     }
-    const caseKey = caseKeyFor(meshFsPath, process.platform);
+    const caseKey = caseKeyFor(sourceMeshFsPath ?? meshFsPath, process.platform);
     const script = req.scriptName ?? "MainKratos.py";
 
-    // Same case already running: generating has just overwritten the files it
-    // is reading, so offer to replace it rather than race.
+    // Same case already running IN THIS FOLDER: generating has just overwritten
+    // the files it is reading, so offer to replace it rather than race. An
+    // isolated run has its own workspace and touches nothing the earlier run
+    // reads, so two of them may overlap by design.
     const mine = this.activeFor(caseKey);
-    if (mine) {
+    if (mine && mine.caseDir === req.caseDir) {
       const choice = await vscode.window.showWarningMessage(
         `A run for "${req.stem}" is already active. Its case files have just been regenerated underneath it.`,
         { modal: true },
@@ -173,8 +210,9 @@ export class RunManager implements vscode.Disposable {
     // A run this session did not start — the MCP server's `case_run`. It is not
     // in the registry, so without this check we would overwrite its sidecar and
     // destroy the only record of its pid, leaving it running, invisible and
-    // unstoppable.
-    const foreign = this.foreignLiveRun(req.meshFsPath);
+    // unstoppable. An isolated workspace is fresh, so this only ever finds a
+    // sidecar where the run actually executes.
+    const foreign = this.foreignLiveRun(meshFsPath);
     if (foreign) {
       const who = foreign.launchedBy === "mcp" ? "an MCP client" : "another window";
       const choice = await vscode.window.showWarningMessage(
@@ -200,10 +238,23 @@ export class RunManager implements vscode.Disposable {
     }
 
     const argv = solverArgv(req.python, script, req.threads ?? preflight.threads);
+    const id = req.runId ?? this.allocateRunId();
     const record: RunRecord = {
-      id: `${Date.now().toString(36)}-${++this.counter}`,
+      id,
       caseKey,
       meshFsPath,
+      ...(sourceMeshFsPath ? { sourceMeshFsPath } : {}),
+      ...(req.runDirectory
+        ? {
+            runDirectory: path.resolve(req.runDirectory),
+            // The receipt's owning request. A run this window starts owns its
+            // request under the run id; `case_run` lets its caller name one, and
+            // the sidecar carries whichever was used so a later reader of the
+            // receipt can echo it (see parser/plot/runs.ts).
+            requestId: id,
+            ownerId: RECEIPT_OWNER,
+          }
+        : {}),
       caseDir: req.caseDir,
       stem: req.stem,
       argv,
@@ -226,6 +277,9 @@ export class RunManager implements vscode.Disposable {
       }
     }
     this.records.push(record);
+    // An isolated run's receipt exists before the child does, so a crash here
+    // reads as a dispatch in progress rather than as output nobody owns.
+    this.openReceipt(record);
     this.rememberSidecar(meshFsPath);
 
     if (req.launchMode === "terminal") this.startInTerminal(record, req);
@@ -280,6 +334,7 @@ export class RunManager implements vscode.Disposable {
     record.pid = handle.pid;
     record.status = "running";
     this.writeSidecar(record);
+    void this.settleReceipt(record);
     this.changed();
 
     void handle.exited.then((exit) => {
@@ -316,6 +371,9 @@ export class RunManager implements vscode.Disposable {
       this.sentinels.delete(record.id);
       this.writeSidecar(record);
       this.refreshProgress(record);
+      // Terminal: the receipt freezes its artifact revisions, exactly as the
+      // MCP server freezes the ones it observed.
+      void this.settleReceipt(record);
       this.changed();
       this.autoConvertResults(record, channel);
     });
@@ -355,6 +413,7 @@ export class RunManager implements vscode.Disposable {
     record.status = "detached";
     record.message = `Running in terminal "${name}" — status is not tracked in this mode.`;
     this.writeSidecar(record);
+    void this.settleReceipt(record);
   }
 
   async stop(id: string): Promise<void> {
@@ -380,6 +439,7 @@ export class RunManager implements vscode.Disposable {
       record.endedAt = Date.now();
       record.message = "The terminal was disposed; the process may have survived it.";
       this.writeSidecar(record);
+      void this.settleReceipt(record);
       this.changed();
       return;
     }
@@ -403,6 +463,7 @@ export class RunManager implements vscode.Disposable {
     record.message = stopMessage(record.stopRung);
     record.endedAt = Date.now();
     this.writeSidecar(record);
+    void this.settleReceipt(record);
     this.changed();
   }
 
@@ -427,6 +488,7 @@ export class RunManager implements vscode.Disposable {
       record.message = action.message;
       record.endedAt = Date.now();
       this.writeSidecar(record);
+      void this.settleReceipt(record);
       state.handle.kill();
     }
   }
@@ -521,6 +583,52 @@ export class RunManager implements vscode.Disposable {
     return vscode.workspace.getConfiguration("kratos").get<boolean>("run.stopOnWindowClose", true);
   }
 
+  /** The receipt's owning request of an isolated run, or undefined for an in-folder one. */
+  private receiptOwner(record: RunRecord): OwnedRun | undefined {
+    if (!record.runDirectory || !record.requestId || !record.ownerId) return undefined;
+    return { requestId: record.requestId, ownerId: record.ownerId, runDirectory: record.runDirectory };
+  }
+
+  private openReceipt(record: RunRecord): void {
+    const owned = this.receiptOwner(record);
+    if (!owned) return;
+    try {
+      writeExecution({
+        version: 1,
+        requestId: owned.requestId,
+        ownerId: owned.ownerId,
+        state: "dispatching",
+        runDirectory: owned.runDirectory,
+        meshPath: record.meshFsPath,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        artifacts: [],
+      });
+    } catch {
+      // A read-only workspace must not break the run; a reader then reports the
+      // sidecar without an owning receipt, which is the honest reading.
+    }
+  }
+
+  /**
+   * Writes this run's observed status into its execution receipt, freezing the
+   * artifact revisions once it ended — the same contract the MCP server keeps,
+   * through the same writer. Fire-and-forget: hashing the outputs must never
+   * delay the row, and a failure leaves the receipt as it was, which makes a
+   * reader report it unresolved rather than invent ownership.
+   */
+  private async settleReceipt(record: RunRecord): Promise<void> {
+    const owned = this.receiptOwner(record);
+    if (!owned) return;
+    try {
+      const current = readExecution(owned.runDirectory);
+      if (!current) return;
+      executionReceiptForRun(owned, record.meshFsPath, record.status, record.id, await collectExecutionArtifacts(current));
+    } catch {
+      /* The receipt keeps its last honest state. */
+    }
+  }
+
   private rememberSidecar(meshFsPath: string): void {
     const seen = this.context.workspaceState.get<string[]>(RUN_SIDECAR_INDEX_KEY, []);
     if (seen.includes(meshFsPath)) return;
@@ -598,9 +706,16 @@ export class RunManager implements vscode.Disposable {
       const { status, message } = reconcileStatus(sidecar, alive);
       const record: RunRecord = {
         id: `restored-${sidecar.runId}`,
-        caseKey: caseKeyFor(path.resolve(meshFsPath), process.platform),
+        // The run belongs to the case its snapshot came from; treating the
+        // snapshot as its own case would re-attach it to whatever file name
+        // happens to be there, which is exactly what isolation exists to avoid.
+        caseKey: caseKeyFor(path.resolve(sidecar.sourceMesh ?? meshFsPath), process.platform),
         meshFsPath,
-        caseDir: path.dirname(meshFsPath),
+        ...(sidecar.sourceMesh ? { sourceMeshFsPath: sidecar.sourceMesh } : {}),
+        ...(sidecar.runDirectory ? { runDirectory: sidecar.runDirectory } : {}),
+        ...(sidecar.requestId ? { requestId: sidecar.requestId } : {}),
+        ...(sidecar.ownerId ? { ownerId: sidecar.ownerId } : {}),
+        caseDir: sidecar.runDirectory ?? path.dirname(meshFsPath),
         stem: sidecar.stem || path.basename(meshFsPath),
         argv: sidecar.argv,
         launchMode: sidecar.launchMode,
