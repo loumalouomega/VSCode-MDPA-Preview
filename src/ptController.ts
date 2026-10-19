@@ -21,8 +21,12 @@ import { CaseState, ProblemtypeRuntime, ProblemtypeSource } from "./problemtype/
 import { BUILTIN_PROBLEMTYPES } from "./problemtype/builtins";
 import { generateCase } from "./problemtype/generate";
 import { writePreparedCase } from "./problemtype/preparation";
+import type { PreparationHandoff } from "./problemtype/preparation";
+import { planRunWorkspace, runWorkspaceFolder, snapshotRunInputs, type RunInputSnapshot } from "./problemtype/runWorkspace";
 import { planCaseMesh } from "./problemtype/caseMesh";
 import { preflightCase } from "./problemtype/preflight";
+import { readHandoff } from "./problemtype/handoffFile";
+import { handoffIdentity } from "./problemtype/handoff";
 import { materialTablesFromCase } from "./problemtype/materialsJsonPlot";
 import { writeMdpa } from "./parser/writers/mdpaWriter";
 import { caseFilePath, parseCaseJson, serializeCase } from "./problemtype/caseFile";
@@ -43,6 +47,12 @@ import { STOP_SENTINEL_MS } from "./problemtype/runProcess";
 import { computeKratosEnv, defaultPythonPath, resolveKratosInstall } from "./problemtype/kratosEnv";
 
 export type PtAction = "generate" | "run" | "stop" | "openResults" | "exportResults";
+
+/** The planned inputs one isolated run executes (see problemtype/runWorkspace.ts). */
+interface IsolatedRun extends RunInputSnapshot {
+  runId: string;
+  runDirectory: string;
+}
 
 /** A catalog entry the webview can render (decl only; hooks stay host-side). */
 interface CatalogEntry {
@@ -369,6 +379,9 @@ export class PtController {
       const report = await preflightCase(runtime, model, state, this.stem, {
         isMdpaSource: meshExtname(this.fsPath) === ".mdpa",
         qualityMaxElements: 50_000,
+        // An exported CAD mesh carries its handoff receipt beside it; the
+        // findings say whether this case's assignments still describe it.
+        handoff: readHandoff(this.fsPath),
       });
       if (this.disposed || seq !== this.preflightSeq) return;
       this.post({ type: "ptPreflight", active: true, counts: report.counts, findings: report.findings });
@@ -483,8 +496,14 @@ export class PtController {
     }
   }
 
+  /** The CAD export identity of this panel's mesh, when it has a handoff beside it. */
+  private handoff(): PreparationHandoff | undefined {
+    const read = readHandoff(this.fsPath);
+    return read.manifest ? handoffIdentity(read.manifest) : undefined;
+  }
+
   /** Generates + writes the three case files; returns false on failure. */
-  private async generate(reveal: boolean): Promise<boolean> {
+  private async generate(reveal: boolean, workspace?: IsolatedRun): Promise<boolean> {
     const model = this.getModel();
     const state = this.state;
     if (!model) {
@@ -500,11 +519,15 @@ export class PtController {
       vscode.window.showWarningMessage(`Unknown problemtype "${state.problemtypeId}".`);
       return false;
     }
+    // An isolated run writes into its own workspace and generates from the
+    // snapshot copied there; everything else works in the case's own folder.
+    const caseDir = workspace?.runDirectory ?? this.caseDir;
+    const meshPath = workspace?.meshPath ?? this.fsPath;
     try {
       // The solver reads an .mdpa file: an .mdpa source is referenced directly
       // unless the mesh-name adaptation renames a block, while any other
       // source is always converted — see planCaseMesh.
-      const isMdpaSource = meshExtname(this.fsPath) === ".mdpa";
+      const isMdpaSource = meshExtname(meshPath) === ".mdpa";
       const plan = planCaseMesh(runtime, model, state, this.stem, isMdpaSource);
       const caseModel = plan.caseModel;
       const files: string[] = [];
@@ -512,13 +535,13 @@ export class PtController {
         let sourceText: string | undefined;
         if (isMdpaSource) {
           try {
-            sourceText = fs.readFileSync(this.fsPath, "utf8"); // Properties survive verbatim
+            sourceText = fs.readFileSync(meshPath, "utf8"); // Properties survive verbatim
           } catch {
             /* lossy write without the source text */
           }
         }
         fs.writeFileSync(
-          path.join(this.caseDir, `${plan.caseStem}.mdpa`),
+          path.join(caseDir, `${plan.caseStem}.mdpa`),
           writeMdpa(caseModel, { sourceText })
         );
         files.push(`${plan.caseStem}.mdpa`);
@@ -535,7 +558,7 @@ export class PtController {
       }
       // A coupled problemtype writes one mesh per physics domain instead.
       for (const dm of plan.domainMeshes) {
-        fs.writeFileSync(path.join(this.caseDir, `${dm.stem}.mdpa`), writeMdpa(dm.model));
+        fs.writeFileSync(path.join(caseDir, `${dm.stem}.mdpa`), writeMdpa(dm.model));
         files.push(`${dm.stem}.mdpa`);
       }
       if (plan.domainMeshes.length > 0) {
@@ -544,11 +567,17 @@ export class PtController {
         );
       }
       const out = await generateCase(runtime, caseModel, state, plan.caseStem);
-      const ppPath = path.join(this.caseDir, out.primaryDocumentName);
-      const domainStems = plan.domainMeshes.map((m) => path.join(this.caseDir, `${m.stem}.mdpa`));
-      const prepared = writePreparedCase({ directory: this.caseDir, sourcePath: this.fsPath,
-        solverMeshPath: domainStems[0] ?? path.join(this.caseDir, `${plan.caseStem}.mdpa`), runtime, state,
-        generated: out, warnings: plan.warnings, extraMeshPaths: domainStems.slice(1) });
+      const ppPath = path.join(caseDir, out.primaryDocumentName);
+      const domainStems = plan.domainMeshes.map((m) => path.join(caseDir, `${m.stem}.mdpa`));
+      const handoff = this.handoff();
+      const prepared = writePreparedCase({ directory: caseDir, sourcePath: meshPath,
+        solverMeshPath: domainStems[0] ?? path.join(caseDir, `${plan.caseStem}.mdpa`), runtime, state,
+        generated: out, warnings: plan.warnings, extraMeshPaths: domainStems.slice(1),
+        // The run identity is recorded only for an isolated workspace: an
+        // in-folder case file is shared by every run and identifies none.
+        ...(workspace ? { run: { runId: workspace.runId } } : {}),
+        // The CAD export chain, when this mesh came with one: identity only.
+        ...(handoff ? { handoff } : {}) });
       files.push(...prepared.written.map(file => path.basename(file)));
       this.post({ type: "ptStatus", kind: "generated", files });
       const allWarnings = [...plan.warnings, ...out.warnings];
@@ -568,6 +597,50 @@ export class PtController {
     }
   }
 
+  /**
+   * Plans and fills a per-run workspace (`kratos.run.isolate`, roadmap item 6):
+   * the mesh and case state are COPIED into `<caseDir>/<runsFolder>/<stem>-<id>/`
+   * so this run generates and solves in a directory of its own, and the case's
+   * own folder is never written underneath a run in flight. The copy is what the
+   * run reads, so its preparation record and its receipt both describe the
+   * exact bytes used.
+   */
+  private prepareRunWorkspace(config: vscode.WorkspaceConfiguration): IsolatedRun | undefined {
+    const runId = this.runs.allocateRunId();
+    const runDirectory = planRunWorkspace({
+      caseDir: this.caseDir,
+      stem: this.stem,
+      runId,
+      runsFolder: runWorkspaceFolder(config.get<string>("run.runsFolder", "")),
+    });
+    try {
+      if (fs.existsSync(runDirectory) && fs.readdirSync(runDirectory).length > 0) {
+        throw new Error("the planned workspace already exists and is not empty");
+      }
+      const snapshot = snapshotRunInputs({
+        sourceMesh: this.fsPath,
+        runDirectory,
+        casePath: this.caseFilePath,
+      });
+      return { runId, runDirectory, ...snapshot };
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      const message = `Could not prepare the run workspace "${path.basename(runDirectory)}": ${detail}.`;
+      this.post({ type: "ptStatus", kind: "error", message });
+      vscode.window.showErrorMessage(message);
+      return undefined;
+    }
+  }
+
+  /** Removes a just-filled workspace whose generation failed; the source case is untouched. */
+  private discardRunWorkspace(workspace: IsolatedRun): void {
+    try {
+      fs.rmSync(workspace.runDirectory, { recursive: true, force: true });
+    } catch {
+      // Generation's own error is the one worth reporting.
+    }
+  }
+
   /** Generates the case files, then hands the launch to the run registry. */
   private async run(): Promise<void> {
     const preflight = await this.runs.checkStart(this.fsPath, this.state?.problemtypeId);
@@ -578,8 +651,21 @@ export class PtController {
       vscode.window.showErrorMessage(`Run unavailable: ${message}`);
       return;
     }
-    if (!(await this.generate(false))) return;
     const config = vscode.workspace.getConfiguration("kratos");
+    // Per-run workspaces are opt-in: with kratos.run.isolate on, a run never
+    // shares ProjectParameters.json, MainKratos.py or vtk_output/ with another
+    // run — including a run of a different case in the same folder.
+    let workspace: IsolatedRun | undefined;
+    if (config.get<boolean>("run.isolate", false)) {
+      workspace = this.prepareRunWorkspace(config);
+      if (!workspace) return;
+    }
+    if (!(await this.generate(false, workspace))) {
+      // An isolated workspace exists only for the run that just failed, so it
+      // is removed rather than left as a case nobody asked for.
+      if (workspace) this.discardRunWorkspace(workspace);
+      return;
+    }
     const python =
       config.get<string>("pythonPath", "") || defaultPythonPath(process.platform);
     // A configured install may be the folder itself or a source checkout whose
@@ -606,9 +692,15 @@ export class PtController {
     const launchMode =
       config.get<string>("run.launchMode", "output") === "terminal" ? "terminal" : "output";
     await this.runs.start({
-      meshFsPath: this.fsPath,
+      // An isolated run executes the snapshot in its workspace; the source mesh
+      // stays the case's identity, so the sidebar's status line and Stop still
+      // address the case the user is looking at.
+      meshFsPath: workspace?.meshPath ?? this.fsPath,
+      ...(workspace
+        ? { runId: workspace.runId, runDirectory: workspace.runDirectory, sourceMeshFsPath: this.fsPath }
+        : {}),
       problemtypeId: this.state?.problemtypeId,
-      caseDir: this.caseDir,
+      caseDir: workspace?.runDirectory ?? this.caseDir,
       stem: this.stem,
       python,
       envDelta,
@@ -641,7 +733,9 @@ export class PtController {
     // the FIRST step, and "_0_10" sorted before "_0_2". The shared command uses
     // the tested latestResultFile instead.
     const record = this.runs.latestFor(this.caseKey);
-    await vscode.commands.executeCommand("kratos.vtk.openLatestResults", this.caseDir, {
+    // An isolated run's results live in its own workspace; an in-folder run's
+    // sit beside the mesh. `record.caseDir` names whichever it executed in.
+    await vscode.commands.executeCommand("kratos.vtk.openLatestResults", record?.caseDir ?? this.caseDir, {
       excludeNewest: record !== undefined && record.status !== "finished",
     });
   }

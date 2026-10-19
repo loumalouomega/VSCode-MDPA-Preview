@@ -1004,6 +1004,18 @@
           ],
           "markdownDescription": "%config.kratos.run.launchMode.markdownDescription%"
         },
+        "kratos.run.isolate": {
+          "type": "boolean",
+          "default": false,
+          "scope": "resource",
+          "markdownDescription": "%config.kratos.run.isolate.markdownDescription%"
+        },
+        "kratos.run.runsFolder": {
+          "type": "string",
+          "default": "runs",
+          "scope": "resource",
+          "markdownDescription": "%config.kratos.run.runsFolder.markdownDescription%"
+        },
         "kratos.run.stopOnWindowClose": {
           "type": "boolean",
           "default": true,

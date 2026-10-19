@@ -52,8 +52,14 @@ export interface RunSidecar {
   requestId?: string;
   /** The study or other caller that owns a queue-managed run. */
   ownerId?: string;
-  /** Absolute, machine-local directory for this isolated run. */
+  /** Absolute, machine-local directory for this isolated run, whoever started it. */
   runDirectory?: string;
+  /**
+   * The source mesh an isolated run was snapshotted from. Identity for every
+   * reader that must find the CASE (monitors, export settings, its own panel)
+   * while the run's results stay inside `runDirectory`.
+   */
+  sourceMesh?: string;
   /**
    * Latched on disk the moment a stop is requested, BEFORE the signal is sent.
    *
@@ -128,6 +134,10 @@ export function sidecarFromRecord(
     ...(record.signal !== undefined ? { signal: record.signal } : {}),
     ...(record.message !== undefined ? { message: record.message } : {}),
     launchedBy,
+    ...(record.requestId !== undefined ? { requestId: record.requestId } : {}),
+    ...(record.ownerId !== undefined ? { ownerId: record.ownerId } : {}),
+    ...(record.runDirectory ? { runDirectory: record.runDirectory } : {}),
+    ...(record.sourceMeshFsPath ? { sourceMesh: record.sourceMeshFsPath } : {}),
     ...(record.stopRequested ? { stopRequested: true } : {}),
     ...(record.stopSentinel ? { stopSentinel: record.stopSentinel } : {}),
     ...(record.stopRung ? { stopRung: record.stopRung } : {}),
@@ -194,6 +204,7 @@ export function parseRunJson(text: string): { sidecar?: RunSidecar; warnings: st
       ...(typeof raw.requestId === "string" ? { requestId: raw.requestId } : {}),
       ...(typeof raw.ownerId === "string" ? { ownerId: raw.ownerId } : {}),
       ...(typeof raw.runDirectory === "string" ? { runDirectory: raw.runDirectory } : {}),
+      ...(typeof raw.sourceMesh === "string" && raw.sourceMesh ? { sourceMesh: raw.sourceMesh } : {}),
       // Strictly `=== true`: a garbage value must never claim a stop that was
       // never requested.
       ...(raw.stopRequested === true ? { stopRequested: true as const } : {}),

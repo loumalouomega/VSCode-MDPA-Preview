@@ -16,7 +16,7 @@ import { writePlotCsv } from "../parser/plot/files";
 import type { ImportOptions, PlotDataset, PlotExecution, PlotTable, PlotRunBinding } from "../parser/plot/types";
 import type { PlotTimeCursorRequest, PlotRunResolution } from "../parser/plot/runs";
 import type { PlotRunTargetRequest, PlotRunTarget } from "../parser/plot/navigation";
-import { solverArgv, THREAD_RECEIPT } from '../problemtype/threadControl';
+import { solverArgv } from '../problemtype/threadControl';
 import { estimateTimeStep } from "../problemtype/timeStepEstimate";
 import {
   BATCH_MANIFEST_NAME,
@@ -50,7 +50,7 @@ import { assertFreshElmerDestination } from "../parser/caeFiles";
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { MdpaModel, EntityBlock, SubModelPart, EntityKind } from "../parser/types";
 import { parseMdpa } from "../parser/mdpaParser";
 import { surfaceDefects } from "../parser/surfaceDefects";
@@ -155,7 +155,11 @@ import { CaseState, JsonValue, MaterialAssignment, ProblemtypeRuntime, Problemty
 import { BUILTIN_PROBLEMTYPES } from "../problemtype/builtins";
 import { generateCase, subModelPartPaths } from "../problemtype/generate";
 import { preflightCase } from "../problemtype/preflight";
-import { PREPARATION_FILE, preparedNames, preparedApplications, writePreparedCase, isRunIdentity, type PreparationRun } from "../problemtype/preparation";
+import { readHandoff } from "../problemtype/handoffFile";
+import { handoffIdentity } from "../problemtype/handoff";
+import { preparedNames, preparedApplications, writePreparedCase, isRunIdentity, type PreparationRun } from "../problemtype/preparation";
+import { planRunWorkspace, snapshotRunInputs } from "../problemtype/runWorkspace";
+import { compareRuns } from "../problemtype/runCompare";
 import { probeKratosApplications } from "../problemtype/kratosAppProbe";
 import { describeMissingApplications } from "../problemtype/applications";
 import { defaultCaseState } from "../problemtype/api";
@@ -187,9 +191,17 @@ import {
 } from "../problemtype/caseFile";
 import { RunRecord, caseKeyFor, latestResultFile, stopMessage } from "../problemtype/runCore";
 import { parseRunJson, reconcileStatus, serializeRun, sidecarFromRecord } from "../problemtype/runFile";
-import { executionFilePath, parseExecutionReceipt, terminalExecution, type ExecutionArtifact, type ExecutionReceipt, type ExecutionState } from "../problemtype/runReceipt";
-import { freezeExecutionResult } from "../problemtype/runResultInventory";
-import { plotDirectorySource } from "../parser/plot/directoryInventory";
+import { EXECUTION_FILE, executionFilePath, type ExecutionArtifact, type ExecutionReceipt } from "../problemtype/runReceipt";
+import {
+  artifactRevision,
+  collectExecutionArtifacts,
+  executionReceiptForRun,
+  executionState,
+  readExecution,
+  updateExecution,
+  writeExecution,
+  type OwnedRun,
+} from "../problemtype/runReceiptWriter";
 import { isPidAlive, spawnRun, stopPid, stopRungFromOutcome } from "../problemtype/runProcess";
 import { prepareStopSentinel, removeStopFile, writeStopFile } from "../problemtype/stopSentinel";
 import { computeKratosEnv, defaultPythonPath, resolveKratosInstall } from "../problemtype/kratosEnv";
@@ -2822,6 +2834,9 @@ export async function caseValidate(args: {
     isMdpaSource: meshExtname(args.meshPath) === ".mdpa",
     quality: args.quality,
     qualityMaxElements: args.qualityMaxElements,
+    // The handoff receipt beside an exported CAD mesh: Part/group coverage,
+    // staleness after a remesh, and the export's units.
+    handoff: readHandoff(args.meshPath),
   });
   let install: object | undefined;
   if (args.checkInstall && report.applications) {
@@ -3011,9 +3026,15 @@ export async function caseGenerate(args: {
     domainPaths.push(domainPath);
   }
   const out = await generateCase(runtime, caseModel, state, caseStem);
+  const handoff = readHandoff(args.meshPath);
+  // The CAD export this mesh came from, when it left a handoff beside it:
+  // identity only, so the chain stays checkable without a path in the record.
+  // A manifest that records no source revision is not turned into a claim.
+  const identity = handoff.manifest ? handoffIdentity(handoff.manifest) : undefined;
   const prepared = writePreparedCase({ directory: caseDir, sourcePath: args.meshPath,
     solverMeshPath: domainPaths[0] ?? path.join(caseDir, `${caseStem}.mdpa`), runtime, state, generated: out,
-    warnings: [...warnings, ...plan.warnings], extraMeshPaths: domainPaths.slice(1), ...(args.run ? { run: args.run } : {}) });
+    warnings: [...warnings, ...plan.warnings], extraMeshPaths: domainPaths.slice(1), ...(args.run ? { run: args.run } : {}),
+    ...(identity ? { handoff: identity } : {}) });
   written.push(...prepared.written);
   warnings.push(...plan.warnings, ...out.warnings);
   return {
@@ -3217,126 +3238,30 @@ export async function caseMaterialAssign(args: {
 const RUN_WAIT_DEFAULT_S = 10;
 const RUN_WAIT_MAX_S = 600;
 
-interface OwnedRun {
-  requestId: string;
-  ownerId: string;
-  runDirectory: string;
-}
-
 const isSafeIdentity = (value: string): boolean => /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(value);
 
-function writeExecution(receipt: ExecutionReceipt): void {
-  const file = executionFilePath(receipt.runDirectory);
-  const temp = `${file}.${process.pid}.${randomUUID()}.tmp`;
-  fs.writeFileSync(temp, JSON.stringify(receipt, null, 2) + "\n", { flag: "wx" });
-  fs.renameSync(temp, file);
-}
-
-function readExecution(runDirectory: string): ExecutionReceipt | undefined {
-  try { return parseExecutionReceipt(fs.readFileSync(executionFilePath(runDirectory), "utf8"), runDirectory); }
-  catch { return undefined; }
-}
-
-function executionState(status: string | undefined): ExecutionState {
-  if (status === "finished") return "succeeded";
-  if (status === "failed") return "failed";
-  if (status === "cancelled") return "cancelled";
-  if (status === "running" || status === "detached") return "running";
-  if (status === "starting") return "dispatching";
-  return "uncertain";
-}
-
-function artifactRevision(file: string): string | undefined {
-  let fd: number | undefined;
-  try {
-    fd = fs.openSync(file, 'r');
-    const hash = createHash('sha256'), buffer = Buffer.allocUnsafe(1024 * 1024);
-    let count: number;
-    while ((count = fs.readSync(fd, buffer, 0, buffer.length, null)) > 0) hash.update(buffer.subarray(0, count));
-    return `sha256:${hash.digest('hex')}`;
-  } catch { return undefined; }
-  finally { if (fd !== undefined) fs.closeSync(fd); }
-}
-
-async function collectExecutionArtifacts(receipt: ExecutionReceipt, generated?: object, prior: ExecutionArtifact[] = []): Promise<ExecutionArtifact[]> {
-  if (terminalExecution(receipt)) return receipt.artifacts;
-  const out: ExecutionArtifact[] = [];
-  const seen = new Set<string>();
-  const add = (role: string, file: string): void => {
-    const abs = path.resolve(file);
-    const key = `${role}\0${abs}`;
-    if (seen.has(key)) return;
-    seen.add(key);
-    try {
-      if (!fs.statSync(abs).isFile()) return;
-      const revision = artifactRevision(abs);
-      out.push({ role, path: abs, ...(revision ? { revision } : { revisionUnavailable: "Could not read file." }) });
-    } catch { /* A missing generated artifact is left out and reported by status consumers. */ }
-  };
-  for (const artifact of prior) add(artifact.role, artifact.path);
-  add("mesh", receipt.meshPath);
-  add("resources", path.join(path.dirname(receipt.meshPath), THREAD_RECEIPT));
-  const generatedFiles = generated && typeof generated === "object" && "written" in generated && Array.isArray((generated as { written?: unknown }).written)
-    ? (generated as { written: unknown[] }).written : [];
-  for (const file of generatedFiles) if (typeof file === "string") add("input", file);
-  const sidecar = readRun(receipt.meshPath).sidecar;
-
-  add("convergence", path.join(path.dirname(receipt.meshPath), "kkss-convergence-v1.jsonl"));
-  add("convergence", path.join(path.dirname(receipt.meshPath), "kkss-convergence-v2.jsonl"));
-  add("preparation", path.join(path.dirname(receipt.meshPath), PREPARATION_FILE));
-  const outputs = discoverOutputs(path.dirname(receipt.meshPath));
-  for (const file of outputs.results) add("result", file);
-  for (const file of outputs.companions) add("result-companion", file);
-  if (sidecar?.logFile) add("log", sidecar.logFile);
-  for (const result of out.filter(a => a.role === "result" && plotDirectorySource(a.path))) {
-    try {
-      for (const artifact of await freezeExecutionResult(result.path)) {
-        const existing = out.find(a => a.role === artifact.role && a.path === artifact.path);
-        if (existing) Object.assign(existing, artifact); else out.push(artifact);
-      }
-    } catch (error) {
-      result.inventoryUnavailable = error instanceof Error ? error.message : String(error);
-    }
-  }
-  return out;
-}
-
-function updateExecution(owned: OwnedRun, update: Partial<ExecutionReceipt>): ExecutionReceipt | undefined {
-  const current = readExecution(owned.runDirectory);
-  if (!current || current.requestId !== owned.requestId || current.ownerId !== owned.ownerId) return undefined;
-  // Once the owning process observed completion, pin its artifact revisions.
-  // Status polling must not relabel rewritten output bytes as the old run.
-  if (terminalExecution(current)) return current;
-  if (['succeeded', 'failed', 'cancelled'].includes(String(update.state))) {
-    const outputs = discoverOutputs(path.dirname(current.meshPath));
-    update = { ...update, outputFindings: outputs.findings };
-  }
-  let resources = current.resources;
-  try {
-    const value = JSON.parse(fs.readFileSync(path.join(owned.runDirectory, THREAD_RECEIPT), "utf8"));
-    if (resources && value.version === 1 && value.requestedThreads === resources.requestedThreads && value.effectiveThreads === resources.requestedThreads) resources = value;
-  } catch { /* Unacknowledged thread application remains unknown. */ }
-  const next = { ...current, ...update, ...(resources ? { resources } : {}), updatedAt: Date.now() };
-  writeExecution(next);
-  return next;
-}
-
-function validateOwnedArgs(args: { requestId?: string; ownerId?: string; runDirectory?: string }): OwnedRun | undefined {
+/**
+ * The run identity a tool addresses, before the directory is decided: an
+ * explicit runDirectory, or just the identity from which `isolate:true`
+ * plans one.
+ */
+function resolveOwnedIdentity(args: { requestId?: string; ownerId?: string; runDirectory?: string }): { requestId: string; ownerId: string; runDirectory?: string } | undefined {
   if (args.requestId === undefined && args.ownerId === undefined && args.runDirectory === undefined) return undefined;
   if (typeof args.requestId !== "string" || !isSafeIdentity(args.requestId) ||
-      typeof args.ownerId !== "string" || !isSafeIdentity(args.ownerId) ||
-      typeof args.runDirectory !== "string" || !args.runDirectory.trim()) {
-    throw new Error("Queue-managed execution requires safe requestId and ownerId values and a runDirectory.");
+      typeof args.ownerId !== "string" || !isSafeIdentity(args.ownerId)) {
+    throw new Error("Queue-managed execution requires safe requestId and ownerId values.");
   }
+  if (args.runDirectory === undefined) return { requestId: args.requestId, ownerId: args.ownerId };
+  if (!args.runDirectory.trim()) throw new Error("runDirectory must be a non-empty path.");
   return { requestId: args.requestId, ownerId: args.ownerId, runDirectory: path.resolve(args.runDirectory) };
 }
 
-function executionReceiptForRun(owned: OwnedRun | undefined, meshPath: string, status: string, runId?: string, artifacts: ExecutionArtifact[] = []): ExecutionReceipt | undefined {
-  if (!owned) return undefined;
-  const current = readExecution(owned.runDirectory);
-  if (!current || current.requestId !== owned.requestId || current.ownerId !== owned.ownerId) return undefined;
-  const next = { ...current, meshPath: path.resolve(meshPath), ...(runId ? { jobId: runId } : {}), state: executionState(status), artifacts, updatedAt: Date.now() };
-  return updateExecution(owned, next);
+function validateOwnedArgs(args: { requestId?: string; ownerId?: string; runDirectory?: string }, plannedRunDirectory?: string): OwnedRun | undefined {
+  const resolved = resolveOwnedIdentity(args);
+  if (!resolved) return undefined;
+  const runDirectory = resolved.runDirectory ?? plannedRunDirectory;
+  if (!runDirectory) throw new Error("Queue-managed execution requires a runDirectory (or isolate:true to plan one).");
+  return { requestId: resolved.requestId, ownerId: resolved.ownerId, runDirectory };
 }
 
 /** Reads the sidecar and reconciles it, the same way case_status does. */
@@ -3359,13 +3284,9 @@ function readRun(meshPath: string): {
   return { path: p, sidecar, status: reconcileStatus(sidecar, alive).status, ...(alive !== undefined ? { alive } : {}) };
 }
 
-function writeRun(meshPath: string, record: RunRecord, logFile?: string, owned?: OwnedRun): void {
+function writeRun(meshPath: string, record: RunRecord, logFile?: string): void {
   try {
-    const base = sidecarFromRecord(record, "mcp", logFile);
-    fs.writeFileSync(runFilePath(meshPath), serializeRun({
-      ...base,
-      ...(owned ? { requestId: owned.requestId, ownerId: owned.ownerId, runDirectory: owned.runDirectory } : {}),
-    }));
+    fs.writeFileSync(runFilePath(meshPath), serializeRun(sidecarFromRecord(record, "mcp", logFile)));
   } catch {
     // A read-only folder must not break a run that already started.
   }
@@ -3417,16 +3338,35 @@ export async function caseRun(args: {
   studyId?: string;
   /** Request ID of an earlier run these settings were cloned from; a label, recorded in the manifest. */
   clonedFrom?: string;
+  /**
+   * Plan a FRESH run workspace from this request's identity instead of naming
+   * one: `<case folder>/runs/<stem>-<requestId>`. Requires requestId + ownerId;
+   * pass it when the caller wants per-run directories without choosing paths.
+   */
+  isolate?: boolean;
 }): Promise<object> {
   solverArgv(args.python ?? "python", args.scriptName ?? "MainKratos.py", args.threads);
-  const owned = validateOwnedArgs(args);
+  if (args.isolate === true) {
+    if (args.runDirectory !== undefined) {
+      throw new Error("Pass either runDirectory or isolate:true, not both: isolate plans the directory from the request identity.");
+    }
+    if (typeof args.requestId !== "string" || !isSafeIdentity(args.requestId)) {
+      throw new Error("isolate:true names the workspace from requestId; pass a safe requestId (letters, digits, . _ -, at most 128, usable as a folder name).");
+    }
+  }
+  const sourceAbs = path.resolve(args.meshPath);
+  const owned = validateOwnedArgs(
+    args,
+    args.isolate === true
+      ? path.resolve(planRunWorkspace({ caseDir: path.dirname(sourceAbs), stem: meshStem(sourceAbs), runId: args.requestId as string }))
+      : undefined
+  );
   if ((args.studyId !== undefined || args.clonedFrom !== undefined) && !owned) {
-    throw new Error("studyId and clonedFrom describe an isolated run; they require requestId, ownerId and runDirectory.");
+    throw new Error("studyId and clonedFrom describe an isolated run; they require requestId, ownerId and runDirectory (or isolate:true).");
   }
   for (const [name, value] of [["studyId", args.studyId], ["clonedFrom", args.clonedFrom]] as const) {
     if (value !== undefined && !isRunIdentity(value)) throw new Error(`${name} must be a short identifier (letters, digits, . _ : -).`);
   }
-  const sourceAbs = path.resolve(args.meshPath);
   let abs = sourceAbs;
   let casePath = args.casePath;
   const runExt = meshExtname(abs);
@@ -3466,22 +3406,17 @@ export async function caseRun(args: {
     // this point, lookup reports uncertainty and callers must not resubmit.
     writeExecution(initial);
     try {
-      fs.copyFileSync(sourceAbs, snapshottedMesh, fs.constants.COPYFILE_EXCL);
       const sourceCase = args.casePath ? path.resolve(args.casePath) : caseFilePath(sourceAbs);
-      const snapshotCase = caseFilePath(snapshottedMesh);
-      if (fs.existsSync(sourceCase)) {
-        fs.copyFileSync(sourceCase, snapshotCase, fs.constants.COPYFILE_EXCL);
-        casePath = snapshotCase;
-      } else {
-        casePath = undefined;
-      }
-      abs = snapshottedMesh;
-      if (args.generate === false) {
-        const driver = args.scriptName ?? generatedDriverScript(path.dirname(sourceAbs));
-        const sourceScript = path.join(path.dirname(sourceAbs), driver);
-        const snapshotScript = path.join(owned.runDirectory, driver);
-        if (fs.existsSync(sourceScript)) fs.copyFileSync(sourceScript, snapshotScript, fs.constants.COPYFILE_EXCL);
-      }
+      // The one shared snapshot: the extension's isolated Run copies the same
+      // way, so both producers agree on what a run workspace contains.
+      const snapshot = snapshotRunInputs({
+        sourceMesh: sourceAbs,
+        runDirectory: owned.runDirectory,
+        casePath: sourceCase,
+        ...(args.generate === false ? { scriptName: args.scriptName ?? generatedDriverScript(path.dirname(sourceAbs)) } : {}),
+      });
+      abs = snapshot.meshPath;
+      casePath = snapshot.casePath;
       updateExecution(owned, { meshPath: abs, artifacts: await collectExecutionArtifacts(initial) });
     } catch (error) {
       updateExecution(owned, { state: "failed", message: error instanceof Error ? error.message : String(error) });
@@ -3584,8 +3519,19 @@ export async function caseRun(args: {
   const argv = solverArgv(python, script, args.threads);
   const record: RunRecord = {
     id: `mcp-${randomUUID()}`,
-    caseKey: caseKeyFor(abs, process.platform),
+    caseKey: caseKeyFor(owned ? sourceAbs : abs, process.platform),
     meshFsPath: abs,
+    // The source case's identity survives the snapshot: readers after a reload
+    // resolve the run through these, never by matching file names. The owning
+    // request/owner ride along so the receipt can be verified and settled.
+    ...(owned
+      ? {
+          runDirectory: owned.runDirectory,
+          sourceMeshFsPath: sourceAbs,
+          requestId: owned.requestId,
+          ownerId: owned.ownerId,
+        }
+      : {}),
     caseDir,
     stem,
     argv,
@@ -3602,7 +3548,7 @@ export async function caseRun(args: {
 
   // Persist the run identity before creating the child. A crash before spawn
   // acknowledgement is therefore observable as an unresolved request.
-  writeRun(abs, record, logFile, owned);
+  writeRun(abs, record, logFile);
   const handle = spawnRun({
     argv,
     cwd: caseDir,
@@ -3613,7 +3559,7 @@ export async function caseRun(args: {
   });
   record.pid = handle.pid;
   record.status = "running";
-  writeRun(abs, record, logFile, owned);
+  writeRun(abs, record, logFile);
   if (owned) {
     const current = readExecution(owned.runDirectory);
     if (current) executionReceiptForRun(owned, abs, record.status, record.id, await collectExecutionArtifacts(current, generated));
@@ -3645,7 +3591,7 @@ export async function caseRun(args: {
         : `Exited with code ${exit.exitCode}.`;
     }
     prepared?.remove();
-    writeRun(abs, record, logFile, owned);
+    writeRun(abs, record, logFile);
     if (owned) {
       const receipt = readExecution(owned.runDirectory);
       if (receipt) executionReceiptForRun(owned, abs, record.status, record.id, await collectExecutionArtifacts(receipt, generated));
@@ -3949,6 +3895,41 @@ export async function caseStatus(args: { meshPath?: string; requestId?: string; 
     output,
     warnings,
     ...(receipt ? { executionReceipt: receipt } : {}),
+  };
+}
+
+/**
+ * Compares two saved runs by the portable evidence each one owns — its
+ * execution receipt and the preparation manifest beside its inputs — so two
+ * cases that share a source folder cannot be confused by matching file names.
+ *
+ * Refuses, rather than guessing, when either side is not a terminal isolated
+ * run: a live run's outputs are still changing, and a legacy in-folder sidecar
+ * never recorded which bytes belonged to it.
+ */
+export async function caseCompare(args: {
+  /** Run directory (or its `.kkss-execution.json`) of the first run. */
+  left: string;
+  /** Run directory (or its `.kkss-execution.json`) of the second run. */
+  right: string;
+}): Promise<object> {
+  const directory = (value: string): string => {
+    const abs = path.resolve(value);
+    return path.basename(abs) === EXECUTION_FILE ? path.dirname(abs) : abs;
+  };
+  const left = directory(args.left), right = directory(args.right);
+  for (const [label, dir] of [["left", left], ["right", right]] as const) {
+    if (!fs.existsSync(dir)) throw new Error(`The ${label} run directory does not exist: ${dir}`);
+  }
+  const comparison = compareRuns(left, right);
+  return {
+    ...comparison,
+    // The receipts' own schema version, stated once, so an agent does not infer
+    // comparability from a successful call.
+    contract: { receipt: 1, preparation: 1 },
+    note: comparison.comparable
+      ? "Artifacts compare by run-relative name and frozen revision; settings by the recorded case state."
+      : "Not comparable until both sides are terminal isolated runs with readable receipts.",
   };
 }
 

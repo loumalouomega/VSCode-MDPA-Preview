@@ -182,3 +182,54 @@ test("garbage stopSentinel / stopRung values are dropped rather than trusted", (
     assert.equal(sidecar!.stopRung, undefined, extra);
   }
 });
+
+test("an isolated run's identity round-trips, so a reader resolves the run and not a filename", () => {
+  const text = serializeRun(
+    sidecarFromRecord(
+      record({
+        runDirectory: "/w/runs/beam-r1",
+        sourceMeshFsPath: "/w/beam.mdpa",
+        requestId: "r1",
+        ownerId: "extension",
+      }),
+      "extension"
+    )
+  );
+  const { sidecar, warnings } = parseRunJson(text);
+  assert.deepEqual(warnings, []);
+  assert.equal(sidecar!.runDirectory, "/w/runs/beam-r1");
+  assert.equal(sidecar!.sourceMesh, "/w/beam.mdpa");
+  assert.equal(sidecar!.requestId, "r1");
+  assert.equal(sidecar!.ownerId, "extension");
+});
+
+test("an in-folder run writes no run-workspace identity", () => {
+  const raw = JSON.parse(serializeRun(sidecarFromRecord(record(), "extension")));
+  for (const key of ["runDirectory", "sourceMesh", "requestId", "ownerId"]) {
+    assert.equal(key in raw, false, key);
+  }
+});
+
+test("garbage run-workspace identity is dropped rather than trusted", () => {
+  const base =
+    `{"runId":"r","stem":"s","meshFile":"m","status":"running","launchMode":"output",` +
+    `"argv":["python"],"startedAt":1,"launchedBy":"extension"`;
+  for (const extra of [`,"runDirectory":42,"sourceMesh":{},"requestId":[],"ownerId":null`, `,"sourceMesh":""`]) {
+    const { sidecar } = parseRunJson(base + extra + "}");
+    assert.equal(sidecar!.runDirectory, undefined, extra);
+    assert.equal(sidecar!.sourceMesh, undefined, extra);
+    assert.equal(sidecar!.requestId, undefined, extra);
+    assert.equal(sidecar!.ownerId, undefined, extra);
+  }
+});
+
+test("a sidecar from before run workspaces existed still reads as an in-folder run", () => {
+  const text =
+    `{"version":1,"runId":"r","stem":"s","meshFile":"m","status":"running",` +
+    `"launchMode":"output","argv":["python"],"startedAt":1,"launchedBy":"extension"}`;
+  const { sidecar, warnings } = parseRunJson(text);
+  assert.ok(sidecar);
+  assert.deepEqual(warnings, []);
+  assert.equal(sidecar!.runDirectory, undefined);
+  assert.equal(sidecar!.sourceMesh, undefined);
+});

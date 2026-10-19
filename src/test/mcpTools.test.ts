@@ -41,6 +41,7 @@ import {
   caseGenerate,
   caseRun,
   caseStatus,
+  caseCompare,
   caseConvergence,
   caseMonitors,
   caseStop,
@@ -1378,8 +1379,8 @@ test("mesh_capabilities reports the live build next to the routing tables", asyn
   // `step`/`iges` readers (full artifact only) and gains a `gltf` reader: 80
   // readers, writers unchanged at 75. The 17.3.0 bump adds the `neuroglancer`
   // reader (81) and seven writers — `ansys_rst`, `lsdyna_d3plot`, `marc_t19`,
-  // `nastran_h5`, `neuroglancer`, `radioss_anim` and `xplt` (82).
-  // 17.4.0–17.7.0 bumps add no reader or writer key (still 81/82 lean, 83/82 full):
+  // `nastran_h5`, `neuroglancer`, `radioss_anim` and `xplt` (82). The 17.4.0–
+  // 17.7.0 bumps add no reader or writer key (still 81/82 lean, 83/82 full):
   // their whole delta is deeper result-writer fidelity (OP2 cards/layouts,
   // nastran_h5 MSC columns, rst cyclic sets, binout/fil layouts, t19/xplt
   // remeshed series), which flows through the same keys.
@@ -1875,6 +1876,114 @@ test("an isolated case_run records its run and study in the manifest and a clone
     caseRun(runArgs(mesh, { requestId: "run-3", ownerId: "study-x", runDirectory: path.join(dir, "study-runs", "run-3"), studyId: "../x" })),
     /studyId must be/
   );
+});
+
+test("isolate:true plans the workspace from the request identity and writes nothing into the source folder", async () => {
+  const { dir, mesh } = runFixture('const fs=require("node:fs");fs.mkdirSync("vtk_output");fs.writeFileSync("vtk_output/result.vtk","isolated result bytes");');
+  const args = runArgs(mesh, { isolate: true, requestId: "request-iso", ownerId: "study-iso" });
+  const started = (await caseRun(args)) as {
+    status: string;
+    runId: string;
+    executionReceipt: { runDirectory: string; meshPath: string; jobId: string; state: string; artifacts: { role: string; path: string }[] };
+  };
+  const runDirectory = path.join(dir, "runs", "beam-request-iso");
+  assert.equal(started.status, "finished");
+  assert.equal(started.executionReceipt.runDirectory, runDirectory);
+  assert.equal(started.executionReceipt.meshPath, path.join(runDirectory, "beam.mdpa"));
+  assert.equal(started.executionReceipt.jobId, started.runId);
+  assert.equal(started.executionReceipt.state, "succeeded");
+  assert.equal(fs.readFileSync(path.join(runDirectory, "beam.mdpa"), "utf8"), MDPA_3D);
+  // The sidecar a plotting reader verifies echoes what the receipt claims.
+  const sidecar = JSON.parse(fs.readFileSync(path.join(runDirectory, "beam.kratosrun.json"), "utf8"));
+  assert.equal(sidecar.runId, started.runId);
+  assert.equal(sidecar.requestId, "request-iso");
+  assert.equal(sidecar.ownerId, "study-iso");
+  assert.equal(sidecar.runDirectory, runDirectory);
+  assert.equal(sidecar.sourceMesh, mesh);
+  // The receipt passes the ownership contract and its result is bindable.
+  const binding = await plotRunBind({
+    recordPath: path.join(runDirectory, ".kkss-execution.json"),
+    path: path.join(runDirectory, "vtk_output", "result.vtk"),
+  });
+  assert.ok(binding.sourceRevision.startsWith("sha256:"));
+  // Nothing landed in the case folder: no sidecar, no output, no case file.
+  assert.equal(fs.existsSync(path.join(dir, "beam.kratosrun.json")), false);
+  assert.equal(fs.existsSync(path.join(dir, "vtk_output")), false);
+  // A retry with the same identity resolves that run; a solver never starts twice.
+  const retry = (await caseRun(args)) as { runId: string; executionReceipt: { jobId: string } };
+  assert.equal(retry.runId, started.runId);
+  assert.equal(retry.executionReceipt.jobId, started.runId);
+  // Isolation plans its own directory, so naming one as well is contradictory.
+  await assert.rejects(
+    caseRun(runArgs(mesh, { isolate: true, requestId: "r", ownerId: "o", runDirectory: path.join(dir, "elsewhere") })),
+    /either runDirectory or isolate/
+  );
+  await assert.rejects(caseRun(runArgs(mesh, { isolate: true, ownerId: "o" })), /safe requestId/);
+  // The identity becomes a folder name, so a colon (legal in a manifest id) is
+  // refused before anything is created.
+  await assert.rejects(
+    caseRun(runArgs(mesh, { isolate: true, requestId: "bad:id", ownerId: "o" })),
+    /not a usable run id/
+  );
+});
+
+test("case_compare pairs two isolated runs by evidence, not by file name", async () => {
+  const { dir, mesh } = runFixture('const fs=require("node:fs");fs.mkdirSync("vtk_output");fs.writeFileSync("vtk_output/result.vtk", process.env.RESULT ?? "result bytes");');
+  // Two cases in ONE source folder, so a filename match could confuse them.
+  const other = path.join(dir, "other.mdpa");
+  fs.copyFileSync(mesh, other);
+  const left = path.join(dir, "runs", "left");
+  const right = path.join(dir, "runs", "right");
+  process.env.RESULT = "left bytes";
+  await caseRun(runArgs(mesh, { requestId: "left", ownerId: "study", runDirectory: left }));
+  process.env.RESULT = "right bytes";
+  await caseRun(runArgs(other, { requestId: "right", ownerId: "study", runDirectory: right }));
+  delete process.env.RESULT;
+
+  const comparison = (await caseCompare({ left, right })) as {
+    comparable: boolean;
+    problems: string[];
+    left: { requestId: string; ownerId: string; runDirectory: string };
+    right: { requestId: string };
+    onlyLeft: string[];
+    onlyRight: string[];
+    changed: { path: string }[];
+  };
+  assert.equal(comparison.comparable, true);
+  assert.deepEqual(comparison.problems, []);
+  assert.equal(comparison.left.requestId, "left");
+  assert.equal(comparison.right.requestId, "right");
+  // The two cases have different source meshes, so their mesh/log artifacts are
+  // named apart rather than paired by a shared filename; the result file shares
+  // its relative name but its frozen bytes differ.
+  assert.deepEqual(comparison.onlyLeft, [`mesh:beam.mdpa`, `log:beam.kratosrun.log`]);
+  assert.deepEqual(comparison.onlyRight, [`mesh:other.mdpa`, `log:other.kratosrun.log`]);
+  assert.deepEqual(comparison.changed.map((c) => c.path), [path.join("vtk_output", "result.vtk")]);
+
+  // A receipt path works as well as the directory.
+  const byReceipt = (await caseCompare({
+    left: path.join(left, ".kkss-execution.json"),
+    right: path.join(right, ".kkss-execution.json"),
+  })) as { comparable: boolean };
+  assert.equal(byReceipt.comparable, true);
+
+  // Two runs of the SAME case with the same result are identical, not changed.
+  const third = path.join(dir, "runs", "third");
+  process.env.RESULT = "left bytes";
+  await caseRun(runArgs(mesh, { requestId: "third", ownerId: "study", runDirectory: third }));
+  delete process.env.RESULT;
+  const same = (await caseCompare({ left, right: third })) as { changed: { role: string }[]; comparable: boolean };
+  assert.equal(same.comparable, true);
+  assert.deepEqual(same.changed.filter((c) => c.role === "result"), [], "same result bytes are not a change");
+
+  // A missing or non-isolated side is a stated problem, never an inferred match.
+  await assert.rejects(caseCompare({ left, right: path.join(dir, "nowhere") }), /does not exist/);
+  const nonIsolated = (await caseCompare({ left, right: dir })) as { comparable: boolean; problems: string[] };
+  assert.equal(nonIsolated.comparable, false);
+  assert.match(nonIsolated.problems.join(" "), /No execution receipt/);
+  const self = (await caseCompare({ left, right: left })) as { comparable: boolean; problems: string[] };
+  assert.equal(self.comparable, false);
+  assert.match(self.problems.join(" "), /same run directory/);
 });
 
 test("queue-owned receipt paths are rebased after the containing project moves", async () => {
