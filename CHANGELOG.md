@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- **VTK-wasm runtime re-pinned 9.7.20261004 → 9.7.20261018** (upstream dist `6d15b9bf`; issue #170, supersedes the reported 9.7.20261011 build). Glue needles byte-identical, the 230-entry API audit resolves with zero problems, the patched glue boots under the strict CSP with zero violations and the Phase 0 browser gates pass. Licence notices re-collected (VTK nightly stamp 2026-10-18; one new permissive third-party notice: nanoflann, BSD-2-Clause). The 34-scene VTK-wasm parity catalog runs with zero errors/warnings/CSP violations and single-run perf stays within budgets. Packaged `.vsix` grows ~21 KB compressed (wasm 86,560,061 → 86,681,271 bytes unpacked), well inside the +15 MB Phase 5 budget.
+
 ### Fixed
 
 - **Skin extraction dedups boundary Conditions against volume faces.** A volume mesh that also carries its boundary as surface cells (every CAD MDPA export: boundary Conditions over the same triangles as the tets' outer faces) came out of `extractSkinModel` — and of the STL/OBJ/PLY/STEP writers through `surfaceTriangles` — with every triangle twice, opposite winding: a non-manifold, zero-volume soup the distance oracles and the wind-tunnel carve cannot use. Volume faces coinciding with a pre-existing surface cell are now skipped (volume-only callers keep the old behaviour), with a regression test; the export fidelity table regenerated accordingly (STEP hex/simplicial references now measure instead of reporting unmeasurable).

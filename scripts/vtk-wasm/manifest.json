@@ -3,8 +3,8 @@
   "schema": 1,
   "repo": "Kitware/vtk-wasm",
   "branch": "dist",
-  "commit": "c20df9cb4e9ac74da0069bd4a3eb8bec367f36e2",
-  "resolvedOn": "2026-10-05",
+  "commit": "6d15b9bfdcabd2248328b469e381cfbd91629ff0",
+  "resolvedOn": "2026-10-19",
   "mirrors": [],
   "candidates": {
     "rel-9.7.0": {
@@ -81,6 +81,7 @@
       }
     },
     "latest-9.7.20261004": {
+      "commit": "c20df9cb4e9ac74da0069bd4a3eb8bec367f36e2",
       "_comment": "Unified JSPI nightly, resolved from dist on 2026-10-05 for issue #122; supersedes the reported 9.7.20260927 build.",
       "vtkVersion": "9.7.20261004",
       "path": "latest/vtk-wasm32-emscripten.tar.gz",
@@ -110,6 +111,38 @@
           "outputBytes": 279045
         }
       }
+    },
+    "latest-9.7.20261018": {
+      "commit": "6d15b9bfdcabd2248328b469e381cfbd91629ff0",
+      "_comment": "Unified JSPI nightly, resolved from dist on 2026-10-19 for issue #170; supersedes the reported 9.7.20261011 build.",
+      "vtkVersion": "9.7.20261018",
+      "path": "latest/vtk-wasm32-emscripten.tar.gz",
+      "bytes": 13140087,
+      "sha256": "715762f1431a41fdd60d458d2638c3f47ae4f6482389b1c86c8e5bf700722b35",
+      "files": {
+        "vtkWebAssembly.mjs": {
+          "bytes": 279390,
+          "sha256": "8b57aa804e522b669205a8395224e5a650c172ed8c3d972cf189580ff0abb779"
+        },
+        "vtkWebAssembly.wasm": {
+          "bytes": 86681271,
+          "sha256": "90bee0f3c55deb549f18d42099fa610bcda2865cc878ac03cb0c30ebe9416da9"
+        }
+      },
+      "typesCount": 851,
+      "typesDigest": "c47ebaf365c16b58c24fd703bf38c2d7e2bf6cd9d3e6c935694a8cd07f2339ac",
+      "glue": {
+        "vtkWebAssembly": {
+          "variant": "async",
+          "patches": [
+            "embind-createJsInvoker-async@1",
+            "emval-create-invoker@1"
+          ],
+          "inputSha256": "8b57aa804e522b669205a8395224e5a650c172ed8c3d972cf189580ff0abb779",
+          "outputSha256": "f75590a00bfea3eddcce88b62be34cc64f59f13ecff2f0a6dc343ae9fcd20b97",
+          "outputBytes": 279138
+        }
+      }
     }
   },
   "loader": {
@@ -119,10 +152,10 @@
     "bytes": 118585,
     "sha256": "9d0b99868fcfcbbf9abaf7ff256ded38aa7cfd77a6e4914d0844dbb8c23b3b2c"
   },
-  "selected": "latest-9.7.20261004",
+  "selected": "latest-9.7.20261018",
   "licenses": {
-    "_comment": "Commits the licence notices were collected from (collect-licenses.mjs). vtkCommit is the VTK master commit that stamped the selected nightly's version (\"VTK Nightly Date Stamp\" 2026-10-04); emscriptenCommit is emscripten main at the same date — the runtime library licences are stable across that window.",
-    "vtkCommit": "7906f0db056832e8480a270b2d064c1bd8ccbfde",
-    "emscriptenCommit": "6e79c0d6c3c97b24beff3813e60f8c304e1a5d4f"
+    "_comment": "Commits the licence notices were collected from (collect-licenses.mjs). vtkCommit is the VTK master commit that stamped the selected nightly's version (\"VTK Nightly Date Stamp\" 2026-10-18); emscriptenCommit is emscripten main at the same date — the runtime library licences are stable across that window.",
+    "vtkCommit": "f261aa08e9a19595937b9501dc98ca607526b753",
+    "emscriptenCommit": "5f63ff2e370da7e6fffd8f54379860bdd18118f9"
   }
 }
