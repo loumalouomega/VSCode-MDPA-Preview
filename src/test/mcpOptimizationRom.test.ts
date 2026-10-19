@@ -204,6 +204,45 @@ test("case_optimization_cad writes the final frame as STEP with the B-rep compan
   await assert.rejects(caseOptimizationCad({ meshPath: mesh, outputPath: path.join(dir, "x.txt") }), /\.step/);
 });
 
+test("case_optimization_cad reads the .vtm frame's volume block, not its merged conditions", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "mcp-opt-cad-vtm-"));
+  const mesh = meshIn(dir);
+  await caseGenerate({ meshPath: mesh, state: optimizationState() });
+  // A Kratos design-field frame: the volume elements first, the same geometry
+  // repeated as boundary Conditions in a sibling dataset. The merged .vtm
+  // carries both with separate node numbering; selecting the volume dataset is
+  // what keeps the exported skin closed.
+  const surfaceFile = path.join(dir, "skin.mdpa");
+  fs.writeFileSync(surfaceFile, CUBE_SKIN_MDPA);
+  const volumeFile = path.join(dir, "volume.mdpa");
+  // The case's tetra is wound for the solver; the frame's is wound outward for
+  // the CAD fit, as the design-field writer's volume cells are.
+  fs.writeFileSync(volumeFile, MDPA.replace("1 0 1 2 3 4", "1 0 1 3 2 4"));
+  const frames = path.join(dir, "Optimization_Results");
+  fs.mkdirSync(frames, { recursive: true });
+  fs.writeFileSync(path.join(frames, "volume.vtu"), writeMeshFile(await parseMeshFile(volumeFile), ".vtu"));
+  fs.writeFileSync(path.join(frames, "surface.vtu"), writeMeshFile(await parseMeshFile(surfaceFile), ".vtu"));
+  const vtm = `<?xml version="1.0"?>
+<VTKFile byte_order="LittleEndian" type="vtkMultiBlockDataSet" version="1.0">
+  <vtkMultiBlockDataSet>
+    <Block index="0" name="Structure_conditions">
+      <DataSet file="surface.vtu" index="0" name="surface"/>
+    </Block>
+    <Block index="1" name="Structure_elements">
+      <DataSet file="volume.vtu" index="0" name="volume"/>
+    </Block>
+  </vtkMultiBlockDataSet>
+</VTKFile>
+`;
+  fs.writeFileSync(path.join(frames, "Structure_0_4.vtm"), vtm);
+  const res = (await caseOptimizationCad({ meshPath: mesh })) as {
+    step: string; frame: string; notes: string[];
+  };
+  assert.equal(res.frame, "Structure_0_4.vtm");
+  assert.ok(res.step.endsWith(".step") && fs.existsSync(res.step), res.step);
+  assert.ok(res.notes.some((n) => n.includes("fitted CAD B-rep via fitCad")), res.notes.join(" | "));
+});
+
 test("case_generate writes a ROM case; case_rom reports its results", async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "mcp-rom-"));
   const mesh = meshIn(dir);

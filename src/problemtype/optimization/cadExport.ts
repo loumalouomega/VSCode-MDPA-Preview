@@ -33,6 +33,8 @@ import { loadMeshio, writeMeshioBytes } from "../../parser/meshio";
 import { meshioToModel, modelToMeshio, sanitizeVariable } from "../../parser/meshioConvert";
 import type { MdpaDiagnostic, MdpaModel } from "../../parser/types";
 import { parseMeshFile } from "../../parser/meshFileParser";
+import { parseVtmIndex } from "../../parser/vtkMultiblock";
+import { cellCategory } from "../../parser/writers/writerCommon";
 import { latestResultFile } from "../runCore";
 import { readOptimization } from "./summaryLogFile";
 
@@ -136,6 +138,39 @@ export interface OptimizedCadResult {
 }
 
 /**
+ * Reads the frame's geometry, never the whole VTK multiblock.
+ *
+ * A Kratos design-field frame is a `.vtm` index whose first Block is the
+ * volume element block (`Structure_elements`) and whose remaining Blocks
+ * repeat the same geometry as boundary Conditions, named node sets and a
+ * duplicated SubModelPart element block. `parseVtm` merges all of them (each
+ * child with its own node numbering), so the merged model carries two copies
+ * of every volume cell plus surface and point blocks — an open, doubled skin
+ * that the `.step` fit correctly refuses. Parse the first child that holds
+ * volume cells instead: it is the frame's geometry, and conditions/nodes
+ * carry nothing the solid needs.
+ */
+async function parseFrameModel(framePath: string): Promise<MdpaModel> {
+  if (path.extname(framePath).toLowerCase() !== ".vtm") return parseMeshFile(framePath);
+  const baseDir = path.dirname(framePath);
+  const index = parseVtmIndex(await fs.promises.readFile(framePath));
+  for (const item of index) {
+    const resolved = path.resolve(baseDir, item.file);
+    const rel = path.relative(baseDir, resolved);
+    if (rel.startsWith("..") || path.isAbsolute(rel)) continue;
+    try {
+      const model = await parseMeshFile(resolved);
+      if (model.blocks.some((b) => cellCategory(b.vtkCellType) === "volume")) return model;
+    } catch {
+      // A child that cannot be read is not the frame's geometry; try the next.
+    }
+  }
+  throw new Error(
+    `The design-field frame ${path.basename(framePath)} holds no volume element block to export.`
+  );
+}
+
+/**
  * Builds the optimized solid's STEP. Throws named refusals (no case, no
  * design fields, no frames, unknown density field, an uncrossed threshold, a
  * mesh with no skinnable surface) — never an empty file.
@@ -146,7 +181,7 @@ export async function buildOptimizedCad(
 ): Promise<OptimizedCadResult> {
   const mode = opts.mode ?? "shape";
   const frame = resolveOptimizedFrame(caseDir, { excludeNewest: opts.excludeNewest });
-  const frameModel = await parseMeshFile(frame.framePath);
+  const frameModel = await parseFrameModel(frame.framePath);
   const notes: string[] = [
     `Final design-field frame ${frame.fileName} (step ${frame.step}).`,
   ];
