@@ -785,6 +785,11 @@
         "category": "%category.KratosRuns%"
       },
       {
+        "command": "kratos.runs.compare",
+        "title": "%command.kratos.runs.compare.title%",
+        "category": "%category.KratosRuns%"
+      },
+      {
         "command": "kratos.preview.openEmpty",
         "title": "%command.kratos.preview.openEmpty.title%",
         "category": "%category.KratosMesh%"
@@ -1147,6 +1152,10 @@
           "when": "(view == kratos.runs || view == kratos.runsSidebar) && viewItem =~ /^kratosRun\\./"
         },
         {
+          "command": "kratos.runs.compare",
+          "when": "(view == kratos.runs || view == kratos.runsSidebar) && viewItem =~ /^kratosRun\\.(finished|failed|cancelled)$/"
+        },
+        {
           "command": "kratos.runs.remove",
           "when": "(view == kratos.runs || view == kratos.runsSidebar) && viewItem =~ /^kratosRun\\.(finished|failed|cancelled|orphaned)$/"
         },
@@ -1175,6 +1184,10 @@
         },
         {
           "command": "kratos.runs.revealCase",
+          "when": "false"
+        },
+        {
+          "command": "kratos.runs.compare",
           "when": "false"
         },
         {
@@ -1282,7 +1295,7 @@
     "@kitware/vtk.js": "^37.4.3",
     "@kratos-flowgraph/flowgraph": "^1.0.2",
     "@loumalouomega/mmg-wasm": "^0.1.0",
-    "@meshioplusplus/wasm": "^17.7.0",
+    "@meshioplusplus/wasm": "^17.8.0",
     "@modelcontextprotocol/sdk": "^1.32.1",
     "cors": "^2.8.5",
     "ejs": "^7.0.2",

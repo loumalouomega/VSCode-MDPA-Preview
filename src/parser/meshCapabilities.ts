@@ -272,6 +272,7 @@ export async function getMeshCapabilities(): Promise<MeshCapabilities> {
     namedWriters: [...MESHIO_WRITER_KEYS],
     operations: { available: ["featureEdges", "hausdorff", "qualityGate", "periodicNodes", "regionAlgebra", "resampleSequence"], unavailable: [
       { name: "agglomerate", reason: "Polyhedral output cannot be preserved by the editable model." },
+      { name: "octree", reason: "Adaptive octree/hex mesh generation around a skin (17.8.0): no fidelity-checked adapter, field transfer or Kratos-semantics review yet." },
       { name: "retagRegions", reason: "SubModelParts do not retain native region tags or side selectors." }
     ] },
     extensions: {

@@ -6,9 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- **Compare runs in the editor.** **Compare With Another Run…** on a finished, failed or cancelled run's context menu in Kratos Runs compares it with a second terminal isolated run picked from the tracked runs and opens the report as a Markdown document — verdict, identity table (source mesh, problemtype, settings, CAD source), every differing setting, and changed, one-sided and unverified outputs with the list bound named when hit. Same `compareRuns` core as MCP `case_compare` (facts only, never a judgement; incomparable pairs render their problems), UI-only otherwise.
+
 ### Changed
 
 - **VTK-wasm runtime re-pinned 9.7.20261004 → 9.7.20261018** (upstream dist `6d15b9bf`; issue #170, supersedes the reported 9.7.20261011 build). Glue needles byte-identical, the 230-entry API audit resolves with zero problems, the patched glue boots under the strict CSP with zero violations and the Phase 0 browser gates pass. Licence notices re-collected (VTK nightly stamp 2026-10-18; one new permissive third-party notice: nanoflann, BSD-2-Clause). The 34-scene VTK-wasm parity catalog runs with zero errors/warnings/CSP violations and single-run perf stays within budgets. Packaged `.vsix` grows ~21 KB compressed (wasm 86,560,061 → 86,681,271 bytes unpacked), well inside the +15 MB Phase 5 budget.
+
+- **Dependency refresh (meshio++ 17.7.0 → 17.8.0).** The declared range is now `^17.8.0`; the binding diff is additive only (the `octree` kernel operation with `OctreeBalance`/`OctreeTransition`/`PlanarPlane` types, ABI staying 30), so nothing is adopted. Live format-key diff on both variants: no reader/writer key added, removed or flipped (still 81/82 lean, 83/82 full), `transientAudit.test.ts` passes unedited, and `mesh_capabilities` reports `17.8.0` with `octree` recorded under `operations.unavailable` (no fidelity-checked adapter, field transfer or Kratos-semantics review yet). Packaged `.vsix` grows ~1.7 MB compressed (50.2 → 51.87 MB), inside the +15 MB Phase 5 budget.
 
 ### Fixed
 

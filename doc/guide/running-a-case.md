@@ -76,7 +76,7 @@ Each workspace keeps the evidence that makes a run comparable after a reload:
 - `.kkss-execution.json` — the execution receipt: the owning request, the artifact revisions frozen when the run ended, and the state.
 - `<stem>.kratosrun.json` — the latest-run sidecar, which now also names the workspace and the source mesh, so a reloaded window resolves the run through its own directory rather than by matching a file name.
 
-The row in the **Kratos Runs** view is labelled **Run workspace** instead of **Case folder**, and its tooltip names the case mesh it belongs to. `case_status`, `plot_runs` and `plot_run_bind` read the same receipt; `case_compare` compares two such runs (see the [MCP guide](./mcp)).
+The row in the **Kratos Runs** view is labelled **Run workspace** instead of **Case folder**, and its tooltip names the case mesh it belongs to. `case_status`, `plot_runs` and `plot_run_bind` read the same receipt; `case_compare` compares two such runs (see the [MCP guide](./mcp)), and **Compare With Another Run…** on a finished run's context menu opens the same comparison as a Markdown report.
 
 A run started in the extension and one started through MCP `case_run { isolate: true }` use the same layout and the same receipt contract. `case_run` derives `<case folder>/runs/<stem>-<requestId>` from the request identity (the MCP tool has no workspace setting, so it always uses the default `runs` folder), and a retry with the same `requestId` finds its own workspace and never dispatches a second solver.
 

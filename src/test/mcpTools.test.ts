@@ -1358,7 +1358,7 @@ test("mesh_capabilities reports the live build next to the routing tables", asyn
       adoptingOperations: string[];
     };
   };
-  assert.equal(caps.packageVersion, "17.7.0");
+  assert.equal(caps.packageVersion, "17.8.0");
   assert.ok(caps.backend.length > 0);
   assert.equal(caps.hasCgnslib, true);
   // 15.x bump (roadmap item 3) added vtkhdf/pvd/pvtu/pvtp/pcd/xyz/lsdyna/frd/
@@ -1383,7 +1383,11 @@ test("mesh_capabilities reports the live build next to the routing tables", asyn
   // 17.7.0 bumps add no reader or writer key (still 81/82 lean, 83/82 full):
   // their whole delta is deeper result-writer fidelity (OP2 cards/layouts,
   // nastran_h5 MSC columns, rst cyclic sets, binout/fil layouts, t19/xplt
-  // remeshed series), which flows through the same keys.
+  // remeshed series), which flows through the same keys. The 17.8.0 bump
+  // likewise adds no reader or writer key (still 81/82 lean, 83/82 full,
+  // verified live): its whole delta is the new `octree` kernel operation
+  // (adaptive hex/octree mesh around a skin), which stays unrouted — see
+  // meshCapabilities' operations.unavailable.
   assert.equal(caps.live.readers.length, 81);
   assert.equal(caps.live.writers.length, 82);
   // 17.2.0 ships a FULL artifact beside the lean one; mesh_capabilities

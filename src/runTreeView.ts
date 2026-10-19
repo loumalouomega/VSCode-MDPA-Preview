@@ -32,6 +32,8 @@ import { readOptimization } from "./problemtype/optimization/summaryLogFile";
 import { romIconId, romRowText, romSingularValuesRecipe, romStatus } from "./problemtype/rom/romResults";
 import { isRomCase, readRomResults } from "./problemtype/rom/romResultsFile";
 import { deliverToPreview } from "./previewSession";
+import { compareRuns } from "./problemtype/runCompare";
+import { renderRunComparisonMarkdown } from "./problemtype/runComparisonReport";
 import { runExportOptimizedCad } from "./optimizationCadCommand";
 import { viewTypeForMesh } from "./meshExport";
 import { evaluateMonitors, readMonitors } from "./problemtype/monitorsFile";
@@ -364,6 +366,42 @@ export function registerRunTreeView(runs: RunManager, context: vscode.ExtensionC
         "revealInExplorer",
         vscode.Uri.file(path.join(node.record.caseDir, preparedNames(node.record.caseDir).primaryDocument))
       );
+    }),
+    vscode.commands.registerCommand("kratos.runs.compare", async (node?: Node) => {
+      if (node?.kind !== "run") return;
+      const source = node.record;
+      if (!source.runDirectory) {
+        void vscode.window.showInformationMessage(
+          "Compare needs an isolated run workspace: this run executed in its case folder and recorded no execution receipt. Turn on kratos.run.isolate (or run with case_run {isolate:true}) and compare those runs."
+        );
+        return;
+      }
+      const candidates = runs.list().filter(
+        (r) =>
+          r.runDirectory &&
+          r.id !== source.id &&
+          (r.status === "finished" || r.status === "failed" || r.status === "cancelled")
+      );
+      if (candidates.length === 0) {
+        void vscode.window.showInformationMessage("No other finished, failed or cancelled isolated run to compare with.");
+        return;
+      }
+      const pick = await vscode.window.showQuickPick(
+        candidates.map((r) => ({ label: runRowLabel(r), description: runRowDescription(r, Date.now()), id: r.id })),
+        { placeHolder: `Compare "${source.stem}" with…` }
+      );
+      if (!pick) return;
+      const target = candidates.find((r) => r.id === pick.id);
+      if (!target?.runDirectory) return;
+      // Pure and bounded (runCompare.ts): two small JSON reads, no hashing,
+      // so no progress notification is needed. An incomparable pair renders
+      // its problems instead of throwing.
+      const comparison = compareRuns(source.runDirectory, target.runDirectory);
+      const document = await vscode.workspace.openTextDocument({
+        language: "markdown",
+        content: renderRunComparisonMarkdown(comparison),
+      });
+      await vscode.window.showTextDocument(document, { preview: true });
     }),
   ];
   return vscode.Disposable.from(...subs);

@@ -404,8 +404,9 @@ export const MESHIO_READER_KEYS: readonly string[] = [
  * Reader keys the live build does NOT also expose as writers — it reports
  * them from `availableFormats().readers` and not from `.writers`, so they are
  * subtracted from MESHIO_WRITER_KEYS rather than being absent by omission.
- * Measured against the 17.7.0 artifact (unchanged since 17.3.0: the 17.4.0–
- * 17.7.0 bumps add no reader or writer key, only deeper result-writer fidelity).
+ * Measured against the 17.8.0 artifact (unchanged since 17.3.0: the 17.4.0–
+ * 17.8.0 bumps add no reader or writer key, only deeper result-writer fidelity
+ * and, in 17.8.0, the unrouted `octree` kernel operation).
  *
  * `frd` (CalculiX results, >= 15.3.0) was read-only until 16.41.0 gave it a
  * writer (as it did `radioss_th`); both left this set in that bump. 16.42.0

@@ -94,7 +94,8 @@ export interface RunComparison {
   unverified: ArtifactChange[];
 }
 
-const LIMIT = 200;
+/** Rows kept per comparison list; the report names the bound when it is hit. */
+export const COMPARE_LIST_LIMIT = 200;
 
 /** Reads the evidence of one saved run from its directory. Never throws. */
 export function readRunEvidence(runDirectory: string): RunEvidence {
@@ -138,7 +139,7 @@ function same(left: unknown, right: unknown): boolean {
 }
 
 /** Every leaf that differs, left-to-right, bounded. */
-export function diffSettings(left: unknown, right: unknown, limit = LIMIT): SettingChange[] {
+export function diffSettings(left: unknown, right: unknown, limit = COMPARE_LIST_LIMIT): SettingChange[] {
   const a = new Map<string, unknown>(), b = new Map<string, unknown>();
   flatten(left, "", a);
   flatten(right, "", b);
@@ -261,9 +262,9 @@ export function compareRuns(leftDirectory: string, rightDirectory: string): RunC
       changed: changed.length,
       unverified: unverified.length,
     },
-    onlyLeft: onlyLeft.slice(0, LIMIT),
-    onlyRight: onlyRight.slice(0, LIMIT),
-    changed: changed.slice(0, LIMIT),
-    unverified: unverified.slice(0, LIMIT),
+    onlyLeft: onlyLeft.slice(0, COMPARE_LIST_LIMIT),
+    onlyRight: onlyRight.slice(0, COMPARE_LIST_LIMIT),
+    changed: changed.slice(0, COMPARE_LIST_LIMIT),
+    unverified: unverified.slice(0, COMPARE_LIST_LIMIT),
   };
 }
