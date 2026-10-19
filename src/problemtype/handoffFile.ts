@@ -19,8 +19,15 @@ import { handoffPath, parseHandoff, type HandoffRead } from "./handoff";
 
 const sha256 = (bytes: Buffer): string => createHash("sha256").update(bytes).digest("hex");
 
-/** Reads (and parses) the manifest once per mtime/size, so a keystroke does not re-read it. */
-const readCache = new Map<string, { key: string; read: HandoffRead }>();
+/**
+ * Parsed manifests by path and text, so a keystroke re-parses nothing.
+ *
+ * Deliberately keyed on the bytes, not mtime/size: Windows timestamps have a
+ * ~15 ms granularity, so two same-size writes in quick succession (a test
+ * rewriting a handoff, or an export overwriting one) can look identical on
+ * disk metadata while describing different meshes.
+ */
+const readCache = new Map<string, { text: string; read: HandoffRead }>();
 
 /** Mesh hashes by path+mtime+size: the stale check hashes a large mesh at most once per edit. */
 const meshHashes = new Map<string, { key: string; revision?: string }>();
@@ -55,32 +62,37 @@ export function meshRevision(meshFsPath: string): string | undefined {
  */
 export function readHandoff(meshFsPath: string): HandoffRead {
   const file = handoffPath(meshFsPath);
-  let meshStat: fs.Stats | undefined;
   try {
-    meshStat = fs.statSync(meshFsPath);
-    if (!meshStat.isFile()) return { path: file };
+    if (!fs.statSync(meshFsPath).isFile()) return { path: file };
   } catch {
     return { path: file };
   }
-  let stat: fs.Stats;
   try {
-    stat = fs.statSync(file);
-    if (!stat.isFile()) return { path: file };
+    if (!fs.statSync(file).isFile()) return { path: file };
   } catch {
     return { path: file };
   }
-  const key = `${stat.mtimeMs}:${stat.size}:${meshStat.mtimeMs}:${meshStat.size}`;
+  let text: string;
+  try {
+    text = fs.readFileSync(file, "utf8");
+  } catch (err) {
+    return { path: file, problem: `Could not read ${path.basename(file)}: ${err instanceof Error ? err.message : String(err)}` };
+  }
   const hit = readCache.get(file);
-  if (hit && hit.key === key) return hit.read;
+  if (hit && hit.text === text) {
+    // The manifest is unchanged; re-stat the mesh so a mesh edit still gets a
+    // fresh revision (the hash itself stays cached until mtime/size move).
+    return hit.read.manifest ? { ...hit.read, meshRevision: meshRevision(meshFsPath) } : hit.read;
+  }
   let read: HandoffRead;
   try {
-    const manifest = parseHandoff(fs.readFileSync(file, "utf8"));
+    const manifest = parseHandoff(text);
     read = manifest
       ? { path: file, manifest, meshRevision: meshRevision(meshFsPath) }
       : { path: file, problem: `${path.basename(file)} is not a version 1 cad-preview-handoff manifest, so it was ignored.` };
   } catch (err) {
     read = { path: file, problem: `Could not read ${path.basename(file)}: ${err instanceof Error ? err.message : String(err)}` };
   }
-  readCache.set(file, { key, read });
+  readCache.set(file, { text, read });
   return read;
 }

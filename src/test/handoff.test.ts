@@ -114,7 +114,12 @@ test("a remesh after the export is reported stale, by counts and by bytes", (t) 
   assert.match(byCount[0].message, /9 nodes/);
 
   // Same counts, different bytes: the hash is what catches an in-place edit.
+  // Pin the mtime so the second manifest is indistinguishable from the first
+  // by metadata (same size too), as it can be on Windows' coarse timestamps.
+  const pinned = new Date("2026-01-01T00:00:00Z");
+  fs.utimesSync(handoffPath(mesh), pinned, pinned);
   fs.writeFileSync(handoffPath(mesh), manifest(mesh, { outputs: [{ path: mesh, format: "mdpa", sha256: "b".repeat(64) }] }));
+  fs.utimesSync(handoffPath(mesh), pinned, pinned);
   const byHash = handoffFindings(readHandoff(mesh), parseMdpa(MDPA), state(), {});
   assert.deepEqual(byHash.map((f) => f.code), ["handoff-stale"]);
   assert.match(byHash[0].message, /not byte-identical/);
