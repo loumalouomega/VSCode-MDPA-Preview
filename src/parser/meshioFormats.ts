@@ -404,7 +404,8 @@ export const MESHIO_READER_KEYS: readonly string[] = [
  * Reader keys the live build does NOT also expose as writers — it reports
  * them from `availableFormats().readers` and not from `.writers`, so they are
  * subtracted from MESHIO_WRITER_KEYS rather than being absent by omission.
- * Measured against the 17.3.0 artifact.
+ * Measured against the 17.7.0 artifact (unchanged since 17.3.0: the 17.4.0–
+ * 17.7.0 bumps add no reader or writer key, only deeper result-writer fidelity).
  *
  * `frd` (CalculiX results, >= 15.3.0) was read-only until 16.41.0 gave it a
  * writer (as it did `radioss_th`); both left this set in that bump. 16.42.0
@@ -663,7 +664,10 @@ export const MESHIO_WRITE_FORMAT: Readonly<Record<string, string>> = {
   // result file written back with geometry plus whatever fields it has slots
   // for. `.t19` (Marc post) and `.xplt` (FEBio plot) are unambiguous; `.rst`
   // (MAPDL results) writes the standard/result/geometry headers with the
-  // nodal solution and element-nodal results the mesh carries. `lsdyna_d3plot`
+  // nodal solution and element-nodal results the mesh carries. 17.4.0–17.6.0
+  // deepen the same writers (OP2 cards/layouts/masses/output systems,
+  // nastran_h5 MSC columns, rst cyclic sets, binout/fil layouts, t19/xplt
+  // remeshed series) with no new keys. `lsdyna_d3plot`
   // and `radioss_anim` stay key-only: they address name-matched file FAMILIES
   // (`d3plot01`…, `runA001`…), so no single extension routes to them — and
   // `nastran_h5` would make `.h5` ambiguous against the XDMF companion and

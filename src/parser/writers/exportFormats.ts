@@ -155,7 +155,9 @@ export const EXPORT_MENU_GROUPS: readonly ExportGroup[] = [
       ".post.msh",
       // Solver result-file writers (meshio++ >= 16.42.0): geometry plus the
       // fields each format has a slot for. 17.3.0 adds the Marc post file
-      // (.t19), the FEBio plot file (.xplt) and the MAPDL result file (.rst).
+      // (.t19), the FEBio plot file (.xplt) and the MAPDL result file (.rst);
+      // 17.4.0–17.6.0 deepen the same writers (OP2 cards/layouts, nastran_h5
+      // MSC columns, rst cyclic sets, t19/xplt remeshed series) with no new keys.
       ".fil", ".op2", ".t19", ".xplt", ".rst",
     ],
   },

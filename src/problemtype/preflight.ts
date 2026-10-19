@@ -30,6 +30,7 @@ import { isFieldVisible } from "./layout";
 import { planCaseMesh } from "./caseMesh";
 import { ransPeriodicIdProblems } from "./periodicCheck";
 import { FLUID_NOT_BOUNDARY, NO_SKIN } from "./builtins/fluid";
+import { handoffFindings, type HandoffRead } from "./handoff";
 import {
   domainOfCondition,
   domainOfLaw,
@@ -78,6 +79,12 @@ export interface PreflightOptions {
   quality?: boolean;
   /** Skip the quality checks above this many cells, with an `info` finding (default 200 000). */
   qualityMaxElements?: number;
+  /**
+   * The CAD handoff beside the source mesh, when the caller read one
+   * (`readHandoff` in `handoffFile.ts`, roadmap item 6). Passed in rather than
+   * read here, so this module stays fs-free; omitted for an in-memory model.
+   */
+  handoff?: HandoffRead;
 }
 
 export const DEFAULT_QUALITY_MAX_ELEMENTS = 200_000;
@@ -406,6 +413,15 @@ export async function preflightCase(
       reported.add(key);
       checkRequirement(r, `Condition "${cond!.label}" on "${a.smpPath}"`, { smpPath: a.smpPath, conditionId: a.conditionId });
     }
+  }
+
+  // --- 8. The CAD export this mesh came from (roadmap item 6): a handoff
+  // receipt beside the mesh says which Parts became which groups, and whether
+  // the mesh still is the export it describes. Reported here, at the case
+  // level, because that is where the assignments it can invalidate live.
+  if (opts.handoff) {
+    const surfaceConditions = new Set(decl.conditions.filter((c) => c.target === "surface").map((c) => c.id));
+    findings.push(...handoffFindings(opts.handoff, model, state, { surfaceConditionIds: surfaceConditions }));
   }
 
   const ordered = findings

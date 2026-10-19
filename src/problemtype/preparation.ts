@@ -40,9 +40,28 @@ export interface PreparationReport {
    * Identity only, never a path, so a run directory stays relocatable.
    */
   run?: PreparationRun;
+  /**
+   * The CAD export this case's mesh came from, when a CAD-Preview handoff
+   * (`<mesh>.handoff.json`, roadmap item 6) sat beside the source mesh: the CAD
+   * document's name and content revision and the export's replay fingerprint,
+   * so the chain CAD bytes → exported mesh → case mesh is recorded once, in the
+   * portable identity-only form the rest of this report uses (no paths).
+   */
+  handoff?: PreparationHandoff;
 }
 
 export interface PreparationRun { runId: string; studyId?: string; clonedFrom?: string }
+
+/** Identity of the CAD export a case was generated from; names only, no paths. */
+export interface PreparationHandoff {
+  /** Basename of the CAD document the export came from. */
+  source: string;
+  /** The export's content revision for that document (its SHA-256 in v1). */
+  sourceRevision: string;
+  /** The export's edit-history fingerprint (`replay.fingerprint`), when it had one. */
+  replay?: string;
+}
+
 const RUN_IDENTITY = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 export const isRunIdentity = (v: unknown): v is string => typeof v === "string" && RUN_IDENTITY.test(v);
 
@@ -71,7 +90,9 @@ export function parsePreparationReport(text: string): PreparationReport {
       !Array.isArray(value.findings) || !value.findings.every((v: any) => v?.severity === "warning" && typeof v.message === "string") ||
       (value.run !== undefined && !(isRunIdentity(value.run?.runId) &&
         (value.run.studyId === undefined || isRunIdentity(value.run.studyId)) &&
-        (value.run.clonedFrom === undefined || isRunIdentity(value.run.clonedFrom))))) {
+        (value.run.clonedFrom === undefined || isRunIdentity(value.run.clonedFrom)))) ||
+      (value.handoff !== undefined && !(plainName(value.handoff?.source) && plainName(value.handoff?.sourceRevision) &&
+        (value.handoff.replay === undefined || plainName(value.handoff.replay))))) {
     throw new Error("Malformed preparation report.");
   }
   return value as PreparationReport;
@@ -113,6 +134,8 @@ export function writePreparedCase(options: {
   extraMeshPaths?: string[];
   /** Identity of the isolated run this case is prepared for; omitted for an ordinary case. */
   run?: PreparationRun;
+  /** The CAD export identity, when the caller found a handoff beside the source mesh. */
+  handoff?: PreparationHandoff;
 }): { written: string[]; preparation: PreparationReport } {
   const { directory, generated, runtime, state } = options;
   const manifest = path.join(directory, PREPARATION_FILE);
@@ -131,6 +154,7 @@ export function writePreparedCase(options: {
     primaryDocument: generated.primaryDocumentName, driverScript: generated.driverScriptName,
     ...(generated.applications ? { applications: [...generated.applications] } : {}),
     ...(options.run ? { run: { ...options.run } } : {}),
+    ...(options.handoff ? { handoff: { ...options.handoff } } : {}),
     settings: structuredClone(state), settingsRevision: hash(JSON.stringify(state)),
     effectiveParameters: JSON.parse(generated.projectParameters),
     units: { state: "undeclared", reason: "This case has no declared unit system. Mesh, material and load values must use consistent units; no conversion was inferred." },

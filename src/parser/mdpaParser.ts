@@ -671,20 +671,35 @@ export async function parseMdpaFile(
 
     rl.on("close", () => {
       if (settled) return;
-      settled = true;
       signal?.removeEventListener("abort", onAbort);
       if (signal?.aborted) {
+        settled = true;
         reject(new Error("cancelled"));
         return;
       }
       if (onProgress) {
         onProgress("read", totalBytes, totalBytes);
       }
+      let model: MdpaModel;
       try {
-        resolve(core.finish());
+        model = core.finish();
       } catch (err) {
+        settled = true;
         reject(err);
+        return;
       }
+      // `readline` closes on the last line, before `autoClose` has released
+      // the descriptor. Settling only after the stream's own `close` means the
+      // file is free to delete or rename when the parse promise resolves (on
+      // Windows an open handle leaves the directory entry delete-pending and
+      // makes a following `rmdir` fail with ENOTEMPTY).
+      const done = (): void => {
+        if (settled) return;
+        settled = true;
+        resolve(model);
+      };
+      if (stream.closed) done();
+      else stream.once("close", done);
     });
 
     rl.on("error", (err) => {

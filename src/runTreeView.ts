@@ -92,6 +92,9 @@ class RunTreeProvider implements vscode.TreeDataProvider<Node> {
     md.appendMarkdown(`**${r.stem}** — ${r.status}\n\n`);
     md.appendMarkdown(`\`${displayCommand(r.argv, process.platform)}\`\n\n`);
     md.appendMarkdown(`- folder: \`${r.caseDir}\`\n`);
+    // An isolated run executes a snapshot; naming the case it belongs to is what
+    // makes the row readable next to rows from the case's own folder.
+    if (r.sourceMeshFsPath) md.appendMarkdown(`- case mesh: \`${r.sourceMeshFsPath}\` (isolated run)\n`);
     if (r.pid !== undefined) md.appendMarkdown(`- pid: ${r.pid}\n`);
     if (r.exitCode !== undefined && r.exitCode !== null) {
       md.appendMarkdown(`- exit code: ${r.exitCode}\n`);
@@ -109,7 +112,7 @@ class RunTreeProvider implements vscode.TreeDataProvider<Node> {
     if (node.kind !== "run") return [];
     const r = node.record;
     const out: Node[] = [
-      { kind: "detail", label: `Case folder — ${path.basename(r.caseDir)}`, icon: "folder" },
+      { kind: "detail", label: `${r.runDirectory ? "Run workspace" : "Case folder"} — ${path.basename(r.caseDir)}`, icon: "folder" },
     ];
     if (r.progress?.fileCount) {
       const step = r.progress.stepLabel ? ` · latest step ${r.progress.stepLabel}` : "";
@@ -137,7 +140,7 @@ class RunTreeProvider implements vscode.TreeDataProvider<Node> {
       const status = romStatus(readRomResults(r.caseDir));
       out.push({ kind: "detail", label: romRowText(status), icon: romIconId(status) });
     }
-    const saved = readMonitors(r.meshFsPath).parsed.monitors.length;
+    const saved = readMonitors(r.sourceMeshFsPath ?? r.meshFsPath).parsed.monitors.length;
     if (saved > 0) out.push({ kind: "detail", label: monitorRowText([], saved), icon: "dashboard" });
     out.push({ kind: "detail", label: "Log", icon: "output" });
     if (r.status === "failed" && typeof r.exitCode === "number") {
@@ -154,8 +157,12 @@ class RunTreeProvider implements vscode.TreeDataProvider<Node> {
 }
 
 /** Evaluates a case's saved monitors behind a cancellable progress notification; undefined when there is nothing to show. */
-async function evaluateWithProgress(meshFsPath: string) {
-  const read = readMonitors(meshFsPath);
+async function evaluateWithProgress(record: RunRecord) {
+  // Monitors are the CASE's definitions; the frames they read belong to the
+  // ownership run — for an isolated run its snapshot sits beside its
+  // vtk_output/, and the source case keeps the definitions the user edits.
+  const sourceMesh = record.sourceMeshFsPath ?? record.meshFsPath;
+  const read = readMonitors(sourceMesh);
   for (const w of read.parsed.warnings) void vscode.window.showWarningMessage(w);
   if (read.parsed.monitors.length === 0) {
     void vscode.window.showInformationMessage("No monitors are saved for this case. Add them with the case_monitors MCP tool or in the .kratosmonitors.json file beside the mesh.");
@@ -168,7 +175,7 @@ async function evaluateWithProgress(meshFsPath: string) {
       token.onCancellationRequested(() => abort.abort());
       let reported = 0;
       try {
-        return await evaluateMonitors(meshFsPath, read.parsed.monitors, {
+        return await evaluateMonitors(record.meshFsPath, read.parsed.monitors, {
           signal: abort.signal,
           progress: (done, total, label) => {
             const pct = total ? Math.floor((done / total) * 100) : 0;
@@ -330,7 +337,7 @@ export function registerRunTreeView(runs: RunManager, context: vscode.ExtensionC
     }),
     vscode.commands.registerCommand("kratos.runs.exportMonitors", async (node?: Node) => {
       if (node?.kind !== "run") return;
-      const evaluation = await evaluateWithProgress(node.record.meshFsPath);
+      const evaluation = await evaluateWithProgress(node.record);
       if (!evaluation) return;
       const target = await vscode.window.showSaveDialog({
         defaultUri: vscode.Uri.file(path.join(node.record.caseDir, `${node.record.stem}.monitors.csv`)),
@@ -344,7 +351,7 @@ export function registerRunTreeView(runs: RunManager, context: vscode.ExtensionC
     }),
     vscode.commands.registerCommand("kratos.runs.plotMonitors", async (node?: Node) => {
       if (node?.kind !== "run") return;
-      const evaluation = await evaluateWithProgress(node.record.meshFsPath);
+      const evaluation = await evaluateWithProgress(node.record);
       if (!evaluation) return;
       const title = `Monitors — ${node.record.stem}`;
       const plot = monitorPlotRecipe(evaluation.results, title);
