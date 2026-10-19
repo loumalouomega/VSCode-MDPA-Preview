@@ -1,8 +1,8 @@
 # Third-party notices — VTK-wasm renderer runtime
 
-`vtkWebAssembly.wasm` / `vtkWebAssembly.mjs` are VTK 9.7.20261004 compiled to WebAssembly by Kitware (https://github.com/Kitware/vtk-wasm, dist commit c20df9cb4e9ac74da0069bd4a3eb8bec367f36e2). VTK itself is BSD-3-Clause (LICENSE.vtk.txt). The glue module is patched by this extension to remove two dynamic-code factories (src/parser/render/vtkWasmGlue.ts); the binary is unmodified.
+`vtkWebAssembly.wasm` / `vtkWebAssembly.mjs` are VTK 9.7.20261018 compiled to WebAssembly by Kitware (https://github.com/Kitware/vtk-wasm, dist commit 6d15b9bfdcabd2248328b469e381cfbd91629ff0). VTK itself is BSD-3-Clause (LICENSE.vtk.txt). The glue module is patched by this extension to remove two dynamic-code factories (src/parser/render/vtkWasmGlue.ts); the binary is unmodified.
 
-The build compiles a subset of VTK's third-party modules. Because the published tarball carries no list of which, the notice of EVERY module VTK 7906f0db declares is reproduced below, followed by the Emscripten runtime libraries linked into every Emscripten binary.
+The build compiles a subset of VTK's third-party modules. Because the published tarball carries no list of which, the notice of EVERY module VTK f261aa08 declares is reproduced below, followed by the Emscripten runtime libraries linked into every Emscripten binary.
 
 # VTK third-party modules
 
@@ -1443,6 +1443,42 @@ SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
 CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+```
+
+## nanoflann — BSD-2-Clause
+
+Copyright 2008-2009 Marius Muja
+
+```
+--- vtknanoflann/COPYING ---
+Software License Agreement (BSD License)
+
+Copyright 2008-2009  Marius Muja (mariusm@cs.ubc.ca). All rights reserved.
+Copyright 2008-2009  David G. Lowe (lowe@cs.ubc.ca). All rights reserved.
+Copyright 2011-2026  Jose L. Blanco (joseluisblancoc@gmail.com). All rights reserved.
+
+THE BSD LICENSE
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions
+are met:
+
+1. Redistributions of source code must retain the above copyright
+   notice, this list of conditions and the following disclaimer.
+2. Redistributions in binary form must reproduce the above copyright
+   notice, this list of conditions and the following disclaimer in the
+   documentation and/or other materials provided with the distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
+IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
+OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
+IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT,
+INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
+THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
 ## netcdf — BSD-3-Clause
