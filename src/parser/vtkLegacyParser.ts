@@ -524,17 +524,30 @@ export async function parseVtkFile(
     });
     rl.on("close", () => {
       if (settled) return;
-      settled = true;
       signal?.removeEventListener("abort", onAbort);
       if (signal?.aborted) {
+        settled = true;
         reject(new Error("cancelled"));
         return;
       }
+      let model: MdpaModel;
       try {
-        resolve(parser.finish());
+        model = parser.finish();
       } catch (err) {
+        settled = true;
         reject(err);
+        return;
       }
+      // Wait for the stream's own `close` so the descriptor is released before
+      // the caller can delete or rename the file (ENOTEMPTY on Windows when
+      // the handle is still open).
+      const done = (): void => {
+        if (settled) return;
+        settled = true;
+        resolve(model);
+      };
+      if (stream.closed) done();
+      else stream.once("close", done);
     });
     rl.on("error", (err) => {
       if (settled) return;

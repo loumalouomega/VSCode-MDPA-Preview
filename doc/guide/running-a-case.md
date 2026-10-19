@@ -66,6 +66,26 @@ It never says **running**. Process ids get reused, so a live id is not proof tha
 
 The generated `ProjectParameters.json`, `MainKratos.py` and `vtk_output/` live next to the mesh with fixed names, so two meshes in the same folder genuinely share them. Running a second case in a folder where one is already live warns you and names the other mesh; re-running the *same* case while it is live offers to stop the existing run first, since generating has just rewritten the files it was reading.
 
+## Isolated run workspaces
+
+Set `kratos.run.isolate` to `true` to give every run a directory of its own instead. The mesh and the case state are copied into `<case folder>/<runs folder>/<stem>-<run id>/` (the runs folder defaults to `runs`; change it with `kratos.run.runsFolder`), the case files are generated there, and the solver writes `vtk_output/` there. Nothing in the case folder is touched, so two runs — of the same case, or of different cases in one folder — never share inputs or outputs, and they can run at the same time.
+
+Each workspace keeps the evidence that makes a run comparable after a reload:
+
+- `kkss-preparation-v1.json` — the problemtype, the source mesh revision, the settings and their revision, the effective `ProjectParameters.json`, the driver script, the CAD export identity when the mesh came with a handoff, and the run identity (the run id; `case_run` also records the study id and the run it was cloned from).
+- `.kkss-execution.json` — the execution receipt: the owning request, the artifact revisions frozen when the run ended, and the state.
+- `<stem>.kratosrun.json` — the latest-run sidecar, which now also names the workspace and the source mesh, so a reloaded window resolves the run through its own directory rather than by matching a file name.
+
+The row in the **Kratos Runs** view is labelled **Run workspace** instead of **Case folder**, and its tooltip names the case mesh it belongs to. `case_status`, `plot_runs` and `plot_run_bind` read the same receipt; `case_compare` compares two such runs (see the [MCP guide](./mcp)).
+
+A run started in the extension and one started through MCP `case_run { isolate: true }` use the same layout and the same receipt contract. `case_run` derives `<case folder>/runs/<stem>-<requestId>` from the request identity (the MCP tool has no workspace setting, so it always uses the default `runs` folder), and a retry with the same `requestId` finds its own workspace and never dispatches a second solver.
+
+## CAD handoff
+
+When a mesh was exported from CAD-Preview, the export leaves `<mesh>.handoff.json` beside it. Preflight reads it and adds findings to the same card: a Part the case assigns to that resolved to no group (`handoff-part-unresolved`), boundary surfaces in no Part group (`handoff-coverage`), an entity in two Part groups (`handoff-overlap`), a non-unit export scale factor (`handoff-units`), and — after a remesh — a manifest whose node/element counts or output hash no longer match the mesh (`handoff-stale`). A file that is not a v1 handoff is one warning (`handoff-unreadable`) and nothing more. The manifest is never rewritten, and nothing is inferred from a file name: the mesh is compared by the output it records and its recorded SHA-256.
+
+Generating a case from such a mesh records the export's identity in `kkss-preparation-v1.json` (`handoff: {source, sourceRevision, replay}` — names and content hashes only, never a path), so the chain CAD document → exported mesh → case mesh stays checkable after the project moves.
+
 ## Progress
 
 Progress is the latest step in `vtk_output/`, not a parse of the solver's log. The generated `MainKratos.py` prints nothing of its own — every line comes from Kratos' own logger in a format this extension does not control, and it is flushed on a timer, so a progress bar built on it would stall and then jump. The output directory is the honest signal, and it works the same for a tracked run, a terminal run, and a run adopted after a reload.

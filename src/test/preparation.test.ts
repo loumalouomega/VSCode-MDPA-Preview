@@ -33,6 +33,32 @@ test("preparation contract records effective inputs, revisions and omitted unit 
   } finally { fs.rmSync(directory, { recursive: true, force: true }); }
 });
 
+test("the preparation record carries the CAD export identity and never a path", async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "preparation-handoff-"));
+  try {
+    const meshPath = path.join(directory, "beam.mdpa");
+    fs.writeFileSync(meshPath, "Begin Nodes\n1 0 0 0\nEnd Nodes\n");
+    const state = defaultCaseState(structural.decl);
+    const generated = await generateCase(structural, parseMdpa(fs.readFileSync(meshPath, "utf8")), state, "beam");
+    const handoff = { source: "bracket.step", sourceRevision: "a".repeat(64), replay: "b".repeat(64) };
+    const base = { directory, sourcePath: meshPath, solverMeshPath: meshPath, runtime: structural, state, generated, warnings: [] as string[] };
+    assert.equal(writePreparedCase(base).preparation.handoff, undefined, "an ordinary mesh records no export");
+    const { preparation } = writePreparedCase({ ...base, handoff });
+    assert.deepEqual(preparation.handoff, handoff);
+    assert.ok(!JSON.stringify(preparation).includes(directory));
+    // The fields are foreign identity tokens, so any non-empty name without a
+    // separator is accepted; a path, an empty revision or a non-object is not.
+    const text = fs.readFileSync(path.join(directory, PREPARATION_FILE), "utf8");
+    assert.deepEqual(parsePreparationReport(text).handoff, handoff);
+    const legacy = JSON.parse(text); delete legacy.handoff;
+    assert.equal(parsePreparationReport(JSON.stringify(legacy)).handoff, undefined);
+    for (const bad of [{ source: "a/b", sourceRevision: handoff.sourceRevision }, { source: "x.step", sourceRevision: "" },
+      { source: "x.step", sourceRevision: handoff.sourceRevision, replay: "a\\b" }, "x.step"]) {
+      assert.throws(() => parsePreparationReport(JSON.stringify({ ...legacy, handoff: bad })), /Malformed/);
+    }
+  } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+});
+
 test("the preparation record names the run and study without recording a path, and rejects unsafe identities", async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "preparation-run-"));
   try {

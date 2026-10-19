@@ -96,7 +96,12 @@ export async function readFileWithProgress(
         reject(new Error("cancelled"));
         return;
       }
-      resolve(Buffer.concat(chunks));
+      // `end` fires before `autoClose` releases the descriptor; wait for
+      // `close` so a following delete or rename of the file cannot race the
+      // open handle (ENOTEMPTY on Windows).
+      const done = (): void => resolve(Buffer.concat(chunks));
+      if (stream.closed) done();
+      else stream.once("close", done);
     });
     stream.on("error", (err) => {
       signal?.removeEventListener("abort", onAbort);

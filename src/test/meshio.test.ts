@@ -94,6 +94,63 @@ for (const ext of [".t19", ".xplt", ".rst"] as const) {
   });
 }
 
+// --- the 17.4.0–17.6.0 result-fidelity batch ---------------------------------
+// No new keys (still 81/82 lean) — the delta is deeper result-writer fidelity:
+// OP2 element-result layouts and nodal tables, rst nodal solutions, xplt/t19
+// series writes. These exercise the same single-mesh write path with fields
+// attached, which is what the new kernel code carries. `.xplt`/`.t19` keep an
+// arbitrary Nodal scalar; `.op2`/`.rst` only have slots for the solver's own
+// result tables, so an arbitrary PRESSURE is dropped by the kernel itself
+// ("arrays without a place in the file are not written") while the geometry
+// still round-trips.
+for (const ext of [".xplt", ".t19"] as const) {
+  test(`meshio++ 17.4–17.6: ${ext} round-trips a Nodal field`, async () => {
+    const m = await tetModel();
+    const withField: MdpaModel = {
+      ...m,
+      fields: [
+        {
+          kind: "Nodal",
+          variable: "PRESSURE",
+          components: 1,
+          ids: Int32Array.from(m.nodeIds),
+          values: Float64Array.from([1.5, 2.5, 3.5, 4.5]),
+        },
+      ],
+    };
+    const { data: bytes } = await writeMeshioBytes(withField, ext);
+    assert.ok(bytes.length > 0, `${ext} writes bytes`);
+    const back = await readMeshioModel(`rf${ext}`, [{ name: `rf${ext}`, data: bytes }], ext);
+    assert.equal(back.nodeCount, withField.nodeCount, `${ext} reads back whole`);
+    assert.ok(
+      back.fields.some((f) => f.variable.toUpperCase().includes("PRESSURE")),
+      `${ext} carries the nodal field back`
+    );
+  });
+}
+
+for (const ext of [".op2", ".rst"] as const) {
+  test(`meshio++ 17.4–17.6: ${ext} keeps the geometry when a field has no slot`, async () => {
+    const m = await tetModel();
+    const withField: MdpaModel = {
+      ...m,
+      fields: [
+        {
+          kind: "Nodal",
+          variable: "PRESSURE",
+          components: 1,
+          ids: Int32Array.from(m.nodeIds),
+          values: Float64Array.from([1.5, 2.5, 3.5, 4.5]),
+        },
+      ],
+    };
+    const { data: bytes } = await writeMeshioBytes(withField, ext);
+    assert.ok(bytes.length > 0, `${ext} writes bytes`);
+    const back = await readMeshioModel(`rf${ext}`, [{ name: `rf${ext}`, data: bytes }], ext);
+    assert.equal(back.nodeCount, withField.nodeCount, `${ext} reads back whole`);
+  });
+}
+
 test("an unreadable .msh names every candidate it tried", async () => {
   await assert.rejects(
     readMeshioModel("x.msh", [{ name: "x.msh", data: Buffer.from("garbage") }], ".msh"),
