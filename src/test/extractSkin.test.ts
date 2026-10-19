@@ -223,3 +223,34 @@ End Elements
   assert.equal(r.surface, undefined);
   assert.match(r.reason!, /no volume cells/);
 });
+
+test("a volume mesh carrying its boundary as Conditions yields each skin triangle once", () => {
+  // The CAD-export layout: boundary Conditions over the same triangles as
+  // the tets' outer faces, with opposite winding. Without cross-dedup the
+  // skin holds every triangle twice and reads as non-manifold downstream.
+  const src = `Begin Properties 0
+End Properties
+
+Begin Nodes
+1 0.0 0.0 0.0
+2 1.0 0.0 0.0
+3 0.0 1.0 0.0
+4 0.0 0.0 1.0
+End Nodes
+
+Begin Elements Element3D4N
+1 0 1 2 3 4
+End Elements
+
+Begin Conditions SurfaceCondition3D3N
+1 0 1 2 3
+2 0 1 2 4
+3 0 1 3 4
+4 0 2 3 4
+End Conditions
+`;
+  const model = parseMdpa(src);
+  const r = extractSkinModel(model);
+  assert.equal(r.faces, 4);
+  assert.equal(r.model.blocks.reduce((n, b) => n + b.count, 0), 4);
+});
