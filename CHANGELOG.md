@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [5.16.0] - 2026-10-19
+
 ### Added
 
 - **Isolated run workspaces (opt-in).** `kratos.run.isolate` gives every run a directory of its own, `<case folder>/<runs folder>/<stem>-<run id>/` (`kratos.run.runsFolder`, default `runs`): the mesh and case state are copied in, the case files are generated there and the solver writes `vtk_output/` there, so concurrent runs — including two cases sharing a source folder — never share inputs or outputs. Each workspace keeps `kkss-preparation-v1.json` (problemtype, source and solver mesh revisions, settings revision, effective parameters, run identity) and a `.kkss-execution.json` receipt written by the same writer MCP `case_run` uses. The latest-run sidecar gains `runDirectory` / `sourceMesh` / `requestId` / `ownerId` additively, so a reloaded window resolves results, logs, convergence, monitors and exports through the owning run rather than by matching a filename; legacy sidecars and receipts still parse and are never upgraded by hashing today's bytes. MCP `case_run` accepts `isolate: true` and plans the same layout from its request identity (a retry with the same `requestId` is idempotent).
@@ -15,6 +17,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Changed
 
 - **Dependency refresh (meshio++ 17.3.0 → 17.7.0).** `@meshioplusplus/wasm` `^17.3.0` → `^17.7.0`, `@kitware/vtk.js` → `^37.4.3`, `ejs` → `^7.0.2`, `mediabunny` → `1.61.6` (`typescript` stays on 5.x; 7.0 is a new major, evaluated separately). No binding changes upstream (`index.d.ts` byte-identical) and no new reader/writer keys — still 81/82 lean, 83/82 full — so nothing re-routes: the 17.4.0–17.6.0 delta is deeper result-writer fidelity flowing through the same keys (OP2 element cards, coordinate systems, complex tables and full result layouts; `nastran_h5` MSC columns; `ansys_rst` cyclic sectors and element rotations; `binout` metadata/links/split layouts; `abaqus_fil` byte order; `t19`/`xplt` remeshed series and per-node surface variables). New tests pin the single-mesh path with fields attached (`.xplt`/`.t19` carry a Nodal scalar back; `.op2`/`.rst` keep the geometry while the kernel reports the unplaced array by name); the export-fidelity table re-measures identical. `mesh_capabilities` reports `17.7.0`.
+
+### Fixed
+
+- **Parsers settle only after the file handle closes.** The `.mdpa`, legacy `.vtk` and meshio++ staging readers resolved on the last line or `end`, before `autoClose` released the descriptor — on Windows the source file or directory could then not be removed (delete-pending entry, `rmdir` ENOTEMPTY). A parse promise now means the file is released.
 
 ## [5.15.0] - 2026-10-18
 
