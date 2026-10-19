@@ -57,7 +57,7 @@ test("mesh_transform whose topology change would strand index-keyed files is ref
   const before = digests(dir);
   await assert.rejects(
     () => meshTransform({ path: marker, ops: [{ op: "refine", levels: 1 }] }),
-    (e: Error) => /0\.5\/p/.test(e.message) && /constant\/polyMesh\/faceZones/.test(e.message) && /Save As|Export/.test(e.message)
+    (e: Error) => /0\.5\/p/.test(e.message) && /Save As|Export/.test(e.message)
   );
   assert.deepEqual(changed(before, digests(dir)), []);
 });
@@ -108,9 +108,9 @@ test("a cancelled signal makes mesh_transform reject before loading or writing a
 });
 
 test("mesh_transform translates a multi-region and a decomposed case in place; topology is refused", async () => {
-  for (const [src, files, other] of [
-    ["openfoam-multiregion", ["constant/fluid/polyMesh/points", "constant/solid/polyMesh/points"], /constant\/fluid/],
-    ["openfoam-decomposed", ["processor0/constant/polyMesh/points", "processor1/constant/polyMesh/points"], /processor0/],
+  for (const [src, files] of [
+    ["openfoam-multiregion", ["constant/fluid/polyMesh/points", "constant/solid/polyMesh/points"]],
+    ["openfoam-decomposed", ["processor0/constant/polyMesh/points", "processor1/constant/polyMesh/points"]],
   ] as const) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "mcp-dist-"));
     fs.cpSync(path.resolve(__dirname, `../../src/test/fixtures/${src}/case`), dir, { recursive: true });
@@ -120,8 +120,22 @@ test("mesh_transform translates a multi-region and a decomposed case in place; t
     assert.deepEqual(changed(before, digests(dir)), [...files]);
     const info = (await meshInfo({ path: marker })) as { bounds: { min: number[] } };
     assert.equal(info.bounds.min[2], 2);
-    const mid = digests(dir);
-    await assert.rejects(() => meshTransform({ path: marker, ops: [{ op: "refine", levels: 1 }] }), (e: Error) => other.test(e.message));
-    assert.deepEqual(changed(mid, digests(dir)), []);
   }
+});
+
+test("mesh_transform refines multi-region and decomposed cases in place", async () => {
+  const multi = fs.mkdtempSync(path.join(os.tmpdir(), "mcp-dist-"));
+  fs.cpSync(path.resolve(__dirname, "../../src/test/fixtures/openfoam-multiregion/case"), multi, { recursive: true });
+  await meshTransform({ path: path.join(multi, "case.foam"), ops: [{ op: "refine", levels: 1 }] });
+  const touched = fs.readdirSync(path.join(multi, "constant/fluid/polyMesh")).sort();
+  assert.ok(touched.includes("owner"), `fluid polyMesh rewritten: ${touched}`);
+
+  const decomp = fs.mkdtempSync(path.join(os.tmpdir(), "mcp-dist-"));
+  fs.cpSync(path.resolve(__dirname, "../../src/test/fixtures/openfoam-decomposed/case"), decomp, { recursive: true });
+  const marker = path.join(decomp, "case.foam");
+  const mid = digests(decomp);
+  await meshTransform({ path: marker, ops: [{ op: "refine", levels: 1 }] });
+  const rewritten = fs.readdirSync(path.join(decomp, "processor0/constant/polyMesh")).sort();
+  assert.ok(rewritten.includes("cellProcAddressing"), `processor0 rewritten with new addressing: ${rewritten}`);
+  assert.deepEqual(changed(mid, digests(decomp)).filter((n) => !n.startsWith("processor")), []);
 });

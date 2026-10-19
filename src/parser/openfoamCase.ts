@@ -626,7 +626,9 @@ export async function collectDecomposedOpenFoamCase(
     throw new Error(`Not a decomposed OpenFOAM case: no processorN/constant/polyMesh under ${caseDir}.`);
   }
   const REQUIRED = [...OPENFOAM_REQUIRED_FILES, "pointProcAddressing", "cellProcAddressing", "faceProcAddressing"];
-  const OPTIONAL = ["neighbour", "boundary", "boundaryProcAddressing"];
+  // Zone files ride along when present (roadmap item 13, increment E); the
+  // kernel maps them through the addressing lists, like the serial reader.
+  const OPTIONAL = ["neighbour", "boundary", "boundaryProcAddressing", ...OPENFOAM_ZONE_FILES];
   const files: MeshioInputFile[] = [];
   let maxGlobalPatch = -1;
   let proc0Boundary: Buffer | undefined;

@@ -155,6 +155,8 @@ export interface LaidOutCell {
   type: number;
   /** 0-based node indices into `model.coords`. */
   nodes: number[];
+  /** The source `EntityBlock`'s kind (Elements/Conditions/Geometries). */
+  kind: EntityBlock["kind"];
   /**
    * The source `EntityBlock`'s name.  Carried so a writer can group cells back
    * by their original block rather than only by (type, stride) — meshioConvert
@@ -236,7 +238,7 @@ export function buildCellLayout(
         continue;
       }
       const cellIndex = cells.length;
-      cells.push({ type, nodes, blockName: block.name, blockIndex: bi });
+      cells.push({ type, nodes, blockName: block.name, blockIndex: bi, kind: block.kind });
       const entityId = block.entityIds[c];
       if (block.kind === "Elements") elementIdToCell.set(entityId, cellIndex);
       else if (block.kind === "Conditions") conditionIdToCell.set(entityId, cellIndex);

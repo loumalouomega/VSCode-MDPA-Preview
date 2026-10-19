@@ -2098,6 +2098,9 @@ export async function writeMeshioBytes(
   const mesh = modelToMeshio(model, opts.diagnostics ?? [], {
     exodusAttributes: fmt === "exodus",
     dim: fmt === "triangle" ? 2 : 3,
+    // Zone files come from the parts: no per-block cell region (a block is
+    // not a zone) and face zones as side regions (roadmap item 13).
+    openfoamZones: fmt === "openfoam",
   });
   const out = writeMeshToBytes(m, mesh, e, fmt, opts.stem, opts.provenance);
   if (fmt === "gmsh") {

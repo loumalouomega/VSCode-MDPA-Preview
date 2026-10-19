@@ -310,6 +310,19 @@ function maxPropertyId(sets: readonly PropertySet[]): number {
   return max;
 }
 
+/**
+ * Merging must be idempotent with respect to the wrapper: a source part
+ * already named `<wrapper>.<rest>` (a dotted zone or group from a previous
+ * merge round trip, e.g. a region file's `fluid.fluidCells` zone) nests as
+ * `<rest>`, not `<wrapper>/<wrapper>.<rest>`. Only the wrapper's own prefix
+ * is stripped, once; anything else keeps its name verbatim.
+ */
+function stripWrapperPrefix(part: SubModelPart, wrapperName: string): SubModelPart {
+  const prefix = `${wrapperName}.`;
+  if (!part.name.startsWith(prefix) || part.name.length === prefix.length) return part;
+  return { ...part, name: part.name.slice(prefix.length) };
+}
+
 /** Folds one source into the accumulator; returns the wrapper it created. */
 function appendModel(
   acc: Accumulator,
@@ -446,7 +459,7 @@ function appendModel(
     // `<wrapper>/Inlet`: SubModelParts are looked up by `path`, so a child that
     // keeps its old top-level path is unreachable from the outline, from
     // findSubModelPart and from every op that targets a part.
-    children: other.subModelParts.map((p) => rebasePaths(offsetPart(p, off), wrapperName)),
+    children: other.subModelParts.map((p) => rebasePaths(offsetPart(stripWrapperPrefix(p, wrapperName), off), wrapperName)),
   };
 
   // Fidelity losses that are real and cannot be repaired here — reported rather

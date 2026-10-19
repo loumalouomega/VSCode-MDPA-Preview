@@ -27,11 +27,15 @@
  *   re-spelling every point would change digits nobody edited). Every
  *   index-keyed file stays valid, because no index moved.
  * - **topology** — anything else (refine, crop, remesh, renumber, a patch
- *   rename …). The six polyMesh files are rewritten by the ordinary writer,
- *   and every file keyed by the OLD index order blocks the save by name:
- *   `faceZones`, `pointZones`, `sets/`, `cellLevel`, `pointLevel`,
- *   `refinementHistory`, `surfaceIndex`, `<time>/polyMesh`, and any
- *   time-directory field with a `nonuniform` (or compressed/binary) list.
+ *   rename …). The six polyMesh files plus the writer-owned zone files
+ *   (`cellZones`/`faceZones`/`pointZones`, rewritten from the model's genuine
+ *   zone parts — blocks and patches never qualify, so no new bogus zone is
+ *   added) are rewritten by the ordinary writer, and every remaining file
+ *   keyed by the OLD index order blocks the save by name: `sets/`,
+ *   `cellLevel`, `pointLevel`, `refinementHistory`, `surfaceIndex`,
+ *   `<time>/polyMesh`, and any time-directory field with a `nonuniform` (or
+ *   compressed/binary) list. A zone file the model no longer carries would be
+ *   deleted by the rewrite, so it blocks until removed explicitly.
  *
  * Field files are never replaced wholesale: an existing `<time>/<VAR>` whose
  * values changed gets only its `internalField` entry replaced (geometry mode),
@@ -60,6 +64,7 @@ import { parseMeshFile } from "./meshFileParser";
 import type { MeshioCompanionFile } from "./meshio";
 import {
   OPENFOAM_POLYMESH_DIR,
+  type OpenFoamTimeDir,
   listOpenFoamProcessors,
   listOpenFoamRegions,
   listOpenFoamTimes,
@@ -68,10 +73,14 @@ import {
   parseOpenFoamBoundary,
   wouldOverwriteOpenFoamCase,
 } from "./openfoamCase";
+import { extractSubModelPart } from "./subModelPartExtract";
 import { patchBoundaryEntry, qualifyingVolumeFields, replaceInternalField, volumeCellIdsInWriteOrder } from "./openfoamFieldWrite";
+import { writeDecomposedProcessors, processorPatchName } from "./openfoamDecomposedWrite";
 import { appendZeroFacePatches, leafPatchParts } from "./openfoamWrite";
+import { partitionParts } from "./partitionExport";
 import { isSafeEntryName } from "./problemZip";
-import type { MdpaDiagnostic, MdpaModel } from "./types";
+import type { MdpaDiagnostic, MdpaModel, SubModelPart } from "./types";
+import { cellCategory } from "./writers/writerCommon";
 import { writeMeshFileAsync } from "./writers/meshWriter";
 
 export interface InPlaceRefusal {
@@ -104,8 +113,7 @@ const MAX_FIELD_BYTES = 512 * 1024 * 1024;
 const OWNED_POLYMESH = ["points", "faces", "owner", "neighbour", "boundary", "cellZones"] as const;
 /** Keyed by point/face/cell INDEX, hence stale after any topology change. */
 const INDEX_KEYED_POLYMESH = new Set([
-  "faceZones",
-  "pointZones",
+  "sets",
   "cellLevel",
   "pointLevel",
   "refinementHistory",
@@ -115,6 +123,13 @@ const INDEX_KEYED_POLYMESH = new Set([
   "cellProcAddressing",
   "boundaryProcAddressing",
 ]);
+/**
+ * Zone files the writer owns since the zone integration (roadmap item 13):
+ * genuine zone parts round-trip through named regions, so a topology rewrite
+ * replaces these files instead of being blocked by them. `sets/` and the
+ * level/history files still have no writer home and keep blocking.
+ */
+const OWNED_ZONES = ["cellZones", "faceZones", "pointZones"] as const;
 
 const rel = (...parts: string[]): string => parts.join("/");
 
@@ -303,12 +318,96 @@ function layoutPoint(layout: PointsLayout, i: number): [number, number, number] 
  * are mapped back onto each region's / processor's own `points` file and the
  * mapping is checked against the file first, so a layout assumption that does
  * not hold refuses instead of writing coordinates to the wrong place.
+ * A topology or patch change diverts to `planRegionTopology` (multi-region)
+ * or `planDecomposedTopology` (decomposed: re-partitioned natively).
  */
+/**
+ * Field edits for a decomposed case in geometry mode (roadmap item 13): the
+ * model's Elemental values sliced per processor through the on-disk
+ * cellProcAddressing, replacing internalField surgically like the other
+ * shapes. The addressing must partition the reconstructed mesh — each global
+ * cell exactly once — or nothing is matched and the fields are kept with a
+ * diagnostic. Files that do not exist are never synthesized (processor
+ * boundary entries cannot be invented); only the displayed time is touched.
+ */
+async function planProcessorFields(
+  opts: PlanOptions,
+  baseline: MdpaModel,
+  caseDir: string,
+  processors: number[],
+  timeName: string,
+  diagnostics: MdpaDiagnostic[],
+  fieldDiagnostics: MdpaDiagnostic[],
+  writes: MeshioCompanionFile[]
+): Promise<void> {
+  const label = "OpenFOAM in-place save (decomposed)";
+  const quals = qualifyingVolumeFields(opts.model, fieldDiagnostics, true);
+  if (quals.length === 0) {
+    diagnostics.push({ line: 0, message: `${label}: field files are kept as they are; only coordinates are written for this case shape.` });
+    return;
+  }
+  // Global cell position -> entity id, in writer order: the order the
+  // cellProcAddressing lists index into, the same positional contract the
+  // points path relies on (and verifies per point) for nodes.
+  const volumeIds = volumeCellIdsInWriteOrder(baseline);
+  const seen = new Array<number>(volumeIds.length).fill(0);
+  const maps: Int32Array[] = [];
+  for (const n of processors) {
+    const addr = `processor${n}/constant/polyMesh/cellProcAddressing`;
+    let labels: number[] | undefined;
+    try {
+      labels = parseAsciiLabelList(await read(path.join(caseDir, ...addr.split("/"))));
+    } catch {
+      labels = undefined;
+    }
+    if (!labels || labels.some((v) => !Number.isInteger(v) || v < 0 || v >= volumeIds.length)) {
+      diagnostics.push({ line: 0, message: `${label}: ${addr} is missing or unreadable, so fields cannot be matched to processor files and are kept as they are.` });
+      return;
+    }
+    for (const g of labels) seen[g]++;
+    maps.push(Int32Array.from(labels));
+  }
+  if (!seen.every((c) => c === 1)) {
+    diagnostics.push({ line: 0, message: `${label}: the processor cell addressing does not partition the reconstructed mesh, so fields cannot be matched to processor files and are kept as they are.` });
+    return;
+  }
+  const enc = new TextEncoder();
+  for (const q of quals) {
+    const v = q.field.variable;
+    for (let i = 0; i < processors.length; i++) {
+      const relName = `processor${processors[i]}/${timeName}/${v}`;
+      const file = path.join(caseDir, ...relName.split("/"));
+      const rows = Array.from(maps[i], (g) => q.rows[g]);
+      if (!exists(file)) {
+        diagnostics.push({ line: 0, message: `${label}: ${relName} does not exist and processor boundary entries cannot be synthesized; not written.` });
+        continue;
+      }
+      if (exists(`${file}.gz`)) {
+        diagnostics.push({ line: 0, message: `${label}: ${relName}.gz exists and is kept as it is.` });
+        continue;
+      }
+      const next = replaceInternalField(await read(file), q.cls, q.kind, rows);
+      if (next === undefined) {
+        diagnostics.push({ line: 0, message: `${label}: ${relName} could not be edited safely (binary, or a different class) and is kept as it is.` });
+        continue;
+      }
+      writes.push({ name: relName, data: enc.encode(next) });
+    }
+  }
+}
+
 async function planDistributedGeometry(opts: PlanOptions, caseDir: string, shape: Distributed): Promise<InPlacePlan> {
   const regionShape = "regions" in shape;
   const names = regionShape ? shape.regions.map((r) => `constant/${r}`) : shape.processors.map((n) => `processor${n}`);
   const pointsOf = (i: number): string => (regionShape ? `constant/${shape.regions[i]}/polyMesh/points` : `processor${shape.processors[i]}/constant/polyMesh/points`);
   const kind = regionShape ? "multi-region" : "decomposed";
+  // Times live at the top level for regions but under each processor for a
+  // decomposed case; the displayed time below selects the field scope.
+  const times = regionShape
+    ? await listOpenFoamTimes(caseDir)
+    : await listOpenFoamTimes(path.join(caseDir, `processor${(shape as { processors: number[] }).processors[0]}`));
+  const stepIndex = times.length > 0 ? Math.min(Math.max(opts.timeStep ?? 0, 0), times.length - 1) : undefined;
+  const timeName = stepIndex !== undefined ? times[stepIndex].name : "0";
   const refuseAll = (reason: string, only?: string[]): InPlacePlan => ({
     ok: false,
     refusals: (only ?? names).map((p) => ({ path: p, reason })),
@@ -321,7 +420,10 @@ async function planDistributedGeometry(opts: PlanOptions, caseDir: string, shape
     return { ok: false, refusals: [{ path: ".", reason: `the case on disk cannot be re-read to compare against (${(e as Error).message})` }] };
   }
   if (meshKey(baseline) !== meshKey(opts.model) || patchKey(baseline) !== patchKey(opts.model)) {
-    return refuseAll(`the mesh topology or patches changed; a ${kind} case can only be saved in place for coordinate-only edits yet`);
+    if (regionShape) {
+      return planRegionTopology(opts, baseline, caseDir, shape.regions, times, timeName);
+    }
+    return planDecomposedTopology(opts, baseline, caseDir, shape.processors, times, timeName);
   }
   if (opts.model.nodeCount < baseline.nodeCount) {
     return { ok: false, refusals: [{ path: ".", reason: "the model lost nodes but kept its connectivity; nothing consistent can be written" }] };
@@ -419,7 +521,34 @@ async function planDistributedGeometry(opts: PlanOptions, caseDir: string, shape
       message: `OpenFOAM in-place save (${kind}): ${moved} point entr${moved === 1 ? "y" : "ies"} rewritten in ${writes.length} points file(s); every other file in the case is untouched.`,
     });
   }
-  diagnostics.push({ line: 0, message: `OpenFOAM in-place save (${kind}): field files are kept as they are; only coordinates are written for this case shape.` });
+  if (regionShape) {
+    // Field edits per region: surgical internalField replacement in the
+    // displayed time's region directories (roadmap item 13).
+    const regionFieldDiagnostics: MdpaDiagnostic[] = [];
+    for (const region of shape.regions) {
+      const sub = extractSubModelPart(opts.model, region);
+      const subBase = extractSubModelPart(baseline, region);
+      // The whole-model meshKey matched, so both wrappers exist; defensive.
+      if (!sub || !subBase) continue;
+      await planScopeFields({
+        model: sub,
+        baseline: subBase,
+        caseDir,
+        scopeDir: `${timeName}/${region}`,
+        scopeLabel: `OpenFOAM in-place save (multi-region: ${region})`,
+        mode: "geometry",
+        topologyFields: "rewrite",
+        diagnostics,
+        fieldDiagnostics: regionFieldDiagnostics,
+        writes,
+      });
+    }
+    diagnostics.push(...regionFieldDiagnostics);
+  } else {
+    const processorFieldDiagnostics: MdpaDiagnostic[] = [];
+    await planProcessorFields(opts, baseline, caseDir, shape.processors, timeName, diagnostics, processorFieldDiagnostics, writes);
+    diagnostics.push(...processorFieldDiagnostics);
+  }
 
   const tree = await walkCase(caseDir, refusals);
   if (refusals.length > 0) return { ok: false, refusals };
@@ -429,6 +558,485 @@ async function planDistributedGeometry(opts: PlanOptions, caseDir: string, shape
     mode: writes.length === 0 ? "unchanged" : "geometry",
     writes,
     preservedCount: tree.filter((f) => !written.has(f.rel)).length,
+    diagnostics,
+  };
+}
+
+/**
+ * Field files for one scope: the single-region time directory or one
+ * region's / processor's. Geometry mode replaces `internalField` surgically
+ * (dimensions and the real boundaryField survive); topology mode either keeps
+ * files with a diagnostic ("keep", the single-region rule) or rewrites them
+ * wholesale from the model's current values ("rewrite", for the distributed
+ * shapes whose cell order changed). Files for variables the model does not
+ * carry are always preserved.
+ */
+interface ScopeFieldOptions {
+  model: MdpaModel;
+  baseline: MdpaModel;
+  caseDir: string;
+  /** Case-relative directory holding the field files, e.g. "0" or "0/fluid". */
+  scopeDir: string;
+  scopeLabel: string;
+  mode: InPlaceMode;
+  topologyFields: "keep" | "rewrite";
+  diagnostics: MdpaDiagnostic[];
+  fieldDiagnostics: MdpaDiagnostic[];
+  writes: MeshioCompanionFile[];
+}
+
+/**
+ * A fresh ASCII field file from current values (export grammar): used for
+ * variables with no file yet, and for wholesale rewrites where the cell
+ * order changed. Exported for the native decomposed writer's field files.
+ */
+export function renderFreshFoamField(v: string, cls: string, kind: string, rows: string[], dims: string, bnd: string): string {
+  return (
+    `FoamFile\n{\n    version     2.0;\n    format      ascii;\n    class       ${cls};\n    object      ${v};\n}\n\n` +
+    `dimensions      [${dims}];\n\ninternalField   nonuniform List<${kind}>\n${rows.length}\n(\n${rows.join("\n")}\n)\n;\n\n` +
+    `boundaryField\n{\n${bnd}}\n`
+  );
+}
+
+async function planScopeFields(o: ScopeFieldOptions): Promise<void> {
+  const enc = new TextEncoder();
+  for (const q of qualifyingVolumeFields(o.model, o.fieldDiagnostics, true)) {
+    const v = q.field.variable;
+    const file = path.join(o.caseDir, ...o.scopeDir.split("/"), v);
+    const relName = [...o.scopeDir.split("/"), v].join("/");
+    const before = o.baseline.fields.find((f) => f.kind === "Elemental" && f.variable === v);
+    const unchanged =
+      before !== undefined &&
+      before.values.length === q.field.values.length &&
+      before.values.every((x, i) => x === q.field.values[i]);
+    if (unchanged) continue;
+    const fresh = (): { name: string; data: Uint8Array } => {
+      const bnd = leafPatchParts(o.model.subModelParts)
+        .map((p) => patchBoundaryEntry(o.model, q.field, p, true))
+        .join("");
+      const dims = (q.field.dimensions?.exponents ?? [0, 0, 0, 0, 0, 0, 0]).join(" ");
+      return { name: relName, data: enc.encode(renderFreshFoamField(v, q.cls, q.kind, q.rows, dims, bnd)) };
+    };
+    if (exists(file)) {
+      if (o.mode !== "geometry") {
+        if (o.topologyFields === "rewrite") {
+          o.writes.push(fresh());
+          o.diagnostics.push({ line: 0, message: `${o.scopeLabel}: ${relName} rewritten from the model's current values (cell order changed).` });
+        } else {
+          o.diagnostics.push({ line: 0, message: `${o.scopeLabel}: ${relName} exists and is kept as it is (cell order changed, so its values cannot be matched).` });
+        }
+        continue;
+      }
+      const next = replaceInternalField(await read(file), q.cls, q.kind, q.rows);
+      if (next === undefined) {
+        o.diagnostics.push({ line: 0, message: `${o.scopeLabel}: ${relName} could not be edited safely (binary, or a different class) and is kept as it is.` });
+        continue;
+      }
+      o.writes.push({ name: relName, data: enc.encode(next) });
+    } else if (exists(`${file}.gz`)) {
+      o.diagnostics.push({ line: 0, message: `${o.scopeLabel}: ${relName}.gz exists and is kept as it is.` });
+    } else {
+      o.writes.push(fresh());
+    }
+  }
+}
+
+/**
+ * A multi-region case with topology and/or field edits: each changed region
+ * is rewritten from its wrapper part (`extractSubModelPart`) through the
+ * ordinary writer, with the region's on-disk patch dictionaries merged in
+ * like the single-region path. Unchanged regions keep every byte. Fields
+ * follow the decided semantic: surgical `internalField` replacement in
+ * geometry (shared helper), wholesale rewrite from the model's values in
+ * topology, history in other time directories never rewritten.
+ */
+async function planRegionTopology(
+  opts: PlanOptions,
+  baseline: MdpaModel,
+  caseDir: string,
+  regions: string[],
+  times: OpenFoamTimeDir[],
+  timeName: string
+): Promise<InPlacePlan> {
+  const refusals: InPlaceRefusal[] = [];
+  const diagnostics: MdpaDiagnostic[] = [];
+  const fieldDiagnostics: MdpaDiagnostic[] = [];
+  const writes: MeshioCompanionFile[] = [];
+  const enc = new TextEncoder();
+
+  // Every volume/surface cell must belong to a region, or a per-region
+  // rewrite would silently drop it.
+  const covered = new Set<string>();
+  const gather = (p: SubModelPart): void => {
+    for (const id of p.elementIds) covered.add(`E:${id}`);
+    for (const id of p.conditionIds) covered.add(`C:${id}`);
+    for (const c of p.children) gather(c);
+  };
+  for (const p of opts.model.subModelParts) if (regions.includes(p.path)) gather(p);
+  const orphaned: string[] = [];
+  for (const b of opts.model.blocks) {
+    if (b.kind !== "Elements" && b.kind !== "Conditions") continue;
+    const tag = b.kind === "Elements" ? "E" : "C";
+    for (const id of b.entityIds) {
+      if (!covered.has(`${tag}:${id}`)) {
+        orphaned.push(`${b.name}#${id}`);
+        if (orphaned.length >= 5) break;
+      }
+    }
+    if (orphaned.length >= 5) break;
+  }
+  if (orphaned.length > 0) {
+    return {
+      ok: false,
+      refusals: [
+        {
+          path: ".",
+          reason: `cells outside any region (${orphaned.join(", ")}) would be dropped by a per-region rewrite; use Export or Save As… instead`,
+        },
+      ],
+    };
+  }
+
+  const tree = await walkCase(caseDir, refusals);
+  if (refusals.length > 0) return { ok: false, refusals };
+
+  let rewroteMesh = false;
+  for (const region of regions) {
+    const label = `OpenFOAM in-place save (multi-region: ${region})`;
+    const sub = extractSubModelPart(opts.model, region);
+    const subBase = extractSubModelPart(baseline, region);
+    if (!sub || !subBase) {
+      refusals.push({
+        path: `constant/${region}`,
+        reason: "the region's wrapper part is missing from the model; a per-region rewrite cannot map it — use Export or Save As… instead",
+      });
+      continue;
+    }
+    const meshChanged = meshKey(sub) !== meshKey(subBase) || patchKey(sub) !== patchKey(subBase);
+    // Fields are checked even for a mesh-identical region: a field-only edit
+    // takes the surgical path below with no mesh rewrite.
+    const scopeDir = `${timeName}/${region}`;
+    const regionPrefix = `constant/${region}/`;
+    const carried = new Set(qualifyingVolumeFields(sub, [], true).map((q) => q.field.variable));
+
+    if (meshChanged) {
+      rewroteMesh = true;
+      // The count before this region's scan: a region that fails reports
+      // alongside the others instead of cutting the scan short, so one
+      // message names every stranded file.
+      const regionFailedBefore = refusals.length;
+      // ---- blockers: constant/<region>/ and <time>/<region>/ ----
+      for (const f of tree) {
+        const underRegion =
+          f.rel.startsWith(regionPrefix) ||
+          times.some((t) => f.rel.startsWith(`${t.name}/${region}/`));
+        if (!underRegion) continue;
+        const rest = f.rel.startsWith(regionPrefix)
+          ? f.rel.slice(regionPrefix.length)
+          : f.rel.slice(f.rel.indexOf(`${region}/`) + `${region}/`.length);
+        const inPolyMesh = rest.startsWith("polyMesh/");
+        const parts = rest.split("/");
+        if (inPolyMesh) {
+          if (!f.rel.startsWith(regionPrefix)) {
+            // <time>/<region>/polyMesh: a moving-mesh overlay keyed by
+            // point/face index, which this edit changes.
+            refusals.push({ path: f.rel, reason: "a moving-mesh overlay is keyed by point/face index, which this edit changes" });
+            continue;
+          }
+          if (parts[1] === "sets") {
+            refusals.push({ path: f.rel, reason: "a set is keyed by cell/face/point index, which this edit changes" });
+          } else if (parts.length === 2) {
+            const name = parts[1];
+            if (INDEX_KEYED_POLYMESH.has(name)) {
+              refusals.push({ path: f.rel, reason: "keyed by cell/face/point index, which this edit changes" });
+            } else if (name.endsWith(".gz") && [...OWNED_POLYMESH, ...OWNED_ZONES].some((n) => name === `${n}.gz`)) {
+              refusals.push({ path: f.rel, reason: "a compressed copy of a file the rewrite replaces would be left stale beside it — decompress or remove it first" });
+            }
+          }
+          continue;
+        }
+        // Time-region field files (constant/<region>/ holds no other files
+        // that reach here besides dictionaries, which are preserved): the
+        // displayed time's carried fields are rewritten wholesale, so they
+        // never block; every other index-keyed field file does.
+        const timeNameOf = times.find((t) => f.rel.startsWith(`${t.name}/${region}/`))?.name;
+        if (timeNameOf === undefined || parts.length !== 1 || parts[0] === "uniform") continue;
+        if (parts[0].endsWith(".gz")) {
+          refusals.push({ path: f.rel, reason: "a compressed field cannot be inspected, so it may be keyed by cell/face index" });
+          continue;
+        }
+        if (timeNameOf === timeName && carried.has(parts[0])) continue;
+        if (f.size > MAX_FIELD_BYTES) {
+          refusals.push({ path: f.rel, reason: "too large to check for index-keyed values" });
+          continue;
+        }
+        const text = await read(path.join(caseDir, f.rel));
+        if (/FoamFile/.test(text) && (/\bnonuniform\b/.test(text) || /\bformat\s+binary\s*;/.test(text))) {
+          refusals.push({ path: f.rel, reason: "holds per-cell or per-face values keyed by the old index order" });
+        }
+      }
+      // A region that already failed reports alongside the others instead of
+      // cutting the scan short: one message names every stranded file.
+      if (refusals.length > regionFailedBefore) continue;
+
+      // ---- the rewrite, with this region's on-disk patch dictionaries ----
+      const boundaryPath = path.join(caseDir, regionPrefix, "polyMesh", "boundary");
+      let patchTypes: Record<string, string> = {};
+      let patchDictionaries: Record<string, string> = {};
+      if (exists(boundaryPath)) {
+        const parsed = parseOpenFoamBoundary(await read(boundaryPath), []);
+        for (const p of parsed) {
+          if (p.type) patchTypes[p.name] = p.type;
+          if (p.dict) patchDictionaries[p.name] = p.dict;
+        }
+      }
+      const sub2: MdpaModel = {
+        ...sub,
+        // extractSubModelPart carries no source; the region's on-disk
+        // boundary is authoritative for patch types and dictionaries.
+        source: { format: "openfoam", openfoam: { patchTypes, patchDictionaries } },
+      };
+      const stem = path.basename(opts.markerPath).replace(/\.foam$/i, "") || "case";
+      const result = await writeMeshFileAsync(sub2, ".foam", {
+        name: stem,
+        onWarning: (w: string) => diagnostics.push({ line: 0, message: w }),
+      });
+      const zeroFaceDiagnostics: MdpaDiagnostic[] = [];
+      for (const c of result.companions) {
+        const mm = /^constant\/polyMesh\/(.+)$/.exec(c.name);
+        if (!mm) continue; // time directories the writer synthesizes are not an in-place write
+        const name = `${regionPrefix}polyMesh/${mm[1]}`;
+        const owned =
+          (OWNED_POLYMESH as readonly string[]).some((n) => mm[1] === n) ||
+          (OWNED_ZONES as readonly string[]).some((n) => mm[1] === n);
+        if (!owned) continue;
+        if (mm[1] === "boundary" && exists(boundaryPath)) {
+          const onDisk = parseOpenFoamBoundary(await read(boundaryPath), []);
+          const text = appendZeroFacePatches(Buffer.from(c.data).toString("utf8"), onDisk, zeroFaceDiagnostics);
+          writes.push({ name, data: enc.encode(text) });
+          continue;
+        }
+        writes.push({ name, data: c.data });
+      }
+      diagnostics.push(...zeroFaceDiagnostics);
+      diagnostics.push({ line: 0, message: `${label}: polyMesh rewritten (topology changed).` });
+      for (const zone of OWNED_ZONES) {
+        const name = `${regionPrefix}polyMesh/${zone}`;
+        if (exists(path.join(caseDir, ...name.split("/"))) && !writes.some((w) => w.name === name)) {
+          refusals.push({
+            path: name,
+            reason: "the model no longer carries these zones, so the rewrite would delete this file — delete it explicitly to confirm, or keep the zones",
+          });
+        }
+      }
+      // A region the zone check just failed skips its field phase too; the
+      // save is refused either way, and other regions still report.
+      if (refusals.length > regionFailedBefore) continue;
+    }
+
+    await planScopeFields({
+      model: sub,
+      baseline: subBase,
+      caseDir,
+      scopeDir,
+      scopeLabel: label,
+      mode: meshChanged ? "topology" : "geometry",
+      topologyFields: "rewrite",
+      diagnostics,
+      fieldDiagnostics,
+      writes,
+    });
+  }
+  if (refusals.length > 0) return { ok: false, refusals };
+
+  diagnostics.push(...fieldDiagnostics);
+  const written = new Set(writes.map((w) => w.name));
+  return {
+    ok: true,
+    mode: writes.length === 0 ? "unchanged" : rewroteMesh ? "topology" : "geometry",
+    writes,
+    preservedCount: tree.filter((f) => !written.has(f.rel)).length,
+    diagnostics,
+  };
+}
+
+/**
+ * A decomposed case with a topology change: re-partition the edited model
+ * (space-filling curve; KaHIP is absent under Emscripten) over the same
+ * processor count and rewrite every processor natively
+ * (`openfoamDecomposedWrite.ts`). A new decomposition, never a patch of the
+ * old addressing: the old cell/face/point order no longer exists, so every
+ * processor's mesh files and addressing are regenerated together. Fields
+ * follow the decided semantic: the displayed time's carried fields rewritten
+ * wholesale from the model's values, history elsewhere never rewritten.
+ */
+async function planDecomposedTopology(
+  opts: PlanOptions,
+  baseline: MdpaModel,
+  caseDir: string,
+  processors: number[],
+  times: OpenFoamTimeDir[],
+  timeName: string
+): Promise<InPlacePlan> {
+  const refusals: InPlaceRefusal[] = [];
+  const diagnostics: MdpaDiagnostic[] = [];
+  const fieldDiagnostics: MdpaDiagnostic[] = [];
+  const writes: MeshioCompanionFile[] = [];
+  const enc = new TextEncoder();
+  const sorted = [...processors].sort((a, b) => a - b);
+
+  // ---- re-partition ----
+  let owned: number[][];
+  try {
+    const result = await partitionParts(
+      opts.model,
+      { nparts: sorted.length, method: "sfc", ghostLayers: 0, seed: 0 },
+      diagnostics
+    );
+    const volumeIds = volumeCellIdsInWriteOrder(opts.model);
+    const globalOf = new Map(volumeIds.map((id, g) => [id, g]));
+    owned = result.parts.map((p) => {
+      const ids: number[] = [];
+      for (const b of p.model.blocks) {
+        if (b.kind !== "Elements") continue;
+        if (cellCategory(b.vtkCellType) !== "volume") {
+          throw new Error(`Surface element block "${b.name}" cannot be decomposed.`);
+        }
+        for (const id of b.entityIds) {
+          const g = globalOf.get(id);
+          if (g === undefined) throw new Error(`Partition part "${p.partId}" names unknown element ${id}.`);
+          ids.push(g);
+        }
+      }
+      return ids;
+    });
+  } catch (e) {
+    return {
+      ok: false,
+      refusals: [
+        {
+          path: ".",
+          reason: `re-partition for the new decomposition failed (${(e as Error).message}); use Export or Save As… instead`,
+        },
+      ],
+    };
+  }
+
+  const meta = mergePatchMeta(baseline.source?.openfoam, opts.model.source?.openfoam);
+  const tree = await walkCase(caseDir, refusals);
+  if (refusals.length > 0) return { ok: false, refusals };
+  const carried = new Set(qualifyingVolumeFields(opts.model, [], true).map((q) => q.field.variable));
+
+  // ---- blockers under processorN/ ----
+  for (const f of tree) {
+    const m = /^processor(\d+)\/(.*)$/.exec(f.rel);
+    if (!m) continue; // top-level files are preserved, never blockers
+    const rest = m[2];
+    const parts = rest.split("/");
+    if (parts[0] === "constant" && parts[1] === "polyMesh") {
+      if (parts[2] === "sets") {
+        refusals.push({ path: f.rel, reason: "a set is keyed by cell/face/point index, which this edit changes" });
+      } else if (parts.length === 3) {
+        const name = parts[2];
+        // Addressing and zones are rewritten, never blockers; the refinement
+        // levels and histories have no writer home and keep blocking.
+        if (["cellLevel", "pointLevel", "refinementHistory", "surfaceIndex"].includes(name)) {
+          refusals.push({ path: f.rel, reason: "keyed by cell/face/point index, which this edit changes" });
+        } else if (name.endsWith(".gz")) {
+          refusals.push({ path: f.rel, reason: "a compressed copy of a file the rewrite replaces would be left stale beside it — decompress or remove it first" });
+        }
+      }
+      continue;
+    }
+    // processorN/<time>/... : overlay refuses; fields refuse unless the
+    // displayed time's carried ones, which are rewritten wholesale.
+    if (parts.length >= 2 && times.some((t) => t.name === parts[0])) {
+      if (parts[1] === "polyMesh") {
+        refusals.push({ path: f.rel, reason: "a moving-mesh overlay is keyed by point/face index, which this edit changes" });
+        continue;
+      }
+      if (parts.length !== 2 || parts[1] === "uniform") continue;
+      if (parts[1].endsWith(".gz")) {
+        refusals.push({ path: f.rel, reason: "a compressed field cannot be inspected, so it may be keyed by cell/face index" });
+        continue;
+      }
+      if (parts[0] === timeName && carried.has(parts[1])) continue;
+      if (f.size > MAX_FIELD_BYTES) {
+        refusals.push({ path: f.rel, reason: "too large to check for index-keyed values" });
+        continue;
+      }
+      const text = await read(path.join(caseDir, f.rel));
+      if (/FoamFile/.test(text) && (/\bnonuniform\b/.test(text) || /\bformat\s+binary\s*;/.test(text))) {
+        refusals.push({ path: f.rel, reason: "holds per-cell or per-face values keyed by the old index order" });
+      }
+    }
+  }
+  if (refusals.length > 0) return { ok: false, refusals };
+
+  // ---- the rewrite ----
+  let written: { files: { name: string; data: Uint8Array }[]; localCells: number[][]; procPatches: string[][] };
+  try {
+    written = writeDecomposedProcessors(
+      opts.model,
+      { processors: sorted, owned, patchTypes: meta.patchTypes, patchDictionaries: meta.patchDictionaries },
+      diagnostics
+    );
+  } catch (e) {
+    return {
+      ok: false,
+      refusals: [
+        {
+          path: ".",
+          reason: `the decomposed rewrite failed (${(e as Error).message}); use Export or Save As… instead`,
+        },
+      ],
+    };
+  }
+  for (const f of written.files) writes.push(f);
+  diagnostics.push({ line: 0, message: `OpenFOAM in-place save (decomposed): ${sorted.length} processor(s) rewritten with a new decomposition (topology changed).` });
+  // Upstream removes a zone file it has nothing to write; an in-place save
+  // never deletes, so a zone file the model no longer carries blocks until
+  // removed explicitly.
+  for (let i = 0; i < sorted.length; i++) {
+    for (const zone of OWNED_ZONES) {
+      const name = `processor${sorted[i]}/constant/polyMesh/${zone}`;
+      if (exists(path.join(caseDir, ...name.split("/"))) && !writes.some((w) => w.name === name)) {
+        refusals.push({
+          path: name,
+          reason: "the model no longer carries these zones, so the rewrite would delete this file — delete it explicitly to confirm, or keep the zones",
+        });
+      }
+    }
+  }
+  if (refusals.length > 0) return { ok: false, refusals };
+
+  // ---- fields: wholesale rewrite of the displayed time's carried fields ----
+  const quals = qualifyingVolumeFields(opts.model, fieldDiagnostics, true);
+  for (const q of quals) {
+    const v = q.field.variable;
+    const dims = (q.field.dimensions?.exponents ?? [0, 0, 0, 0, 0, 0, 0]).join(" ");
+    for (let i = 0; i < sorted.length; i++) {
+      const relName = `processor${sorted[i]}/${timeName}/${v}`;
+      const rows = written.localCells[i].map((g) => q.rows[g]);
+      const realEntries = leafPatchParts(opts.model.subModelParts)
+        .map((p) => patchBoundaryEntry(opts.model, q.field, p, true))
+        .join("");
+      const procEntries = written.procPatches[i]
+        .map((name) => `    ${name}\n    {\n        type            processor;\n    }\n`)
+        .join("");
+      const text = renderFreshFoamField(v, q.cls, q.kind, rows, dims, `${realEntries}${procEntries}`);
+      writes.push({ name: relName, data: enc.encode(text) });
+    }
+    diagnostics.push({ line: 0, message: `OpenFOAM in-place save (decomposed): ${timeName}/${v} rewritten on every processor from the model's current values (cell order changed).` });
+  }
+  diagnostics.push(...fieldDiagnostics);
+
+  const writtenNames = new Set(writes.map((w) => w.name));
+  return {
+    ok: true,
+    mode: "topology",
+    writes,
+    preservedCount: tree.filter((f) => !writtenNames.has(f.rel)).length,
     diagnostics,
   };
 }
@@ -570,10 +1178,7 @@ export async function planOpenFoamInPlaceSave(opts: PlanOptions): Promise<InPlac
         source: {
           format: "openfoam",
           ...opts.model.source,
-          openfoam: {
-            patchTypes: { ...asRead?.patchTypes, ...own?.patchTypes },
-            patchDictionaries: { ...asRead?.patchDictionaries, ...own?.patchDictionaries },
-          },
+          openfoam: mergePatchMeta(asRead, own),
         },
       };
       const result = await writeMeshFileAsync(model2, ".foam", {
@@ -583,7 +1188,6 @@ export async function planOpenFoamInPlaceSave(opts: PlanOptions): Promise<InPlac
       const boundaryPath = path.join(polyMesh, "boundary");
       const zeroFaceDiagnostics: MdpaDiagnostic[] = [];
       for (const c of result.companions) {
-        if (!(OWNED_POLYMESH as readonly string[]).some((n) => c.name === rel(OPENFOAM_POLYMESH_DIR, n))) continue;
         if (c.name === rel(OPENFOAM_POLYMESH_DIR, "boundary") && exists(boundaryPath)) {
           // A zero-face patch has no conditions, so the model cannot carry it:
           // keep the ones the case on disk declares.
@@ -592,50 +1196,46 @@ export async function planOpenFoamInPlaceSave(opts: PlanOptions): Promise<InPlac
           writes.push({ name: c.name, data: enc.encode(text) });
           continue;
         }
+        if (!(OWNED_POLYMESH as readonly string[]).some((n) => c.name === rel(OPENFOAM_POLYMESH_DIR, n))) {
+          // Zone files the writer owns: genuine zone parts round-trip through
+          // named regions (cellZones/faceZones/pointZones). Anything else the
+          // writer leaves beside the case (time directories it synthesizes)
+          // is not an in-place write.
+          if (!(OWNED_ZONES as readonly string[]).some((n) => c.name === rel(OPENFOAM_POLYMESH_DIR, n))) continue;
+        }
         writes.push(c);
       }
       diagnostics.push(...zeroFaceDiagnostics);
       diagnostics.push({ line: 0, message: "OpenFOAM in-place save: constant/polyMesh rewritten (topology changed)." });
+      // Upstream removes a zone file it has nothing to write; an in-place
+      // save never deletes, so a zone file the model no longer carries
+      // blocks the save until it is removed explicitly.
+      for (const zone of OWNED_ZONES) {
+        const name = rel(OPENFOAM_POLYMESH_DIR, zone);
+        if (exists(path.join(polyMesh, zone)) && !writes.some((w) => w.name === name)) {
+          refusals.push({
+            path: name,
+            reason: "the model no longer carries these zones, so the rewrite would delete this file — delete it explicitly to confirm, or keep the zones",
+          });
+        }
+      }
     }
   }
   if (refusals.length > 0) return { ok: false, refusals };
 
   // ---- fields in the displayed time directory ----------------------------------
-  const timeDir = path.join(caseDir, timeName);
-  for (const q of qualifyingVolumeFields(opts.model, fieldDiagnostics, true)) {
-    const v = q.field.variable;
-    const file = path.join(timeDir, v);
-    const before = baseline.fields.find((f) => f.kind === "Elemental" && f.variable === v);
-    const unchanged =
-      before !== undefined &&
-      before.values.length === q.field.values.length &&
-      before.values.every((x, i) => x === q.field.values[i]);
-    if (unchanged) continue;
-    if (exists(file)) {
-      if (mode !== "geometry") {
-        diagnostics.push({ line: 0, message: `OpenFOAM in-place save: ${timeName}/${v} exists and is kept as it is (cell order changed, so its values cannot be matched).` });
-        continue;
-      }
-      const next = replaceInternalField(await read(file), q.cls, q.kind, q.rows);
-      if (next === undefined) {
-        diagnostics.push({ line: 0, message: `OpenFOAM in-place save: ${timeName}/${v} could not be edited safely (binary, or a different class) and is kept as it is.` });
-        continue;
-      }
-      writes.push({ name: rel(timeName, v), data: enc.encode(next) });
-    } else if (exists(`${file}.gz`)) {
-      diagnostics.push({ line: 0, message: `OpenFOAM in-place save: ${timeName}/${v}.gz exists and is kept as it is.` });
-    } else {
-      const bnd = leafPatchParts(opts.model.subModelParts)
-        .map((p) => patchBoundaryEntry(opts.model, q.field, p, true))
-        .join("");
-      const dims = (q.field.dimensions?.exponents ?? [0, 0, 0, 0, 0, 0, 0]).join(" ");
-      const text =
-        `FoamFile\n{\n    version     2.0;\n    format      ascii;\n    class       ${q.cls};\n    object      ${v};\n}\n\n` +
-        `dimensions      [${dims}];\n\ninternalField   nonuniform List<${q.kind}>\n${q.rows.length}\n(\n${q.rows.join("\n")}\n)\n;\n\n` +
-        `boundaryField\n{\n${bnd}}\n`;
-      writes.push({ name: rel(timeName, v), data: enc.encode(text) });
-    }
-  }
+  await planScopeFields({
+    model: opts.model,
+    baseline,
+    caseDir,
+    scopeDir: timeName,
+    scopeLabel: "OpenFOAM in-place save",
+    mode,
+    topologyFields: "keep",
+    diagnostics,
+    fieldDiagnostics,
+    writes,
+  });
   diagnostics.push(...fieldDiagnostics);
 
   const written = new Set(writes.map((w) => w.name));
@@ -645,6 +1245,17 @@ export async function planOpenFoamInPlaceSave(opts: PlanOptions): Promise<InPlac
     writes,
     preservedCount: tree.filter((f) => !written.has(f.rel)).length,
     diagnostics,
+  };
+}
+
+/** Patch names, types and dictionaries: the read side's record merged with the model's own. Shared by the single-region and decomposed rewrites. */
+function mergePatchMeta(
+  asRead?: { patchTypes?: Record<string, string>; patchDictionaries?: Record<string, string> },
+  own?: { patchTypes?: Record<string, string>; patchDictionaries?: Record<string, string> }
+): { patchTypes: Record<string, string>; patchDictionaries: Record<string, string> } {
+  return {
+    patchTypes: { ...asRead?.patchTypes, ...own?.patchTypes },
+    patchDictionaries: { ...asRead?.patchDictionaries, ...own?.patchDictionaries },
   };
 }
 
