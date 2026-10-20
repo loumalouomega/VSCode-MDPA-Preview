@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [5.17.0] - 2026-10-20
+
 ### Added
 
 - **Compare runs in the editor.** **Compare With Another Run…** on a finished, failed or cancelled run's context menu in Kratos Runs compares it with a second terminal isolated run picked from the tracked runs and opens the report as a Markdown document — verdict, identity table (source mesh, problemtype, settings, CAD source), every differing setting, and changed, one-sided and unverified outputs with the list bound named when hit. Same `compareRuns` core as MCP `case_compare` (facts only, never a judgement; incomparable pairs render their problems), UI-only otherwise.
