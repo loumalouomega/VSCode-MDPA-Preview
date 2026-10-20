@@ -216,8 +216,14 @@ test("topology mode keeps a zero-face patch declared on disk", async () => {
 
 // ---- zones are writer-owned ---------------------------------------------------------
 
+/**
+ * Zone names of a cellZones/faceZones file. The grammar is line based, and a
+ * Windows checkout with autocrlf turns the committed LF fixture into CRLF, so
+ * the line endings are normalised before matching rather than trusted.
+ */
 function zoneNames(text: string): string[] {
-  return [...text.matchAll(/^([A-Za-z0-9_.]+)\n\{/gm)].map((m) => m[1]).filter((n) => n !== "FoamFile");
+  const lf = text.replace(/\r\n/g, "\n");
+  return [...lf.matchAll(/^([A-Za-z0-9_.]+)\n\{/gm)].map((m) => m[1]).filter((n) => n !== "FoamFile");
 }
 
 test("topology mode rewrites faceZones from the model's genuine zone parts", async () => {

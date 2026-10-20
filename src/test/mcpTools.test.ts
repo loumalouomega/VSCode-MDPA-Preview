@@ -1962,7 +1962,7 @@ test("case_compare pairs two isolated runs by evidence, not by file name", async
   // its relative name but its frozen bytes differ.
   assert.deepEqual(comparison.onlyLeft, [`mesh:beam.mdpa`, `log:beam.kratosrun.log`]);
   assert.deepEqual(comparison.onlyRight, [`mesh:other.mdpa`, `log:other.kratosrun.log`]);
-  assert.deepEqual(comparison.changed.map((c) => c.path), [path.join("vtk_output", "result.vtk")]);
+  assert.deepEqual(comparison.changed.map((c) => c.path), ["vtk_output/result.vtk"]);
 
   // A receipt path works as well as the directory.
   const byReceipt = (await caseCompare({
