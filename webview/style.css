@@ -2718,6 +2718,50 @@ input.outline-label-input {
   z-index: 20;
 }
 
+/* --- The bottom-left panel cluster (roadmap item 1) -----------------------
+   The Selection card and the two wide strips (the Probe chart and the
+   Plot-over-time chart) share the viewport's bottom-left corner, and they
+   used to be positioned independently: the card by `left/width` and the
+   strips by `left/right`, each bottom-anchored to a different line. With a
+   tall card and a chart open, the chart painted over the card's lower half
+   and swallowed its clicks — the KKSS embedding reproduced exactly that (a
+   probe chart over the Selection panel's Box control).
+
+   `src/parser/panelLayout.ts` now decides the geometry, and
+   `webview/panelDock.ts` writes it here. The fallback values are the
+   pre-cluster positions, so a panel is never misplaced before the first
+   layout run. `data-docked` marks a panel the dock has placed: from then on
+   its position comes from the custom properties and nothing else. */
+:is(#selection-panel, #probe-panel, #series-panel)[data-docked] {
+  left: var(--panel-left, 8px);
+  bottom: var(--panel-bottom, 52px);
+  width: var(--panel-width, auto);
+  max-height: var(--panel-height, none);
+  /* A panel that had to be shortened scrolls rather than covering the
+     canvas or the panel beside it. */
+  overflow-y: auto;
+}
+
+/* The strips are the wide ones: they run from the card's right edge to the
+   Inspect panel's left edge, or take the whole row when the card is not
+   beside them. The width comes from the layout, so the rule only carries the
+   fallback. The `bottom` is the pre-cluster line (clear of the nav dock and
+   the timeline bar), used until the dock places the panel for the first
+   time. */
+#probe-panel,
+#series-panel {
+  position: absolute;
+  bottom: 52px; /* 36px #timeline-bar + 8px gap + 8px inset */
+  left: 8px;
+  right: 296px; /* clears #inspect-panel: 8px inset + 280px */
+  z-index: 22;
+}
+
+#probe-panel[data-docked],
+#series-panel[data-docked] {
+  right: auto;
+}
+
 /* The rubber band the box gesture drags over the canvas (#render-root).
    Dashed accent border, translucent fill; pointer-events none so the picks
    underneath see the mouse up. */
@@ -2891,6 +2935,12 @@ input.outline-label-input {
 
 .inspect-actions {
   display: flex;
+  /* A row of panel actions must WRAP: the Selection card's action row (Frame,
+     New SubModelPart, Export, Delete entities, Clear) is wider than the
+     300px card, and without wrapping the last two buttons hung over the
+     card's edge — where the panel beside them could paint over them, and
+     where a click landed on the canvas instead of the button. */
+  flex-wrap: wrap;
   gap: var(--ui-s-2);
   margin: var(--ui-s-2) 0;
 }
@@ -4265,15 +4315,8 @@ button.pt-preflight-row:hover,
    for the step axis, it is launched from #inspect-panel (right: 8px, 280px
    wide) and must not cover it, and its whole payoff is clicking a point and
    watching #timeline-bar move — so it sits above the bar, never over it.
-   It can only exist when a timeline does, so `bottom` is a constant. */
-#series-panel {
-  position: absolute;
-  bottom: 52px; /* 36px #timeline-bar + 8px gap + 8px inset */
-  left: 8px;
-  right: 296px; /* clears #inspect-panel: 8px inset + 280px */
-  z-index: 22;
-}
-
+   Its position is the panel cluster's (see the docked rules above): the
+   layout decides whether it sits beside the Selection card or below it. */
 .series-toolbar {
   display: flex;
   align-items: center;
@@ -4282,16 +4325,7 @@ button.pt-preflight-row:hover,
 }
 
 /* The line-probe panel shares the series panel's strip shape and every
-   .series-* internal class; only the position differs — it can exist with no
-   timeline (the MDPA preview), so `bottom` is set from main.ts depending on
-   whether #timeline-bar is showing. */
-#probe-panel {
-  position: absolute;
-  left: 8px;
-  right: 296px; /* clears #inspect-panel: 8px inset + 280px */
-  z-index: 22;
-}
-
+   .series-* internal class. Its position is the panel cluster's too. */
 .series-toolbar .field-select {
   flex: 1;
 }

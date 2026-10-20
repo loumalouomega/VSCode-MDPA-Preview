@@ -223,6 +223,7 @@ import {
 } from "../src/parser/viewState";
 import { RGB, getThemePalette, getThemeBackground } from "./themes";
 import { NavControls, NavSlot } from "./navControls";
+import { PanelDock } from "./panelDock";
 import { TimelineControl } from "./timeline";
 import { UI_GLYPHS } from "../src/uiGlyphs";
 import { initSidebarSections } from "./sidebar";
@@ -1049,6 +1050,61 @@ function detachLayerFromPanes(layer: Layer): void {
 
 // --- Navigation controls (DOM overlay, always visible) ------------------
 const navControls = new NavControls(vtkSub, focusedView, { render });
+
+// --- The bottom-left panel cluster (roadmap item 1) -----------------------
+// The Selection card and the two wide strips (the Probe chart and the
+// Plot-over-time chart) share the viewport's bottom-left corner. They used
+// to be positioned independently, so a chart painted over the card's lower
+// half and swallowed its clicks. `src/parser/panelLayout.ts` decides the
+// geometry and `webview/panelDock.ts` applies it; the dock only MOVES the
+// panels, so a form keeps what the user typed into it.
+const panelDock = new PanelDock({
+  container: vtkSub,
+  panels: [
+    {
+      id: "selection",
+      role: "card",
+      el: selectionPanelEl,
+      isOpen: () => selectionVisible,
+      naturalWidth: () => 300,
+      minHeight: () => 120,
+    },
+    {
+      id: "probe",
+      role: "strip",
+      el: probePanelEl,
+      isOpen: () => probeVisible,
+      naturalWidth: () => probePanelEl.offsetWidth || 1056,
+      minHeight: () => 96,
+      // A chart draws into a canvas sized from its own width, so a width
+      // change leaves the drawing stale. The probe panel holds no input of
+      // its own, so re-rendering it is safe.
+      onWidthChanged: () => renderProbeUI(),
+    },
+    {
+      id: "series",
+      role: "strip",
+      el: seriesPanelEl,
+      isOpen: () => seriesVisible,
+      naturalWidth: () => seriesPanelEl.offsetWidth || 1056,
+      minHeight: () => 120,
+      onWidthChanged: () => renderSeriesUI(),
+    },
+  ],
+  // The cluster's floor is the line the nav dock's top sits on, so a panel
+  // never covers the dock. The dock is lifted above the cluster as well, but
+  // the floor is what keeps the panels off the canvas' bottom edge.
+  floor: () => (timelineVisible ? 52 : 8) + navDockHeight(),
+  rightInset: () => 296,
+});
+panelDock.start();
+
+/** The nav dock's real height, published by NavControls as `--nav-height`. */
+function navDockHeight(): number {
+  const raw = getComputedStyle(vtkSub).getPropertyValue("--nav-height").trim();
+  const n = Number.parseFloat(raw);
+  return Number.isFinite(n) ? n : 0;
+}
 
 // --- Timeline (VTK time-series) -----------------------------------------
 initAnalysisTools(message => vscode.postMessage(message));
@@ -4629,6 +4685,10 @@ function syncNavOffset(): void {
   // above this, so they clear the dock at rest without being squeezed out of the
   // viewport by a tall chart (style.css, "the panels anchored to the bottom edge").
   vtkSub.style.setProperty("--nav-rest", `${timelineVisible ? 44 : 8}px`);
+  // The panel cluster moves too: a panel that opens or closes changes the
+  // space the others have. The dock re-measures and re-places on the next
+  // frame, when the DOM has settled.
+  panelDock.schedule();
 }
 
 /** Rebuild the view after anything that changes which rows or columns exist. */
@@ -6297,10 +6357,9 @@ function showProbePanel(points: [number, number, number][]): void {
       : names[0];
   probeState = { variables, variable, samples: probeState?.samples ?? PROBE_DEFAULT_SAMPLES };
   probeVisible = true;
-  // Sans timeline (the MDPA preview, or a single-step series) the strip rests
-  // above bare canvas, not above #timeline-bar (which #series-panel's constant
-  // bottom presumes).
-  probePanelEl.style.bottom = timelineVisible ? "52px" : "8px";
+  // The strip's position is the panel cluster's (the dock places it beside the
+  // Selection card, or below it when the viewport is too narrow), so nothing
+  // sets a `bottom` here any more.
   probePanelEl.style.display = "";
   renderProbeUI();
   syncNavOffset();
