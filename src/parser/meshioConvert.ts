@@ -13,7 +13,7 @@ import {
   MESHIO_TO_VTK_TYPE,
   VTK_TO_MESHIO_TYPE,
 } from "./meshioFormats";
-import { MeshioRegion, regionsToParts } from "./meshioRegions";
+import { FACETS, MeshioRegion, regionsToParts, type FacetDef } from "./meshioRegions";
 import {
   decomposePolyhedronBlock,
   PolyhedronDecomposition,
@@ -835,6 +835,16 @@ export function modelToMeshio(
      * would surface as bogus user-visible fields on a later read.
      */
     carriers?: boolean;
+    /**
+     * Emit OpenFOAM zone regions instead of generic grouping regions: no
+     * per-block `cell` region (a block is not a zone), a `cell` region only
+     * for element-carrying parts without children, a `point` region only for
+     * node-only parts, and a `side` region for condition parts with an
+     * interior face (patches stay served by the boundary tags, not regions).
+     * Set by `writeMeshioBytes` for `fmt === "openfoam"` only — every other
+     * format keeps the grouping regions MED/Abaqus/Exodus need.
+     */
+    openfoamZones?: boolean;
   } = {}
 ): MeshioMesh {
   const layout = buildCellLayout(model, diagnostics);
@@ -1010,7 +1020,7 @@ export function modelToMeshio(
     point_data_components,
     cell_data,
     cell_data_components,
-    regions: buildRegions(model, layout, blockCellIdx, blockNames, diagnostics, opts.carriers),
+    regions: buildRegions(model, layout, blockCellIdx, blockNames, diagnostics, opts.carriers, opts.openfoamZones),
   };
   if (opts.carriers && model.properties && model.properties.length > 0) {
     mesh.propertySets = toUpstreamPropertySets(model.properties);
@@ -1104,13 +1114,101 @@ function attachFidelityCarriers(
  * facet group; the read path materializes those as real Conditions blocks
  * instead) and a format-native `tag` (a Kratos SubModelPart has no integer id).
  */
+/**
+ * Corner-node count of a facet type, for matching a linear condition against
+ * a higher-order face (whose corners come first in every table below — the
+ * read path materializes side regions with full connectivity, so an exact
+ * match is the norm and this is only the order-elevation fallback).
+ */
+function facetCornerCount(facetType: string): number {
+  if (facetType === "triangle" || facetType === "triangle6") return 3;
+  if (facetType === "quad" || facetType === "quad8" || facetType === "quad9") return 4;
+  if (facetType === "line" || facetType === "line3") return 2;
+  return -1;
+}
+
+/** Volume cells and the inverted node index over them, for face matching. */
+export interface FoamVolumeIndex {
+  volumes: number[];
+  nodeToVolumes: Map<number, number[]>;
+}
+
+export function buildFoamVolumeIndex(layout: CellLayout): FoamVolumeIndex {
+  const volumes: number[] = [];
+  const nodeToVolumes = new Map<number, number[]>();
+  layout.cells.forEach((cell, ci) => {
+    if (cell.kind !== "Elements" || cellCategory(cell.type) !== "volume") return;
+    volumes.push(ci);
+    for (const n of cell.nodes) {
+      const list = nodeToVolumes.get(n);
+      if (list) list.push(ci);
+      else nodeToVolumes.set(n, [ci]);
+    }
+  });
+  return { volumes, nodeToVolumes };
+}
+
+/**
+ * The volume face a condition's nodes coincide with, as (flat layout cell,
+ * meshio facet index, owning volume cells). `owners > 1` is an interior face.
+ * Exact node-set match first, then a linear-condition-on-higher-order-face
+ * corner subset; undefined when no volume face fits. Exported for the native
+ * decomposed writer, which matches zone faces the same way.
+ */
+export function matchFoamFace(
+  condNodes: readonly number[],
+  index: FoamVolumeIndex,
+  layout: CellLayout
+): { flat: number; facet: number; owners: number } | undefined {
+  let candidates: number[] | undefined;
+  for (const n of condNodes) {
+    const owners = index.nodeToVolumes.get(n);
+    if (!owners) return undefined;
+    candidates = candidates === undefined ? owners.slice() : candidates.filter((c) => owners.includes(c));
+    if (candidates.length === 0) return undefined;
+  }
+  if (!candidates || candidates.length === 0) return undefined;
+  const condSet = new Set(condNodes);
+  for (let pass = 0; pass < 2; pass++) {
+    for (const flat of candidates) {
+      const cell = layout.cells[flat];
+      const meshioType = VTK_TO_MESHIO_TYPE[cell.type];
+      const table = meshioType ? FACETS[meshioType] : undefined;
+      if (!table) continue;
+      const perm = meshioType ? MESHIO_TO_VTK_ORDER[meshioType] : undefined;
+      for (let fi = 0; fi < table.length; fi++) {
+        const def = table[fi];
+        const vtkNodes = def.nodes.map((p) => cell.nodes[perm ? perm[p] : p]);
+        if (vtkNodes.some((n) => n === undefined)) continue;
+        if (pass === 0) {
+          if (vtkNodes.length === condNodes.length && vtkNodes.every((n) => condSet.has(n))) {
+            return { flat, facet: fi, owners: candidates.length };
+          }
+        } else {
+          const corners = facetCornerCount(def.type);
+          if (corners < 0) continue;
+          const facetSet = new Set(vtkNodes);
+          if (
+            condNodes.every((n) => facetSet.has(n)) &&
+            vtkNodes.slice(0, corners).every((n) => condSet.has(n))
+          ) {
+            return { flat, facet: fi, owners: candidates.length };
+          }
+        }
+      }
+    }
+  }
+  return undefined;
+}
+
 function buildRegions(
   model: MdpaModel,
   layout: CellLayout,
   blockCellIdx: number[][],
   blockNames: string[],
   diagnostics: MdpaDiagnostic[],
-  carriers?: boolean
+  carriers?: boolean,
+  openfoamZones = false
 ): MeshioRegion[] {
   // flat cell index -> global block-major index in the emitted blocks.
   const globalOf = new Map<number, number>();
@@ -1136,6 +1234,11 @@ function buildRegions(
 
   for (let bi = 0; bi < blockCellIdx.length; bi++) {
     if (blockCellIdx[bi].length === 0) continue;
+    // OpenFOAM zones come only from parts below: a block is grouping, not a
+    // zone, and emitting it would land as a bogus cellZone (every patch and
+    // block name the old writer added this way had its non-volume entries
+    // dropped with a warning).
+    if (openfoamZones) continue;
     regions.push({
       name: uniqueName(blockNames[bi]),
       kind: "cell",
@@ -1145,7 +1248,117 @@ function buildRegions(
     });
   }
 
+  const foam = openfoamZones ? buildFoamVolumeIndex(layout) : undefined;
+  if (foam && foam.volumes.length === 0) {
+    diagnostics.push({
+      line: 0,
+      message: "OpenFOAM zone detection needs volume cells; this model has none, so no face zones are emitted (patches stay served by the boundary).",
+    });
+  }
+
   const nodeIndex = nodeIndexMap(model);
+  /**
+   * Patch names the case declares (the read side recovers them into
+   * `source.openfoam.patchTypes`). A part carrying a patch name is a patch
+   * even when its faces are interior in the model — upstream misassigns
+   * patch ranges when a faceZones file is present (measured: the inlet patch
+   * of the item-13 fixture claims the internal face once faceZones exists,
+   * while without it the same patch claims its true boundary face), so the
+   * geometry rule alone would zone a patch-named part. Absent when `source`
+   * was dropped by an edit; the geometry rule then stands alone.
+   */
+  const patchNames = new Set(Object.keys(model.source?.openfoam?.patchTypes ?? {}));
+  /**
+   * OpenFOAM zone regions for one part (openfoamZones only): upstream writes
+   * every `cell` region as a cellZone, every `point` region as a pointZone
+   * and every `side` region as a faceZone, so this decides the zone files.
+   *
+   * - Parts with children are merge scaffolding (the multi-region wrappers)
+   *   or user groups — zones are flat in OpenFOAM, so only the children emit.
+   * - A `cell` region needs element ids: patches (conditions) and blocks
+   *   never qualified, which is what stops every patch name landing in
+   *   cellZones with its non-volume entries dropped.
+   * - A `point` region needs a node-only part: genuine point zones.
+   * - A `side` region needs an interior face: boundary-only condition parts
+   *   stay served by the boundary tags (patches), interior ones become
+   *   faceZones. A pure-boundary group therefore never becomes a faceZone —
+   *   documented loss, since the model no longer records which file a part
+   *   came from; a face zone is recognized by an interior face.
+   */
+  const emitFoamZoneRegions = (part: SubModelPart, name: string): void => {
+    if (part.children.length > 0) {
+      if (part.elementIds.length > 0 || part.conditionIds.length > 0 || part.nodeIds.length > 0) {
+        diagnostics.push({
+          line: 0,
+          message: `SubModelPart "${part.path}" has children; only its children are considered for OpenFOAM zones.`,
+        });
+      }
+      return;
+    }
+    const elementCells: number[] = [];
+    for (const id of part.elementIds) {
+      const ci = layout.elementIdToCell.get(id);
+      if (ci !== undefined && globalOf.has(ci)) elementCells.push(ci);
+    }
+    if (elementCells.length > 0) {
+      regions.push({
+        name,
+        kind: "cell",
+        dim: cellRegionDim(elementCells, layout),
+        tag: -1,
+        entries: canonical(elementCells.map((ci) => globalOf.get(ci) as number)),
+      });
+    }
+    if (part.elementIds.length === 0 && part.conditionIds.length === 0 && part.geometryIds.length === 0) {
+      const pointEntries: number[] = [];
+      for (const id of part.nodeIds) {
+        const i = nodeIndex.get(id);
+        if (i !== undefined) pointEntries.push(i);
+      }
+      if (pointEntries.length > 0) {
+        regions.push({ name, kind: "point", dim: 0, tag: -1, entries: canonical(pointEntries) });
+      } else {
+        diagnostics.push({
+          line: 0,
+          message: `SubModelPart "${part.path}" holds no writable entity; no named group emitted.`,
+        });
+      }
+      return;
+    }
+    if (foam && part.conditionIds.length > 0 && !patchNames.has(part.path) && !patchNames.has(part.name)) {
+      const pairs: number[] = [];
+      const seen = new Set<string>();
+      let interior = 0;
+      let dropped = 0;
+      for (const id of part.conditionIds) {
+        const ci = layout.conditionIdToCell.get(id);
+        if (ci === undefined) {
+          dropped++;
+          continue;
+        }
+        const m = matchFoamFace(layout.cells[ci].nodes, foam, layout);
+        if (!m || !globalOf.has(m.flat)) {
+          dropped++;
+          continue;
+        }
+        if (m.owners > 1) interior++;
+        const key = `${m.flat}:${m.facet}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          pairs.push(globalOf.get(m.flat) as number, m.facet);
+        }
+      }
+      if (pairs.length > 0 && interior > 0) {
+        regions.push({ name, kind: "side", dim: 2, tag: -1, entries: Int32Array.from(pairs) });
+      }
+      if (dropped > 0) {
+        diagnostics.push({
+          line: 0,
+          message: `SubModelPart "${part.path}": ${dropped} condition(s) match no volume face and are omitted from the OpenFOAM zones.`,
+        });
+      }
+    }
+  };
   const walk = (part: SubModelPart): void => {
     // A "/" would reach an HDF5 group name in MED, so a plain export uses the
     // dotted spelling Kratos itself uses for a nested model part. The carry
@@ -1159,6 +1372,15 @@ function buildRegions(
     const name = uniqueName(
       carriers ? `${MESHIO_PART_PREFIX}${part.path}` : part.path.replace(/\//g, ".")
     );
+    if (foam) {
+      // Dotted, like every other format: the read side recovers dotted
+      // names, and the multi-region merge strips the wrapper's own prefix
+      // (see mergeMesh.ts), so round trips fixpoint instead of nesting one
+      // level deeper per save (`fluidCells` -> `fluid.fluidCells` -> …).
+      emitFoamZoneRegions(part, name);
+      for (const child of part.children) walk(child);
+      return;
+    }
     const cellIdx: number[] = [];
     for (const [ids, map] of [
       [part.elementIds, layout.elementIdToCell],

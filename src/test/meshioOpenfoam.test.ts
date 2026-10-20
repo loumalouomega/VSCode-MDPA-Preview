@@ -46,13 +46,12 @@ test("meshio++ 9.20.0: .foam writes a polyMesh DIRECTORY, not a sibling file", a
     companions.map((c) => c.name).sort(),
     [
       "constant/polyMesh/boundary",
-      "constant/polyMesh/cellZones",
       "constant/polyMesh/faces",
       "constant/polyMesh/neighbour",
       "constant/polyMesh/owner",
       "constant/polyMesh/points",
     ],
-    "six polyMesh files since 11.4.0: the writer carries block Cell regions as cellZones"
+    "five polyMesh files for a zoneless model: blocks are grouping, not zones, so no cellZones is synthesized (roadmap item 13)"
   );
   for (const c of companions) assert.ok(c.data.length > 0, `${c.name} is non-empty`);
 
@@ -119,7 +118,7 @@ test("a mesh exported to .foam writes the whole tree to disk", async () => {
   }
   assert.deepEqual(
     fs.readdirSync(path.join(dir, "constant", "polyMesh")).sort(),
-    ["boundary", "cellZones", "faces", "neighbour", "owner", "points"]
+    ["boundary", "faces", "neighbour", "owner", "points"]
   );
   assert.ok(fs.existsSync(dest), "the marker sits beside constant/");
 });
@@ -160,13 +159,10 @@ test("an OpenFOAM case round-trips: write a case, then open its marker", async (
   assert.deepEqual(Array.from(model.bounds.min), [0, 0, 0]);
   assert.deepEqual(Array.from(model.bounds.max), [1, 1, 1]);
 
-  // The patch name our own writer synthesizes, recovered from boundary —
-  // plus the block-derived "Element3D8N" zone (roadmap item 3: cellZones
-  // now stage), the same block-name-survives-as-a-part pattern every other
-  // format already has (Exodus block names, FLAC3D zone groups, …).
-  assert.deepEqual(model.subModelParts.map((p) => p.name), ["Element3D8N", "defaultFaces"]);
-  const [zonePart, facesPart] = model.subModelParts;
-  assert.equal(zonePart.elementIds.length, 1, "the writer's own block-derived zone");
+  // The patch name our own writer synthesizes, recovered from boundary. No
+  // block-derived zone: blocks are grouping, not zones (roadmap item 13).
+  assert.deepEqual(model.subModelParts.map((p) => p.name), ["defaultFaces"]);
+  const [facesPart] = model.subModelParts;
   assert.equal(facesPart.conditionIds.length, 6);
   assert.equal(facesPart.elementIds.length, 0, "faces are Conditions, not Elements");
 
@@ -230,10 +226,9 @@ test("real patch names survive, one SubModelPart each", async () => {
     ].join("\n")
   );
   const model = await parseMeshFile(marker);
-  // "Element3D8N" is the block-derived zone (roadmap item 3) — see the
-  // single-patch test above for why it is now expected here too.
-  assert.deepEqual(model.subModelParts.map((p) => p.name), ["Element3D8N", "inlet", "outlet"]);
-  const [, a, b] = model.subModelParts;
+  // Only the two patches: no block-derived zone is synthesized (item 13).
+  assert.deepEqual(model.subModelParts.map((p) => p.name), ["inlet", "outlet"]);
+  const [a, b] = model.subModelParts;
   assert.equal(a.conditionIds.length, 3);
   assert.equal(b.conditionIds.length, 3);
   const overlap = Array.from(a.conditionIds).filter((id) => b.conditionIds.includes(id));
@@ -267,8 +262,8 @@ test("a multi-region case with no region requested merges every region, one wrap
 
   assert.deepEqual(model.subModelParts.map((p) => p.name), ["fluid", "solid"]);
   const [fluid, solid] = model.subModelParts;
-  assert.deepEqual(fluid.children.map((c) => c.path), ["fluid/defaultFaces"]);
-  assert.deepEqual(solid.children.map((c) => c.path), ["solid/defaultFaces"]);
+  assert.deepEqual(fluid.children.map((c) => c.path), ["fluid/fluidCells", "fluid/defaultFaces"]);
+  assert.deepEqual(solid.children.map((c) => c.path), ["solid/solidCells", "solid/defaultFaces"]);
 
   // Each region's own 0/<region>/T field lands in one merged Elemental
   // field, offset into the merged element id space.
@@ -311,13 +306,14 @@ test("a decomposed (processorN/) case reconstructs one mesh with the shared face
   const vol = model.blocks.filter((b) => b.kind === "Elements");
   const bnd = model.blocks.filter((b) => b.kind === "Conditions");
   assert.equal(vol.reduce((n, b) => n + b.count, 0), 2);
-  assert.equal(bnd.reduce((n, b) => n + b.count, 0), 10);
+  assert.equal(bnd.reduce((n, b) => n + b.count, 0), 11, "10 boundary quads plus the shared face as the iface zone's condition");
 
   // Patch names recovered from processor0's own boundary (a single
   // "defaultFaces" patch here — see collectDecomposedOpenFoamCase's doc
-  // comment for the ordering assumption this rests on).
-  assert.deepEqual(model.subModelParts.map((p) => p.name), ["defaultFaces"]);
-  assert.equal(model.subModelParts[0].conditionIds.length, 10);
+  // comment for the ordering assumption this rests on), plus the zone files
+  // staged beside them (roadmap item 13, increment E).
+  assert.deepEqual(model.subModelParts.map((p) => p.name).sort(), ["corners", "defaultFaces", "iface", "zoneA"]);
+  assert.equal(model.subModelParts.find((p) => p.name === "defaultFaces")!.conditionIds.length, 10);
 
   // Informational, not a warning — the decomposed read is deliberate here.
   assert.ok(model.diagnostics.some((d) => /reconstructed from 2 processor directories/.test(d.message)));
@@ -343,7 +339,8 @@ test("patch names survive a write: read a two-patch case, write it, re-read", as
     ].join("\n")
   );
   const model = await parseMeshFile(marker);
-  assert.deepEqual(model.subModelParts.map((p) => p.name), ["Element3D8N", "inlet", "outlet"]);
+  // Only the two patches: no block-derived zone is synthesized (item 13).
+  assert.deepEqual(model.subModelParts.map((p) => p.name), ["inlet", "outlet"]);
 
   const { writeMeshFileAsync } = await import("../parser/writers/meshWriter");
   const dir = tmpDir();
@@ -365,18 +362,11 @@ test("patch names survive a write: read a two-patch case, write it, re-read", as
   );
 
   const reread = await parseMeshFile(dest);
-  // Both zone names now appear: "Element3D8N" is the SubModelPart the FIRST
-  // read's own zone staging added to `model` (itself written out as a zone
-  // on this second write, since a SubModelPart gets its own Cell region same
-  // as a block does), and "hexahedron" is the block's own name after
-  // meshio's generic reader renamed it by cell type. Noise that compounds
-  // over successive OpenFOAM round trips, not a defect this change causes —
-  // measured, not assumed.
-  assert.deepEqual(
-    reread.subModelParts.map((p) => p.name),
-    ["Element3D8N", "hexahedron", "inlet", "outlet"]
-  );
-  const [, , a, b] = reread.subModelParts;
+  // No zone compounding across round trips (roadmap item 13): the first read
+  // stages no block zone, so the second write emits no cellZones at all and
+  // the parts are exactly the two patches again.
+  assert.deepEqual(reread.subModelParts.map((p) => p.name), ["inlet", "outlet"]);
+  const [a, b] = reread.subModelParts;
   assert.equal(a.conditionIds.length, 3);
   assert.equal(b.conditionIds.length, 3);
   const overlap = Array.from(a.conditionIds).filter((id) => b.conditionIds.includes(id));
@@ -406,9 +396,9 @@ test("a case without boundary loses its faces, and says so", async () => {
   const model = await parseMeshFile(marker);
   assert.equal(model.blocks.filter((b) => b.kind === "Conditions").length, 0);
   assert.equal(model.blocks.reduce((n, b) => n + b.count, 0), 1, "the volume cell survives");
-  // No patches (boundary is gone), but the block-derived zone (roadmap
-  // item 3) is independent of `boundary` and still arrives.
-  assert.deepEqual(model.subModelParts.map((p) => p.name), ["Element3D8N"]);
+  // No patches (boundary is gone) and no block-derived zone either: a zoneless
+  // model writes no cellZones (roadmap item 13).
+  assert.deepEqual(model.subModelParts.map((p) => p.name), []);
   assert.ok(
     model.diagnostics.some((d) => /boundary is missing/.test(d.message)),
     "the loss is reported rather than silent"
@@ -501,14 +491,11 @@ test("cellZones cross the reader as named Cell regions since 11.4.0", async () =
 });
 
 test("zones stage through a real case (roadmap item 3): collectOpenFoamCase now reads cellZones too", async () => {
-  // The write side already emits a `cellZones` companion from the block
-  // Cell regions (openfoamWrite.ts) — writeCase()'s case therefore already
-  // carries one, and this is the gate for whether the READ side (the
-  // extension's own collector, not readMeshioModel called directly as
-  // above) now actually stages and surfaces it as a SubModelPart, closing
-  // the "still stages only the mesh files" gap the test above used to name.
+  // The writer no longer synthesizes a block zone (roadmap item 13), so the
+  // zone under test is staged by hand; the gate is still the READ side (the
+  // extension's own collector, not readMeshioModel called directly).
   const marker = await writeCase();
-  assert.ok(fs.existsSync(polyMesh(marker, "cellZones")), "the writer left a cellZones file to find");
+  fs.writeFileSync(polyMesh(marker, "cellZones"), cellZonesDict("probeZone"));
   const model = await parseMeshFile(marker);
   const zonePart = model.subModelParts.find((p) => p.elementIds.length > 0 && p.name !== "defaultFaces");
   assert.ok(zonePart, `expected a zone-derived part, got ${model.subModelParts.map((p) => p.name)}`);

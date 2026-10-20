@@ -529,3 +529,45 @@ test("a merged model still exposes its parts through the tree walk", () => {
   walk(r.model.subModelParts);
   assert.ok(paths.includes("beam"));
 });
+
+test("merging strips the wrapper's own dotted prefix: the merge fixpoints", () => {
+  // A source part already named `<wrapper>.<rest>` (a dotted zone or group
+  // from a previous merge round trip) nests as `<rest>`, not
+  // `<wrapper>/<wrapper>.<rest>` — otherwise every merge round trip would
+  // nest one level deeper.
+  const withDotted = parseMdpa(TRI_A);
+  withDotted.subModelParts = [
+    {
+      name: "beam.roof",
+      path: "beam.roof",
+      nodeIds: new Int32Array([1, 2, 3]),
+      elementIds: new Int32Array([1]),
+      conditionIds: new Int32Array(),
+      geometryIds: new Int32Array(),
+      constraintIds: new Int32Array(),
+      children: [],
+    },
+    {
+      name: "other.eaves",
+      path: "other.eaves",
+      nodeIds: new Int32Array([1, 2, 3]),
+      elementIds: new Int32Array(),
+      conditionIds: new Int32Array(),
+      geometryIds: new Int32Array(),
+      constraintIds: new Int32Array(),
+      children: [],
+    },
+  ];
+  const r = mergeManyModels(parseMdpa(TRI_A), [src(withDotted, "beam")]);
+  const beam = findSubModelPart(r.model, "beam")!;
+  assert.ok(beam, "the wrapper exists");
+  assert.deepEqual(
+    beam.children.map((c) => c.path),
+    ["beam/roof", "beam/other.eaves"],
+    "the wrapper's own prefix strips; anything else keeps its name verbatim"
+  );
+  assert.deepEqual(
+    beam.children.map((c) => c.name),
+    ["roof", "other.eaves"]
+  );
+});

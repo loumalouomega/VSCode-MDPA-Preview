@@ -1,0 +1,17 @@
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       cellZoneList;
+    location    "constant/polyMesh";
+    object      cellZones;
+}
+
+1
+(
+fluidCells
+{
+    type cellZone;
+    cellLabels List<label> 1(0);
+}
+)

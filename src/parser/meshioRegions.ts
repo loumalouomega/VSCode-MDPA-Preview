@@ -53,7 +53,7 @@ export interface MeshioRegion {
  * index, so a reordering upstream silently mislabels every side set — the
  * ordering is asserted in meshioRegions.test.ts against the values below.
  */
-interface FacetDef {
+export interface FacetDef {
   /** meshio++ type name of the facet cell. */
   type: string;
   /** Local node indices into the parent cell's connectivity row. */
@@ -61,7 +61,7 @@ interface FacetDef {
 }
 
 /** Facet tables, keyed by the parent cell's meshio++ type name. */
-const FACETS: Readonly<Record<string, readonly FacetDef[]>> = {
+export const FACETS: Readonly<Record<string, readonly FacetDef[]>> = {
   // --- 3D: faces (cell_faces.cpp) ---
   tetra: [
     { type: "triangle", nodes: [0, 1, 3] },

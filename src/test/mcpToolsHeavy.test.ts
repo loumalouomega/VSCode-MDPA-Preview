@@ -185,7 +185,8 @@ test("mesh_convert writes an OpenFOAM case as a polyMesh DIRECTORY", async () =>
   assert.equal(fs.statSync(out).size, 0, "the marker is empty; the mesh is the tree");
   assert.deepEqual(
     fs.readdirSync(path.join(dir, "constant", "polyMesh")).sort(),
-    ["boundary", "cellZones", "faces", "neighbour", "owner", "points"]
+    ["boundary", "faces", "neighbour", "owner", "points"],
+    "no cellZones for a zoneless model: blocks are grouping, not zones (roadmap item 13)"
   );
   const boundary = fs.readFileSync(path.join(dir, "constant", "polyMesh", "boundary"), "utf8");
   assert.match(boundary, /defaultFaces/, "the single synthesized patch");

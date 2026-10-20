@@ -115,7 +115,7 @@ test("two terminal runs of the same case compare by identity, settings and outpu
   assert.deepEqual(comparison.same, { sourceMesh: true, problemtype: true, settings: true });
   // Same names, so they pair up; one pair changed bytes, one did not.
   assert.deepEqual(comparison.counts, { paired: 3, onlyLeft: 0, onlyRight: 1, changed: 1, unverified: 0 });
-  assert.deepEqual(comparison.changed.map((a) => a.path), [path.join("vtk_output", "result_0.vtk")]);
+  assert.deepEqual(comparison.changed.map((a) => a.path), ["vtk_output/result_0.vtk"]);
   assert.deepEqual(comparison.onlyRight, [`log:${path.join("beam.kratosrun.log")}`]);
   assert.deepEqual(comparison.onlyLeft, []);
 });

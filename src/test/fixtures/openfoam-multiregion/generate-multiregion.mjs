@@ -60,6 +60,14 @@ for (const [region, value] of [["fluid", 300], ["solid", 500]]) {
     path.join(dir, "T"),
     FIELD_HEADER("T") + `internalField   uniform ${value};\n` + "boundaryField\n{\n}\n"
   );
+  // One cell zone per region, written by hand (roadmap item 13, increment
+  // E): each region holds a single cell, locally indexed.
+  writeFileSync(
+    path.join(OUT, "constant", region, "polyMesh", "cellZones"),
+    "FoamFile\n{\n    version     2.0;\n    format      ascii;\n" +
+      '    class       cellZoneList;\n    location    "constant/polyMesh";\n    object      cellZones;\n}\n\n' +
+      `1\n(\n${region}Cells\n{\n    type cellZone;\n    cellLabels List<label> 1(0);\n}\n)\n`
+  );
 }
 
 writeFileSync(path.join(OUT, "case.foam"), "");

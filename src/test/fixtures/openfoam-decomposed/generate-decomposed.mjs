@@ -122,6 +122,30 @@ for (const [proc, memfsDir] of [[0, "/p0/constant/polyMesh"], [1, "/p1/constant/
     writeFileSync(path.join(destDir, f), Buffer.from(m.FS.readFile(`${memfsDir}/${f}`)));
   }
 }
+
+// Zone files, written by hand like a real decomposePar leaves them (roadmap
+// item 13, increment E): one cell zone spanning both processors, the
+// interface face as a face zone on both sides, and a point zone over the
+// shared interface points. Local numbering per processor.
+const zoneFile = (cls, obj, zoneType, labelKey, zones) =>
+  `FoamFile\n{\n    version     2.0;\n    format      ascii;\n    class       ${cls};\n    location    "constant/polyMesh";\n    object      ${obj};\n}\n\n` +
+  `${zones.length}\n(\n` +
+  zones.map(([name, ids]) => `${name}\n{\n    type ${zoneType};\n    ${labelKey} List<label> ${ids.length}(${ids.join(" ")});\n}\n`).join("") +
+  ")\n";
+const zoneDirs = [path.join(OUT, "processor0/constant/polyMesh"), path.join(OUT, "processor1/constant/polyMesh")];
+writeFileSync(path.join(zoneDirs[0], "cellZones"), zoneFile("cellZoneList", "cellZones", "cellZone", "cellLabels", [["zoneA", [0]]]));
+writeFileSync(path.join(zoneDirs[1], "cellZones"), zoneFile("cellZoneList", "cellZones", "cellZone", "cellLabels", [["zoneA", [0]]]));
+writeFileSync(
+  path.join(zoneDirs[0], "faceZones"),
+  `FoamFile\n{\n    version     2.0;\n    format      ascii;\n    class       faceZoneList;\n    location    "constant/polyMesh";\n    object      faceZones;\n}\n\n1\n(\niface\n{\n    type faceZone;\n    faceLabels List<label> 1(${ifaceA});\n    flipMap List<bool> 1(0);\n}\n)\n`
+);
+writeFileSync(
+  path.join(zoneDirs[1], "faceZones"),
+  `FoamFile\n{\n    version     2.0;\n    format      ascii;\n    class       faceZoneList;\n    location    "constant/polyMesh";\n    object      faceZones;\n}\n\n1\n(\niface\n{\n    type faceZone;\n    faceLabels List<label> 1(${ifaceB});\n    flipMap List<bool> 1(0);\n}\n)\n`
+);
+// Shared global points {1,2,5,6}: identity addressing on processor0, bGlobal order on processor1.
+writeFileSync(path.join(zoneDirs[0], "pointZones"), zoneFile("pointZoneList", "pointZones", "pointZone", "pointLabels", [["corners", [1, 2, 5, 6]]]));
+writeFileSync(path.join(zoneDirs[1], "pointZones"), zoneFile("pointZoneList", "pointZones", "pointZone", "pointLabels", [["corners", [0, 1, 2, 3]]]));
 writeFileSync(path.join(OUT, "case.foam"), "");
 
 // Verify the shape this fixture exists to pin, before committing it: stage

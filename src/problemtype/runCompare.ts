@@ -49,7 +49,7 @@ export interface SettingChange {
 
 export interface ArtifactChange {
   role: string;
-  /** Path relative to the run directory, so two directories compare meaningfully. */
+  /** Path relative to the run directory, with forward slashes, so two directories compare meaningfully. */
   path: string;
   left?: string;
   right?: string;
@@ -157,10 +157,16 @@ export function diffSettings(left: unknown, right: unknown, limit = COMPARE_LIST
   return out;
 }
 
-/** A run-relative path for an artifact, so two run directories compare by name. */
+/**
+ * A run-relative path for an artifact, so two run directories compare by name.
+ * Forward slashes on every platform: the report and the MCP JSON show these
+ * strings, and a Windows backslash would make the same artifact read differently.
+ */
 function relative(dir: string, file: string): string {
   const rel = path.relative(dir, path.resolve(file));
-  return rel !== ".." && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel) ? rel : path.basename(file);
+  return rel !== ".." && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel)
+    ? rel.split(path.sep).join("/")
+    : path.basename(file);
 }
 
 function side(receipt: ExecutionReceipt): RunComparison["left"] {
