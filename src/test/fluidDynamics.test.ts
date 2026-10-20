@@ -210,8 +210,21 @@ test("monitors are processes of the right module, stay out of the skin lists and
   assert.deepEqual([coefficients.reference_area, coefficients.reference_chord, coefficients.dynamic_pressure, coefficients.is_embedded], [2, 1.5, 100, false]);
   // The wall appears once in the skin list (the no-slip), not once per monitor.
   assert.deepEqual(pp.solver_settings.skin_parts, ["FluidModelPart.Wall"]);
-  const vtk = ((pp.output_processes.vtk_output as JsonObject[])[0].Parameters) as JsonObject;
-  assert.deepEqual(vtk.nodal_data_value_variables, ["PRESSURE_COEFFICIENT", "Y_PLUS"]);
+  const outputs = pp.output_processes.vtk_output as JsonObject[];
+  const vtk = outputs[0].Parameters as JsonObject;
+  // The pressure coefficient is a NODAL variable (Kratos sets it on the nodes).
+  assert.deepEqual(vtk.nodal_data_value_variables, ["PRESSURE_COEFFICIENT"]);
+  // The y+ is a CONDITION variable (Kratos sets it on the wall's faces), so
+  // it must NOT be asked for as nodal data — that writes a column of zeros,
+  // because the nodes never carry it. It gets its own condition-typed output
+  // on the wall's model part.
+  assert.equal(vtk.nodal_data_value_variables.includes("Y_PLUS"), false);
+  assert.equal(outputs.length, 2);
+  const conditionOutput = outputs[1].Parameters as JsonObject;
+  assert.equal(conditionOutput.model_part_name, "FluidModelPart.Wall");
+  assert.equal(conditionOutput.entity_type, "condition");
+  assert.deepEqual(conditionOutput.condition_data_value_variables, ["Y_PLUS"]);
+  assert.deepEqual(conditionOutput.nodal_data_value_variables, []);
 });
 
 // One master node and its slave 3 m above it: the translation runs from the master to the slave.

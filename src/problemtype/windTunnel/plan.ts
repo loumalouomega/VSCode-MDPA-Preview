@@ -210,7 +210,7 @@ export function wakeSizeExpr(domain: TunnelDomain, length: number, wakeLength: n
 export type { RefinementRegion } from "./regions";
 export { checkRegion } from "./regions";
 import type { RefinementRegion } from "./regions";
-import { checkRegion } from "./regions";
+import { checkRegion, refinementRegionVolume } from "./regions";
 
 const num = (v: number): string => String(+v.toPrecision(7));
 
@@ -381,7 +381,12 @@ export function planPlacedTunnel(
   const sizeExpr = refineExprs.length > 0 ? `min(${wallLaw}, ${refineExprs.join(", ")})` : wallLaw;
 
   const maxTetrahedra = mesh.maxTetrahedra ?? DEFAULT_MAX_TETRAHEDRA;
-  const estimate = estimateMesh({ volume: domain.volume, surfaceArea: body.surfaceArea * (domain.halfModel ? 0.5 : 1), wall });
+  const estimate = estimateMesh({
+    volume: domain.volume,
+    surfaceArea: body.surfaceArea * (domain.halfModel ? 0.5 : 1),
+    wall,
+    regions: (mesh.regions ?? []).map((region) => ({ volume: refinementRegionVolume(region), size: region.size })),
+  });
   if (mode === "embedded") {
     // No wall layer to pay for: the layer cannot be built on a surface the mesh does not follow.
     estimate.notes.push("Embedded mode has no wall layer: the count is the lattice refined to the surface size, not the stretched stack.");

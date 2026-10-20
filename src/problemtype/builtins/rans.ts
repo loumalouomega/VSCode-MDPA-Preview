@@ -309,6 +309,11 @@ export const rans = defineProblemtype(decl, {
     };
     const velocityTolerance = asNum(v.velocityTolerance, 1e-3);
     const pressureTolerance = asNum(v.pressureTolerance, 1e-3);
+    // The wall y+ monitor is computed from the wall's REACTION, so a case that
+    // asks for it needs the solver to compute the reactions. (RANS' own wall
+    // function writes its RANS_Y_PLUS; the monitor is the classic
+    // ComputeYPlusProcess, which needs REACTION.)
+    const computeReactions = asBool(v.computeReactions, false) || ctx.assignments.some((a) => a.conditionId === "yPlus");
     const formulation: JsonObject = {
       formulation_name: `${fractional ? "fractional_step" : "monolithic"}_${model.key}`,
       incompressible_potential_flow_initialization_settings: {},
@@ -324,7 +329,7 @@ export const rans = defineProblemtype(decl, {
         oss_switch: 0,
         echo_level: 0,
         time_order: 2,
-        compute_reactions: asBool(v.computeReactions, false),
+        compute_reactions: computeReactions,
         reform_dofs_at_each_step: false,
         pressure_linear_solver_settings: linear(1e-6),
         velocity_linear_solver_settings: linear(1e-6),
@@ -333,7 +338,7 @@ export const rans = defineProblemtype(decl, {
       formulation.monolithic_flow_solver_settings = {
         maximum_iterations: asNum(v.maxIterations, 20),
         echo_level: 0,
-        compute_reactions: asBool(v.computeReactions, false),
+        compute_reactions: computeReactions,
         reform_dofs_at_each_step: false,
         relative_velocity_tolerance: velocityTolerance,
         absolute_velocity_tolerance: 1e-5,

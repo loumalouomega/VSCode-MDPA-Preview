@@ -145,16 +145,32 @@ function powerFit(points) {
 
 function fit(file) {
   const rows = JSON.parse(fs.readFileSync(file, "utf8")).results.filter((r) => r.measured);
-  const ratio = rows.map((r) => r.measured.tetrahedra / r.planned.ideal);
-  const factor = Math.exp(ratio.reduce((a, b) => a + Math.log(b), 0) / ratio.length);
-  const time = powerFit(rows.map((r) => [r.measured.tetrahedra, r.measured.seconds]));
-  const mem = powerFit(rows.map((r) => [r.measured.tetrahedra, r.measured.peakRssMb]));
+  // The model estimate.ts fits: the wall-law ideal plus each region's volume
+  // at its own size, then a power law to what MMG really produces. The region
+  // term is recomputed here from the case grid (not read from the record, so
+  // an old record without it still fits).
+  const TET = Math.SQRT2 / 12;
+  const { refinementRegionVolume } = out("problemtype/windTunnel/regions.js");
+  const idealOf = (r) => {
+    const c = CASES.find((x) => x.id === r.id);
+    let regionCells = 0;
+    if (c?.regions) {
+      for (const region of REGION(c.regions)) regionCells += refinementRegionVolume(region) / (TET * region.size ** 3);
+    }
+    return r.planned.ideal + regionCells;
+  };
+  const cells = powerFit(rows.map((r) => [idealOf(r), r.measured.tetrahedra]));
+  const tets = rows.map((r) => cells.k * idealOf(r) ** cells.p);
+  const time = powerFit(rows.map((r, i) => [tets[i], r.measured.seconds]));
+  const mem = powerFit(rows.map((r, i) => [tets[i], r.measured.peakRssMb]));
   const within = (est, got) => Math.max(est / got, got / est);
+  const worst = (pred, get) => Math.max(...rows.map((r, i) => within(pred[i], get(r))));
   const report = {
     cells: rows.length,
-    MMG_CELL_FACTOR: +factor.toFixed(3),
+    cellsLaw: `measured = ${cells.k.toFixed(4)} * ideal^${cells.p.toFixed(4)}`,
     timeLaw: `seconds = ${time.k.toExponential(3)} * tets^${time.p.toFixed(3)}`,
     memoryLaw: `peakRssMb = ${mem.k.toExponential(3)} * tets^${mem.p.toFixed(3)}`,
+    worstCellsRatio: +worst(tets, (r) => r.measured.tetrahedra).toFixed(2),
     worstTetrahedraRatio: +Math.max(...rows.map((r) => within(r.planned.tetrahedra, r.measured.tetrahedra))).toFixed(2),
   };
   console.log(JSON.stringify(report, null, 2));

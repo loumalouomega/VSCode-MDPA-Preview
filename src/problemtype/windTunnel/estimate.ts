@@ -94,6 +94,13 @@ export interface MeshEstimateInput {
   surfaceArea: number;
   /** Sizing law at the wall. */
   wall: WallLayerSpec;
+  /**
+   * The refinement regions, each with the volume it occupies and the size
+   * inside it. A region refines the tunnel to its own size, so the integral
+   * must count those cells: without them a region is under-estimated by
+   * several times, because the wall law alone says nothing about it.
+   */
+  regions?: { volume: number; size: number }[];
 }
 
 export interface MeshEstimate {
@@ -113,14 +120,38 @@ export interface MeshEstimate {
 const TET_VOLUME = Math.SQRT2 / 12;
 
 /**
+ * What MMG really produces for an ideal count, fitted on ten measured runs
+ * (a sharp box and a smooth sphere over a ladder of surface sizes, three of
+ * them with a refinement region; each in a fresh process with the
+ * extension's worker runners installed, so the peak RSS is what a user's
+ * host would see). The calibration fixture is
+ * `src/test/fixtures/windTunnel/estimate-refit-2026-10-20.json`.
+ *
+ * The power is below 1 because MMG's overhead per surface is roughly
+ * constant: as the volume grows the ratio falls (7.7 at 13k ideal cells,
+ * 2.0 at 400k). The fit is within a factor of 1.6 of every measured run.
+ */
+export const MMG_CELL_K = 248.4669;
+export const MMG_CELL_P = 0.629;
+/** Wall time, fitted on the same runs (worst error 2x, on the finest box case). */
+export const MMG_TIME_K = 6.585e-5;
+export const MMG_TIME_P = 1.113;
+/** Peak RSS in the extension's workers, fitted on the same runs. */
+export const MMG_MEMORY_K = 125.7152;
+export const MMG_MEMORY_P = 0.241;
+
+/**
  * Ratio of the cells MMG really produces to the ideal count, fitted on the
  * sphere-in-a-tunnel spike (an isotropic and a stretched case). MMG splits and
  * grades more finely than a size field alone asks for.
+ *
+ * Kept for compatibility; new code uses the power law below, which the
+ * ten-run refit supersedes.
  */
 export const MMG_CELL_FACTOR = 1.45;
 
 export function estimateMesh(input: MeshEstimateInput): MeshEstimate {
-  const { volume, surfaceArea, wall } = input;
+  const { volume, surfaceArea, wall, regions } = input;
   const reqv = Math.sqrt(surfaceArea / (4 * Math.PI));
   let used = 0;
   let cells = 0;
@@ -140,16 +171,31 @@ export function estimateMesh(input: MeshEstimateInput): MeshEstimate {
       used = volume;
     }
   }
-  const expected = cells * MMG_CELL_FACTOR;
-  const notes = ["An ideal-tetrahedron integral of the sizing law, scaled by the factor fitted on a sphere test; expect it within about a factor of two."];
+  // A refinement region refines its own volume to its own size, which the
+  // wall law alone says nothing about: without this term a region is
+  // under-estimated several times over (the wall integral counts the region
+  // at the coarse far size). The double count of the region's volume at the
+  // far size is negligible beside it (tens of cells against hundreds of
+  // thousands).
+  let regionCells = 0;
+  for (const region of regions ?? []) {
+    if (!(region.volume > 0) || !(region.size > 0)) continue;
+    regionCells += region.volume / (TET_VOLUME * region.size ** 3);
+  }
+  const ideal = cells + regionCells;
+  const expected = MMG_CELL_K * ideal ** MMG_CELL_P;
+  const notes = [
+    "An ideal-tetrahedron integral of the sizing law plus the refinement regions, through the power law fitted on ten measured worker runs; expect it within about a factor of two.",
+  ];
+  if ((regions ?? []).length > 0) notes.push("The refinement regions dominate the count: each contributes its volume at its own size.");
   return {
     tetrahedra: cells,
     expectedTetrahedra: expected,
     nodes: expected / 5.5,
-    // Measured on a sharp box in a tunnel: 413k tetrahedra in 78 s at 3.2 GB, 1.05M in 385 s at 2.8 GB
-    // (single process; the extension runs each wasm step in a worker that is released afterwards).
-    memoryMb: Math.max(1000, expected * 2.5e-3),
-    seconds: 78 * (expected / 413_000) ** 1.75,
+    // Fitted on the same ten runs, measured in the extension's workers
+    // (peak RSS of the fresh child process, workers included).
+    memoryMb: Math.max(1000, MMG_MEMORY_K * expected ** MMG_MEMORY_P),
+    seconds: MMG_TIME_K * expected ** MMG_TIME_P,
     notes,
   };
 }

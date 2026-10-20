@@ -23,8 +23,49 @@ NAME = "Fluid Dynamics (Python example)"
 NO_SKIN = ("velocityConstraints", "pressureConstraints")
 # Conditions that name a part without being a boundary condition of the solver.
 NOT_BOUNDARY = ("flowForces", "aerodynamicCoefficients", "pressureCoefficient", "yPlus", "periodic", "integrationStats")
-# Output variables a monitor writes as non-historical nodal data.
-MONITOR_OUTPUT = {"pressureCoefficient": "PRESSURE_COEFFICIENT", "yPlus": "Y_PLUS"}
+# Output variables a monitor writes as non-historical data.
+#
+# The two are written on DIFFERENT entities, and that is not a detail:
+# PRESSURE_COEFFICIENT is set on the part's nodes, so it belongs in the
+# output's nodal_data_value_variables; Y_PLUS is set on the part's conditions
+# (computed per wall face from that face's parent element), so it belongs in
+# condition_data_value_variables — asking for it as nodal data makes Kratos
+# read the nodes, which never carry it, and the output file gets zeros.
+MONITOR_NODAL_OUTPUT = {"pressureCoefficient": "PRESSURE_COEFFICIENT"}
+MONITOR_CONDITION_OUTPUT = {"yPlus": "Y_PLUS"}
+
+
+def _condition_vtk_output_process(model_part_name, variables, volume_vtk):
+    """A vtk output process for a part whose results live on its CONDITIONS.
+
+    Kratos' VtkOutput writes condition data only for a model part whose entity
+    type is CONDITION, so the wall's own part gets its own output process. The
+    file it writes is a condition mesh (the wall's faces): a SECOND file beside
+    the volume output, not a replacement.
+    """
+    parameters = volume_vtk["Parameters"]
+    return {
+        "python_module": "vtk_output_process",
+        "kratos_module": "KratosMultiphysics",
+        "process_name": "VtkOutputProcess",
+        "help": "This process writes postprocessing files for Paraview",
+        "Parameters": {
+            "model_part_name": model_part_name,
+            "output_control_type": parameters["output_control_type"],
+            "output_interval": parameters["output_interval"],
+            "file_format": parameters["file_format"],
+            "output_precision": parameters["output_precision"],
+            "output_sub_model_parts": False,
+            "output_path": parameters["output_path"],
+            "save_output_files_in_folder": True,
+            "entity_type": "condition",
+            "nodal_solution_step_data_variables": [],
+            "nodal_data_value_variables": [],
+            "element_data_value_variables": [],
+            "condition_data_value_variables": list(variables),
+            "gauss_point_variables_extrapolated_to_nodes": [],
+        },
+    }
 FORMULATION_KEY = {"axisymmetric": "axisymmetric_navier_stokes"}
 
 
@@ -168,7 +209,10 @@ def solver_settings(values, ctx):
         "model_import_settings": {"input_type": "mdpa", "input_filename": ctx["mdpa_stem"]},
         "material_import_settings": {"materials_filename": ctx["materials_file_name"]},
         "echo_level": values["echoLevel"],
-        "compute_reactions": values["computeReactions"],
+        # The wall y+ is computed from the wall's REACTION, so a case that
+        # asks for it needs the solver to compute the reactions.
+        "compute_reactions": values["computeReactions"] or any(
+            a["conditionId"] == "yPlus" for a in ctx["assignments"]),
         # Derived from the assignments — the reason this is a hook, not a template.
         "volume_model_part_name": (ctx["parts_model_parts"][0]
                                    if ctx["parts_model_parts"] else ctx["model_part_name"]),
@@ -357,7 +401,7 @@ def post_process(project_parameters, ctx):
     # A monitor that writes a nodal result needs it in the output's non-historical list.
     wanted = []
     for a in ctx["assignments"]:
-        name = MONITOR_OUTPUT.get(a["conditionId"])
+        name = MONITOR_NODAL_OUTPUT.get(a["conditionId"])
         if name and name not in wanted:
             wanted.append(name)
     vtk = (project_parameters.get("output_processes") or {}).get("vtk_output") or []
@@ -368,6 +412,26 @@ def post_process(project_parameters, ctx):
             if name not in listed:
                 listed.append(name)
         parameters["nodal_data_value_variables"] = listed
+    # A monitor that writes a CONDITION result (the wall y+) needs a
+    # condition-typed output on the wall's own part: asking the element part
+    # for condition data writes nothing, and asking for it as nodal data
+    # writes zeros (the nodes never carry it).
+    condition_wanted = []
+    for a in ctx["assignments"]:
+        name = MONITOR_CONDITION_OUTPUT.get(a["conditionId"])
+        if name and name not in condition_wanted:
+            condition_wanted.append(name)
+    if condition_wanted and vtk:
+        wall_parts = []
+        for a in ctx["assignments"]:
+            if MONITOR_CONDITION_OUTPUT.get(a["conditionId"]):
+                dotted = ctx["model_part_name"] + "." + a["smpPath"].replace("/", ".")
+                if dotted not in wall_parts:
+                    wall_parts.append(dotted)
+        outputs = (project_parameters["output_processes"] or {}).get("vtk_output") or []
+        for wall_part in wall_parts:
+            outputs.append(_condition_vtk_output_process(wall_part, condition_wanted, vtk[0]))
+        project_parameters["output_processes"]["vtk_output"] = outputs
     modulus = ctx["values"]["gravityValue"]
     if modulus == 0:
         return project_parameters
@@ -674,7 +738,7 @@ CONDITIONS = [
                       "echo_level": 0,
                   },
               },
-              help="Writes Y_PLUS on this wall's nodes for the output, to check the first cell height against the wall model.", category="other", icon="ptResults"),
+              help="Writes Y_PLUS on this wall's faces for the output, to check the first cell height against the wall model.", category="other", icon="ptResults"),
     condition("integrationStats", "Integration-point statistics", list="auxiliar_process_list", target="volume",
               fields=[field("statisticType", "Statistic", "enum", default="average", options=[{"value": "average", "label": "Average"}, {"value": "variance", "label": "Variance"}, {"value": "third_order_moment", "label": "Third-order moment"}]),
                       field("variable", "Variable(s)", "string", default="VELOCITY", help="One variable for an average, one or two for a variance, three for a third-order moment, comma-separated."),

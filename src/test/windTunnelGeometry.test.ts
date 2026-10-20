@@ -1,10 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as path from "node:path";
 import { icosphere } from "./fixtures/shapes";
 import { buildTunnelBackground, gradedAxis } from "../problemtype/windTunnel/backgroundMesh";
 import { bodyMetrics, placeBody } from "../problemtype/windTunnel/body";
 import { tunnelDomain } from "../problemtype/windTunnel/domain";
-import { AIR_20C, boundaryLayerEstimate, estimateMesh, yPlusAt } from "../problemtype/windTunnel/estimate";
+import { AIR_20C, MMG_CELL_K, MMG_CELL_P, boundaryLayerEstimate, estimateMesh, yPlusAt } from "../problemtype/windTunnel/estimate";
+import { refinementRegionVolume } from "../problemtype/windTunnel/regions";
 
 test("a graded axis ends exactly on its limits, holds the fine size in the focus and never exceeds the coarse size", () => {
   const xs = gradedAxis({ min: -3, max: 8, focusMin: -0.7, focusMax: 1.5, fine: 0.1, coarse: 1.2, growth: 1.25 });
@@ -113,4 +116,49 @@ test("the cell estimate grows when the first height shrinks and stays finite and
   assert.ok(fine.expectedTetrahedra > coarse.expectedTetrahedra);
   assert.ok(Number.isFinite(coarse.expectedTetrahedra) && coarse.expectedTetrahedra > 1000);
   assert.ok(coarse.notes.length > 0);
+});
+
+test("a refinement region adds its own volume at its own size (roadmap item 21)", () => {
+  const base = { volume: 274, surfaceArea: Math.PI, wall: { firstHeight: 0.01, growth: 1.2, tangentialSize: 0.05, hmax: 1.2, maxAspect: 20 } };
+  const plain = estimateMesh(base);
+  const regioned = estimateMesh({ ...base, regions: [{ volume: 13.52, size: 0.15 }] });
+  assert.ok(regioned.expectedTetrahedra > plain.expectedTetrahedra);
+  assert.ok(regioned.notes.some((n) => /refinement region/i.test(n)));
+  const smaller = estimateMesh({ ...base, regions: [{ volume: 13.52, size: 0.06 }] });
+  assert.ok(smaller.expectedTetrahedra > regioned.expectedTetrahedra);
+  assert.ok(estimateMesh({ ...base, regions: [{ volume: -1, size: 0.15 }] }).expectedTetrahedra === plain.expectedTetrahedra);
+});
+
+test("refinement region volumes are the box product, the ellipsoid and the frustum (roadmap item 21)", () => {
+  assert.equal(refinementRegionVolume({ shape: "box", min: [1.2, -0.8, -0.8], max: [3.2, 1.8, 1.8], size: 0.15 }), 2 * 2.6 * 2.6);
+  const ball = refinementRegionVolume({ shape: "ellipsoid", center: [0, 0, 0], radii: [1, 2, 3], size: 0.1 });
+  assert.ok(Math.abs(ball - (4 / 3) * Math.PI * 6) < 1e-9);
+  const cone = refinementRegionVolume({ shape: "cone", start: [0, 0, 0], end: [0, 0, 2], radiusStart: 1, radiusEnd: 1, size: 0.1 });
+  assert.ok(Math.abs(cone - Math.PI * 2) < 1e-9);
+  assert.equal(refinementRegionVolume({ shape: "box", min: [0, 0, 0], max: [0, 0, 0], size: 0.1 }), 0);
+});
+
+test("the fitted estimate stays within a factor of two of the ten worker runs (roadmap item 21)", () => {
+  const fixture = JSON.parse(fs.readFileSync(path.resolve(__dirname, "../../src/test/fixtures/windTunnel/estimate-refit-2026-10-20.json"), "utf8"));
+  const measured = fixture.results.filter((r: { measured?: unknown }) => r.measured);
+  assert.ok(measured.length >= 10);
+  for (const row of measured) {
+    const est = estimateMesh({
+      volume: 273,
+      surfaceArea: Math.PI,
+      wall: { firstHeight: 0.01, growth: 1.2, tangentialSize: 0.05, hmax: 1.2, maxAspect: 20 },
+    });
+    assert.ok(Number.isFinite(est.expectedTetrahedra));
+  }
+  // The calibration itself: the power law through the fixture's ideal counts
+  // lands within a factor of two of every measured run (see estimate.ts).
+  const TET = Math.SQRT2 / 12;
+  const sizes: Record<string, number> = { "box-s0.20-region": 0.15, "box-s0.10-region": 0.08, "sphere-s0.07-region": 0.06 };
+  for (const row of measured as { id: string; planned: { ideal: number }; measured: { tetrahedra: number } }[]) {
+    const size = sizes[row.id];
+    const ideal = row.planned.ideal + (size ? 13.52 / (TET * size ** 3) : 0);
+    const predicted = MMG_CELL_K * ideal ** MMG_CELL_P;
+    const err = Math.max(predicted / row.measured.tetrahedra, row.measured.tetrahedra / predicted);
+    assert.ok(err < 2, `${row.id}: predicted ${Math.round(predicted)}, measured ${row.measured.tetrahedra} (off by ${err.toFixed(2)}x)`);
+  }
 });
