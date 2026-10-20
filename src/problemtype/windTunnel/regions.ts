@@ -50,3 +50,32 @@ export function checkRegion(region: RefinementRegion): string | undefined {
       return `unknown shape "${(region as { shape: unknown }).shape}" (box, cone or ellipsoid)`;
   }
 }
+
+/**
+ * The volume a refinement region occupies (m³), for the cost estimate.
+ *
+ * A box is its side product; an ellipsoid is 4/3 π rx ry rz; a cone is the
+ * frustum between its two radii (a true cone when one radius is 0). Never
+ * negative and never NaN: an invalid region contributes nothing, and the
+ * estimate runs even when the plan carries errors.
+ */
+export function refinementRegionVolume(region: RefinementRegion): number {
+  try {
+    if (region.shape === "box") {
+      const v = (region.max[0] - region.min[0]) * (region.max[1] - region.min[1]) * (region.max[2] - region.min[2]);
+      return Number.isFinite(v) ? Math.max(0, v) : 0;
+    }
+    if (region.shape === "ellipsoid") {
+      const v = (4 / 3) * Math.PI * region.radii[0] * region.radii[1] * region.radii[2];
+      return Number.isFinite(v) ? Math.max(0, v) : 0;
+    }
+    const dx = region.end[0] - region.start[0];
+    const dy = region.end[1] - region.start[1];
+    const dz = region.end[2] - region.start[2];
+    const h = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    const v = (Math.PI * h * (region.radiusStart ** 2 + region.radiusStart * region.radiusEnd + region.radiusEnd ** 2)) / 3;
+    return Number.isFinite(v) ? Math.max(0, v) : 0;
+  } catch {
+    return 0;
+  }
+}

@@ -136,8 +136,62 @@ function statsByPart(ctx: { assignments: { conditionId: string; smpPath: string;
   return { byPart, problems };
 }
 
-/** Output variables a monitor writes as non-historical nodal data, by condition. */
-const MONITOR_OUTPUT: Record<string, string> = { pressureCoefficient: "PRESSURE_COEFFICIENT", yPlus: "Y_PLUS" };
+/**
+ * Output variables a monitor writes as non-historical data, by condition.
+ *
+ * The two are written on DIFFERENT entities, and that is not a detail:
+ *
+ * - `PRESSURE_COEFFICIENT` is set on the part's **nodes**
+ *   (`compute_pressure_coefficient_process.cpp`: `r_node.SetValue(...)`), so it
+ *   belongs in the output's `nodal_data_value_variables`.
+ * - `Y_PLUS` is set on the part's **conditions**
+ *   (`compute_y_plus_process.cpp`: `rCondition.SetValue(r_output_variable, ...)`),
+ *   because it is computed per wall face from that face's parent element. It
+ *   therefore belongs in `condition_data_value_variables` — asking for it as
+ *   nodal data makes Kratos read the nodes, which never carry it, and the
+ *   output file gets a column of zeros.
+ */
+const MONITOR_NODAL_OUTPUT: Record<string, string> = { pressureCoefficient: "PRESSURE_COEFFICIENT" };
+const MONITOR_CONDITION_OUTPUT: Record<string, string> = { yPlus: "Y_PLUS" };
+
+/**
+ * A vtk output process for a part whose results live on its CONDITIONS.
+ *
+ * Kratos' VtkOutput decides what to write from the model part's entity type:
+ * `automatic` gives elements precedence over conditions (and warns when a part
+ * has both), so a wall that carries both surface cells and volume elements
+ * would never reach its condition data. Naming the entity type `condition`
+ * makes it write the conditions instead — which is where the y+ is.
+ *
+ * The file it writes is a condition mesh (the wall's faces), so it is a
+ * SECOND file beside the volume output, not a replacement: the volume output
+ * carries the fields, this one carries the wall quantities.
+ */
+function conditionVtkOutputProcess(modelPartName: string, variables: string[], volumeVtk: JsonObject): JsonObject {
+  const parameters = volumeVtk.Parameters as JsonObject;
+  return {
+    python_module: "vtk_output_process",
+    kratos_module: "KratosMultiphysics",
+    process_name: "VtkOutputProcess",
+    help: "This process writes postprocessing files for Paraview",
+    Parameters: {
+      model_part_name: modelPartName,
+      output_control_type: parameters.output_control_type,
+      output_interval: parameters.output_interval,
+      file_format: parameters.file_format,
+      output_precision: parameters.output_precision,
+      output_sub_model_parts: false,
+      output_path: parameters.output_path,
+      save_output_files_in_folder: true,
+      entity_type: "condition",
+      nodal_solution_step_data_variables: [],
+      nodal_data_value_variables: [],
+      element_data_value_variables: [],
+      condition_data_value_variables: [...variables],
+      gauss_point_variables_extrapolated_to_nodes: [],
+    },
+  };
+}
 
 const MONOLITHIC = { field: "strategy", equals: "monolithic" };
 const STOKES = { field: "strategy", equals: "stokes" };
@@ -588,7 +642,7 @@ export const fluid = defineProblemtype(
         target: "surface",
         category: "other",
         icon: "ptResults",
-        help: "Writes Y_PLUS on this wall's nodes for the output, to check the first cell height against the wall model.",
+        help: "Writes Y_PLUS on this wall's faces for the output, to check the first cell height against the wall model.",
         fields: [],
         processTemplate: {
           python_module: "compute_y_plus_process",
@@ -787,7 +841,11 @@ export const fluid = defineProblemtype(
         model_import_settings: { input_type: "mdpa", input_filename: ctx.mdpaStem },
         material_import_settings: { materials_filename: ctx.materialsFileName },
         echo_level: asNum(v.echoLevel, 0),
-        compute_reactions: asBool(v.computeReactions, false),
+        // The wall y+ is computed from the wall's REACTION, so a case that
+        // asks for it needs the solver to compute the reactions — without
+        // them the y+ process reads a variable nobody wrote, and the run
+        // dies in the first time step.
+        compute_reactions: asBool(v.computeReactions, false) || ctx.assignments.some((a) => a.conditionId === "yPlus"),
         // Derived from the assignments — the reason this is a hook, not a template.
         volume_model_part_name: ctx.partsModelParts[0] ?? ctx.modelPartName,
         skin_parts: skin,
@@ -889,13 +947,36 @@ export const fluid = defineProblemtype(
         }
       }
       // A monitor that writes a nodal result needs it in the output's non-historical list.
-      const wanted = [...new Set(ctx.assignments.map((a) => MONITOR_OUTPUT[a.conditionId]).filter((n): n is string => Boolean(n)))];
+      const wanted = [...new Set(ctx.assignments.map((a) => MONITOR_NODAL_OUTPUT[a.conditionId]).filter((n): n is string => Boolean(n)))];
       const vtk = (((pp.output_processes as JsonObject | undefined)?.vtk_output as JsonObject[] | undefined) ?? [])[0];
       if (wanted.length > 0 && vtk) {
         const parameters = vtk.Parameters as JsonObject;
         const list = Array.isArray(parameters.nodal_data_value_variables) ? [...(parameters.nodal_data_value_variables as string[])] : [];
         for (const n of wanted) if (!list.includes(n)) list.push(n);
         parameters.nodal_data_value_variables = list;
+      }
+      // A monitor that writes a CONDITION result (the wall y+) needs a
+      // condition-typed output. Kratos' VtkOutput writes condition data only
+      // for a model part whose entity type is CONDITION, so the wall's own
+      // part gets its own output process — asking the element part for
+      // condition data writes nothing, and asking for it as nodal data writes
+      // zeros (the nodes never carry it).
+      const conditionWanted = [
+        ...new Set(ctx.assignments.map((a) => MONITOR_CONDITION_OUTPUT[a.conditionId]).filter((n): n is string => Boolean(n))),
+      ];
+      if (conditionWanted.length > 0 && vtk) {
+        const wallParts = [
+          ...new Set(
+            ctx.assignments
+              .filter((a) => MONITOR_CONDITION_OUTPUT[a.conditionId])
+              .map((a) => dottedModelPart(ctx.modelPartName, a.smpPath)),
+          ),
+        ];
+        const outputs = ((pp.output_processes as JsonObject).vtk_output as JsonObject[]) ?? [];
+        for (const wallPart of wallParts) {
+          outputs.push(conditionVtkOutputProcess(wallPart, conditionWanted, vtk));
+        }
+        (pp.output_processes as JsonObject).vtk_output = outputs;
       }
       const modulus = asNum(ctx.values.gravityValue, 0);
       if (modulus === 0) return pp;

@@ -167,10 +167,18 @@ End SubModelPartConditions
 End SubModelPart
 Begin SubModelPart Walls
 Begin SubModelPartNodes
+1
+2
+3
+4
 5
 6
 7
 8
+9
+10
+11
+12
 End SubModelPartNodes
 Begin SubModelPartConditions
 1
@@ -223,9 +231,9 @@ async function readLatest(caseDir, { excludeNewest = false } = {}) {
 
 const nodalField = (model, variable) => model.fields.find((f) => f.variable === variable && f.kind === "Nodal");
 
-/** Share and mean of the positive values of a nodal scalar (y+ is written 0 off the wall). */
+/** Share and mean of the positive values of a scalar (the y+ is 0 off the wall). */
 function wallStats(model, variable) {
-  const f = nodalField(model, variable);
+  const f = model.fields.find((x) => x.variable === variable);
   if (!f) return undefined;
   const v = Array.from(f.values).filter((x) => Number.isFinite(x) && x > 0);
   if (v.length === 0) return { count: 0, mean: NaN, inLog: 0 };
@@ -442,19 +450,31 @@ function longRunState(kind) {
  * criterion is that the variable exists and is finite, not a tolerance this harness would invent).
  */
 async function checkTunnelWall(fam, { caseDir, built }) {
-  const latest = await readLatest(caseDir);
-  if (!latest) throw new Error("no readable result in vtk_output");
-  // The wizard's case writes the classic nodal Y_PLUS (its yPlus monitor), not RANS_Y_PLUS: Kratos' RANS
-  // y+ is a CONDITION variable (RANSApplication formulations/utilities.py sets it on model_part.Conditions).
-  const variable = "Y_PLUS";
-  const stats = wallStats(latest.model, variable);
-  if (!stats) throw new Error(`${variable} is not in ${latest.fileName}; the output list the case writes lacks it`);
-  if (!(stats.count > 0) || !Number.isFinite(stats.mean)) {
-    throw new Error(`${variable} is zero on every node of ${latest.fileName}: the wall y+ monitor was never evaluated in this case`);
+  // The y+ is a CONDITION variable in Kratos (ComputeYPlusProcess sets it on
+  // the wall's faces), so it is written by the wall's own condition-typed
+  // output — a second file beside the volume output. The volume output has
+  // no y+ at all, and asking it for one as nodal data yields a column of
+  // zeros, which is what this check used to find.
+  const dir = path.join(caseDir, "vtk_output");
+  if (!fs.existsSync(dir)) throw new Error("no vtk_output directory");
+  const files = fs.readdirSync(dir).filter((f) => f.endsWith(".vtk") || f.endsWith(".vtp"));
+  let stats;
+  let fileName;
+  for (const f of files) {
+    const model = await parseMeshFile(path.join(dir, f));
+    const s = wallStats(model, "Y_PLUS");
+    if (s && s.count > 0) {
+      stats = s;
+      fileName = f;
+      break;
+    }
+  }
+  if (!stats) {
+    throw new Error(`Y_PLUS is zero on every node of every file in ${dir}: the wall y+ monitor was never evaluated in this case`);
   }
   const planned = built.report.firstLayer?.yPlus;
   const ratio = planned ? stats.mean / planned : NaN;
-  return `${variable} mean ${stats.mean.toFixed(1)} on ${stats.count} nodes, ${(stats.inLog * 100).toFixed(0)}% in 30–300; report y+ ${planned?.toFixed(1) ?? "?"} (solver/report ${Number.isFinite(ratio) ? ratio.toFixed(2) : "?"})`;
+  return `Y_PLUS mean ${stats.mean.toFixed(1)} on ${stats.count} nodes in ${fileName}, ${(stats.inLog * 100).toFixed(0)}% in 30–300; report y+ ${planned?.toFixed(1) ?? "?"} (solver/report ${Number.isFinite(ratio) ? ratio.toFixed(2) : "?"})`;
 }
 
 async function checkPeriodic(fam, { caseDir }) {
@@ -603,7 +623,12 @@ const FAMILIES = [
     state: () => fluidState({ strategy: "monolithic", elementType: "qsvms", timeScheme: "bdf2" }),
     upstreamBug: {
       note: "monolithic BDF2 with a classic element segfaults stock Kratos in the first time step",
-      matches: ({ log }) => /Fluid Dynamics Analysis: STEP/.test(log) && !/Analysis -END-/.test(log),
+      // The crash kills the process during the analysis stage's setup, BEFORE
+      // the "Fluid Dynamics Analysis: STEP" banner is ever printed — so the
+      // banner is NOT a marker for it. The signal the run actually reports
+      // is the segfault itself, and a run that dies on SIGSEGV with the
+      // analysis never started is this bug.
+      matches: ({ log, message }) => /SIGSEGV|segmentation fault/i.test(`${message ?? ""} ${log}`) && !/Analysis -END-/.test(log),
     },
   },
   // Item 21: stop behavior, through case_run and case_stop.
@@ -807,7 +832,8 @@ async function runFamily(fam, { python, install, timeout, root }) {
     if (fam.upstreamBug) {
       const logFile = path.join(path.dirname(meshPath), "case.kratosrun.log");
       const log = fs.existsSync(logFile) ? fs.readFileSync(logFile, "utf8") : "";
-      if (fam.upstreamBug.matches({ log, status: st })) return { family: fam.id, status: KNOWN, dir, detail: fam.upstreamBug.note };
+      const message = status.message ?? reply.message ?? "";
+      if (fam.upstreamBug.matches({ log, status: st, message })) return { family: fam.id, status: KNOWN, dir, detail: fam.upstreamBug.note };
     }
     return { family: fam.id, status: FAIL, dir, detail: `run ended ${st}: ${status.message ?? reply.message ?? "see log"} (${seconds}s)` };
   }

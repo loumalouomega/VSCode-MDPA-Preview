@@ -1,0 +1,247 @@
+{
+  "date": "2026-10-20",
+  "host": {
+    "cpus": 16,
+    "model": "AMD Ryzen 7 255 w/ Radeon 780M Graphics",
+    "totalMemGb": 22.8,
+    "node": "v26.11.1",
+    "platform": "linux"
+  },
+  "note": "Each case in a fresh process with the extension's worker runners installed; peakRssMb is process.resourceUsage().maxRSS (workers included).",
+  "results": [
+    {
+      "id": "box-s0.30",
+      "planned": {
+        "tetrahedra": 19598.991990110488,
+        "ideal": 13516.5462000762,
+        "seconds": 0.376349245127638,
+        "memoryMb": 1000
+      },
+      "measured": {
+        "tetrahedra": 104072,
+        "nodes": 18929,
+        "seconds": 28.22,
+        "reportSeconds": 28.219,
+        "peakRssMb": 2179.50390625,
+        "snap": {
+          "before": 0.037646546959877014,
+          "after": 0.012902766466140747,
+          "fraction": 0.5,
+          "applied": true
+        },
+        "inverted": 0
+      }
+    },
+    {
+      "id": "box-s0.20",
+      "planned": {
+        "tetrahedra": 40087.08869905931,
+        "ideal": 27646.26806831677,
+        "seconds": 1.3165577595526714,
+        "memoryMb": 1000
+      },
+      "measured": {
+        "tetrahedra": 190537,
+        "nodes": 34123,
+        "seconds": 48.504,
+        "reportSeconds": 48.504,
+        "peakRssMb": 2237.4765625,
+        "snap": {
+          "before": 0.028279513120651245,
+          "after": 0.01372702419757843,
+          "fraction": 0.25,
+          "applied": true
+        },
+        "inverted": 0
+      }
+    },
+    {
+      "id": "box-s0.20-region",
+      "planned": {
+        "tetrahedra": 40087.08869905931,
+        "ideal": 27646.26806831677,
+        "seconds": 1.3165577595526714,
+        "memoryMb": 1000
+      },
+      "measured": {
+        "tetrahedra": 256045,
+        "nodes": 45869,
+        "seconds": 58.823,
+        "reportSeconds": 58.822,
+        "peakRssMb": 2464.546875,
+        "snap": {
+          "before": 0.030638158321380615,
+          "after": 0.014220282435417175,
+          "fraction": 0.125,
+          "applied": true
+        },
+        "inverted": 0
+      }
+    },
+    {
+      "id": "box-s0.14",
+      "planned": {
+        "tetrahedra": 64102.50970534274,
+        "ideal": 44208.62738299499,
+        "seconds": 2.9937347620235792,
+        "memoryMb": 1000
+      },
+      "measured": {
+        "tetrahedra": 222060,
+        "nodes": 40031,
+        "seconds": 56.94,
+        "reportSeconds": 56.94,
+        "peakRssMb": 2509.72265625,
+        "snap": {
+          "before": 0.025048822164535522,
+          "after": 0.005907520651817322,
+          "fraction": 0.125,
+          "applied": true
+        },
+        "inverted": 0
+      }
+    },
+    {
+      "id": "box-s0.10",
+      "planned": {
+        "tetrahedra": 109147.43552553568,
+        "ideal": 75274.09346588668,
+        "seconds": 7.598112168802537,
+        "memoryMb": 1000
+      },
+      "measured": {
+        "tetrahedra": 313718,
+        "nodes": 56499,
+        "seconds": 81.022,
+        "reportSeconds": 81.021,
+        "peakRssMb": 2655.4296875,
+        "snap": {
+          "before": 0.016552358865737915,
+          "after": 0.004261985421180725,
+          "fraction": 0.25,
+          "applied": true
+        },
+        "inverted": 0
+      }
+    },
+    {
+      "id": "box-s0.10-region",
+      "planned": {
+        "tetrahedra": 109147.43552553568,
+        "ideal": 75274.09346588668,
+        "seconds": 7.598112168802537,
+        "memoryMb": 1000
+      },
+      "measured": {
+        "tetrahedra": 699004,
+        "nodes": 123391,
+        "seconds": 175.862,
+        "reportSeconds": 175.862,
+        "peakRssMb": 3651.21875,
+        "snap": {
+          "before": 0.01530754566192627,
+          "after": 0.0061581432819366455,
+          "fraction": 0.5,
+          "applied": true
+        },
+        "inverted": 0
+      }
+    },
+    {
+      "id": "box-s0.07",
+      "planned": {
+        "tetrahedra": 202864.30912503108,
+        "ideal": 139906.42008622835,
+        "seconds": 22.479771542822675,
+        "memoryMb": 1000
+      },
+      "measured": {
+        "tetrahedra": 479646,
+        "nodes": 85997,
+        "seconds": 139.52,
+        "reportSeconds": 139.52,
+        "peakRssMb": 2621.53515625,
+        "snap": {
+          "before": 0.011652961373329163,
+          "after": 0.006107360124588013,
+          "fraction": 0.25,
+          "applied": true
+        },
+        "inverted": 0
+      }
+    },
+    {
+      "id": "box-s0.05-region",
+      "error": "10: 0x5557c17a35a4  [/usr/bin/node] | 11: 0x5557c18f232a  [/usr/bin/node] | 12: 0x7f2d9e63d8b6 "
+    },
+    {
+      "id": "box-s0.035",
+      "planned": {
+        "tetrahedra": 582947.763756547,
+        "ideal": 402032.9405217566,
+        "seconds": 142.57188230724483,
+        "memoryMb": 1457.3694093913675
+      },
+      "measured": {
+        "tetrahedra": 812993,
+        "nodes": 147231,
+        "seconds": 515.946,
+        "reportSeconds": 515.945,
+        "peakRssMb": 2913.359375,
+        "snap": {
+          "before": 0.00583416223526001,
+          "after": 0.001889050006866455,
+          "fraction": 0.125,
+          "applied": true
+        },
+        "inverted": 0
+      }
+    },
+    {
+      "id": "sphere-s0.10",
+      "planned": {
+        "tetrahedra": 41183.5976500398,
+        "ideal": 28402.481137958486,
+        "seconds": 1.3802237823577557,
+        "memoryMb": 1000
+      },
+      "measured": {
+        "tetrahedra": 101271,
+        "nodes": 18245,
+        "seconds": 25.354,
+        "reportSeconds": 25.353,
+        "peakRssMb": 2023.55859375,
+        "snap": {
+          "before": 0.011310087589004028,
+          "after": 2.0094623665610326e-8,
+          "fraction": 1,
+          "applied": true
+        },
+        "inverted": 0
+      }
+    },
+    {
+      "id": "sphere-s0.07-region",
+      "planned": {
+        "tetrahedra": 63913.71267076788,
+        "ideal": 44078.42253156406,
+        "seconds": 2.978321610109549,
+        "memoryMb": 1000
+      },
+      "measured": {
+        "tetrahedra": 976712,
+        "nodes": 169993,
+        "seconds": 204.163,
+        "reportSeconds": 204.162,
+        "peakRssMb": 3856.53125,
+        "snap": {
+          "before": 0.005150955279605674,
+          "after": 1.977992669182333e-8,
+          "fraction": 1,
+          "applied": true
+        },
+        "inverted": 0
+      }
+    }
+  ]
+}
