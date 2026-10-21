@@ -49,12 +49,12 @@ export interface PreparedMeshioOp {
 export async function prepareMeshioOp(
   model: MdpaModel,
   diagnostics: MdpaDiagnostic[],
-  opts: { dim?: 2 | 3; exodusAttributes?: boolean } = {}
+  opts: { dim?: 2 | 3; exodusAttributes?: boolean; loader?: () => Promise<MeshioModule> } = {}
 ): Promise<PreparedMeshioOp | undefined> {
   if (model.nodeCount === 0) return undefined;
   const mesh = modelToMeshio(model, diagnostics, { dim: opts.dim ?? 3, exodusAttributes: opts.exodusAttributes });
   if (mesh.cells.length === 0) return undefined;
-  const m = await loadMeshio();
+  const m = await (opts.loader ?? loadMeshio)();
   return { m, mesh };
 }
 

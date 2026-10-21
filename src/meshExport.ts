@@ -38,8 +38,9 @@ import { extractSkinModel } from "./parser/extractSkin";
 import { deriveMesh, DeriveSpec, DeriveResult, DERIVE_KINDS } from "./parser/deriveMesh";
 import { estimateGrid, describeGridEstimate, triangleSurfaceOf, GRID_MAX_CELLS, GRID_CONFIRM_CELLS } from "./parser/gridSample";
 import { exportReportHtml } from "./parser/exportReportHtml";
-import { writeRawMeshioBytes } from "./parser/meshio";
+import { writeRawMeshioBytes, meshioFullInstalled } from "./parser/meshio";
 import { partitionParts, partitionManifest } from "./parser/partitionExport";
+import { deriveMeshOffThread, partitionPartsOffThread } from "./parser/derivedRunner";
 import { splitModel, SplitSpec } from "./parser/splitComponents";
 import {
   TABLE_KINDS,
@@ -940,7 +941,7 @@ export async function exportDerived(
         const abort = new AbortController();
         const sub = token.onCancellationRequested(() => abort.abort());
         try {
-          return await deriveMesh(ctx.model, spec, [], { signal: abort.signal });
+          return await deriveMeshOffThread(ctx.model, spec, [], { signal: abort.signal });
         } finally {
           sub.dispose();
         }
@@ -1149,6 +1150,19 @@ export async function exportPartitions(ctx: ExportContext): Promise<void> {
     { title: "Ghost layers each part also holds", placeHolder: "Ghost layers" }
   );
   if (!ghost) return;
+  // KaHIP lives in the full artifact, so the choice is only offered where it is installed.
+  let method: "sfc" | "kahip" = "sfc";
+  if (meshioFullInstalled()) {
+    const picked = await vscode.window.showQuickPick(
+      [
+        { label: "KaHIP", description: "minimizes the edge cut between parts; slightly uneven part sizes", value: "kahip" as const },
+        { label: "Space-filling curve", description: "exactly balanced by cell count; the interface is not optimized", value: "sfc" as const },
+      ],
+      { title: "Partitioning method", placeHolder: "Partitioning method" }
+    );
+    if (!picked) return;
+    method = picked.value;
+  }
   const stem = path.basename(ctx.fsPath, path.extname(ctx.fsPath));
   const dir = await pickFolderAndFormat(ctx, "Export partitions", (ext) => [
     ...Array.from({ length: +n }, (_, i) => `${stem}_part${i}${ext}`),
@@ -1163,7 +1177,7 @@ export async function exportPartitions(ctx: ExportContext): Promise<void> {
         const abort = new AbortController();
         const sub = token.onCancellationRequested(() => abort.abort());
         try {
-          return await partitionParts(ctx.model, { nparts: +n, ghostLayers: ghost.value }, [], { signal: abort.signal });
+          return await partitionPartsOffThread(ctx.model, { nparts: +n, ghostLayers: ghost.value, method }, [], { signal: abort.signal });
         } finally {
           sub.dispose();
         }

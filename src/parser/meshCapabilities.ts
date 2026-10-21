@@ -62,6 +62,8 @@ export interface MeshCapabilities {
     zstd: boolean;
     lz4: boolean;
     bzip2: boolean;
+    /** KaHIP partitioner linked (meshio++ >= 17.9.0): false on the lean build. */
+    kahip: boolean;
   };
   /**
    * The FULL artifact shipped beside the lean one since 17.2.0 (OpenCASCADE,
@@ -80,6 +82,7 @@ export interface MeshCapabilities {
       zstd: boolean;
       lz4: boolean;
       bzip2: boolean;
+      kahip: boolean;
       readers: string[];
       writers: string[];
     };
@@ -119,10 +122,17 @@ export interface MeshCapabilities {
   exportFidelity: ExportFidelityCapabilities;
   /**
    * Which partitioners the LIVE build can actually run (probed with a two-cell
-   * mesh, not assumed): the WebAssembly artifact has no KaHIP, so `kahip`
-   * throws and `auto` resolves to the space-filling-curve method.
+   * mesh, not assumed): `sfc` runs on the lean artifact; `kahip` (meshio++ >=
+   * 17.9.0) only on the full one, which `backends` names per method. When the
+   * full artifact is absent `kahip` is unavailable with the refusal's own
+   * reason. `auto` is whichever of the two is best here (measured: on the full
+   * artifact it returns KaHIP's labels, not the curve's).
    */
-  partitioning: { available: string[]; unavailable: { method: string; reason: string }[] };
+  partitioning: {
+    available: string[];
+    unavailable: { method: string; reason: string }[];
+    backends: Record<string, "lean" | "full">;
+  };
 }
 
 /** One fidelity-carrier array the adapter can emit, and what it recovers. */
@@ -259,6 +269,7 @@ export async function getMeshCapabilities(): Promise<MeshCapabilities> {
     build: {
       flavour: m.buildFlavour(),
       occt: m.hasOcct(),
+      kahip: m.hasKahip(),
       zstd: m.hasZstd(),
       lz4: m.hasLz4(),
       bzip2: m.hasBzip2(),
@@ -272,6 +283,8 @@ export async function getMeshCapabilities(): Promise<MeshCapabilities> {
     namedWriters: [...MESHIO_WRITER_KEYS],
     operations: { available: ["featureEdges", "hausdorff", "qualityGate", "periodicNodes", "regionAlgebra", "resampleSequence"], unavailable: [
       { name: "agglomerate", reason: "Polyhedral output cannot be preserved by the editable model." },
+      { name: "segment (method: primitive)", reason: "Primitive-aware patch segmentation (17.9.0): segment itself is an interactive op with no adopting adapter here yet; fitCad self-segments." },
+      { name: "generators (rectangle, box, disk, uvSphere, icosaSphere, cylinder, referenceCells)", reason: "Procedural mesh generators (17.9.0): a new-mesh feature, not an edit of the open one; no entry point or Kratos naming decision yet." },
       { name: "octree", reason: "Adaptive octree/hex mesh generation around a skin (17.8.0): no fidelity-checked adapter, field transfer or Kratos-semantics review yet." },
       { name: "retagRegions", reason: "SubModelParts do not retain native region tags or side selectors." }
     ] },
@@ -287,7 +300,7 @@ export async function getMeshCapabilities(): Promise<MeshCapabilities> {
     lenientRetry: [...MESHIO_LENIENT_RETRY_FORMATS],
     fidelity: FIDELITY_CAPABILITIES,
     exportFidelity: exportFidelityCapabilities(),
-    partitioning: probePartitioners(m),
+    partitioning: await probePartitioners(m),
   };
 }
 
@@ -312,6 +325,7 @@ async function probeFullArtifact(): Promise<MeshCapabilities["full"]> {
         zstd: fm.hasZstd(),
         lz4: fm.hasLz4(),
         bzip2: fm.hasBzip2(),
+        kahip: fm.hasKahip(),
         readers: [...live.readers].sort(),
         writers: [...live.writers].sort(),
       },
@@ -321,8 +335,14 @@ async function probeFullArtifact(): Promise<MeshCapabilities["full"]> {
   }
 }
 
-/** Runs each partitioner on a two-triangle mesh: a method the build lacks refuses by name. */
-function probePartitioners(m: Awaited<ReturnType<typeof loadMeshio>>): MeshCapabilities["partitioning"] {
+/**
+ * Runs each partitioner on a two-triangle mesh. The lean build is asked first;
+ * a method it refuses is retried on the full artifact when that is installed
+ * (one extra instantiation, only while `kahip` is unavailable on lean), and the
+ * backend that served it is recorded. A method no installed artifact can run
+ * is unavailable with the refusal's own reason.
+ */
+async function probePartitioners(m: Awaited<ReturnType<typeof loadMeshio>>): Promise<MeshCapabilities["partitioning"]> {
   const mesh = {
     dim: 3,
     points: new Float64Array([0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0]),
@@ -333,15 +353,31 @@ function probePartitioners(m: Awaited<ReturnType<typeof loadMeshio>>): MeshCapab
   } as unknown as Parameters<typeof m.partitionLabels>[0];
   const available: string[] = [];
   const unavailable: { method: string; reason: string }[] = [];
+  const backends: Record<string, "lean" | "full"> = {};
+  let full: Awaited<ReturnType<typeof loadMeshioFull>> | undefined;
   for (const method of ["sfc", "kahip"]) {
     try {
       m.partitionLabels(mesh, 2, method);
       available.push(method);
+      backends[method] = "lean";
+      continue;
     } catch (err) {
-      unavailable.push({ method, reason: err instanceof Error ? err.message : String(err) });
+      const leanReason = err instanceof Error ? err.message : String(err);
+      if (!meshioFullInstalled()) {
+        unavailable.push({ method, reason: leanReason });
+        continue;
+      }
+      try {
+        full ??= await loadMeshioFull();
+        full.partitionLabels(mesh, 2, method);
+        available.push(method);
+        backends[method] = "full";
+      } catch (err2) {
+        unavailable.push({ method, reason: err2 instanceof Error ? err2.message : String(err2) });
+      }
     }
   }
-  return { available, unavailable };
+  return { available, unavailable, backends };
 }
 
 /** Static — no wasm call needed — so it is defined once at module scope. */

@@ -18,14 +18,18 @@
  * distributed setup actually needs is per part: what it owns, what it holds as
  * ghost, and which of its nodes are shared with another part (the interface).
  *
- * The WASM build has no KaHIP: `"kahip"` throws by name and `"auto"` resolves to
- * `"sfc"`, a Hilbert space-filling-curve cut balanced by cell count (or by
- * weight, with `weights`) with good locality but no edge-cut minimization.
+ * `"sfc"` (the default) is a Hilbert space-filling-curve cut balanced by cell
+ * count (or by weight, with `weights`) with good locality but no edge-cut
+ * minimization. `"kahip"` (meshio++ >= 17.9.0, full artifact only, loaded lazily
+ * for this call) minimizes the edge cut at the cost of a small imbalance, and
+ * `"auto"` is KaHIP when the full artifact is installed, the curve otherwise —
+ * see partitionMesh.ts for the measurements. The result reports the method that
+ * RAN.
  */
 
 import { EntityKind, FieldData, MdpaDiagnostic, MdpaModel, SubModelPart } from "./types";
 import { modelToMeshio, meshioBlockOrder } from "./meshioConvert";
-import { loadMeshio } from "./meshio";
+import { loadMeshioForPartition, resolvePartitionMethod } from "./meshio";
 import { flattenMeshioData } from "./meshioAdapter";
 import { restrictToCells } from "./selectCells";
 import type { PartitionMethod } from "./partitionMesh";
@@ -64,7 +68,8 @@ export interface ExportedPart {
 
 export interface PartitionExportResult {
   parts: ExportedPart[];
-  method: "sfc";
+  /** The partitioner that ran (`auto` resolved). */
+  method: "sfc" | "kahip";
   ghostLayers: number;
   /** Owned Elements per part, and the imbalance max/mean − 1 (0 = perfectly even). */
   ownedElements: number[];
@@ -83,9 +88,7 @@ export async function partitionParts(
   if (!(nparts >= 1)) throw new Error("nparts must be at least 1.");
   const ghostLayers = Math.floor(params.ghostLayers ?? 0);
   if (!(ghostLayers >= 0) || ghostLayers > 8) throw new Error("ghostLayers must be between 0 and 8.");
-  if (params.method === "kahip") {
-    throw new Error("KaHIP is not available in the WebAssembly build; use \"sfc\" (or \"auto\", which resolves to it).");
-  }
+  const method = resolvePartitionMethod(params.method);
   const total = model.blocks.reduce((s, b) => s + b.count, 0);
   if (total === 0) throw new Error("The mesh has no cells to partition.");
   const elements = model.blocks.filter((b) => b.kind === "Elements").reduce((s, b) => s + b.count, 0);
@@ -120,9 +123,11 @@ export async function partitionParts(
     mesh.cell_data = { ...(mesh.cell_data ?? {}), [weightsKey]: perBlock as unknown as NonNullable<typeof mesh.cell_data>[string] };
   }
 
-  const m = await loadMeshio();
+  // KaHIP lives in the full artifact only; a missing one fails loudly here
+  // rather than quietly partitioning with the curve and calling it KaHIP.
+  const m = await loadMeshioForPartition(method);
   if (opts.signal?.aborted) throw new Error("cancelled");
-  const raw = m.partition(mesh, nparts, params.method ?? "sfc", params.imbalance ?? 0.03, "eco", params.seed ?? 0, true, ghostLayers, weightsKey, false);
+  const raw = m.partition(mesh, nparts, method, params.imbalance ?? 0.03, "eco", params.seed ?? 0, true, ghostLayers, weightsKey, false);
   if (opts.signal?.aborted) throw new Error("cancelled");
   if (raw.length !== nparts) throw new Error(`partition returned ${raw.length} part(s) for ${nparts}; the result was discarded.`);
 
@@ -207,12 +212,12 @@ export async function partitionParts(
   const sizes = parts.map((p) => p.owned.Elements);
   const mean = sizes.reduce((a, b) => a + b, 0) / Math.max(1, sizes.length);
   const warnings: string[] = [];
-  if (params.method === "auto" || params.method === undefined) {
-    warnings.push("Partitioned with the space-filling-curve method (the WebAssembly build has no KaHIP): balanced, with good locality, but the interface is not edge-cut optimized.");
+  if (method === "sfc" && params.method !== "sfc") {
+    warnings.push("Partitioned with the space-filling-curve method: balanced, with good locality, but the interface is not edge-cut optimized (method \"kahip\" minimizes it).");
   }
   return {
     parts,
-    method: "sfc",
+    method,
     ghostLayers,
     ownedElements: sizes,
     imbalance: mean > 0 ? Math.max(...sizes) / mean - 1 : 0,

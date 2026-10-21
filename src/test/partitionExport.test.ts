@@ -107,9 +107,28 @@ test("weights move the cut: a heavy element region ends up in a smaller part", a
   await assert.rejects(partitionParts(bad, { nparts: 2, weights: "W" }), /finite and positive/);
 });
 
-test("refusals: KaHIP by name, too many parts, no cells, bad ghost count", async () => {
+test("KaHIP (full artifact): every cell owned exactly once, and the result names the method that ran", async () => {
+  const src = tetBar(6);
+  const all = elementIds(src);
+  const r = await partitionParts(src, { nparts: 3, method: "kahip" });
+  assert.equal(r.method, "kahip");
+  assert.equal(r.parts.length, 3);
+  assert.ok(!r.warnings.some((w) => /space-filling-curve/.test(w)));
+  const owned: number[] = [];
+  for (const p of r.parts) {
+    const f = field(p.model, "Elemental", PARTITION_OWNER_VARIABLE)!;
+    for (let i = 0; i < f.ids.length; i++) if (f.values[i] === p.partId) owned.push(f.ids[i]);
+  }
+  assert.deepEqual(owned.sort((a, b) => a - b), [...all].sort((a, b) => a - b), "every element owned exactly once");
+  assert.ok(r.parts.every((p) => p.owned.Elements > 0), "no part is empty");
+  assert.equal((partitionManifest("x", r, []) as { method: string }).method, "kahip");
+  // The default stays the curve (recipes recorded before KaHIP keep their labels), and `auto` takes KaHIP.
+  assert.equal((await partitionParts(src, { nparts: 2 })).method, "sfc");
+  assert.equal((await partitionParts(src, { nparts: 2, method: "auto" })).method, "kahip");
+});
+
+test("refusals: too many parts, no cells, bad ghost count", async () => {
   const src = tetBar(2);
-  await assert.rejects(partitionParts(src, { nparts: 2, method: "kahip" }), /KaHIP is not available/);
   await assert.rejects(partitionParts(src, { nparts: 1000 }), /parts requested/);
   await assert.rejects(partitionParts(src, { nparts: 0 }), /at least 1/);
   await assert.rejects(partitionParts(src, { nparts: 2, ghostLayers: 9 }), /between 0 and 8/);

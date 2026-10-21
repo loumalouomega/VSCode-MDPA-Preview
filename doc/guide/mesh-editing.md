@@ -157,7 +157,7 @@ Constraint ids are also left where they are in the two cases where following the
 
 ![Partition: a hexahedral block coloured into four contiguous domains by the PARTITION_INDEX field, with the Field panel showing PARTITION_INDEX and the Partition form showing 4 parts](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/op-partition.png)
 
-Space-filling-curve domain decomposition into *N* parts balanced by cell count, attached as a real Kratos `PARTITION_INDEX` Elemental field (so it exports, and Kratos can read it) and optionally also created as one SubModelPart per part. Colouring by that field through the Field panel is how you check the result, as above. The bundled WASM build has **no KaHIP**, so only the space-filling-curve method is offered — good for previewing a decomposition and for a quick run, but it minimizes no edge cut and is not a substitute for METIS.
+Domain decomposition into *N* parts, attached as a real Kratos `PARTITION_INDEX` Elemental field (so it exports, and Kratos can read it) and optionally also created as one SubModelPart per part. Colouring by that field through the Field panel is how you check the result, as above. Two methods: **curve** (default) is a Hilbert space-filling-curve cut, balanced to within one cell with good locality but no edge-cut minimization — fine for previewing a decomposition and for a quick run; **KaHIP** minimizes the edge cut between parts (on a 40×40 triangle grid it cut 40–47% fewer edges than the curve for 3 or 7 parts) at the price of a small imbalance of a few percent. KaHIP lives in the *full* meshio++ artifact shipped with the extension, which is loaded only for that call. The outcome message names the method that ran.
 
 #### Mark connected components
 
@@ -351,7 +351,7 @@ Adding and removing entity ids directly is available as the `mesh_transform` ops
 - **The manifest** gives, per file, the owned and ghost counts by kind, the node count and the **interface nodes** (owned nodes shared with another part — what a solver exchanges over), plus the imbalance (`max/mean` owned elements − 1).
 - **Weights** (MCP only): `weights` names an Elemental field of per-element weights, so a region that costs more is spread over more parts.
 
-The WebAssembly build has **no KaHIP**: `kahip` is refused by name and the method is a Hilbert space-filling-curve cut — balanced by cell count (or weight), with good locality, but no edge-cut minimization. `mesh_capabilities` reports which partitioners the live build can actually run. This produces *partitioned data*; solver-specific distributed Kratos setup is a separate matter.
+The default method is a Hilbert space-filling-curve cut — balanced by cell count (or weight), with good locality, but no edge-cut minimization. `method: "kahip"` minimizes the edge cut instead (full meshio++ artifact, loaded on demand; the imbalance in the manifest shows its small price), and `auto` means KaHIP when that artifact is installed and the curve otherwise. The manifest records the method that actually ran, and `mesh_capabilities.partitioning` reports which partitioners are available and which artifact serves each. The Export partitions… prompt offers the choice. This produces *partitioned data*; solver-specific distributed Kratos setup is a separate matter.
 
 ### Split mesh
 

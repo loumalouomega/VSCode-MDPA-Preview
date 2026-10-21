@@ -10,6 +10,8 @@ import { PtAction } from "./ptController";
 import { resolveKratosInstall } from "./problemtype/kratosEnv";
 import { configureMmg } from "./parser/remesh";
 import { configureMmgRunner, configureOracleRunner } from "./parser/operations";
+import { configureDerivedRunner } from "./parser/derivedRunner";
+import { runDerivedInWorker } from "./derivedWorkerClient";
 import { runMmgInWorker } from "./mmgWorkerClient";
 import { runOracleInWorker } from "./oracleOpWorkerClient";
 import { configureMeshioWriteRunner } from "./parser/writers/meshWriter";
@@ -51,6 +53,10 @@ export function activate(context: vscode.ExtensionContext): void {
   // one synchronous wasm call each; they run in dist/oracleOpWorker.js so the
   // sidebar's Cancel can terminate them instead of being a no-op.
   configureOracleRunner(runOracleInWorker);
+  // Derived meshes (slice, isosurface, grid, decimate) and partition export
+  // (curve or KaHIP) are synchronous wasm too; dist/derivedWorker.js makes their
+  // notification Cancel terminate the thread.
+  configureDerivedRunner(runDerivedInWorker);
   // meshio++ exports (Save As / Export / SubModelPart / skin / derived meshes)
   // are one synchronous wasm write; run them in dist/meshioWriteWorker.js so a
   // large export does not freeze the host and can be cancelled.

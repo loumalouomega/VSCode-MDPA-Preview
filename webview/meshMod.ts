@@ -1527,6 +1527,8 @@ function buildPartitionMsg(): Record<string, unknown> | undefined {
     op: "partition",
     nparts: Math.floor(nparts),
   };
+  const method = (document.getElementById("partition-method") as HTMLSelectElement | null)?.value;
+  if (method === "kahip") msg.method = method;
   if (checked("partition-createparts")) msg.createParts = true;
   return msg;
 }

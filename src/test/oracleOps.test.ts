@@ -278,10 +278,65 @@ test("partition can also create one SubModelPart per part", async () => {
   assert.equal(total, 10);
 });
 
-test("partition surfaces the missing KaHIP backend instead of downgrading", async () => {
-  // The WASM build has no KaHIP; a user asking for quality partitioning should
-  // be told, not silently given a space-filling curve.
-  await assert.rejects(partitionModel(grid(), { nparts: 2, method: "kahip" }), /kahip/i);
+/** An n x n sheet of triangles, so the dual-graph edge cut of a partition can be counted. */
+function triSheet(n: number): MdpaModel {
+  let t = "Begin Nodes\n";
+  const id = (i: number, j: number): number => j * (n + 1) + i + 1;
+  for (let j = 0; j <= n; j++) for (let i = 0; i <= n; i++) t += `${id(i, j)} ${i} ${j} 0\n`;
+  t += "End Nodes\nBegin Elements Element2D3N\n";
+  let e = 1;
+  for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) {
+    t += `${e++} 0 ${id(i, j)} ${id(i + 1, j)} ${id(i + 1, j + 1)}\n`;
+    t += `${e++} 0 ${id(i, j)} ${id(i + 1, j + 1)} ${id(i, j + 1)}\n`;
+  }
+  return parseMdpa(t + "End Elements\n");
+}
+
+/** Cells whose labels differ across a shared edge. */
+function edgeCut(m: MdpaModel, labelOf: Map<number, number>): number {
+  const owners = new Map<string, number[]>();
+  for (const b of m.blocks) for (let c = 0; c < b.count; c++) {
+    const n = Array.from(b.connectivity.slice(c * b.stride, (c + 1) * b.stride));
+    for (let k = 0; k < n.length; k++) {
+      const a = n[k], z = n[(k + 1) % n.length];
+      const key = a < z ? `${a}_${z}` : `${z}_${a}`;
+      (owners.get(key) ?? owners.set(key, []).get(key)!).push(b.entityIds[c]);
+    }
+  }
+  let cut = 0;
+  for (const cs of owners.values()) if (cs.length === 2 && labelOf.get(cs[0]) !== labelOf.get(cs[1])) cut++;
+  return cut;
+}
+
+const labelsOf = (m: MdpaModel): Map<number, number> => {
+  const f = m.fields.find((x) => x.variable === PARTITION_VARIABLE)!;
+  return new Map(Array.from(f.ids, (id, i) => [id, f.values[i]]));
+};
+
+test("partition with KaHIP (full artifact) cuts fewer edges than the curve and reports the method that ran", async () => {
+  const sheet = triSheet(24);
+  const curve = await partitionModel(sheet, { nparts: 7, method: "sfc" });
+  const kahip = await partitionModel(sheet, { nparts: 7, method: "kahip" });
+  assert.equal(curve.method, "sfc");
+  assert.equal(kahip.method, "kahip");
+  assert.equal(kahip.assigned, sheet.blocks[0].count);
+  assert.equal(kahip.sizes.length, 7);
+  assert.ok(kahip.sizes.every((s) => s > 0), "no empty part");
+  assert.equal(kahip.sizes.reduce((a, b) => a + b, 0), sheet.blocks[0].count, "every cell labelled once");
+  const mean = sheet.blocks[0].count / 7;
+  assert.ok(Math.max(...kahip.sizes) / mean - 1 < 0.1, "KaHIP stays within a few percent of balanced");
+  const cutCurve = edgeCut(sheet, labelsOf(curve.model));
+  const cutKahip = edgeCut(sheet, labelsOf(kahip.model));
+  assert.ok(cutKahip < cutCurve, `KaHIP cut ${cutKahip} should be below the curve's ${cutCurve}`);
+});
+
+test("partition: the default is the curve, and auto means KaHIP when the full artifact is installed", async () => {
+  const sheet = triSheet(12);
+  assert.equal((await partitionModel(sheet, { nparts: 3 })).method, "sfc");
+  const auto = await partitionModel(sheet, { nparts: 3, method: "auto" });
+  const kahip = await partitionModel(sheet, { nparts: 3, method: "kahip" });
+  assert.equal(auto.method, "kahip");
+  assert.deepEqual(Array.from(labelsOf(auto.model).values()), Array.from(labelsOf(kahip.model).values()), "auto takes KaHIP's labels, as measured upstream");
 });
 
 test("applying partition twice replaces rather than duplicates the field", async () => {

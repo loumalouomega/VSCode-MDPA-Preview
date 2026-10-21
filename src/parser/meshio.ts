@@ -469,6 +469,12 @@ export interface MeshioModule {
   hasLz4(): boolean;
   /** Whether libMesh readers inflate .bz2 containers: full artifact only. */
   hasBzip2(): boolean;
+  /**
+   * Whether the KaHIP partitioner is linked (meshio++ >= 17.9.0): full artifact
+   * only. `partition` / `partitionLabels` with `method: "kahip"` run there and
+   * refuse by name on the lean one.
+   */
+  hasKahip(): boolean;
 
   /**
    * Provenance (former roadmap item 6): with a scope open, a writer records the richer
@@ -1210,6 +1216,30 @@ export function loadMeshio(): Promise<MeshioModule> {
  */
 export function loadMeshioFull(): Promise<MeshioModule> {
   return trackEngine("meshio", () => loadMeshioFlavour(true));
+}
+
+/**
+ * Which partitioner a request ends up on, and therefore which artifact it
+ * needs. MEASURED against 17.10.0 (the shipped typings say `auto` resolves to
+ * the space-filling curve, which is true only of the lean build): on the full
+ * artifact `auto` returns exactly KaHIP's labels. So here `auto` means "the
+ * best partitioner this install has" — KaHIP when the full artifact is
+ * installed, the curve otherwise — and the RESOLVED method is what callers
+ * report. An absent method stays `sfc`: recipes recorded before KaHIP existed
+ * must keep producing the same labels, and `sfc` needs no 30 MB second
+ * instantiation.
+ */
+export type PartitionMethodRequest = "sfc" | "kahip" | "auto";
+
+export function resolvePartitionMethod(method?: PartitionMethodRequest): "sfc" | "kahip" {
+  if (method === "kahip") return "kahip";
+  if (method === "auto") return meshioFullInstalled() ? "kahip" : "sfc";
+  return "sfc";
+}
+
+/** The module a partition call needs: the full artifact for KaHIP, the lean one for the curve. */
+export function loadMeshioForPartition(method: "sfc" | "kahip"): Promise<MeshioModule> {
+  return method === "kahip" ? loadMeshioFull() : loadMeshio();
 }
 
 async function loadMeshioFlavour(full: boolean): Promise<MeshioModule> {

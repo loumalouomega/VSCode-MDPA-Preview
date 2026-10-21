@@ -147,3 +147,24 @@ test("progress stage lines reach onProgress", async () => {
   await runOracleInWorker(parseMdpa(CUBE), rec({ op: "reorder", method: "rcm" }), { onProgress: (l) => lines.push(l) });
   assert.ok(lines.some((l) => /worker/.test(l)), lines.join("\n"));
 });
+
+test("a KaHIP partition (full artifact) runs in the worker, matches in-process, and a cancel terminates it", async () => {
+  const m = parseMdpa(CUBE);
+  const r = rec({ op: "partition", nparts: 2, method: "kahip" });
+  configureOracleRunner((model, rc, o) => applyOracleOp(model, rc, o));
+  const a = await applyOpAsync(m, r);
+  configureOracleRunner(createOracleWorkerRunner());
+  const b = await applyOpAsync(m, r);
+  assert.match(b.message ?? "", /KaHIP/);
+  assert.equal(b.message, a.message);
+  const labels = (x: typeof a): number[] => Array.from(x.model.fields.find((f) => f.variable === "PARTITION_INDEX")!.values);
+  assert.deepEqual(labels(b), labels(a));
+
+  const abort = new AbortController();
+  const run = applyOpAsync(m, r, { signal: abort.signal });
+  abort.abort();
+  const out = await run;
+  assert.equal(out.noop, true);
+  assert.equal(out.model, m);
+  assert.match(out.message ?? "", /cancelled/i);
+});
