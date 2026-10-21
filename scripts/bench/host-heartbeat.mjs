@@ -52,6 +52,8 @@ const probeMod = load("out/parser/pathProbe.js");
 const watertightMod = load("out/parser/watertight.js");
 const opsMod = load("out/parser/operations.js");
 const oracleClient = load("out/oracleOpWorkerClient.js");
+const derivedRunnerMod = load("out/parser/derivedRunner.js");
+const derivedClient = load("out/derivedWorkerClient.js");
 const writerMod = load("out/parser/writers/meshWriter.js");
 const writeClient = load("out/meshioWriteWorkerClient.js");
 const meshioMod = load("out/parser/meshio.js");
@@ -161,6 +163,10 @@ async function main() {
       ? [{ name: "bench.msh", data: (await writerMod.writeMeshioInProcess(model, ".msh", { stem: "bench" })).result.data }]
       : undefined;
     const readJob = mshFiles && { kind: "model", mainName: "bench.msh", files: mshFiles, ext: ".msh" };
+    const hasDerivedWorker = workersBuilt("derivedWorker.js") && derivedClient && derivedRunnerMod;
+    const derivedWorker = hasDerivedWorker && derivedClient.createDerivedWorkerRunner();
+    const sliceJob = hasDerivedWorker && { kind: "derive", model, spec: { kind: "slice", origin: [N / 2, 0, 0], normal: [1, 0, 0] } };
+    const kahipJob = hasDerivedWorker && { kind: "partition", model, params: { nparts: 4, method: "kahip" } };
     const smoothRec = opsMod && opsMod.opRecordFromMessage({ op: "smooth", iterations: 20 });
     const cases = [
       {
@@ -200,6 +206,18 @@ async function main() {
         name: "smooth (skin, oracle op)",
         inProcess: () => opsMod.applyOracleOp(skin, smoothRec),
         worker: hasOracleWorker && smoothRec && (() => oracleClient.runOracleInWorker(skin, smoothRec)),
+      },
+      {
+        // Derived mesh (modelToMeshio + one synchronous wasm slice) — what Export slice… and mesh_derive run.
+        name: "slice (derived mesh)",
+        inProcess: () => derivedRunnerMod.runDerivedInProcess(sliceJob, [], {}),
+        worker: derivedWorker && sliceJob && (() => derivedWorker(sliceJob, [], {})),
+      },
+      {
+        // KaHIP partition export (full artifact) — what Export partitions… and mesh_split run.
+        name: "partition export (KaHIP)",
+        inProcess: () => derivedRunnerMod.runDerivedInProcess(kahipJob, [], {}),
+        worker: derivedWorker && kahipJob && (() => derivedWorker(kahipJob, [], {})),
       },
     ];
 

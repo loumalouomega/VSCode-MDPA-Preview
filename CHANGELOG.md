@@ -12,6 +12,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
+- **Derived meshes and partition export no longer block the host.** Export slice / isosurface / region / simplified surface / grid, Export partitions… (curve or KaHIP) and the MCP `mesh_derive` / `mesh_split` tools run their synchronous meshio++ call in a worker thread (`dist/derivedWorker.js`), so a large input leaves the UI responsive and Cancel (or a cancelled MCP request) terminates the work and releases its WASM heap. Streamline traces keep their in-process per-seed progress. Results are unchanged. Measured on a 64,000-cell block: max host stall for a slice 462 ms to 10 ms, for a KaHIP partition 1,056 ms to 9 ms.
+
 - **Dependency refresh (meshio++ 17.8.0 → 17.10.0).** The declared range is now `^17.10.0`; the binding diff is additive (ABI unchanged). Live format-key diff on both variants: no reader or writer key added, removed or flipped (lean 81 readers/82 writers, full 83/82), and `transientAudit.test.ts` passes unedited. Besides KaHIP (above), the release adds procedural mesh generators, `segment` `method: 'primitive'` and a kernel-free `fitCad` backend on the lean artifact; those are recorded as unrouted in `mesh_capabilities` rather than adopted.
 
 ## [5.17.0] - 2026-10-20

@@ -40,6 +40,7 @@ import { estimateGrid, describeGridEstimate, triangleSurfaceOf, GRID_MAX_CELLS, 
 import { exportReportHtml } from "./parser/exportReportHtml";
 import { writeRawMeshioBytes, meshioFullInstalled } from "./parser/meshio";
 import { partitionParts, partitionManifest } from "./parser/partitionExport";
+import { deriveMeshOffThread, partitionPartsOffThread } from "./parser/derivedRunner";
 import { splitModel, SplitSpec } from "./parser/splitComponents";
 import {
   TABLE_KINDS,
@@ -940,7 +941,7 @@ export async function exportDerived(
         const abort = new AbortController();
         const sub = token.onCancellationRequested(() => abort.abort());
         try {
-          return await deriveMesh(ctx.model, spec, [], { signal: abort.signal });
+          return await deriveMeshOffThread(ctx.model, spec, [], { signal: abort.signal });
         } finally {
           sub.dispose();
         }
@@ -1176,7 +1177,7 @@ export async function exportPartitions(ctx: ExportContext): Promise<void> {
         const abort = new AbortController();
         const sub = token.onCancellationRequested(() => abort.abort());
         try {
-          return await partitionParts(ctx.model, { nparts: +n, ghostLayers: ghost.value, method }, [], { signal: abort.signal });
+          return await partitionPartsOffThread(ctx.model, { nparts: +n, ghostLayers: ghost.value, method }, [], { signal: abort.signal });
         } finally {
           sub.dispose();
         }

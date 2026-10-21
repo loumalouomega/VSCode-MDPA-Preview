@@ -13,6 +13,8 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { configureMmg } from "./parser/remesh";
 import { configureMmgRunner, configureOracleRunner } from "./parser/operations";
+import { configureDerivedRunner } from "./parser/derivedRunner";
+import { createDerivedWorkerRunner } from "./derivedWorkerClient";
 import { createMmgWorkerRunner } from "./mmgWorkerClient";
 import { createOracleWorkerRunner } from "./oracleOpWorkerClient";
 import { configureMeshioWriteRunner } from "./parser/writers/meshWriter";
@@ -47,6 +49,10 @@ if (fs.existsSync(path.join(__dirname, "mmgWorker.js"))) {
 }
 if (fs.existsSync(path.join(__dirname, "oracleOpWorker.js"))) {
   configureOracleRunner(createOracleWorkerRunner({ captureStdio: true }));
+}
+// Derived meshes and partition export (mesh_derive, mesh_split) likewise.
+if (fs.existsSync(path.join(__dirname, "derivedWorker.js"))) {
+  configureDerivedRunner(createDerivedWorkerRunner({ captureStdio: true }));
 }
 // Same for meshio++ writes (mesh_convert, mesh_transform output, …).
 if (fs.existsSync(path.join(__dirname, "meshioWriteWorker.js"))) {

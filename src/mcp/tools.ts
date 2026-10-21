@@ -57,11 +57,12 @@ import { surfaceDefects } from "../parser/surfaceDefects";
 import { curvatureModel, gaussBonnetResidual } from "../parser/curvature";
 import { compareMeshes, compareFieldModel } from "../parser/meshCompare";
 import { fieldUnitLabel } from "../parser/fieldDimensions";
-import { deriveMesh, DeriveSpec, DERIVE_KINDS, DERIVE_STANDALONE_KINDS } from "../parser/deriveMesh";
+import { DeriveSpec, DERIVE_KINDS, DERIVE_STANDALONE_KINDS } from "../parser/deriveMesh";
 import type { StreamSeeds } from "../parser/streamlines";
 import { writeRawMeshioBytes } from "../parser/meshio";
 import { probeAlongPath, probeToCsv } from "../parser/pathProbe";
-import { partitionParts, partitionManifest } from "../parser/partitionExport";
+import { partitionManifest } from "../parser/partitionExport";
+import { deriveMeshOffThread, partitionPartsOffThread } from "../parser/derivedRunner";
 import { splitModel } from "../parser/splitComponents";
 import {
   parseMeshFile,
@@ -1894,9 +1895,12 @@ export async function meshDerive(args: {
   // whole percents — a 1000-seed run must not emit 1000 lines); every other
   // kind ignores the callback.
   let lastPct = -1;
-  const derived = await deriveMesh(src.model, spec, [], {
-    // A client cancel stops the trace between seeds (the other kinds are one
-    // synchronous wasm call and cannot be interrupted in-process).
+  // Every kind but a streamline trace runs in dist/derivedWorker.js when the
+  // server installed it, so a client cancel terminates the thread; a trace keeps
+  // its in-process per-seed progress and stops between seeds.
+  const derived = await deriveMeshOffThread(src.model, spec, [], {
+    signal: execution.signal,
+    streamOpts: {
     signal: execution.signal,
     onProgress: (done, total) => {
       const pct = total > 0 ? Math.floor((100 * done) / total) : 100;
@@ -1905,6 +1909,7 @@ export async function meshDerive(args: {
         progressSink?.(`Streamlines ${done}/${total} seeds`);
         execution.progress?.(done, total, `Streamlines ${done}/${total} seeds`);
       }
+    },
     },
   });
   const warnings: string[] = [];
@@ -2069,7 +2074,7 @@ export async function meshSplit(args: {
 
   if (args.by === "partition") {
     if (args.nparts === undefined) throw new Error("`nparts` is required for by: \"partition\".");
-    const r = await partitionParts(src.model, {
+    const r = await partitionPartsOffThread(src.model, {
       nparts: args.nparts,
       method: args.method,
       imbalance: args.imbalance,

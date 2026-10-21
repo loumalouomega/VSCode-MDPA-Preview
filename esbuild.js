@@ -193,6 +193,9 @@ const extensionConfig = {
   // oracleOpWorker.js runs the meshio++ oracle/adopting operations (smooth,
   // reorder, gradient, repair, …) off the host thread
   // (src/oracleOpWorkerClient.ts); it loads dist/meshio/ like analysisWorker.
+  // derivedWorker.js runs derived meshes (slice, isosurface, grid, decimate, …) and
+  // partition export (curve or KaHIP) off the host thread
+  // (src/derivedWorkerClient.ts); it loads dist/meshio/ like analysisWorker.
   // meshioWriteWorker.js runs meshio++ exports (src/meshioWriteWorkerClient.ts);
   // it loads dist/meshio/ like analysisWorker.
   // meshioReadWorker.js runs meshio++ reads (src/meshioReadWorkerClient.ts);
@@ -205,6 +208,7 @@ const extensionConfig = {
     "src/plotWorker.ts",
     "src/analysisWorker.ts",
     "src/oracleOpWorker.ts",
+    "src/derivedWorker.ts",
     "src/meshioWriteWorker.ts",
     "src/meshioReadWorker.ts",
     "src/seriesScanWorker.ts",
