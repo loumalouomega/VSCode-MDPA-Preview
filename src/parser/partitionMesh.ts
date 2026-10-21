@@ -18,22 +18,33 @@
  * `PARTITION_INDEX` is a real Kratos variable, so a `.mdpa` export carries the
  * decomposition into Kratos rather than into a private convention.
  *
- * ## The one caveat worth stating loudly
+ * ## Which partitioner
  *
- * The WASM build has **no KaHIP**, so the quality partitioner is unavailable:
- * `"kahip"` throws by name and `"auto"` resolves to `"sfc"`. What you get is a
- * Hilbert space-filling-curve cut — cells sorted along the curve and sliced into
- * contiguous ranges. Parts are balanced by CELL COUNT (to within one cell), and
- * locality is good, but there is no edge-cut minimization: the interface between
- * parts is whatever the curve happens to produce, not an optimized surface.
- * Honest for previewing and for a quick run; not a substitute for METIS.
+ * `"sfc"` (the default, and what a recipe recorded before KaHIP existed gets) is
+ * a Hilbert space-filling-curve cut — cells sorted along the curve and sliced
+ * into contiguous ranges. Parts are balanced by CELL COUNT (to within one cell),
+ * and locality is good, but there is no edge-cut minimization.
+ *
+ * `"kahip"` (meshio++ >= 17.9.0) is the quality partitioner. It is linked into
+ * the FULL artifact only, so it is loaded lazily for exactly this call
+ * (`loadMeshioForPartition`). Measured on 17.10.0: 40-47% fewer cut edges than
+ * the curve on a 40x40 triangle grid split into 3 or 7 parts, equal where the
+ * curve is already optimal (4 parts of a square), at the cost of a small
+ * imbalance (up to ~2.4% here, against the curve's exact balance).
+ *
+ * `"auto"` means the best partitioner this install has: KaHIP when the full
+ * artifact is installed, the curve otherwise. The shipped typings say `auto`
+ * resolves to the curve; that is true of the lean build only (measured: on the
+ * full one it returns KaHIP's labels exactly). The result reports the RESOLVED
+ * method so the outcome never claims a quality cut that was not made.
  */
 
 import { FieldData, MdpaModel, MdpaDiagnostic, SubModelPart } from "./types";
 import { prepareMeshioOp, meshioCorrespondence, flattenMeshioData } from "./meshioAdapter";
+import { loadMeshioForPartition, resolvePartitionMethod, PartitionMethodRequest } from "./meshio";
 
-/** Only `sfc` is reachable in the WASM build; see the module docblock. */
-export type PartitionMethod = "sfc" | "kahip" | "auto";
+/** See the module docblock; `auto` resolves against the install. */
+export type PartitionMethod = PartitionMethodRequest;
 
 export const PARTITION_VARIABLE = "PARTITION_INDEX";
 
@@ -50,6 +61,8 @@ export interface PartitionResult {
   assigned: number;
   /** Cell count per part, in part order. */
   sizes: number[];
+  /** The partitioner that actually ran (`auto` resolved); absent when nothing was partitioned. */
+  method?: "sfc" | "kahip";
 }
 
 export async function partitionModel(
@@ -61,12 +74,17 @@ export async function partitionModel(
   const nparts = Math.floor(params.nparts);
   if (!(nparts >= 1)) return unchanged;
 
-  const prepared = await prepareMeshioOp(model, diagnostics, { dim: 3 });
+  const method = resolvePartitionMethod(params.method);
+  const prepared = await prepareMeshioOp(model, diagnostics, {
+    dim: 3,
+    loader: () => loadMeshioForPartition(method),
+  });
   if (!prepared) return unchanged;
   const { m, mesh } = prepared;
-  // Throws by name for "kahip" — surfaced rather than silently downgraded, so a
-  // user asking for quality partitioning learns the build cannot do it.
-  const labels = m.partitionLabels(mesh, nparts, params.method ?? "sfc");
+  // Passes the RESOLVED method, never "auto": on the full artifact upstream's
+  // own "auto" is KaHIP, and what we report must be what ran. A missing full
+  // artifact fails loudly in loadMeshioFull rather than downgrading to the curve.
+  const labels = m.partitionLabels(mesh, nparts, method);
 
   // Flatten the per-block label arrays in meshio block order, then hand them
   // back out over our blocks in the same order. Labels arrive as BigInt64Array
@@ -121,6 +139,7 @@ export async function partitionModel(
     },
     assigned: ids.length,
     sizes,
+    method,
   };
 }
 

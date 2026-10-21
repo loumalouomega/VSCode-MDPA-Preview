@@ -1499,7 +1499,8 @@ async function applyAsyncOpInProcess(
         model: r.model,
         message:
           `Partitioned ${r.assigned} cell(s) into ${r.sizes.length} part(s) ` +
-          `(${r.sizes.join(" / ")}) as ${PARTITION_VARIABLE}.`,
+          `(${r.sizes.join(" / ")}) as ${PARTITION_VARIABLE}` +
+          ` using ${r.method === "kahip" ? "KaHIP" : "a space-filling curve"}.`,
       };
     }
     default:

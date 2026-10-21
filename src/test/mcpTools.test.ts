@@ -1358,7 +1358,7 @@ test("mesh_capabilities reports the live build next to the routing tables", asyn
       adoptingOperations: string[];
     };
   };
-  assert.equal(caps.packageVersion, "17.8.0");
+  assert.equal(caps.packageVersion, "17.10.0");
   assert.ok(caps.backend.length > 0);
   assert.equal(caps.hasCgnslib, true);
   // 15.x bump (roadmap item 3) added vtkhdf/pvd/pvtu/pvtp/pcd/xyz/lsdyna/frd/
@@ -1387,7 +1387,11 @@ test("mesh_capabilities reports the live build next to the routing tables", asyn
   // likewise adds no reader or writer key (still 81/82 lean, 83/82 full,
   // verified live): its whole delta is the new `octree` kernel operation
   // (adaptive hex/octree mesh around a skin), which stays unrouted — see
-  // meshCapabilities' operations.unavailable.
+  // meshCapabilities' operations.unavailable. The 17.9.0 and 17.10.0 bumps
+  // add no reader or writer key either (still 81/82 lean, 83/82 full, verified
+  // live); their delta is additive — KaHIP linked into the FULL artifact only
+  // (hasKahip), a kernel-free fitCad backend on lean, `segment` method
+  // "primitive" and procedural mesh generators, the last two unrouted.
   assert.equal(caps.live.readers.length, 81);
   assert.equal(caps.live.writers.length, 82);
   // 17.2.0 ships a FULL artifact beside the lean one; mesh_capabilities
@@ -1401,6 +1405,7 @@ test("mesh_capabilities reports the live build next to the routing tables", asyn
   assert.equal(caps.build.zstd, false);
   assert.equal(caps.build.lz4, false);
   assert.equal(caps.build.bzip2, false);
+  assert.equal((caps.build as { kahip?: boolean }).kahip, false, "KaHIP is not linked into the lean build");
   assert.equal(caps.full.installed, true);
   assert.equal(caps.full.error, undefined);
   assert.equal(caps.full.build?.flavour, "full");
@@ -1408,6 +1413,7 @@ test("mesh_capabilities reports the live build next to the routing tables", asyn
   assert.equal(caps.full.build?.zstd, true);
   assert.equal(caps.full.build?.lz4, true);
   assert.equal(caps.full.build?.bzip2, true);
+  assert.equal((caps.full.build as { kahip?: boolean } | undefined)?.kahip, true, "KaHIP is linked into the full build");
   assert.equal(caps.full.build?.readers.length, 83);
   assert.equal(caps.full.build?.writers.length, 82);
   assert.ok(caps.full.build?.readers.includes("step"));
@@ -3003,13 +3009,22 @@ test("mesh_split writes per-part files with a manifest, splits connected bodies,
   const back = parseMdpa(fs.readFileSync(path.join(dir, "bodies", s.groups[1].file), "utf8"));
   assert.equal(back.blocks[0].entityIds[0], 7, "the original element id is kept");
 
-  await assert.rejects(meshSplit({ path: src, by: "partition", nparts: 2, method: "kahip", outputDir: out }), /KaHIP is not available/);
+  // KaHIP runs on the full artifact (meshio++ >= 17.9.0), and the manifest says which method ran.
+  const kahipOut = path.join(dir, "kahip");
+  const ks = (await meshSplit({ path: src, by: "partition", nparts: 2, method: "kahip", outputDir: kahipOut })) as { method: string; warnings: string[] };
+  assert.equal(ks.method, "kahip");
+  assert.ok(!ks.warnings.some((w) => /space-filling-curve/.test(w)), "no curve warning when KaHIP ran");
+  const as = (await meshSplit({ path: src, by: "partition", nparts: 2, method: "auto", outputDir: path.join(dir, "auto") })) as { method: string };
+  assert.equal(as.method, "kahip", "auto is KaHIP where the full artifact is installed");
   await assert.rejects(meshSplit({ path: src, by: "partition", outputDir: out }), /nparts/);
   await assert.rejects(meshSplit({ path: src, by: "field", outputDir: out }), /variable/);
 
-  const caps = (await meshCapabilities()) as { partitioning: { available: string[]; unavailable: { method: string }[] } };
+  const caps = (await meshCapabilities()) as { partitioning: { available: string[]; unavailable: { method: string }[]; backends: Record<string, string> } };
   assert.ok(caps.partitioning.available.includes("sfc"));
-  assert.ok(caps.partitioning.unavailable.some((u) => u.method === "kahip"), "the WebAssembly build has no KaHIP");
+  assert.equal(caps.partitioning.backends.sfc, "lean");
+  assert.ok(caps.partitioning.available.includes("kahip"), "KaHIP runs on the full artifact");
+  assert.equal(caps.partitioning.backends.kahip, "full", "and mesh_capabilities names the artifact that serves it");
+  assert.equal(caps.partitioning.unavailable.length, 0);
 });
 
 test("mesh_derive decimate writes a simplified copy that keeps entity ids, and refuses a solid by name", async () => {

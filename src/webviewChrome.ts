@@ -874,8 +874,12 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
                 <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("partition")}<span>Partition</span></button>
                 <div class="edit-form-row">
                   <label class="edit-field"><span>parts</span><input type="number" id="partition-nparts" class="edit-num" value="2" min="1" step="1"></label>
+                  <label class="edit-field"><span>method</span><select id="partition-method" class="edit-sel edit-sel-mid">
+                    <option value="sfc" selected>curve</option>
+                    <option value="kahip">KaHIP</option>
+                  </select></label>
                   <label class="edit-check"><input type="checkbox" id="partition-createparts"><span>as SubModelParts</span></label>
-                  <button type="button" class="edit-apply edit-apply-mmg" data-op="partition" title="Split the mesh into balanced parts (Hilbert curve — no KaHIP in this build)" data-run-title="Split the mesh into balanced parts"><span class="apply-play">${ic("play")}</span><span class="apply-stop">${ic("stop")}</span></button>
+                  <button type="button" class="edit-apply edit-apply-mmg" data-op="partition" title="Split the mesh into parts: a Hilbert curve (balanced by cell count) or KaHIP (minimizes the edge cut between parts)" data-run-title="Split the mesh into balanced parts"><span class="apply-play">${ic("play")}</span><span class="apply-stop">${ic("stop")}</span></button>
                 </div>
                 <div class="edit-progress hidden" id="partition-progress">
                   <div class="edit-progress-track"><div class="edit-progress-bar"></div></div>

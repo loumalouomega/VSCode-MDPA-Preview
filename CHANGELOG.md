@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- **KaHIP partitioning.** `partition`, **Advanced ▸ Export partitions…** and `mesh_split` (`by: "partition"`) accept `method: "kahip"`, which minimizes the edge cut between parts. KaHIP is linked into the full meshio++ artifact (17.9.0+), which is loaded only for that call; the default stays the space-filling curve, so recipes recorded before keep their labels. `auto` now means KaHIP when the full artifact is installed (upstream's own `auto` is KaHIP there, although its typings say otherwise) and the curve otherwise. Measured on a 40×40 triangle grid: 40–47% fewer cut edges than the curve at 3 and 7 parts, equal at 4 parts of a square, imbalance up to ~2.4% against the curve's exact balance. The sidebar Partition form has a method selector, the Export partitions… prompt offers the choice where the full artifact is installed, the outcome message and the manifest name the method that ran, and `mesh_capabilities.partitioning` reports `backends` (which artifact serves each method) and `build.kahip`. Decomposed-OpenFOAM in-place save stays on the seed-0 curve on purpose.
+
+### Changed
+
+- **Dependency refresh (meshio++ 17.8.0 → 17.10.0).** The declared range is now `^17.10.0`; the binding diff is additive (ABI unchanged). Live format-key diff on both variants: no reader or writer key added, removed or flipped (lean 81 readers/82 writers, full 83/82), and `transientAudit.test.ts` passes unedited. Besides KaHIP (above), the release adds procedural mesh generators, `segment` `method: 'primitive'` and a kernel-free `fitCad` backend on the lean artifact; those are recorded as unrouted in `mesh_capabilities` rather than adopted.
+
 ## [5.17.0] - 2026-10-20
 
 ### Added
