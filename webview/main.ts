@@ -116,7 +116,7 @@ import {
   buildBeamSegments,
   defaultBeamRadius,
 } from "../src/parser/beamElements";
-import { buildFieldInfo, FieldInfo, rangeForComponent, scalarAt, vectorAt } from "./fieldData";
+import { buildFieldInfo, FieldInfo, isDeformable, rangeForComponent, scalarAt, vectorAt } from "./fieldData";
 import {
   contourAttach,
   cutCapEdgeGeometry,
@@ -2288,7 +2288,7 @@ function buildScene(resetCam = true): void {
       resetFieldStateForSelection(p);
     }
     // Keep the deformation field valid (default to the first vector field).
-    if (!infos.some((i) => i.key === p.field.deformKey && i.isVector)) {
+    if (!infos.some((i) => i.key === p.field.deformKey && isDeformable(i))) {
       p.field.deformKey = infos.find((i) => i.isVector)?.key ?? "";
     }
   });
@@ -2714,6 +2714,7 @@ function lightingStyle(): PropStyle {
     ambient: lightingState.ambient,
     diffuse: lightingState.diffuse,
     backfaceCulling: lightingState.cullBackFace,
+    smoothShading: lightingState.smoothShading,
   };
 }
 
@@ -2761,7 +2762,7 @@ function renderLightingUI(): void {
       applyLightingToAllLayers();
       renderLightingUI();
     },
-  });
+  }, { displayFilters: backend.caps.displayFilters });
 }
 
 // --- Camera bookmarks --------------------------------------------------------
@@ -5540,7 +5541,7 @@ function collectCells(kinds: EntityKind[] | "all", pane?: Pane): Cell[] {
 
 // The vector FieldInfo currently selected to drive the deformation, if any.
 function selectedDeformInfo(pane: Pane): FieldInfo | undefined {
-  return scopeInfos(pane).find((i) => i.key === pane.field.deformKey && i.isVector);
+  return scopeInfos(pane).find((i) => i.key === pane.field.deformKey && isDeformable(i));
 }
 
 // When deformed shape is active, produce a warped copy of the geometry
@@ -5555,6 +5556,12 @@ function computeWarpedGeometry(pane: Pane): { prepared: PreparedNodes; model: Md
   const coords = new Float32Array(scopePrep.coords); // copy (never mutate the reference)
   const scale = pane.field.deformScale;
   for (let i = 0; i < scope.nodeCount; i++) {
+    if (!info.isVector) {
+      // Relief: a nodal scalar lifts the point along +Z.
+      const h = scalarAt(info, scope.nodeIds[i]);
+      if (h !== undefined && Number.isFinite(h)) coords[i * 3 + 2] += scale * h;
+      continue;
+    }
     const v = vectorAt(info, scope.nodeIds[i]);
     if (!v) continue;
     coords[i * 3] += scale * v[0];
@@ -6188,7 +6195,7 @@ async function startRecording(): Promise<void> {
         const info = fieldInfos.find(f => f.key === s.field.selectedKey);
         if (s.field.selectedKey && (!info || info.isVector !== s.vector)) throw new Error(`Selected field/component is missing at step ${currentFrameIndex + 1}: ${s.field.selectedKey}`);
         if (info && typeof s.field.component === "number" && s.field.component >= info.field.components) throw new Error(`Selected component ${s.field.component} of ${s.field.selectedKey} is missing at step ${currentFrameIndex + 1}.`);
-        if (s.field.modes.has("deformed") && !fieldInfos.some(f => f.key === s.field.deformKey && f.isVector)) throw new Error(`Deformation field is missing at step ${currentFrameIndex + 1}.`);
+        if (s.field.modes.has("deformed") && !fieldInfos.some(f => f.key === s.field.deformKey && isDeformable(f))) throw new Error(`Deformation field is missing at step ${currentFrameIndex + 1}.`);
       }
       restorePanes(true, step.kind === "timeline" || i === 0);
       if (step.kind === "turntable") {
@@ -7376,7 +7383,7 @@ function clearCompare(note?: string): void {
         p.field.selectedKey = fieldInfos[0]?.key ?? "";
         resetFieldStateForSelection(p);
       }
-      if (!fieldInfos.some((inf) => inf.key === p.field.deformKey && inf.isVector)) {
+      if (!fieldInfos.some((inf) => inf.key === p.field.deformKey && isDeformable(inf))) {
         p.field.deformKey = fieldInfos.find((inf) => inf.isVector)?.key ?? "";
       }
     });
@@ -7491,7 +7498,7 @@ function resolveCompareFieldState(): void {
     }
     if (fs.modes.size === 0) fs.modes.add("contour");
   }
-  if (fs.deformKey && !st.infos.some((inf) => inf.key === fs.deformKey && inf.isVector)) {
+  if (fs.deformKey && !st.infos.some((inf) => inf.key === fs.deformKey && isDeformable(inf))) {
     fs.deformKey = st.infos.find((inf) => inf.isVector)?.key ?? "";
   }
 }

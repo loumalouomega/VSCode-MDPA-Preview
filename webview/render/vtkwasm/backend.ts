@@ -856,6 +856,7 @@ export async function createVtkWasmBackend(opts: VtkWasmBackendOptions): Promise
     impostors: false,
     impostorsReason: "VTK-wasm has no ray-cast sphere or stick mapper; it draws tessellated glyphs.",
     hardwareSelection: false,
+    displayFilters: false,
   };
   let disposed = false;
 

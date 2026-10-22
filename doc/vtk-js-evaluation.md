@@ -28,3 +28,13 @@ Measured verdicts for the vtk.js 37.4.3 modules that were evaluated rather than 
 
 - **Does not exist in the 37.4.3 package** (no `IO/Geometry/PolyDataSerializer`, no serializer module under `IO/`). Nothing to evaluate.
 - **Verdict: dropped.** Scene export stays with the existing writers and the problem archive.
+
+# Increment E: display-only geometry filters
+
+Delivered: the Lighting panel's **Smooth shading** (vtk.js `PolyDataNormals`, `PropStyle.smoothShading`, `BackendCaps.displayFilters`) and **scalar relief** (a nodal scalar can be picked in the Deformed mode's "Deform by" selector and lifts the mesh along +Z; this is the `WarpScalar` idea, done in `computeWarpedGeometry` because the warp is two lines and the result must flow into every overlay like the vector warp does). Checked by `scripts/screenshots/check-display-filters.mjs`.
+
+- **PolyDataNormals** has no feature angle and no splitting: it averages the unit normals of every cell at a point. It is right for curved surfaces and visibly wrong on the hard edges of a boxy mesh, so the checkbox is off by default and says so in its tooltip. A feature-angle version would need point duplication in `displayGeometry.ts` and is not built.
+- **WindowedSincPolyDataFilter** was not adopted: it moves points, so it would change what the viewer shows relative to the mesh being edited, which this item's rule forbids ("a display representation never replaces exported or edited geometry"). Smoothing the mesh itself is the `smooth` operation.
+- **TubeFilter vs `streamlineTubes.ts`** (1,000 polylines of 100 points, 8 sides, Node): vtk.js 242 ms, ours 83 ms, both 800,000 points; ours also carries speed as point scalars and emits quads, so it is not replaced.
+- **ClipClosedSurface** clips a *closed* surface and runs on the CPU like `computePlaneCut`, so it is not a GPU cap; the displayed layers are open boundary skins per block, so it has no closed surface to work on. The CPU section cap stays.
+- **Calculator / ThresholdPoints**: not benchmarked and not adopted. The native `fieldCalc` and `thresholdCells` are shared with recipes and MCP, so a second evaluator would only add a way for the two to disagree.

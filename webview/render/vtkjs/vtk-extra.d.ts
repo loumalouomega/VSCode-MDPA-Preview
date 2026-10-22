@@ -14,3 +14,10 @@ declare module "@kitware/vtk.js/Rendering/OpenGL/CubeAxesActor" {
 declare module "@kitware/vtk.js/Rendering/OpenGL/Glyph3DMapper" {
   // Side-effect import — registers the OpenGL rendering backend.
 }
+
+declare module "@kitware/vtk.js/Filters/Core/PolyDataNormals" {
+  const vtkPolyDataNormals: {
+    newInstance(initialValues?: Record<string, unknown>): any;
+  };
+  export default vtkPolyDataNormals;
+}

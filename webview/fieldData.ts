@@ -77,3 +77,13 @@ export function vectorAt(info: FieldInfo, id: number): [number, number, number] 
     c > 2 ? info.field.values[o + 2] : 0,
   ];
 }
+
+/**
+ * Fields the Deformed-shape mode can warp by: a vector is a displacement, and a
+ * NODAL scalar is a height (relief) along +Z (vtk.js `WarpScalar`'s idea — a 2D
+ * result drawn as a surface). Elemental/Conditional scalars have no per-node
+ * value to lift a point by.
+ */
+export function isDeformable(info: FieldInfo): boolean {
+  return info.isVector || info.field.kind === "Nodal";
+}

@@ -54,6 +54,8 @@ export interface BackendCaps {
    * selection. When false callers sample `pick` over a grid instead.
    */
   hardwareSelection: boolean;
+  /** `PropStyle.smoothShading` (and the other display-only filters) are honoured. */
+  displayFilters: boolean;
 }
 
 /** The cells of one prop that are visible inside a selected region. */

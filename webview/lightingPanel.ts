@@ -9,6 +9,8 @@ export interface LightingState {
   ambient: number; // 0..1
   diffuse: number; // 0..1
   cullBackFace: boolean;
+  /** Smooth shading from averaged point normals (display only). */
+  smoothShading: boolean;
 }
 
 export const DEFAULT_LIGHTING_STATE: LightingState = {
@@ -16,7 +18,13 @@ export const DEFAULT_LIGHTING_STATE: LightingState = {
   ambient: 0.3,
   diffuse: 0.7,
   cullBackFace: false,
+  smoothShading: false,
 };
+
+export interface LightingPanelOptions {
+  /** The backend honours smoothShading (caps.displayFilters). */
+  displayFilters: boolean;
+}
 
 export interface LightingPanelHandlers {
   onClose(): void;
@@ -58,7 +66,8 @@ function slider(
 export function renderLightingPanel(
   container: HTMLElement,
   state: LightingState,
-  handlers: LightingPanelHandlers
+  handlers: LightingPanelHandlers,
+  options: LightingPanelOptions = { displayFilters: false }
 ): void {
   container.textContent = "";
 
@@ -98,6 +107,20 @@ export function renderLightingPanel(
   cullLabel.appendChild(document.createTextNode("Cull back faces"));
   cullLabel.title = "Hide the inside surface of a shell — helps spot an inverted (flipped) element";
   container.appendChild(cullLabel);
+
+  if (options.displayFilters) {
+    const smoothLabel = document.createElement("label");
+    smoothLabel.className = "edit-check";
+    const smoothCk = document.createElement("input");
+    smoothCk.type = "checkbox";
+    smoothCk.checked = state.smoothShading;
+    smoothCk.addEventListener("change", () => handlers.onChange({ ...state, smoothShading: smoothCk.checked }));
+    smoothLabel.appendChild(smoothCk);
+    smoothLabel.appendChild(document.createTextNode("Smooth shading"));
+    smoothLabel.title =
+      "Shade with averaged point normals. Suits curved surfaces (scans, spheres); it rounds the hard edges of a boxy mesh because there is no feature angle";
+    container.appendChild(smoothLabel);
+  }
 
   const resetBtn = document.createElement("button");
   resetBtn.className = "inspect-frame-btn";

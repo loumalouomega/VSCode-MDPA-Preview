@@ -28,6 +28,7 @@ import vtkPlane from "@kitware/vtk.js/Common/DataModel/Plane";
 import vtkHardwareSelector from "@kitware/vtk.js/Rendering/OpenGL/HardwareSelector";
 import * as HardwareSelectorConstants from "@kitware/vtk.js/Rendering/OpenGL/HardwareSelector/Constants";
 import { FieldAssociations } from "@kitware/vtk.js/Common/DataModel/DataSet/Constants";
+import vtkPolyDataNormals from "@kitware/vtk.js/Filters/Core/PolyDataNormals";
 import vtkCellPicker from "@kitware/vtk.js/Rendering/Core/CellPicker";
 import vtkArrowSource from "@kitware/vtk.js/Filters/Sources/ArrowSource";
 import vtkSphereSource from "@kitware/vtk.js/Filters/Sources/SphereSource";
@@ -128,6 +129,17 @@ class VtkJsGeometry implements RGeometry {
     readonly data?: DisplayGeometry,
     readonly glyphs?: { set: GlyphSet; source: any }
   ) {}
+  private smooth: any;
+  /** The polydata with averaged point normals attached, built once on first use. */
+  smoothPolyData(): any {
+    if (!this.smooth) {
+      const f: any = vtkPolyDataNormals.newInstance();
+      f.setInputData(this.polyData);
+      f.update();
+      this.smooth = f.getOutputData();
+    }
+    return this.smooth;
+  }
   // vtk.js data objects are garbage collected with the mappers that reference
   // them; the scene code never deleted polydata explicitly, and removing a
   // layer already deletes every actor over it.
@@ -223,7 +235,7 @@ class VtkJsProp implements RProp {
       }
     } else {
       mapper = vtkMapper.newInstance();
-      mapper.setInputData(g.polyData);
+      mapper.setInputData(this.smoothShading ? g.smoothPolyData() : g.polyData);
     }
     this.mapper = mapper;
     if (this.coloring) this.applyColoring(this.coloring);
@@ -240,8 +252,18 @@ class VtkJsProp implements RProp {
     this.actor.setPickable(on);
   }
 
+  private smoothShading = false;
+
   setStyle(s: PropStyle): void {
     const p = this.actor.getProperty();
+    if (s.smoothShading !== undefined && s.smoothShading !== this.smoothShading) {
+      this.smoothShading = s.smoothShading;
+      if (this.geometry?.kind === "mesh" && this.mapper) {
+        this.mapper.setInputData(s.smoothShading ? this.geometry.smoothPolyData() : this.geometry.polyData);
+        if (s.smoothShading) p.setInterpolationToPhong();
+        else p.setInterpolationToGouraud(); // vtk.js default
+      }
+    }
     if (s.color) p.setColor(s.color[0], s.color[1], s.color[2]);
     if (s.edgeVisible !== undefined) p.setEdgeVisibility(s.edgeVisible);
     if (s.edgeColor) p.setEdgeColor(s.edgeColor[0], s.edgeColor[1], s.edgeColor[2]);
@@ -431,7 +453,7 @@ export function createVtkJsBackend(opts: VtkJsBackendOptions): RenderBackend {
 
   const cellPicker = vtkCellPicker.newInstance();
   let hardwareSelector: any;
-  const caps: BackendCaps = { syncRender: true, impostors: true, hardwareSelection: true };
+  const caps: BackendCaps = { syncRender: true, impostors: true, hardwareSelection: true, displayFilters: true };
 
   return {
     kind: "vtkjs",

@@ -80,6 +80,13 @@ export interface PropStyle {
   diffuse?: number;
   specular?: number;
   backfaceCulling?: boolean;
+  /**
+   * Gouraud-style smooth shading from averaged point normals (vtk.js
+   * `PolyDataNormals`). Display only; it rounds hard edges because the filter
+   * has no feature angle, so it suits smooth surfaces. Mesh geometry only —
+   * glyph layers ignore it. Needs `caps.displayFilters`.
+   */
+  smoothShading?: boolean;
 }
 
 /** A per-point array carried by a glyph set. */
