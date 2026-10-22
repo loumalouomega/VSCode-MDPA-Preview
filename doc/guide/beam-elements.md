@@ -48,7 +48,7 @@ You can still draw line conditions deliberately: open the panel and turn on **Li
 - **Thickness** — a multiplier on every tube's *radius*. The length always stays the element's own, so a member never detaches from its end nodes.
 - **Constant radius** — used for cells with no `CROSS_AREA` (and for all of them when the mesh declares none). Prefilled with the suggestion.
 - **Line conditions** — also draw line Conditions and Geometries. Off by default, for the reason above.
-- **Detail** — cylinder tessellation (6 / 8 / 12 / 24). Above ~50 000 tubes the panel warns you off the finer settings.
+- **Detail** — cylinder tessellation (6 / 8 / 12 / 24), shown only on the experimental VTK-wasm renderer and while Clip is on; above ~50 000 tubes the panel warns you off the finer settings. Otherwise the default renderer draws ray-cast cylinders, which need no tessellation. A ray-cast tube is clipped by its centre, so while Clip is on the tubes switch to tessellated cylinders to be cut exactly by the plane.
 - **By section** — colour the tubes through the usual colormaps and legend, so a frame with graded members is readable at a glance. Only offered when the sections actually vary.
 
 The tubes follow the [deformed-shape warp](./field-visualization) like every other glyph, so a displaced frame draws displaced members.

@@ -10,7 +10,16 @@ import { snapCamera } from "./render/cameraOps";
 import { initCommandLine } from "./commandLine";
 import { STANDARD_VIEW_DIRECTIONS, type CommandAction } from "../src/parser/commandSpec";
 import { buildCellIndex, cellPointIds, CellIndex } from "../src/parser/render/cellArrays";
-import { beamGlyphSet, QuiverData, quiverColoring, quiverGlyphSet, radiusColoring, sphereGlyphSet } from "../src/parser/render/glyphSets";
+import {
+  beamGlyphSet,
+  QuiverData,
+  quiverColoring,
+  quiverGlyphSet,
+  radiusColoring,
+  sphereGlyphSet,
+  sphereImpostorSet,
+  stickImpostorSet,
+} from "../src/parser/render/glyphSets";
 import { ctfPointsFromStops, fieldColoring } from "../src/parser/render/scalarColoring";
 import type { ScalarColoring } from "../src/parser/render/types";
 import { renderStreamlinePanel, StreamlinePanelState } from "./streamlinePanel";
@@ -3105,6 +3114,10 @@ function setCut(on: boolean): void {
   if (on) updateClipPlane(pane);
   applyClipToPane(pane);
   buildCutCap(pane);
+  if (beamState.enabled) {
+    applyBeamLayer(); // impostor <-> tessellated, see beamsUseImpostors
+    renderBeamUI(); // the Detail control follows
+  }
   render();
 }
 
@@ -4854,7 +4867,11 @@ function sphereInfo(): SpherePanelInfo {
 
 function renderSphereUI(): void {
   const info = sphereInfo();
-  const state: SpherePanelState = { ...sphereState, constant: sphereConstant() };
+  const state: SpherePanelState = {
+    ...sphereState,
+    constant: sphereConstant(),
+    showDetail: !backend.caps.impostors,
+  };
   // Every control does the same two things after its own one-line assignment.
   const update = (patch: Partial<typeof sphereState>): void => {
     Object.assign(sphereState, patch);
@@ -4919,7 +4936,11 @@ function beamInfo(): BeamPanelInfo {
 
 function renderBeamUI(): void {
   const info = beamInfo();
-  const state: BeamPanelState = { ...beamState, constant: beamConstant() };
+  const state: BeamPanelState = {
+    ...beamState,
+    constant: beamConstant(),
+    showDetail: !beamsUseImpostors(),
+  };
   const update = (patch: Partial<typeof beamState>): void => {
     Object.assign(beamState, patch);
     renderBeamUI();
@@ -4951,7 +4972,11 @@ function applySphereLayer(): void {
     const info = spheres();
     const data = buildSphereData(prep);
     if (data && data.points.length > 0) {
-      const geometry = backend.createGlyphGeometry(sphereGlyphSet(data, sphereState.scale, sphereState.resolution));
+      const geometry = backend.createGlyphGeometry(
+        backend.caps.impostors
+          ? sphereImpostorSet(data, sphereState.scale)
+          : sphereGlyphSet(data, sphereState.scale, sphereState.resolution)
+      );
       const coloring = radiusColoring(
         SPHERE_COLOR,
         sphereState.colorByRadius && info.withRadius > 0
@@ -4976,6 +5001,18 @@ function applySphereLayer(): void {
  * built through `coordOf`, so the tubes follow a warped mesh exactly as the
  * sphere anchors do. There is no base-layer suppression — see BEAM_LAYER_ID.
  */
+/**
+ * Ray-cast sticks are clipped by their CENTRE (the mapper clips the one vertex
+ * a glyph is built from), so a member straddling the Clip plane would be drawn
+ * whole or dropped whole, where the tessellated tube is cut exactly. A long
+ * member is the case where that shows, so beams draw tessellated tubes while
+ * any pane has Clip on; `setCut` rebuilds the layer when that changes. Spheres
+ * are small enough that the centre test is within one radius of exact.
+ */
+function beamsUseImpostors(): boolean {
+  return backend.caps.impostors && !panes.some((p) => p.clip.active);
+}
+
 function applyBeamLayer(): void {
   removeLayer(BEAM_LAYER_ID);
   if (beamState.enabled && model && prepared) {
@@ -4989,7 +5026,11 @@ function applyBeamLayer(): void {
       coordOf: (nodeId) => coordOfPrep(prep, nodeId),
     });
     if (data.count > 0) {
-      const geometry = backend.createGlyphGeometry(beamGlyphSet(data, beamState.thickness, beamState.resolution));
+      const geometry = backend.createGlyphGeometry(
+        beamsUseImpostors()
+          ? stickImpostorSet(data, beamState.thickness)
+          : beamGlyphSet(data, beamState.thickness, beamState.resolution)
+      );
       const coloring = radiusColoring(
         BEAM_COLOR,
         beamState.colorBySection && info.withSection > 0

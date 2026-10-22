@@ -258,6 +258,10 @@ function glyphSource(vtk: Vtk, set: GlyphSet): { pd: number; owned: number[] } {
     }
     case "cylinderX":
       return buildPolyData(vtk, unitCylinderX(set.source.resolution));
+    case "impostorSphere":
+    case "impostorStick":
+      // Guarded by caps.impostors === false: the caller builds tessellated sets here.
+      throw new Error("VTK-wasm does not draw impostor glyphs.");
   }
 }
 
@@ -847,7 +851,11 @@ export async function createVtkWasmBackend(opts: VtkWasmBackendOptions): Promise
   // hit exactly) pickable and keeps vtk.js's forgiveness near edges.
   const PICK_TOLERANCES = [1e-6, 0.025];
 
-  const caps: BackendCaps = { syncRender: true };
+  const caps: BackendCaps = {
+    syncRender: true,
+    impostors: false,
+    impostorsReason: "VTK-wasm has no ray-cast sphere or stick mapper; it draws tessellated glyphs.",
+  };
   let disposed = false;
 
   // --- Size ---------------------------------------------------------------

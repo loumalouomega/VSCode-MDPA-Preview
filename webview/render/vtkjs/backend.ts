@@ -12,11 +12,16 @@ import "@kitware/vtk.js/Rendering/Profiles/Geometry";
 // Glyph3DMapper, so without this a glyph actor is built and added to the
 // renderer but draws nothing at all.
 import "@kitware/vtk.js/Rendering/OpenGL/Glyph3DMapper";
+// Same for the ray-cast impostor mappers (roadmap item 22 A).
+import "@kitware/vtk.js/Rendering/OpenGL/SphereMapper";
+import "@kitware/vtk.js/Rendering/OpenGL/StickMapper";
 import vtkGenericRenderWindow from "@kitware/vtk.js/Rendering/Misc/GenericRenderWindow";
 import vtkActor from "@kitware/vtk.js/Rendering/Core/Actor";
 import vtkRenderer from "@kitware/vtk.js/Rendering/Core/Renderer";
 import vtkMapper from "@kitware/vtk.js/Rendering/Core/Mapper";
 import vtkGlyph3DMapper from "@kitware/vtk.js/Rendering/Core/Glyph3DMapper";
+import vtkSphereMapper from "@kitware/vtk.js/Rendering/Core/SphereMapper";
+import vtkStickMapper from "@kitware/vtk.js/Rendering/Core/StickMapper";
 import vtkPolyData from "@kitware/vtk.js/Common/DataModel/PolyData";
 import vtkDataArray from "@kitware/vtk.js/Common/Core/DataArray";
 import vtkPlane from "@kitware/vtk.js/Common/DataModel/Plane";
@@ -163,6 +168,9 @@ function glyphSource(set: GlyphSet): any {
         direction: [1, 0, 0],
         capping: true,
       });
+    case "impostorSphere":
+    case "impostorStick":
+      return undefined; // no source shape: the mapper draws the glyph itself
   }
 }
 
@@ -184,18 +192,30 @@ class VtkJsProp implements RProp {
     let mapper: any;
     if (g.kind === "glyphs" && g.glyphs) {
       const { set, source } = g.glyphs;
-      mapper = vtkGlyph3DMapper.newInstance();
-      mapper.setInputData(g.polyData, 0);
-      mapper.setInputConnection(source.getOutputPort(), 1);
-      if (set.orientationArray) {
+      if (set.source.kind === "impostorSphere") {
+        mapper = vtkSphereMapper.newInstance();
+        mapper.setScaleArray(set.scaleArray);
+        mapper.setScaleFactor(set.scaleFactor);
+        mapper.setInputData(g.polyData);
+      } else if (set.source.kind === "impostorStick") {
+        mapper = vtkStickMapper.newInstance();
+        mapper.setScaleArray(set.scaleArray);
         mapper.setOrientationArray(set.orientationArray);
-        mapper.setOrientationModeToDirection();
+        mapper.setInputData(g.polyData);
+      } else {
+        mapper = vtkGlyph3DMapper.newInstance();
+        mapper.setInputData(g.polyData, 0);
+        mapper.setInputConnection(source.getOutputPort(), 1);
+        if (set.orientationArray) {
+          mapper.setOrientationArray(set.orientationArray);
+          mapper.setOrientationModeToDirection();
+        }
+        // setScaleArray exists at runtime (macro.setGet) but is missing from vtk.js TS typedefs.
+        mapper.setScaleArray(set.scaleArray);
+        if (set.scaleMode === "components") mapper.setScaleModeToScaleByComponents();
+        else mapper.setScaleModeToScaleByMagnitude();
+        mapper.setScaleFactor(set.scaleFactor);
       }
-      // setScaleArray exists at runtime (macro.setGet) but is missing from vtk.js TS typedefs.
-      mapper.setScaleArray(set.scaleArray);
-      if (set.scaleMode === "components") mapper.setScaleModeToScaleByComponents();
-      else mapper.setScaleModeToScaleByMagnitude();
-      mapper.setScaleFactor(set.scaleFactor);
     } else {
       mapper = vtkMapper.newInstance();
       mapper.setInputData(g.polyData);
@@ -405,7 +425,7 @@ export function createVtkJsBackend(opts: VtkJsBackendOptions): RenderBackend {
   grw.resize();
 
   const cellPicker = vtkCellPicker.newInstance();
-  const caps: BackendCaps = { syncRender: true };
+  const caps: BackendCaps = { syncRender: true, impostors: true };
 
   return {
     kind: "vtkjs",

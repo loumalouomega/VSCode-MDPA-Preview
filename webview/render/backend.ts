@@ -42,6 +42,13 @@ export type { Bounds6, DisplayGeometry, GlyphSet, PickHit, PropStyle, RGB, Rende
 export interface BackendCaps {
   /** `render()` has drawn by the time it returns (the recorder copies right after). */
   syncRender: boolean;
+  /**
+   * Ray-cast sphere and cylinder impostors (`GlyphSource` `impostorSphere` /
+   * `impostorStick`) are supported. When false the caller builds the
+   * tessellated glyph sets instead and `impostorsReason` says why.
+   */
+  impostors: boolean;
+  impostorsReason?: string;
 }
 
 export interface RCamera {

@@ -17,6 +17,8 @@ export interface SpherePanelState {
   scale: number;
   /** Sphere tessellation (theta = phi). */
   resolution: number;
+  /** Offer the Detail (tessellation) control: false when the backend draws ray-cast impostors. */
+  showDetail: boolean;
   /** Radius used for particles the mesh gives none. */
   constant: number;
   /** Colour the glyphs by radius rather than flat. */
@@ -131,26 +133,28 @@ export function renderSpherePanel(
   hint.textContent = `Suggested ${fmt(info.suggested)} — half the nearest-neighbour spacing.`;
   container.appendChild(hint);
 
-  // --- tessellation ---
-  container.appendChild(sectionLabel("Detail"));
-  const resRow = document.createElement("div");
-  resRow.className = "meshsize-modes";
-  for (const r of RESOLUTIONS) {
-    const btn = document.createElement("button");
-    btn.className = "meshsize-mode-btn";
-    btn.textContent = String(r);
-    btn.classList.toggle("active", state.resolution === r);
-    btn.addEventListener("click", () => handlers.onResolution(r));
-    resRow.appendChild(btn);
-  }
-  container.appendChild(resRow);
+  if (state.showDetail) {
+    // --- tessellation ---
+    container.appendChild(sectionLabel("Detail"));
+    const resRow = document.createElement("div");
+    resRow.className = "meshsize-modes";
+    for (const r of RESOLUTIONS) {
+      const btn = document.createElement("button");
+      btn.className = "meshsize-mode-btn";
+      btn.textContent = String(r);
+      btn.classList.toggle("active", state.resolution === r);
+      btn.addEventListener("click", () => handlers.onResolution(r));
+      resRow.appendChild(btn);
+    }
+    container.appendChild(resRow);
 
-  if (info.cells > BUSY_GLYPHS && state.resolution >= 32) {
-    const warn = document.createElement("div");
-    warn.className = "meshsize-summary";
-    warn.textContent =
-      `${info.cells.toLocaleString()} glyphs at this detail may be slow — try 8 or 16.`;
-    container.appendChild(warn);
+    if (info.cells > BUSY_GLYPHS && state.resolution >= 32) {
+      const warn = document.createElement("div");
+      warn.className = "meshsize-summary";
+      warn.textContent =
+        `${info.cells.toLocaleString()} glyphs at this detail may be slow — try 8 or 16.`;
+      container.appendChild(warn);
+    }
   }
 
   // --- colour ---
