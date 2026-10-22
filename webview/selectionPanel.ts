@@ -20,6 +20,8 @@ export interface SelectionPanelState {
   mode: SelectionMode;
   /** Box/lasso reach hidden entities too (their centres, projected), not just the visible ones. */
   xray: boolean;
+  /** Ctrl+click picks the clicked NODE instead of its entity. */
+  pickNodes: boolean;
   isolate: boolean;
   /** Named SubModelPart paths for the "Put in SubModelPart" input dropdown. */
   partPaths: string[];
@@ -35,8 +37,10 @@ export interface SelectionPanelHandlers {
   onSetMode(mode: SelectionMode): void;
   /** Toggles through-the-surface selection for box and lasso. */
   onSetXray(): void;
+  /** Toggles node picking for Ctrl+click. */
+  onSetPickNodes(): void;
   /** Creates a new set seeded by a predicate built in the panel row. */
-  onAddSeed(kind: string, params: Record<string, unknown>): void;
+  onAddSeed(kind: string, params: Record<string, unknown>): boolean;
   /** Left-click "frame the active set's first highlight" (Frame button). */
   onFrame(): void;
   /** Creates a SubModelPart from the ACTIVE set via an ordinary applyOp. */
@@ -149,6 +153,15 @@ export function renderSelectionPanel(
     xr.classList.toggle("active", state.xray);
   }
 
+  const nodeBtn = smallBtn(
+    state.pickNodes ? "Pick nodes: on" : "Pick nodes: off",
+    "On: Ctrl+click picks the nearest NODE of the clicked entity instead of the entity. Picked nodes go into a SubModelPart made from the set; picking an element or condition always brings its nodes along",
+    () => handlers.onSetPickNodes()
+  );
+  nodeBtn.id = "sel-pick-nodes";
+  nodeBtn.classList.toggle("active", state.pickNodes);
+  container.appendChild(nodeBtn);
+
   const active = state.sets[state.activeIndex];
   const countLine = (s: SelectionSet): string => {
     const c = s.kinds;
@@ -188,79 +201,81 @@ export function renderSelectionPanel(
     container.appendChild(hint);
   }
 
-  if (!active) return;
+  // The seed builder below must exist with no set yet (that is how the first set is seeded).
+  if (active) {
 
-  // active-set actions
-  const actions = document.createElement("div");
-  actions.className = "inspect-actions";
-  const frameBtn = document.createElement("button");
-  frameBtn.className = "panel-btn";
-  frameBtn.innerHTML = `<span class="ui-glyph">${glyph("maximize")}</span> Frame`;
-  frameBtn.title = "Frame the selection";
-  frameBtn.addEventListener("click", () => handlers.onFrame());
-  actions.appendChild(frameBtn);
-  actions.appendChild(smallBtn("New SubModelPart", "Create a SubModelPart holding the selection (an ordinary, undoable operation)", () => {
-    const nameInput = document.getElementById("sel-smp-name") as HTMLInputElement | null;
-    const parent = document.getElementById("sel-smp-parent") as HTMLSelectElement | null;
-    const name = (nameInput?.value ?? "").trim();
-    if (!name) {
-      nameInput?.focus();
-      return;
-    }
-    handlers.onNewSubModelPart(name, parent?.value ?? "");
-  }));
-  actions.appendChild(smallBtn("Export", "Export the selection as its own mesh file (original ids preserved)", () => handlers.onExportActive()));
-  actions.appendChild(smallBtn("Delete entities", "DELETE the selected entities as one undoable edit — conditions on the surviving region stay, constraints vanish with their nodes, fields and SubModelParts follow, orphan nodes are cleaned up", () => handlers.onDeleteActive(), true));
-  actions.appendChild(smallBtn("Clear", "Empty the active set (it keeps its seed)", () => handlers.onClearActive()));
-  actions.querySelectorAll("button").forEach(button => button.dataset.selectionRequired = "");
-  container.appendChild(actions);
-
-  const subRow = document.createElement("div");
-  subRow.className = "inspect-actions";
-  const subInput = document.createElement("input");
-  subInput.type = "text";
-  subInput.id = "sel-smp-name";
-  subInput.className = "edit-text";
-  subInput.placeholder = "SubModelPart name";
-  subInput.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") {
+    // active-set actions
+    const actions = document.createElement("div");
+    actions.className = "inspect-actions";
+    const frameBtn = document.createElement("button");
+    frameBtn.className = "panel-btn";
+    frameBtn.innerHTML = `<span class="ui-glyph">${glyph("maximize")}</span> Frame`;
+    frameBtn.title = "Frame the selection";
+    frameBtn.addEventListener("click", () => handlers.onFrame());
+    actions.appendChild(frameBtn);
+    actions.appendChild(smallBtn("New SubModelPart", "Create a SubModelPart holding the selection (an ordinary, undoable operation)", () => {
+      const nameInput = document.getElementById("sel-smp-name") as HTMLInputElement | null;
       const parent = document.getElementById("sel-smp-parent") as HTMLSelectElement | null;
-      const name = subInput.value.trim();
-      if (name) handlers.onNewSubModelPart(name, parent?.value ?? "");
-    }
-  });
-  subRow.appendChild(subInput);
-  const parentSel = document.createElement("select");
-  parentSel.id = "sel-smp-parent";
-  parentSel.className = "edit-sel";
-  parentSel.title = "Parent SubModelPart (none = top level)";
-  const optNone = document.createElement("option");
-  optNone.value = "";
-  optNone.textContent = "— top level —";
-  parentSel.appendChild(optNone);
-  for (const p of state.partPaths) {
-    const o = document.createElement("option");
-    o.value = p;
-    o.textContent = p;
-    parentSel.appendChild(o);
-  }
-  subRow.appendChild(parentSel);
-  container.appendChild(subRow);
+      const name = (nameInput?.value ?? "").trim();
+      if (!name) {
+        nameInput?.focus();
+        return;
+      }
+      handlers.onNewSubModelPart(name, parent?.value ?? "");
+    }));
+    actions.appendChild(smallBtn("Export", "Export the selection as its own mesh file (original ids preserved)", () => handlers.onExportActive()));
+    actions.appendChild(smallBtn("Delete entities", "DELETE the selected entities as one undoable edit — conditions on the surviving region stay, constraints vanish with their nodes, fields and SubModelParts follow, orphan nodes are cleaned up", () => handlers.onDeleteActive(), true));
+    actions.appendChild(smallBtn("Clear", "Empty the active set (it keeps its seed)", () => handlers.onClearActive()));
+    actions.querySelectorAll("button").forEach(button => button.dataset.selectionRequired = "");
+    container.appendChild(actions);
 
-  // visibility actions
-  const visActions = document.createElement("div");
-  visActions.className = "inspect-actions";
-  const isolateBtn = document.createElement("button");
-  isolateBtn.className = "panel-btn";
-  isolateBtn.classList.toggle("active", state.isolate);
-  isolateBtn.textContent = "Isolate";
-  isolateBtn.title = "Show only the selection: every block layer the selection does not touch is suppressed";
-  isolateBtn.addEventListener("click", () => handlers.onIsolate());
-  visActions.appendChild(isolateBtn);
-  visActions.appendChild(smallBtn("Hide", "Suppress every block layer the selection touches (block granularity)", () => handlers.onHide()));
-  visActions.querySelectorAll("button").forEach(button => button.dataset.selectionRequired = "");
-  visActions.appendChild(smallBtn("Restore", "Undo every Isolate/Hide suppression", () => handlers.onRestore()));
-  container.appendChild(visActions);
+    const subRow = document.createElement("div");
+    subRow.className = "inspect-actions";
+    const subInput = document.createElement("input");
+    subInput.type = "text";
+    subInput.id = "sel-smp-name";
+    subInput.className = "edit-text";
+    subInput.placeholder = "SubModelPart name";
+    subInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        const parent = document.getElementById("sel-smp-parent") as HTMLSelectElement | null;
+        const name = subInput.value.trim();
+        if (name) handlers.onNewSubModelPart(name, parent?.value ?? "");
+      }
+    });
+    subRow.appendChild(subInput);
+    const parentSel = document.createElement("select");
+    parentSel.id = "sel-smp-parent";
+    parentSel.className = "edit-sel";
+    parentSel.title = "Parent SubModelPart (none = top level)";
+    const optNone = document.createElement("option");
+    optNone.value = "";
+    optNone.textContent = "— top level —";
+    parentSel.appendChild(optNone);
+    for (const p of state.partPaths) {
+      const o = document.createElement("option");
+      o.value = p;
+      o.textContent = p;
+      parentSel.appendChild(o);
+    }
+    subRow.appendChild(parentSel);
+    container.appendChild(subRow);
+
+    // visibility actions
+    const visActions = document.createElement("div");
+    visActions.className = "inspect-actions";
+    const isolateBtn = document.createElement("button");
+    isolateBtn.className = "panel-btn";
+    isolateBtn.classList.toggle("active", state.isolate);
+    isolateBtn.textContent = "Isolate";
+    isolateBtn.title = "Show only the selection: every block layer the selection does not touch is suppressed";
+    isolateBtn.addEventListener("click", () => handlers.onIsolate());
+    visActions.appendChild(isolateBtn);
+    visActions.appendChild(smallBtn("Hide", "Suppress every block layer the selection touches (block granularity)", () => handlers.onHide()));
+    visActions.querySelectorAll("button").forEach(button => button.dataset.selectionRequired = "");
+    visActions.appendChild(smallBtn("Restore", "Undo every Isolate/Hide suppression", () => handlers.onRestore()));
+    container.appendChild(visActions);
+  }
 
   // --- seed builder ---
   container.appendChild(section("Seed a new set from"));
@@ -269,7 +284,7 @@ export function renderSelectionPanel(
   const kindSel = document.createElement("select");
   kindSel.id = "sel-seed-kind";
   kindSel.className = "edit-sel";
-  for (const [v, t] of [["part", "SubModelPart"], ["field", "Field range"], ["quality", "Quality metric"], ["property", "Property id"]] as const) {
+  for (const [v, t] of [["part", "SubModelPart"], ["field", "Field range"], ["quality", "Quality metric"], ["property", "Property id"], ["formula", "Formula (e.g. z <= 0)"]] as const) {
     const o = document.createElement("option");
     o.value = v;
     o.textContent = t;
@@ -333,6 +348,26 @@ export function renderSelectionPanel(
   anyLabel.appendChild(anyCheck);
   anyLabel.appendChild(document.createTextNode("any"));
   seedRow.appendChild(anyLabel);
+  const exprInput = document.createElement("input");
+  exprInput.type = "text";
+  exprInput.id = "sel-seed-expr";
+  exprInput.className = "edit-text";
+  exprInput.placeholder = "z <= 0.0 && x > 1";
+  exprInput.title =
+    "Boolean formula over x, y, z, nodal fields and globals: < <= > >= == != && || ! and + - * / ^ functions. " +
+    "Example: z <= 0.0 selects the base of the model.";
+  seedRow.appendChild(exprInput);
+  const ruleSel = document.createElement("select");
+  ruleSel.id = "sel-seed-rule";
+  ruleSel.className = "edit-sel";
+  ruleSel.title = "all: every node of a cell satisfies the formula · any: at least one · centroid: at the cell centroid";
+  for (const [v, t] of [["all", "all nodes"], ["any", "any node"], ["centroid", "centroid"]] as const) {
+    const o = document.createElement("option");
+    o.value = v;
+    o.textContent = t;
+    ruleSel.appendChild(o);
+  }
+  seedRow.appendChild(ruleSel);
   container.appendChild(seedRow);
 
   const confirmRow = document.createElement("div");
@@ -347,35 +382,61 @@ export function renderSelectionPanel(
   go.className = "panel-btn";
   go.textContent = "Add set";
   go.title = "Resolve the seed against the CURRENT model and add it";
-  go.addEventListener("click", () => {
-    const kindSel = document.getElementById("sel-seed-kind") as HTMLSelectElement;
-    const name = ((document.getElementById("sel-seed-name") as HTMLInputElement)?.value ?? "").trim() || "Set " + (state.sets.length + 1);
-    const kind = kindSel.value;
+  /** Builds the seed from the row and adds the set; true when a set was added. */
+  const addSeed = (): boolean => {
+    const kind = (document.getElementById("sel-seed-kind") as HTMLSelectElement).value;
     if (kind === "part") {
       const path = (document.getElementById("sel-seed-part") as HTMLSelectElement)?.value ?? "";
-      if (path) handlers.onAddSeed("part", { kind: "part", path });
-      return;
+      return path ? handlers.onAddSeed("part", { kind: "part", path }) : false;
     }
     if (kind === "field") {
       const lo = Number((document.getElementById("sel-seed-lo") as HTMLInputElement)?.value ?? Number.NaN);
       const hi = Number((document.getElementById("sel-seed-hi") as HTMLInputElement)?.value ?? Number.NaN);
       const any = Boolean((document.getElementById("sel-seed-any") as HTMLInputElement)?.checked);
       const variable = (document.getElementById("sel-seed-field") as HTMLSelectElement)?.value ?? "";
-      if (!Number.isFinite(lo) || !Number.isFinite(hi) || !variable) return;
-      handlers.onAddSeed("field", { kind: "field", variable, blockKind: "Nodal", lo, hi, rule: any ? "any" : "all" });
-      return;
+      if (!Number.isFinite(lo) || !Number.isFinite(hi) || !variable) return false;
+      return handlers.onAddSeed("field", { kind: "field", variable, blockKind: "Nodal", lo, hi, rule: any ? "any" : "all" });
     }
     if (kind === "property") {
       const id = Number((document.getElementById("sel-seed-prop") as HTMLInputElement)?.value ?? Number.NaN);
-      if (!Number.isInteger(id) || id <= 0) return;
-      handlers.onAddSeed("property", { kind: "property", propertyId: id });
+      if (!Number.isInteger(id) || id <= 0) return false;
+      return handlers.onAddSeed("property", { kind: "property", propertyId: id });
     }
     if (kind === "quality") {
       const metric = (document.getElementById("sel-seed-quality") as HTMLSelectElement)?.value ?? "";
-      if (metric) handlers.onAddSeed("quality", { kind: "quality", metric });
+      return metric ? handlers.onAddSeed("quality", { kind: "quality", metric }) : false;
+    }
+    if (kind === "formula") {
+      const expr = ((document.getElementById("sel-seed-expr") as HTMLInputElement)?.value ?? "").trim();
+      const rule = (document.getElementById("sel-seed-rule") as HTMLSelectElement)?.value ?? "all";
+      return expr ? handlers.onAddSeed("formula", { kind: "formula", expr, rule }) : false;
+    }
+    return false;
+  };
+  go.addEventListener("click", () => {
+    addSeed();
+  });
+  exprInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      addSeed();
     }
   });
   confirmRow.appendChild(go);
+  const goPart = document.createElement("button");
+  goPart.className = "panel-btn";
+  goPart.id = "sel-seed-create-part";
+  goPart.textContent = "Add & create SubModelPart";
+  goPart.title = "Add the set, then turn it into a top-level SubModelPart named like the set (its nodes ride along)";
+  goPart.addEventListener("click", () => {
+    const name = ((document.getElementById("sel-seed-name") as HTMLInputElement)?.value ?? "").trim();
+    if (!name) {
+      (document.getElementById("sel-seed-name") as HTMLInputElement | null)?.focus();
+      return;
+    }
+    if (addSeed()) handlers.onNewSubModelPart(name, "");
+  });
+  confirmRow.appendChild(goPart);
   container.appendChild(confirmRow);
 
   // The seed row shows only the inputs the chosen kind reads.
@@ -388,6 +449,8 @@ export function renderSelectionPanel(
     anyLabel.style.display = kind === "field" ? "" : "none";
     qualitySel.style.display = kind === "quality" ? "" : "none";
     propInput.style.display = kind === "property" ? "" : "none";
+    exprInput.style.display = kind === "formula" ? "" : "none";
+    ruleSel.style.display = kind === "formula" ? "" : "none";
   };
   kindSel.addEventListener("change", syncSeedVisibility);
   syncSeedVisibility();

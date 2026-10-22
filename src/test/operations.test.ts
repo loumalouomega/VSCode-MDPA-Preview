@@ -873,3 +873,85 @@ test("deleteEntities keeps the independent id spaces and follows the shipped rul
   assert.deepEqual(parsed.operations[0], rec as OpRecord);
   assert.equal(parsed.warnings.length, 0);
 });
+
+test("transform ops accept a SubModelPart scope and refuse an unknown one", async () => {
+  const { applyOp, opRecordFromMessage } = await import("../parser/operations");
+  const m = parseMdpa(`Begin Nodes
+1 0 0 0
+2 1 0 0
+3 1 1 0
+4 5 5 0
+End Nodes
+Begin Elements Element2D3N
+1 1 1 2 3
+2 1 2 3 4
+End Elements
+Begin SubModelPart Left
+  Begin SubModelPartElements
+  1
+  End SubModelPartElements
+End SubModelPart
+`);
+  const rec = opRecordFromMessage({ op: "translate", dx: 1, dy: 0, dz: 0, part: "Left" });
+  assert.deepEqual(rec, { op: "translate", dx: 1, dy: 0, dz: 0, part: "Left" });
+  const out = applyOp(m, rec!);
+  assert.ok(!out.noop);
+  assert.equal(out.model.coords[0], 1); // node 1 moved
+  assert.equal(out.model.coords[9], 5); // node 4 untouched
+  assert.match(out.message ?? "", /3 nodes of "Left"/);
+  const bad = applyOp(m, { op: "scale", sx: 2, sy: 2, sz: 2, part: "Nope" });
+  assert.equal(bad.noop, true);
+  assert.equal(opRecordFromMessage({ op: "rotate", axis: "z", angle: 5, part: 3 }), undefined);
+  assert.equal(opRecordFromMessage({ op: "scale", sx: 2, part: "" })?.op, "scale");
+});
+
+test("addSubModelPartEntities with closure also adds the nodes of the added cells", async () => {
+  const { applyOp, opRecordFromMessage } = await import("../parser/operations");
+  const m = parseMdpa(`Begin Nodes
+1 0 0 0
+2 1 0 0
+3 1 1 0
+4 5 5 0
+End Nodes
+Begin Elements Element2D3N
+1 1 1 2 3
+2 1 2 3 4
+End Elements
+Begin SubModelPart Empty
+End SubModelPart
+`);
+  const rec = opRecordFromMessage({ op: "addSubModelPartEntities", path: "Empty", kind: "elements", ids: [1], closure: true });
+  assert.equal((rec as { closure?: boolean }).closure, true);
+  const out = applyOp(m, rec!);
+  const part = out.model.subModelParts.find((p) => p.name === "Empty")!;
+  assert.deepEqual(Array.from(part.elementIds), [1]);
+  assert.deepEqual(Array.from(part.nodeIds).sort(), [1, 2, 3]);
+  const plain = applyOp(m, opRecordFromMessage({ op: "addSubModelPartEntities", path: "Empty", kind: "elements", ids: [1] })!);
+  assert.equal(plain.model.subModelParts.find((p) => p.name === "Empty")!.nodeIds.length, 0);
+});
+
+test("createSubModelPartFromSelection accepts picked nodes (alone or with entities) and refuses unknown nodes or a seed combo", async () => {
+  const { applyOp, opRecordFromMessage } = await import("../parser/operations");
+  const m = parseMdpa(`Begin Nodes
+1 0 0 0
+2 1 0 0
+3 1 1 0
+4 5 5 0
+End Nodes
+Begin Elements Element2D3N
+1 1 1 2 3
+End Elements
+`);
+  const only = opRecordFromMessage({ op: "createSubModelPartFromSelection", parentPath: "", name: "N", nodes: [2, 4] });
+  assert.deepEqual((only as { nodes?: number[] }).nodes, [2, 4]);
+  const out = applyOp(m, only!);
+  assert.ok(!out.noop, out.message ?? "");
+  assert.deepEqual(Array.from(out.model.subModelParts.find((p) => p.name === "N")!.nodeIds).sort(), [2, 4]);
+  const mixed = applyOp(m, opRecordFromMessage({ op: "createSubModelPartFromSelection", parentPath: "", name: "M", elements: [1], nodes: [4] })!);
+  assert.deepEqual(Array.from(mixed.model.subModelParts.find((p) => p.name === "M")!.nodeIds).sort(), [1, 2, 3, 4]);
+  assert.equal(applyOp(m, opRecordFromMessage({ op: "createSubModelPartFromSelection", parentPath: "", name: "X", nodes: [99] })!).noop, true);
+  assert.equal(
+    opRecordFromMessage({ op: "createSubModelPartFromSelection", parentPath: "", name: "S", nodes: [1], seed: { kind: "formula", expr: "x>0" } }),
+    undefined
+  );
+});

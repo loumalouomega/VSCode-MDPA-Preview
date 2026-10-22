@@ -668,6 +668,9 @@ export function setMeshModParts(parts: { path: string; children: unknown[] }[]):
 
   // Shrinkwrap's target (parts + skin) and the part pickers of the two
   // deformation forms. Each keeps its own previous selection when it still exists.
+  fillPartSelect("scale-part", paths, "— whole mesh —", false);
+  fillPartSelect("trans-part", paths, "— whole mesh —", false);
+  fillPartSelect("rot-part", paths, "— whole mesh —", false);
   fillPartSelect("sw-target", paths, "— none —", true);
   fillPartSelect("sw-move", paths, "— all nodes —", false);
   fillPartSelect("sw-pin", paths, "— none —", false);

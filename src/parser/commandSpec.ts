@@ -205,9 +205,9 @@ const OPERATIONS: CommandSpec[] = [
   op("reorder", "Reorder node storage (rcm, morton, hilbert)", "method(rcm|morton|hilbert)!", "reorder method=rcm", ["method"]),
   op("partition", "Attach a PARTITION_INDEX field (domain decomposition)", "nparts:int! method(sfc|kahip|auto) createParts:bool", "partition nparts=4", ["nparts"]),
   // Transforms
-  op("scale", "Scale the mesh about the origin", "sx:number sy:number sz:number", "scale sx=2 sy=2 sz=2"),
-  op("translate", "Translate the mesh", "dx:number dy:number dz:number", "translate dx=1 dy=0 dz=0"),
-  op("rotate", "Rotate about an axis parallel to x, y or z", "axis(x|y|z)! angle:number cx:number cy:number cz:number", "rotate axis=z angle=90", ["axis", "angle"]),
+  op("scale", "Scale about the origin (optionally only the nodes of a SubModelPart)", "sx:number sy:number sz:number part:part", "scale sx=2 sy=2 sz=2"),
+  op("translate", "Translate the mesh (optionally only the nodes of a SubModelPart)", "dx:number dy:number dz:number part:part", "translate dx=1 dy=0 dz=0"),
+  op("rotate", "Rotate about an axis parallel to x, y or z", "axis(x|y|z)! angle:number cx:number cy:number cz:number part:part", "rotate axis=z angle=90", ["axis", "angle"]),
   // SubModelParts
   op("deleteSubModelPart", "Delete a SubModelPart and its entities", "path:part!", "deleteSubModelPart path=Inlet", ["path"]),
   op("renameSubModelPart", "Rename a SubModelPart", "path:part! newName!", "renameSubModelPart path=Inlet newName=Inflow", ["path", "newName"]),
@@ -215,7 +215,7 @@ const OPERATIONS: CommandSpec[] = [
   op("moveSubModelPart", "Move a SubModelPart under another parent", "path:part! newParentPath!", "moveSubModelPart path=Inlet newParentPath=Walls"),
   op("mergeSubModelParts", "Merge one SubModelPart into another", "sourcePath:part! targetPath:part!", "mergeSubModelParts sourcePath=A targetPath=B"),
   op("regionAlgebra", "Union/intersection/difference of SubModelParts into a new one", "operation(union|intersection|difference)! inputs:list! output!", "regionAlgebra operation=union inputs=A,B output=AB"),
-  op("addSubModelPartEntities", "Add entities (by id) to a SubModelPart", "path:part! kind(nodes|elements|conditions|geometries|constraints)! ids:ids!", "addSubModelPartEntities path=Inlet kind=nodes ids=1,2,5-8"),
+  op("addSubModelPartEntities", "Add entities (by id) to a SubModelPart", "path:part! kind(nodes|elements|conditions|geometries|constraints)! ids:ids! closure:bool", "addSubModelPartEntities path=Inlet kind=nodes ids=1,2,5-8"),
   op("removeSubModelPartEntities", "Remove entities (by id) from a SubModelPart", "path:part! kind(nodes|elements|conditions|geometries|constraints)! ids:ids!", "removeSubModelPartEntities path=Inlet kind=nodes ids=1,2"),
   op("createSubModelPartFromSelection", "Group entities (explicit ids or a selection seed) into a SubModelPart", "parentPath! name! elements:ids conditions:ids geometries:ids seed:json", "createSubModelPartFromSelection parentPath=\"\" name=Picked elements=1,2,3"),
   op("deleteEntities", "Delete elements/conditions/geometries by id", "elements:ids conditions:ids geometries:ids", "deleteEntities elements=1,2"),

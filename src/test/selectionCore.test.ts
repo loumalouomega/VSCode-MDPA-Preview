@@ -292,3 +292,33 @@ test("set and id counts are capped", () => {
   assert.match(capped.warnings.join(" "), /kept the first 50000 elements/);
   assert.equal(serializeSelectionSets([{ name: "huge", seed: { kind: "explicit" }, kinds: { Elements: big, Conditions: [], Geometries: [] } }])[0].kinds!.Elements.length, MAX_SELECTION_IDS);
 });
+
+test("formula seeds resolve, validate, clone, describe and round-trip", async () => {
+  const { resolveSeed, validateSelectionSeed, describeSeed } = await import("../parser/selectionCore");
+  const m = parseMdpa(`Begin Nodes
+1 0 0 0
+2 1 0 0
+3 1 1 0
+4 0 1 0
+5 0 0 -1
+End Nodes
+Begin Elements Element2D3N
+1 1 1 2 3
+2 1 3 4 1
+End Elements
+Begin Conditions LineCondition2D2N
+1 1 1 2
+2 1 4 3
+End Conditions
+`);
+  const base = resolveSeed(m, { kind: "formula", expr: "y <= 0" });
+  assert.deepEqual([...base.kinds.Conditions], [1]);
+  assert.equal(base.kinds.Elements.size, 0);
+  assert.deepEqual([...resolveSeed(m, { kind: "formula", expr: "y <= 0", rule: "any" }).kinds.Elements].sort(), [1, 2]);
+  assert.ok(resolveSeed(m, { kind: "formula", expr: "z > 10" }).reason);
+  assert.ok(resolveSeed(m, { kind: "formula", expr: "(((" }).reason);
+  const seed = validateSelectionSeed({ kind: "formula", expr: " y <= 0 ", rule: "any" });
+  assert.deepEqual(seed, { kind: "formula", expr: " y <= 0 ", rule: "any" });
+  assert.equal(validateSelectionSeed({ kind: "formula", expr: "" }), undefined);
+  assert.match(describeSeed({ kind: "formula", expr: "y<=0", rule: "any" }), /formula y<=0 \(any\)/);
+});

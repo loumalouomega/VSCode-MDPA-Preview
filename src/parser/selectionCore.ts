@@ -35,6 +35,7 @@ import { FieldComponent } from "./fieldScalars";
 import { findSubModelPart } from "./subModelPartExtract";
 import { findPropertySet } from "./propertiesParser";
 import { QualityReport } from "./meshQuality";
+import { formulaCells, FormulaRule } from "./formulaSelect";
 
 export const ENTITY_KINDS: EntityKind[] = ["Elements", "Conditions", "Geometries"];
 
@@ -61,13 +62,17 @@ export type SelectionSeed =
   /** meshQuality ids in the bad/unacceptable bands of one metric. */
   | { kind: "quality"; metric: string }
   /** Entities whose block's `propertyIds` row is `propertyId`. */
-  | { kind: "property"; propertyId: number };
+  | { kind: "property"; propertyId: number }
+  /** Cells whose nodes (or centroid) satisfy a boolean formula, e.g. `z <= 0`. */
+  | { kind: "formula"; expr: string; rule?: FormulaRule };
 
 /** One named selection set. Id lists are sorted ascending. */
 export interface SelectionSet {
   name: string;
   seed: SelectionSeed;
   kinds: { Elements: number[]; Conditions: number[]; Geometries: number[] };
+  /** Nodes picked directly (session-only; they ride into a SubModelPart created from the set). */
+  nodes?: number[];
 }
 
 /** A seed resolution: a non-undefined `reason` means nothing was selected. */
@@ -147,6 +152,11 @@ export function resolveSeed(
       if (kinds.Elements.size + kinds.Conditions.size + kinds.Geometries.size === 0)
         return { kinds, reason: `no entity carries property id ${seed.propertyId}.` };
       return { kinds };
+    }
+
+    case "formula": {
+      const r = formulaCells(model, seed.expr, seed.rule ?? "all");
+      return r.reason ? { kinds: r.kinds, reason: r.reason } : { kinds: r.kinds };
     }
 
     case "quality": {
@@ -366,6 +376,11 @@ export function validateSelectionSeed(raw: unknown): SelectionSeed | undefined {
       return typeof r.propertyId === "number" && Number.isInteger(r.propertyId) && r.propertyId >= 0
         ? { kind: "property", propertyId: r.propertyId }
         : undefined;
+    case "formula": {
+      if (typeof r.expr !== "string" || r.expr.trim().length === 0 || r.expr.length > 1000) return undefined;
+      const rule = r.rule === "all" || r.rule === "any" || r.rule === "centroid" ? r.rule : undefined;
+      return { kind: "formula", expr: r.expr, ...(rule ? { rule } : {}) };
+    }
     default:
       return undefined;
   }
@@ -382,6 +397,8 @@ function cloneSeed(seed: SelectionSeed): SelectionSeed {
       return { kind: "quality", metric: seed.metric };
     case "property":
       return { kind: "property", propertyId: seed.propertyId };
+    case "formula":
+      return { kind: "formula", expr: seed.expr, ...(seed.rule ? { rule: seed.rule } : {}) };
     case "field":
       return {
         kind: "field",
@@ -501,5 +518,7 @@ export function describeSeed(seed: SelectionSeed): string {
       return `quality metric ${seed.metric} (bad/unacceptable)`;
     case "property":
       return `property id ${seed.propertyId}`;
+    case "formula":
+      return `formula ${seed.expr}${seed.rule && seed.rule !== "all" ? ` (${seed.rule})` : ""}`;
   }
 }

@@ -22,6 +22,10 @@ Adjacent cells that share an edge get a single **welded** mid-edge node, nodal f
 
 For MMG-based remeshing and level-set splitting, see [MMG Remesh & Level-set](./mmg-remeshing).
 
+## Transforming only part of the mesh
+
+Scale, Translate and Rotate each have a **part** selector (default *whole mesh*). Pick a SubModelPart and only its nodes move — the part's listed nodes plus the nodes of its elements, conditions and geometries, including child parts. Cells shared with the rest of the mesh stretch, and the outcome message says so. Through MCP and the command line, pass `part`, e.g. `translate dz=5 part=Base`.
+
 ## Additional mesh operations
 
 ![The Mesh Modification sidebar organized into six subcategories — Element order & topology (expanded, with Refine open), Remeshing (MMG), Smoothing & renumbering, Selection & combination, Fields, and Sphere elements](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/mesh-operations.png)

@@ -207,3 +207,22 @@ test("a sidecar written by a newer version is never overwritten", () => {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("measures cache persists, is preserved by partial saves and tolerates garbage", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "kvl-measures-"));
+  const mesh = path.join(dir, "m.mdpa");
+  fs.writeFileSync(mesh, "Begin Nodes\n1 0 0 0\nEnd Nodes\n");
+  const cache = {
+    key: "4|E10:1|0|0,0,0|1,1,1",
+    total: { value: 1 / 6, dimension: 3 },
+    parts: { Parts: { value: 1 / 6, dimension: 3 }, Empty: null },
+  };
+  saveViewLayers(mesh, [], undefined, undefined, cache);
+  assert.deepEqual(loadViewLayers(mesh).measures, { ...cache });
+  // A layers-only save keeps the cache.
+  saveViewLayers(mesh, []);
+  assert.equal(loadViewLayers(mesh).measures?.key, cache.key);
+  // Garbage is dropped, not thrown.
+  saveViewLayers(mesh, [], undefined, undefined, { key: 3 });
+  assert.equal(loadViewLayers(mesh).measures, undefined);
+});

@@ -46,7 +46,7 @@ export function findSubModelPart(
   return walk(model.subModelParts);
 }
 
-interface IdSets {
+export interface IdSets {
   elements: Set<number>;
   conditions: Set<number>;
   geometries: Set<number>;
@@ -54,12 +54,34 @@ interface IdSets {
 }
 
 /** Recursively unions a part's + descendants' entity/node ids into `sets`. */
-function collectIds(part: SubModelPart, sets: IdSets): void {
+export function collectIds(part: SubModelPart, sets: IdSets): void {
   for (const id of part.elementIds) sets.elements.add(id);
   for (const id of part.conditionIds) sets.conditions.add(id);
   for (const id of part.geometryIds) sets.geometries.add(id);
   for (const id of part.nodeIds) sets.nodes.add(id);
   for (const child of part.children) collectIds(child, sets);
+}
+
+/**
+ * Every node of a SubModelPart's subtree: its listed nodes plus the connectivity
+ * closure of its elements/conditions/geometries (Kratos parts may list only
+ * elements). Undefined when the path does not exist.
+ */
+export function subModelPartNodeIds(model: MdpaModel, path: string): Set<number> | undefined {
+  const part = findSubModelPart(model, path);
+  if (!part) return undefined;
+  const sets: IdSets = { elements: new Set(), conditions: new Set(), geometries: new Set(), nodes: new Set() };
+  collectIds(part, sets);
+  const nodes = sets.nodes;
+  for (const block of model.blocks) {
+    const keep = setForKind(sets, block.kind);
+    if (keep.size === 0) continue;
+    for (let c = 0; c < block.count; c++) {
+      if (!keep.has(block.entityIds[c])) continue;
+      for (let k = 0; k < block.stride; k++) nodes.add(block.connectivity[c * block.stride + k]);
+    }
+  }
+  return nodes;
 }
 
 function setForKind(sets: IdSets, kind: EntityKind): Set<number> {

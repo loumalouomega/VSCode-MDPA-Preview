@@ -24,6 +24,7 @@ import {
   serializeViewSidecar,
   validateUserLayers,
 } from "./parser/userLayers";
+import { MeasuresCache, validateMeasuresCache } from "./parser/partMeasures";
 import { ViewState, validateViewState } from "./parser/viewState";
 import { viewFilePath } from "./problemtype/caseFile";
 
@@ -36,6 +37,7 @@ export function loadViewLayers(meshFsPath: string): {
   warnings: string[];
   outline?: OutlineViewSettings;
   view?: ViewState;
+  measures?: MeasuresCache;
 } {
   let text: string;
   try {
@@ -44,7 +46,7 @@ export function loadViewLayers(meshFsPath: string): {
     return { layers: [], warnings: [] };
   }
   const parsed = parseViewSidecar(text);
-  return { layers: parsed.layers, warnings: parsed.warnings, outline: parsed.outline, view: parsed.view };
+  return { layers: parsed.layers, warnings: parsed.warnings, outline: parsed.outline, view: parsed.view, measures: parsed.measures };
 }
 
 /**
@@ -63,7 +65,8 @@ export function saveViewLayers(
   meshFsPath: string,
   layers?: unknown,
   outline?: unknown,
-  view?: unknown
+  view?: unknown,
+  measures?: unknown
 ): { saved: number; warnings: string[] } {
   const warnings: string[] = [];
   let onDisk: ReturnType<typeof parseViewSidecar> | undefined;
@@ -106,8 +109,11 @@ export function saveViewLayers(
     viewOut = onDisk?.view;
   }
 
+  // Same rule as the other keys: omitted keeps the on-disk cache; an invalid one is dropped.
+  const measuresOut = measures !== undefined ? validateMeasuresCache(measures) : onDisk?.measures;
+
   try {
-    fs.writeFileSync(viewFilePath(meshFsPath), serializeViewSidecar(layersOut, outlineOut, viewOut));
+    fs.writeFileSync(viewFilePath(meshFsPath), serializeViewSidecar(layersOut, outlineOut, viewOut, measuresOut));
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return { saved: 0, warnings: [...warnings, `Could not save the view sidecar: ${message}`] };

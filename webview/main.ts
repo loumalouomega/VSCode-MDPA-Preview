@@ -52,6 +52,15 @@ import type { FlowBalance } from "../src/parser/flowBalance";
 import { EntityBlock, EntityKind, FieldData, MdpaModel, SubModelPart } from "../src/parser/types";
 import { computeMeshQuality, QualityReport } from "../src/parser/meshQuality";
 import { computeMeshSize, MeshSizeResult } from "../src/parser/meshSize";
+import {
+  computePartMeasures,
+  formatMeasure,
+  measureKey,
+  measureName,
+  MeasuresCache,
+  PartMeasures,
+  validateMeasuresCache,
+} from "../src/parser/partMeasures";
 import { computeMeshNormals, MeshNormals } from "../src/parser/meshNormals";
 import { surfaceDefects, SurfaceDefects } from "../src/parser/surfaceDefects";
 import { pointInPolygon, SelectionSet, SelectionSeed, describeSeed, refreshSelection, resolveSeed } from "../src/parser/selectionCore";
@@ -1781,6 +1790,8 @@ function handleHostMessage(event: MessageEvent): void {
       }
       viewSidecarLoaded = true;
       applyPendingView();
+      measuresCache = validateMeasuresCache((msg as unknown as { measures?: unknown }).measures);
+      scheduleMeasures();
       break;
     }
     case "opProgress": {
@@ -2285,7 +2296,7 @@ function buildScene(resetCam = true): void {
       onMerge: (sourcePath, targetPath) =>
         vscode.postMessage({ type: "applyOp", op: "mergeSubModelParts", sourcePath, targetPath }),
       onAddEntities: (path, kind, ids) =>
-        vscode.postMessage({ type: "applyOp", op: "addSubModelPartEntities", path, kind, ids }),
+        vscode.postMessage({ type: "applyOp", op: "addSubModelPartEntities", path, kind, ids, closure: kind !== "nodes" && kind !== "constraints" }),
       onRemoveEntities: (path, kind, ids) =>
         vscode.postMessage({ type: "applyOp", op: "removeSubModelPartEntities", path, kind, ids }),
   };
@@ -2316,6 +2327,7 @@ function buildScene(resetCam = true): void {
     }
   });
 
+  invalidateMeasures();
   renderStats();
   plotPane.update();
   if (resetCam) resetCamera();
@@ -2561,6 +2573,7 @@ function buildPartLayer(
   if (!opts?.plain) {
     node.exportPath = part.path;
     node.counts = subModelPartCounts(part);
+    attachMeasure(node.counts, part.path);
   }
   return node;
 }
@@ -3569,6 +3582,68 @@ function updateNodeLabels(): void {
 }
 
 // --- Stats panel --------------------------------------------------------
+// --- Length / area / volume of the model and of every SubModelPart -----------
+// Computed after the scene settles (debounced, so playing a timeline does not
+// measure every frame). A result is cached in the sidecar's `measures` key under
+// a structural fingerprint, so a reopened mesh reuses it; only a computation
+// slow enough to matter is persisted, so merely opening a small mesh never
+// creates a sidecar.
+let measuresCache: MeasuresCache | undefined;
+let partMeasures: PartMeasures | undefined;
+let measureTimer: ReturnType<typeof setTimeout> | undefined;
+const MEASURE_PERSIST_MS = 50;
+
+function attachMeasure(counts: OutlineCounts, path: string): void {
+  const m = partMeasures?.parts[path];
+  if (m) {
+    counts.measureLabel = measureName(m.dimension);
+    counts.measureText = formatMeasure(m);
+  } else {
+    delete counts.measureLabel;
+    delete counts.measureText;
+  }
+}
+
+function applyMeasuresToOutline(nodes: OutlineNode[]): void {
+  for (const n of nodes) {
+    if (n.exportPath !== undefined && n.counts) attachMeasure(n.counts, n.exportPath);
+    if (n.children) applyMeasuresToOutline(n.children);
+  }
+}
+
+function invalidateMeasures(): void {
+  partMeasures = undefined;
+  scheduleMeasures();
+}
+
+function scheduleMeasures(patient = false): void {
+  if (measureTimer !== undefined) clearTimeout(measureTimer);
+  measureTimer = setTimeout(() => {
+    measureTimer = undefined;
+    if (!model || partMeasures) return;
+    // Wait (once) for the sidecar reply so its cache can be used; if it never
+    // comes (no sidecar host), measure anyway — the cache is only an optimisation.
+    if (!viewSidecarLoaded && !patient) {
+      scheduleMeasures(true);
+      return;
+    }
+    const key = measureKey(model);
+    if (measuresCache && measuresCache.key === key) {
+      partMeasures = measuresCache;
+    } else {
+      const t0 = performance.now();
+      partMeasures = computePartMeasures(model);
+      if (performance.now() - t0 >= MEASURE_PERSIST_MS) {
+        measuresCache = { key, ...partMeasures };
+        vscode.postMessage({ type: "viewLayersSave", measures: measuresCache });
+      }
+    }
+    renderStats();
+    applyMeasuresToOutline(outlineRoots);
+    renderOutlineFromState();
+  }, patient ? 1500 : 400);
+}
+
 function renderStats(): void {
   if (!model) return;
   const count = (kind: string) =>
@@ -3589,6 +3664,10 @@ function renderStats(): void {
       `[${fmt(b.min[0])}, ${fmt(b.min[1])}, ${fmt(b.min[2])}] – [${fmt(b.max[0])}, ${fmt(b.max[1])}, ${fmt(b.max[2])}]`
     ),
   ];
+  if (partMeasures?.total) {
+    rows.push(row(measureName(partMeasures.total.dimension), formatMeasure(partMeasures.total)));
+    if (partMeasures.boundary) rows.push(row("Boundary area", formatMeasure(partMeasures.boundary)));
+  }
   // Source-format metadata with no home elsewhere (today: MED's own mesh
   // name/description/units) — same conditional shape as mesh_info's `source`
   // section, only rendered when the file actually set something.
@@ -6982,6 +7061,7 @@ let selectionActiveIndex = 0;
 let selectionMode: SelectionMode = "single";
 /** Box/lasso select through occluding surfaces (centroid projection) rather than the visible ones. */
 let selectionXray = false;
+let selectionPickNodes = false;
 let selectionVisibility: SelectionVisibilityMode = "normal";
 // The per-layer `visible` state before an Isolate/Hide, for Restore.
 const selectionBackup = new Map<string, boolean>();
@@ -7116,6 +7196,7 @@ function selectionPanelState(): SelectionPanelState {
     activeIndex: selectionActiveIndex,
     mode: selectionMode,
     xray: selectionXray,
+    pickNodes: selectionPickNodes,
     isolate: selectionVisibility === "isolate",
     partPaths: collectSubModelPartPaths(),
     fieldNames: fieldInfos.map((f) => f.field.variable),
@@ -7140,6 +7221,11 @@ function renderSelectionUI(): void {
           : "Visible only: box and lasso select what can be seen."
       );
     },
+    onSetPickNodes: () => {
+      selectionPickNodes = !selectionPickNodes;
+      renderSelectionUI();
+      toast(selectionPickNodes ? "Ctrl+click now picks nodes." : "Ctrl+click picks entities.");
+    },
     onSetMode: (mode) => {
       selectionMode = mode;
       if (mode !== "lasso") selectionLassoHide();
@@ -7154,14 +7240,14 @@ function renderSelectionUI(): void {
       );
     },
     onAddSeed: (kind, params) => {
-      if (!model) return;
+      if (!model) return false;
       const name = ((document.getElementById("sel-seed-name") as HTMLInputElement)?.value ?? "").trim() || `Set ${selectionSets.length + 1}`;
       const seed = params as SelectionSeed;
       try {
         const r = resolveSeed(model, seed, seed.kind === "quality" ? computeMeshQuality(model) : undefined);
         if (r.reason) {
-          toast(`Nothing selected: ${r.reason}.`);
-          return;
+          toast(`Nothing selected: ${r.reason}`);
+          return false;
         }
         const set: SelectionSet = {
           name,
@@ -7177,6 +7263,7 @@ function renderSelectionUI(): void {
         refreshAndApplySelection();
         renderSelectionUI();
         scheduleViewSave();
+        return true;
       } finally {
         void seed;
       }
@@ -7186,8 +7273,9 @@ function renderSelectionUI(): void {
       const activeSet = activeSelectionSet();
       if (!activeSet) return;
       const kinds = activeSet.kinds;
+      const nodes = activeSet.nodes ?? [];
       const total = kinds.Elements.length + kinds.Conditions.length + kinds.Geometries.length;
-      if (total === 0) {
+      if (total + nodes.length === 0) {
         toast("The active set is empty — pick something first.");
         return;
       }
@@ -7199,8 +7287,9 @@ function renderSelectionUI(): void {
         elements: kinds.Elements,
         conditions: kinds.Conditions,
         geometries: kinds.Geometries,
+        ...(nodes.length > 0 ? { nodes } : {}),
       });
-      toast(`Creating SubModelPart "${name}" from the set (${total} entities, nodes follow their cells).`);
+      toast(`Creating SubModelPart "${name}" from the set (${total} entities${nodes.length ? `, ${nodes.length} picked node(s)` : ""}; nodes follow their cells).`);
     },
     onExportActive: () => {
       const activeSet = activeSelectionSet();
@@ -8844,6 +8933,24 @@ renderRoot.addEventListener("pointerup", (ev: PointerEvent) => {
 // buttons or while the panel is closed, the mode's stated trade.
 
 /** Toggles one resolved entity into the active set; creates the set. */
+/** Ctrl+click in node mode: toggles one node in the active set's `nodes`. */
+function toggleSelectionNode(nodeId: number | undefined): void {
+  if (!model || nodeId === undefined) return;
+  let set: SelectionSet;
+  try {
+    set = ensureActiveSet();
+  } catch {
+    return;
+  }
+  const nodes = (set.nodes ??= []);
+  const at = nodes.indexOf(nodeId);
+  if (at >= 0) nodes.splice(at, 1);
+  else nodes.push(nodeId);
+  nodes.sort((a, b) => a - b);
+  toast(`Node ${nodeId} ${at >= 0 ? "removed from" : "added to"} "${set.name}" (${nodes.length} node${nodes.length === 1 ? "" : "s"} picked).`);
+  renderSelectionUI();
+}
+
 function toggleSelectionPick(kind: EntityKind, entityId: number | undefined): void {
   if (!model || entityId === undefined) return;
   let set: SelectionSet;
@@ -9126,7 +9233,8 @@ renderRoot.addEventListener("pointerup", (ev: PointerEvent) => {
   if (ev.button === 0 && (ev.ctrlKey || ev.metaKey)) {
     const rect = renderRoot.getBoundingClientRect();
     const r = pickAt(ev.clientX - rect.left, rect.height - (ev.clientY - rect.top));
-    toggleSelectionPick(r?.kind ?? undefined as unknown as EntityKind, r?.entityId);
+    if (selectionPickNodes) toggleSelectionNode(r?.nodeId);
+    else toggleSelectionPick(r?.kind ?? undefined as unknown as EntityKind, r?.entityId);
   }
 });
 window.addEventListener("keydown", (ev: KeyboardEvent) => {
