@@ -350,6 +350,16 @@ async function main() {
       model.coords[p * 3] += dx;
       model.coords[p * 3 + 1] += dy;
     }
+  } else if (scene === "lattice") {
+    // A dense regular lattice with one nodal scalar (a soft ball plus a ridge),
+    // for the Volume view (roadmap item 22 D). HARNESS_LATTICE sets the cells
+    // per side (default 24).
+    const n = Number(process.env.HARNESS_LATTICE ?? 24);
+    model = fieldCalcModel(hexGrid(n, n, n, 1 / n), {
+      expr: "exp(-((x-0.5)^2 + (y-0.5)^2 + (z-0.5)^2) * 18) + 0.4 * exp(-((x-0.25)^2 + (z-0.7)^2) * 60)",
+      location: "Nodal",
+      output: "DENSITY",
+    }).model;
   } else if (scene === "panefields") {
     // Two distinct nodal fields on one body, so the split-view shot can show a
     // different one per pane — the point of per-pane field settings. Synthetic
@@ -441,6 +451,8 @@ async function main() {
   const fileName =
     scene === "op" || scene === "badquality"
       ? "example.mdpa"
+      : scene === "lattice"
+        ? "lattice.vti"
       : scene === "panefields"
         ? "results.vtu"
         : scene === "spheres"
@@ -506,6 +518,7 @@ async function main() {
     // Outgoing messages are recorded (not swallowed) so a capture script can
     // drive a real host-bound flow headlessly — e.g. click Screenshot… and read
     // back the PNG bytes the webview would have posted to VS Code.
+    window.__HARNESS__ = true;
     function acquireVsCodeApi() { return { postMessage(m) { (window.SENT_MESSAGES ||= []).push(m); window.HARNESS_POST?.(m); }, getState() {}, setState() {} }; }
   </script>
 </head>

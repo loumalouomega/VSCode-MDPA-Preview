@@ -6,6 +6,7 @@
 // stylesheet. Pure DOM: no vtk, no model types.
 
 import { COLORMAPS, gradientCss, gradientCssFromStops, ColorStop } from "./colormaps";
+import { filterColormaps, groupByCategory } from "../src/parser/colormapSearch";
 
 /** Compact numeric formatting for panel labels and legends. */
 export function fmt(v: number): string {
@@ -74,6 +75,74 @@ export function sectionLabel(text: string): HTMLElement {
   return el;
 }
 
+// The search box and the colour-blind filter outlive a panel re-render (picking
+// a map re-renders it), so the picker's two inputs are module state.
+let colormapQuery = "";
+let colormapOnlySafe = false;
+
+/**
+ * The colormap control: a search box, a colour-blind-safe filter and a select
+ * grouped by category. The selected map is always listed even when the filter
+ * would hide it, so the select never silently shows a different map from the
+ * one in use.
+ */
+export function colormapSelectControl(selected: string, onChange: (name: string) => void): HTMLElement {
+  const wrap = document.createElement("div");
+  wrap.className = "colormap-picker";
+
+  const search = document.createElement("input");
+  search.type = "search";
+  search.className = "field-input";
+  search.placeholder = "Search colormaps…";
+  search.value = colormapQuery;
+  wrap.appendChild(search);
+
+  const safeLabel = document.createElement("label");
+  safeLabel.className = "edit-check";
+  const safe = document.createElement("input");
+  safe.type = "checkbox";
+  safe.checked = colormapOnlySafe;
+  safeLabel.appendChild(safe);
+  safeLabel.appendChild(document.createTextNode("Colour-blind safe only"));
+  safeLabel.title = "Only maps whose published source rates them safe for the common colour-vision deficiencies";
+  wrap.appendChild(safeLabel);
+
+  const sel = document.createElement("select");
+  sel.className = "field-select";
+  const fill = (): void => {
+    sel.textContent = "";
+    const shown = filterColormaps(COLORMAPS, colormapQuery, colormapOnlySafe);
+    if (!shown.some((c) => c.name === selected)) {
+      const current = COLORMAPS.find((c) => c.name === selected);
+      if (current) shown.unshift(current);
+    }
+    for (const g of groupByCategory(shown)) {
+      const og = document.createElement("optgroup");
+      og.label = g.category[0].toUpperCase() + g.category.slice(1);
+      for (const cm of g.maps) {
+        const opt = document.createElement("option");
+        opt.value = cm.name;
+        opt.textContent = cm.colorblindSafe ? `${cm.name} ✓` : cm.name;
+        if (cm.name === selected) opt.selected = true;
+        og.appendChild(opt);
+      }
+      sel.appendChild(og);
+    }
+  };
+  fill();
+  search.addEventListener("input", () => {
+    colormapQuery = search.value;
+    fill();
+  });
+  safe.addEventListener("change", () => {
+    colormapOnlySafe = safe.checked;
+    fill();
+  });
+  sel.addEventListener("change", () => onChange(sel.value));
+  wrap.appendChild(sel);
+  return wrap;
+}
+
 /** A labelled colormap picker. */
 export function colormapRow(
   selected: string,
@@ -85,17 +154,7 @@ export function colormapRow(
   l.className = "field-label";
   l.textContent = "Colormap";
   row.appendChild(l);
-  const sel = document.createElement("select");
-  sel.className = "field-select";
-  for (const cm of COLORMAPS) {
-    const opt = document.createElement("option");
-    opt.value = cm.name;
-    opt.textContent = cm.name;
-    if (cm.name === selected) opt.selected = true;
-    sel.appendChild(opt);
-  }
-  sel.addEventListener("change", () => onChange(sel.value));
-  row.appendChild(sel);
+  row.appendChild(colormapSelectControl(selected, onChange));
   return row;
 }
 

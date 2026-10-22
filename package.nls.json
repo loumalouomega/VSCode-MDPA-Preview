@@ -44,6 +44,7 @@
   "command.kratos.mdpa.dataTable.title": "Data Table…",
   "command.kratos.mdpa.exportReport.title": "Export Report…",
   "command.kratos.mdpa.lighting.title": "Lighting…",
+  "command.kratos.mdpa.volume.title": "Volume View (Regular Lattice)…",
   "command.kratos.mdpa.propertiesEditor.title": "Properties Editor…",
   "command.kratos.mdpa.cameraBookmarks.title": "Camera Bookmarks…",
   "command.kratos.mdpa.record.title": "Record Video / Frames…",

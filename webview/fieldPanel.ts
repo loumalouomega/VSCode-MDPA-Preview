@@ -8,9 +8,9 @@
 // threshold cell selection is src/parser/thresholdCells.ts.
 
 import { displayAlternatives, displayScaleFor, labelWithUnit } from "../src/parser/fieldDimensions";
-import { FieldInfo, rangeForComponent } from "./fieldData";
+import { FieldInfo, isDeformable, rangeForComponent } from "./fieldData";
 import { COLORMAPS, getColormap } from "./colormaps";
-import { legendFromStops } from "./panelWidgets";
+import { colormapSelectControl, legendFromStops } from "./panelWidgets";
 import { TOOLBAR_ICONS } from "../src/toolbarIcons";
 import { glyph } from "../src/uiGlyphs";
 import {
@@ -327,7 +327,7 @@ function buildModeSelect(
 ): HTMLElement {
   const wrap = document.createElement("div");
   wrap.className = "field-modes";
-  const hasVector = vectorInfos(state).length > 0;
+  const hasVector = state.infos.some(isDeformable);
   const modes: { mode: FieldMode; label: string; enabled: boolean; title: string }[] = [
     { mode: "contour", label: "Contour", enabled: !!info, title: "Color map on the mesh" },
     {
@@ -346,7 +346,7 @@ function buildModeSelect(
       mode: "deformed",
       label: "Deformed",
       enabled: hasVector,
-      title: hasVector ? "Warp the geometry by a vector field" : "Requires a vector field",
+      title: hasVector ? "Warp the geometry by a vector field, or lift it by a nodal scalar (relief along Z)" : "Requires a vector or nodal scalar field",
     },
     {
       mode: "threshold",
@@ -409,17 +409,7 @@ function buildUnitSelect(state: FieldPanelState, info: FieldInfo, handlers: Fiel
 }
 
 function buildColormapSelect(state: FieldPanelState, handlers: FieldPanelHandlers): HTMLElement {
-  const sel = document.createElement("select");
-  sel.className = "field-select";
-  for (const cm of COLORMAPS) {
-    const opt = document.createElement("option");
-    opt.value = cm.name;
-    opt.textContent = cm.name;
-    if (cm.name === state.colormap) opt.selected = true;
-    sel.appendChild(opt);
-  }
-  sel.addEventListener("change", () => handlers.onSelectColormap(sel.value));
-  return sel;
+  return colormapSelectControl(state.colormap, (name) => handlers.onSelectColormap(name));
 }
 
 // Editable min/max range (with a lock/reset toggle), log-scale checkbox
@@ -682,11 +672,11 @@ function buildDeformControls(state: FieldPanelState, handlers: FieldPanelHandler
   const wrap = document.createElement("div");
   wrap.className = "field-subform";
 
-  const vecs = vectorInfos(state);
+  const vecs = state.infos.filter(isDeformable);
   if (vecs.length === 0) {
     const note = document.createElement("div");
     note.className = "field-summary";
-    note.textContent = "No vector field to deform by.";
+    note.textContent = "No vector or nodal scalar field to deform by.";
     wrap.appendChild(note);
     return wrap;
   }
@@ -696,7 +686,7 @@ function buildDeformControls(state: FieldPanelState, handlers: FieldPanelHandler
   for (const info of vecs) {
     const opt = document.createElement("option");
     opt.value = info.key;
-    opt.textContent = `${labelWithUnit(info.field)} (${info.field.kind})`;
+    opt.textContent = `${labelWithUnit(info.field)} (${info.field.kind}${info.isVector ? "" : ", height along Z"})`;
     if (info.key === state.deformKey) opt.selected = true;
     sel.appendChild(opt);
   }

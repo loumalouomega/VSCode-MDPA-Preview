@@ -10,8 +10,22 @@ import { snapCamera } from "./render/cameraOps";
 import { initCommandLine } from "./commandLine";
 import { STANDARD_VIEW_DIRECTIONS, type CommandAction } from "../src/parser/commandSpec";
 import { buildCellIndex, cellPointIds, CellIndex } from "../src/parser/render/cellArrays";
-import { beamGlyphSet, QuiverData, quiverColoring, quiverGlyphSet, radiusColoring, sphereGlyphSet } from "../src/parser/render/glyphSets";
+import {
+  beamGlyphSet,
+  QuiverData,
+  quiverColoring,
+  quiverGlyphSet,
+  radiusColoring,
+  sphereGlyphSet,
+  sphereImpostorSet,
+  stickImpostorSet,
+} from "../src/parser/render/glyphSets";
 import { ctfPointsFromStops, fieldColoring } from "../src/parser/render/scalarColoring";
+import type { RPlaneWidget, RVolume } from "./render/backend";
+import type { Vec3 } from "../src/parser/render/types";
+import { angleAt, clipFromPlane, planeFromClip, polylineLength } from "../src/parser/render/widgetMath";
+import { lightPlacement } from "../src/parser/render/lightMode";
+import { layoutLabels, occludedPoints, projectPoints } from "../src/parser/render/labelLayout";
 import type { ScalarColoring } from "../src/parser/render/types";
 import { renderStreamlinePanel, StreamlinePanelState } from "./streamlinePanel";
 import {
@@ -101,13 +115,16 @@ import {
   sphereStats,
 } from "../src/parser/sphereElements";
 import { BeamPanelInfo, BeamPanelState, renderBeamPanel } from "./beamPanel";
+import { renderVolumePanel, type VolumePanelState, type VolumeViewMode } from "./volumePanel";
+import { detectLattice, type Lattice } from "../src/parser/render/imageLattice";
+import { OPACITY_PRESETS, opacityToData } from "../src/parser/render/opacityTransfer";
 import {
   BeamStats,
   beamStats,
   buildBeamSegments,
   defaultBeamRadius,
 } from "../src/parser/beamElements";
-import { buildFieldInfo, FieldInfo, rangeForComponent, scalarAt, vectorAt } from "./fieldData";
+import { buildFieldInfo, FieldInfo, isDeformable, rangeForComponent, scalarAt, vectorAt } from "./fieldData";
 import {
   contourAttach,
   cutCapEdgeGeometry,
@@ -124,7 +141,8 @@ import { buildCapturePlan, captureBackground, captureFieldLabel, captureStepLabe
 import { composeCaptureOverlays, CaptureOverlay } from "./captureCompositor";
 import { renderScreenshotPanel } from "./screenshotPanel";
 import { thresholdCells } from "../src/parser/thresholdCells";
-import { resolvePick } from "../src/parser/pickResolve";
+import { blockCentroids } from "../src/parser/render/hardwareSelection";
+import { resolveEntity, resolvePick } from "../src/parser/pickResolve";
 import { buildMembershipIndex, MembershipIndex } from "../src/parser/smpMembership";
 import { findIsolatedNodeIds, findIsolatedNodeIdsInScope } from "../src/parser/isolatedNodes";
 import { VtkCellType } from "../src/parser/geometryMap";
@@ -386,6 +404,8 @@ interface Layer {
    * rather than clobber each other — both must be clear for the layer to draw.
    */
   userSuppressed?: boolean;
+  /** Set while the Volume view stands in for the surface layers (kept apart so it composes with the other suppressions). */
+  volumeSuppressed?: boolean;
   /**
    * View-layer colour override (the topmost visible containing layer wins).
    * `color` keeps the palette original; this is the display override only, so
@@ -427,7 +447,7 @@ interface Layer {
 /** Whether a layer's actor should currently be drawn. */
 function layerShouldDraw(layer: Layer, paneIndex: number): boolean {
   return (
-    layer.visible && layer.built && !layer.suppressed && !layer.userSuppressed && paneDraws(layer.paneHidden, paneIndex) && compareDraws(layer, paneIndex)
+    layer.visible && layer.built && !layer.suppressed && !layer.userSuppressed && !layer.volumeSuppressed && paneDraws(layer.paneHidden, paneIndex) && compareDraws(layer, paneIndex)
   );
 }
 
@@ -503,6 +523,11 @@ const beamPanelEl = document.createElement("div");
 beamPanelEl.id = "beam-panel";
 beamPanelEl.style.display = "none";
 vtkSub.appendChild(beamPanelEl);
+
+const volumePanelEl = document.createElement("div");
+volumePanelEl.id = "volume-panel";
+volumePanelEl.style.display = "none";
+vtkSub.appendChild(volumePanelEl);
 
 const integralPanelEl = document.createElement("div");
 integralPanelEl.id = "integral-panel";
@@ -882,6 +907,7 @@ function copyCamera(from: RView, to: RView): void {
  */
 function setPaneLayout(next: PaneLayoutId): void {
   if (next === paneLayout) return;
+  disposeVolume(); // the volume belongs to one pane's renderer
   const rects = paneViewports(next);
   const keepIndex = focusedPaneIndex();
   const keep = panes[keepIndex];
@@ -979,6 +1005,7 @@ function setPaneLayout(next: PaneLayoutId): void {
     clearCompare();
     toast(`Compare with ${name} closed by the layout change — reopen it in the new layout.`);
   }
+  applyLightPlacement();
   render();
 }
 
@@ -1511,7 +1538,9 @@ let inspectMode = false;
 let inspectVisible = false;
 let inspectSelection: InspectSelection | undefined;
 let measuring = false;
-let measurePendingPoint: { id: number; coords: [number, number, number] } | undefined;
+/** Nodes picked so far by the in-progress measurement (2, or 3 in Angle mode). */
+let measurePicked: { id: number; coords: [number, number, number] }[] = [];
+let measureAngle = false;
 let measureResult: MeasureResult | undefined;
 // The probe line's two-click mode, alongside Measure above.
 let probing = false;
@@ -1944,6 +1973,9 @@ function handleHostMessage(event: MessageEvent): void {
     case "beams":
       toggleBeamPanel();
       break;
+    case "volume":
+      toggleVolumePanel();
+      break;
     case "field":
       toggleFieldPanel();
       break;
@@ -2019,6 +2051,7 @@ function isVolumeBlock(block: EntityBlock): boolean {
 
 // --- Scene construction -------------------------------------------------
 function clearScene(): void {
+  disposeVolume();
   for (const layer of layers.values()) detachLayerFromPanes(layer);
   layers.clear();
   // The per-pane field/cut-cap overlays are not in `layers` — they belong to
@@ -2079,7 +2112,7 @@ function buildScene(resetCam = true): void {
   // layers along with everything else, so only the state needs resetting).
   membershipIndex = undefined;
   inspectSelection = undefined;
-  measurePendingPoint = undefined;
+  measurePicked = [];
   measureResult = undefined;
   probePendingPoint = undefined;
   if (inspectVisible) renderInspectUI();
@@ -2278,7 +2311,7 @@ function buildScene(resetCam = true): void {
       resetFieldStateForSelection(p);
     }
     // Keep the deformation field valid (default to the first vector field).
-    if (!infos.some((i) => i.key === p.field.deformKey && i.isVector)) {
+    if (!infos.some((i) => i.key === p.field.deformKey && isDeformable(i))) {
       p.field.deformKey = infos.find((i) => i.isVector)?.key ?? "";
     }
   });
@@ -2363,6 +2396,7 @@ function buildScene(resetCam = true): void {
   // merely re-created layers does not read as a user change worth saving.
   applyPendingView();
   rebaselineView();
+  if (lightingState.light.mode !== "headlight") applyLightPlacement();
 }
 
 function allIn(nodeIds: ArrayLike<number>, set: Set<number>): boolean {
@@ -2704,10 +2738,22 @@ function lightingStyle(): PropStyle {
     ambient: lightingState.ambient,
     diffuse: lightingState.diffuse,
     backfaceCulling: lightingState.cullBackFace,
+    smoothShading: lightingState.smoothShading,
   };
 }
 
+// The light is per renderer, not per prop, so it is placed against the visible
+// bounds of the focused pane and re-placed after a model change.
+function applyLightPlacement(): void {
+  if (!backend.caps.lightModes) return;
+  for (const pane of panes) {
+    const b = pane.view.computeVisiblePropBounds();
+    pane.view.setLight(lightPlacement(lightingState.light, b));
+  }
+}
+
 function applyLightingToAllLayers(): void {
+  applyLightPlacement();
   for (const layer of layers.values()) {
     styleLayer(layer, lightingStyle());
   }
@@ -2746,12 +2792,17 @@ function renderLightingUI(): void {
       applyLightingToAllLayers();
       renderLightingUI();
     },
+    onLightAngle: (light) => {
+      lightingState = { ...lightingState, light };
+      applyLightPlacement();
+      render();
+    },
     onReset: () => {
-      lightingState = { ...DEFAULT_LIGHTING_STATE };
+      lightingState = { ...DEFAULT_LIGHTING_STATE, light: { ...DEFAULT_LIGHTING_STATE.light } };
       applyLightingToAllLayers();
       renderLightingUI();
     },
-  });
+  }, { displayFilters: backend.caps.displayFilters, lightModes: backend.caps.lightModes });
 }
 
 // --- Camera bookmarks --------------------------------------------------------
@@ -2987,53 +3038,104 @@ function updateClipPlane(pane: Pane): void {
   // pane), so the same t means the same relative position on either mesh.
   const b = scopeModel(pane)?.bounds;
   if (!b) return;
-  const t = pane.clip.t;
   const showReadout = pane === focusedPane();
-  const fn = pane.clip.freeNormal;
-
-  if (pane.clip.axis === "free") {
-    const len = Math.hypot(fn[0], fn[1], fn[2]);
-    let normal: [number, number, number] =
-      len > 1e-9 ? [fn[0] / len, fn[1] / len, fn[2] / len] : [0, 0, 1];
-    if (pane.clip.flipped) normal = [-normal[0], -normal[1], -normal[2]];
-    let min = Infinity;
-    let max = -Infinity;
-    for (const c of bboxCorners(b)) {
-      const d = c[0] * normal[0] + c[1] * normal[1] + c[2] * normal[2];
-      if (d < min) min = d;
-      if (d > max) max = d;
-    }
-    const dist = min + t * (max - min);
-    // Any point P with dot(P, normal) = dist lies on the plane; normal*dist is
-    // the simplest such point since normal is unit length.
-    const origin: [number, number, number] = [normal[0] * dist, normal[1] * dist, normal[2] * dist];
-    pane.clipPlane.setNormal(normal);
-    pane.clipPlane.setOrigin(origin);
-    if (cutPositionEl && showReadout) {
-      const n = normal.map((v) => v.toFixed(2)).join(", ");
+  const plane = planeFromClip(pane.clip, b);
+  pane.clipPlane.setNormal(plane.normal);
+  pane.clipPlane.setOrigin(plane.origin);
+  if (cutPositionEl && showReadout) {
+    if (pane.clip.axis === "free") {
+      const dist = plane.origin[0] * plane.normal[0] + plane.origin[1] * plane.normal[1] + plane.origin[2] * plane.normal[2];
+      const n = plane.normal.map((v) => v.toFixed(2)).join(", ");
       cutPositionEl.textContent = `n=(${n})  d=${dist.toPrecision(4)}`;
-      cutPositionEl.title = cutPositionEl.textContent; // the dock cell ellipsizes it
+    } else {
+      cutPositionEl.textContent = `${"XYZ"[pane.clip.axis]} = ${plane.origin[pane.clip.axis].toPrecision(4)}`;
     }
+    cutPositionEl.title = cutPositionEl.textContent; // the dock cell ellipsizes it
+  }
+  syncClipWidget(pane);
+}
+
+// --- Clip handle (roadmap item 22 C) -------------------------------------------
+// A draggable 3D plane that is a VIEW of `pane.clip`: a drag is mapped back to
+// the clip state by widgetMath.clipFromPlane (an axis preset when it lands
+// square, Free otherwise) and everything else — slider, readout, cap — follows
+// through the same writers the slider uses. Only where caps.widgets.
+const clipWidgets = new Map<Pane, { widget: RPlaneWidget; last?: { origin: Vec3; normal: Vec3 }; dragging: boolean }>();
+
+function coplanar(a: { origin: Vec3; normal: Vec3 }, b: { origin: Vec3; normal: Vec3 }, tol: number): boolean {
+  const dot = a.normal[0] * b.normal[0] + a.normal[1] * b.normal[1] + a.normal[2] * b.normal[2];
+  if (Math.abs(dot) < 0.9995) return false;
+  const d = [b.origin[0] - a.origin[0], b.origin[1] - a.origin[1], b.origin[2] - a.origin[2]];
+  return Math.abs(d[0] * a.normal[0] + d[1] * a.normal[1] + d[2] * a.normal[2]) <= tol;
+}
+
+function syncClipWidget(pane: Pane): void {
+  if (!backend.caps.widgets) return;
+  for (const p of [...clipWidgets.keys()]) if (!panes.includes(p)) clipWidgets.delete(p);
+  const b = scopeModel(pane)?.bounds;
+  let entry = clipWidgets.get(pane);
+  if (!pane.clip.active || !b) {
+    entry?.widget.setVisible(false);
     return;
   }
-
-  const axis = pane.clip.axis;
-  const normals: [number, number, number][] = [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
-  const n = normals[axis];
-  const normal: [number, number, number] = pane.clip.flipped
-    ? [-n[0], -n[1], -n[2]]
-    : [n[0], n[1], n[2]];
-  const min = b.min[axis];
-  const max = b.max[axis];
-  const pos = min + t * (max - min);
-  const origin: [number, number, number] = [0, 0, 0];
-  origin[axis] = pos;
-  pane.clipPlane.setNormal(normal);
-  pane.clipPlane.setOrigin(origin);
-  if (cutPositionEl && showReadout) {
-    cutPositionEl.textContent = `${"XYZ"[axis]} = ${pos.toPrecision(4)}`;
-    cutPositionEl.title = cutPositionEl.textContent;
+  if (!entry) {
+    const created: { widget: RPlaneWidget; last?: { origin: Vec3; normal: Vec3 }; dragging: boolean } = {
+      widget: undefined as unknown as RPlaneWidget,
+      dragging: false,
+    };
+    created.widget = pane.view.createPlaneWidget(
+      (origin, normal) => {
+        const box = scopeModel(pane)?.bounds;
+        if (!box) return;
+        created.last = { origin, normal };
+        Object.assign(pane.clip, clipFromPlane({ origin, normal }, box, pane.clip));
+        if (pane === focusedPane()) syncClipUI();
+        else updateClipPlane(pane);
+        scheduleCutCapRebuild(pane);
+        render();
+      },
+      (active) => {
+        created.dragging = active;
+        const h = window as unknown as { __HARNESS__?: unknown; __widgetInteractions?: number };
+        if (h.__HARNESS__ === true && active) h.__widgetInteractions = (h.__widgetInteractions ?? 0) + 1;
+      }
+    );
+    clipWidgets.set(pane, created);
+    entry = created;
   }
+  const diag = Math.hypot(b.max[0] - b.min[0], b.max[1] - b.min[1], b.max[2] - b.min[2]) || 1;
+  entry.widget.setBounds([b.min[0], b.max[0], b.min[1], b.max[1], b.min[2], b.max[2]]);
+  const want = { origin: pane.clipPlane.getOrigin() as Vec3, normal: pane.clipPlane.getNormal() as Vec3 };
+  // Do not fight the drag, and do not move a handle the user left on an
+  // equivalent plane (the canonical origin differs from where they dropped it).
+  if (!entry.dragging && !(entry.last && coplanar(entry.last, want, diag * 1e-4))) {
+    entry.widget.setPlane(want.origin, want.normal);
+    entry.last = undefined;
+  }
+  entry.widget.setVisible(true);
+}
+
+// Chromium checks only: the screenshot harness (it sets the
+// window.__HARNESS__ marker) can ask where the clip handle is on screen.
+if ((window as unknown as { __HARNESS__?: unknown }).__HARNESS__ === true) {
+  (window as unknown as Record<string, unknown>).__clipHandleProbe = (frac = 0.3):
+    | { x: number; y: number; t: number; active: boolean; plane: { x: number; y: number } }
+    | undefined => {
+    const pane = focusedPane();
+    const o = pane.clipPlane.getOrigin();
+    const n = pane.clipPlane.getNormal();
+    const r = renderRoot.getBoundingClientRect();
+    const [x, y] = backend.worldToDisplay(pane.view, o[0], o[1], o[2]);
+    // A point on the plane away from the origin handle: where a drag moves the plane.
+    const b = scopeModel(pane)?.bounds;
+    const span = b ? Math.max(b.max[0] - b.min[0], b.max[1] - b.min[1], b.max[2] - b.min[2]) : 1;
+    const helper: [number, number, number] = Math.abs(n[0]) < 0.9 ? [1, 0, 0] : [0, 1, 0];
+    const u = [n[1] * helper[2] - n[2] * helper[1], n[2] * helper[0] - n[0] * helper[2], n[0] * helper[1] - n[1] * helper[0]];
+    const ul = Math.hypot(u[0], u[1], u[2]) || 1;
+    const k = (frac * span) / ul;
+    const [px, py] = backend.worldToDisplay(pane.view, o[0] + u[0] * k, o[1] + u[1] * k, o[2] + u[2] * k);
+    return { x: r.left + x, y: r.top + y, t: pane.clip.t, active: pane.clip.active, plane: { x: r.left + px, y: r.top + py } };
+  };
 }
 
 /** Points one pane's props at (or away from) that pane's clipping plane. */
@@ -3103,8 +3205,13 @@ function setCut(on: boolean): void {
   pane.clip.active = on;
   syncClipToggleUI(pane);
   if (on) updateClipPlane(pane);
+  else syncClipWidget(pane);
   applyClipToPane(pane);
   buildCutCap(pane);
+  if (beamState.enabled) {
+    applyBeamLayer(); // impostor <-> tessellated, see beamsUseImpostors
+    renderBeamUI(); // the Detail control follows
+  }
   render();
 }
 
@@ -3318,6 +3425,20 @@ function setNodeIds(on: boolean): void {
   const btn = document.querySelector('[data-action="nodeIds"]');
   btn?.classList.toggle("active", on);
   labelsEl.textContent = "";
+  labelPool.length = 0;
+  gpuLabelKey = "";
+  gpuProbeRequested = false;
+  if (!on) eachPane((p) => p.view.depthSnapshot?.(false));
+  if (on && backend.caps.gpuLabels) {
+    // Projection, declutter and (1x1 and split alike) occlusion culling run on
+    // typed arrays against each pane's own matrix, so neither the node-count
+    // cap nor the single-pane restriction applies.
+    messageEl.textContent = "";
+    if (!model) return;
+    stopLabelLoop();
+    startLabelLoop();
+    return;
+  }
   if (on && paneLayout !== "1x1") {
     // Labels are projected through ONE camera into one overlay div, so in a
     // split they would land over the wrong panes. Refuse and say so, the way
@@ -3363,8 +3484,77 @@ function stopLabelLoop(): void {
   }
 }
 
+// --- GPU-assisted node labels (roadmap item 22 F) ---------------------------
+// Every node is projected per pane in typed arrays, hidden ones are culled
+// against the depth buffer, a grid declutters what is left and a pooled set of
+// DOM labels is positioned. The work is redone only when a camera, a pane
+// rectangle or the rendered frame changed.
+const GPU_LABEL_MAX = 3000;
+const GPU_LABEL_CELL = 38;
+let gpuLabelKey = "";
+let gpuProbeRequested = false;
+const labelPool: HTMLElement[] = [];
+
+function updateGpuNodeLabels(): void {
+  if (!model) return;
+  const canvasRect = renderRoot.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  const keyParts: string[] = [String(captureSceneRevision), String(canvasRect.width), String(canvasRect.height)];
+  const frames = panes.map((pane) => {
+    const matrix = pane.view.compositeMatrix();
+    keyParts.push(matrix.join(","));
+    return { pane, matrix, tile: backend.viewTile(pane.view) };
+  });
+  const key = keyParts.join("|");
+  if (key === gpuLabelKey) return;
+  gpuLabelKey = key;
+  const pts = model.coords as Float32Array;
+  const kept: { x: number; y: number; id: number }[] = [];
+  let occludedCount = 0;
+  for (const f of frames) {
+    const proj = projectPoints(f.matrix, pts, f.tile);
+    let hidden: Uint8Array | undefined;
+    // Occlusion needs the pane's own depth texels; ask every pane so the probe
+    // is in place for the next frame, and use the snapshot once it exists.
+    const snap = f.pane.view.depthSnapshot(true);
+    if (!snap && !gpuProbeRequested) {
+      // The probe only receives depth during a render, so draw once; the
+      // rendered-frame counter then changes the key and the next tick lays out.
+      gpuProbeRequested = true;
+      requestAnimationFrame(() => render());
+    }
+    if (snap) {
+      hidden = occludedPoints(proj, snap.depth, snap.width, snap.height, dpr, canvasRect.height, 2e-3);
+    }
+    const picked = layoutLabels(proj, f.tile, { maxLabels: GPU_LABEL_MAX, cell: GPU_LABEL_CELL, hidden });
+    if (hidden) for (let i = 0; i < hidden.length; i++) occludedCount += hidden[i];
+    for (const i of picked) kept.push({ x: proj.x[i], y: proj.y[i], id: model.nodeIds[i] });
+  }
+  for (let i = 0; i < kept.length; i++) {
+    let el = labelPool[i];
+    if (!el) {
+      el = document.createElement("div");
+      el.className = "node-label";
+      labelPool[i] = el;
+      labelsEl.appendChild(el);
+    }
+    el.textContent = String(kept[i].id);
+    el.style.left = `${kept[i].x}px`;
+    el.style.top = `${kept[i].y}px`;
+    el.style.display = "";
+  }
+  for (let i = kept.length; i < labelPool.length; i++) labelPool[i].style.display = "none";
+  // Read by the Chromium check; also handy when a label looks wrong.
+  labelsEl.dataset.shown = String(kept.length);
+  labelsEl.dataset.occluded = String(occludedCount);
+}
+
 function updateNodeLabels(): void {
   if (!showNodeIds) return;
+  if (backend.caps.gpuLabels) {
+    updateGpuNodeLabels();
+    return;
+  }
   const view = focusedView();
   const children = labelsEl.children;
   for (let i = 0; i < children.length; i++) {
@@ -3544,6 +3734,7 @@ function dispatchToolbarAction(action: string | undefined, _target?: HTMLElement
   else if (action === "viewMenu") viewMenu?.toggle();
   else if (action === "spheres") toggleSpherePanel();
   else if (action === "beams") toggleBeamPanel();
+  else if (action === "volume") toggleVolumePanel();
   else if (action === "normals") toggleNormals();
   else if (action === "integrals") toggleIntegralPanel();
   else if (action === "streamlines") toggleStreamlinePanel();
@@ -3769,6 +3960,7 @@ const LEFT_DOCK: { action: string; dismiss: () => void }[] = [
   { action: "meshSize", dismiss: () => dismissMeshSizePanel() },
   { action: "spheres", dismiss: () => dismissSpherePanel() },
   { action: "beams", dismiss: () => dismissBeamPanel() },
+  { action: "volume", dismiss: () => dismissVolumePanel() },
   { action: "integrals", dismiss: () => dismissIntegralPanel() },
   { action: "streamlines", dismiss: () => dismissStreamlinePanel() },
   { action: "flowBalance", dismiss: () => dismissFlowPanel() },
@@ -4854,7 +5046,11 @@ function sphereInfo(): SpherePanelInfo {
 
 function renderSphereUI(): void {
   const info = sphereInfo();
-  const state: SpherePanelState = { ...sphereState, constant: sphereConstant() };
+  const state: SpherePanelState = {
+    ...sphereState,
+    constant: sphereConstant(),
+    showDetail: !backend.caps.impostors,
+  };
   // Every control does the same two things after its own one-line assignment.
   const update = (patch: Partial<typeof sphereState>): void => {
     Object.assign(sphereState, patch);
@@ -4879,6 +5075,176 @@ function renderSphereUI(): void {
     },
     onFrame: () => frameLayer(SPHERE_LAYER_ID),
   });
+}
+
+// --- Volume view (roadmap item 22 D) -------------------------------------------
+// A model that is a dense regular lattice (.vti, sampled grids) can be drawn as
+// image data: a volume with an editable opacity curve, three slices or iso
+// surfaces. Display only: the surface layers are SUPPRESSED (never edited or
+// hidden by intent) while it shows and come back on "Surface", and it is torn
+// down on any rebuild or layout change because it belongs to one pane's
+// renderer. Only where backend.caps.volume.
+const latticeCache = new WeakMap<MdpaModel, Lattice | null>();
+let volumeVisible = false;
+let volumeHandle: { rvolume: RVolume; scalar: string } | undefined;
+const volumeState: VolumePanelState = {
+  scalar: "",
+  mode: "off",
+  colormap: "Viridis",
+  opacity: OPACITY_PRESETS[0].points.map((p) => ({ ...p })),
+  slice: [0, 0, 0],
+  sliceOn: [true, true, true],
+  isoValues: [],
+};
+
+function currentLattice(): Lattice | undefined {
+  if (!model || !backend?.caps.volume) return undefined;
+  let l = latticeCache.get(model);
+  if (l === undefined) {
+    l = detectLattice(model) ?? null;
+    latticeCache.set(model, l);
+  }
+  return l ?? undefined;
+}
+
+function toggleVolumePanel(): void {
+  if (volumeVisible) hideVolumePanel();
+  else showVolumePanel();
+}
+
+function showVolumePanel(): void {
+  if (!model) return;
+  closeLeftDockExcept("volume");
+  volumePanelEl.style.display = "";
+  volumeVisible = true;
+  document.querySelector('[data-action="volume"]')?.classList.add("active");
+  renderVolumeUI();
+}
+
+/** Panel off screen, volume left as it is — see LEFT_DOCK. */
+function dismissVolumePanel(): void {
+  volumePanelEl.style.display = "none";
+  volumeVisible = false;
+  document.querySelector('[data-action="volume"]')?.classList.remove("active");
+}
+
+function hideVolumePanel(): void {
+  dismissVolumePanel();
+  setVolumeMode("off");
+}
+
+function syncVolumeSuppression(active: boolean): void {
+  for (const [id, layer] of layers) {
+    if (isOverlayLayer(id) || isCompareLayer(id)) continue;
+    layer.volumeSuppressed = active || undefined;
+    applyLayerVisibility(layer);
+  }
+}
+
+function disposeVolume(): void {
+  if (!volumeHandle) return;
+  volumeHandle.rvolume.setMode("off");
+  volumeHandle.rvolume.dispose();
+  volumeHandle = undefined;
+  volumeState.mode = "off";
+  syncVolumeSuppression(false);
+  if (volumeVisible) queueMicrotask(renderVolumeUI);
+}
+
+function volumeColoring(l: Lattice): void {
+  const sc = l.scalars.find((s) => s.name === volumeState.scalar);
+  if (!sc || !volumeHandle) return;
+  const [lo, hi] = sc.range;
+  volumeHandle.rvolume.setColoring(ctfPointsFromStops(getColormap(volumeState.colormap).stops, lo, hi), sc.range);
+  volumeHandle.rvolume.setOpacity(opacityToData(volumeState.opacity, sc.range));
+}
+
+function setVolumeMode(mode: VolumeViewMode): void {
+  const l = currentLattice();
+  if (mode === "off" || !l) {
+    disposeVolume();
+    render();
+    return;
+  }
+  if (!volumeState.scalar || !l.scalars.some((s) => s.name === volumeState.scalar)) {
+    volumeState.scalar = l.scalars[0].name;
+    volumeState.slice = [l.dims[0] >> 1, l.dims[1] >> 1, l.dims[2] >> 1];
+    const r = l.scalars[0].range;
+    volumeState.isoValues = [(r[0] + r[1]) / 2];
+  }
+  if (volumeHandle && volumeHandle.scalar !== volumeState.scalar) {
+    volumeHandle.rvolume.dispose();
+    volumeHandle = undefined;
+  }
+  if (!volumeHandle) {
+    const sc = l.scalars.find((s) => s.name === volumeState.scalar)!;
+    const rvolume = focusedPane().view.createVolume({
+      name: sc.name,
+      dims: l.dims,
+      origin: l.origin,
+      spacing: l.spacing,
+      values: sc.values,
+    });
+    volumeHandle = { rvolume, scalar: sc.name };
+    volumeColoring(l);
+  }
+  volumeState.mode = mode;
+  volumeHandle.rvolume.setSlices(volumeState.slice, volumeState.sliceOn);
+  volumeHandle.rvolume.setIsoValues(volumeState.isoValues);
+  volumeHandle.rvolume.setMode(mode);
+  syncVolumeSuppression(true);
+  render();
+}
+
+function renderVolumeUI(): void {
+  if (!volumeVisible) return;
+  const l = currentLattice();
+  renderVolumePanel(
+    volumePanelEl,
+    l ? { scalars: l.scalars.map((s) => ({ name: s.name, range: s.range })), dims: l.dims } : undefined,
+    volumeState,
+    {
+      onClose: () => hideVolumePanel(),
+      onScalar: (name) => {
+        const sc = l?.scalars.find((s) => s.name === name);
+        volumeState.scalar = name;
+        if (sc) volumeState.isoValues = [(sc.range[0] + sc.range[1]) / 2];
+        if (volumeState.mode !== "off") setVolumeMode(volumeState.mode);
+        renderVolumeUI();
+      },
+      onMode: (mode) => {
+        setVolumeMode(mode);
+        renderVolumeUI();
+      },
+      onColormap: (name) => {
+        volumeState.colormap = name;
+        if (l) volumeColoring(l);
+        render();
+        renderVolumeUI();
+      },
+      onOpacity: (points) => {
+        volumeState.opacity = points;
+        if (l) volumeColoring(l);
+        render();
+      },
+      onSlice: (axis, index) => {
+        volumeState.slice[axis] = index;
+        volumeHandle?.rvolume.setSlices(volumeState.slice, volumeState.sliceOn);
+        render();
+      },
+      onSliceVisible: (axis, on) => {
+        volumeState.sliceOn[axis] = on;
+        volumeHandle?.rvolume.setSlices(volumeState.slice, volumeState.sliceOn);
+        render();
+      },
+      onIsoValues: (values) => {
+        volumeState.isoValues = values;
+        volumeHandle?.rvolume.setIsoValues(values);
+        render();
+        renderVolumeUI();
+      },
+    }
+  );
 }
 
 // --- Beams / line elements -----------------------------------------------
@@ -4919,7 +5285,11 @@ function beamInfo(): BeamPanelInfo {
 
 function renderBeamUI(): void {
   const info = beamInfo();
-  const state: BeamPanelState = { ...beamState, constant: beamConstant() };
+  const state: BeamPanelState = {
+    ...beamState,
+    constant: beamConstant(),
+    showDetail: !beamsUseImpostors(),
+  };
   const update = (patch: Partial<typeof beamState>): void => {
     Object.assign(beamState, patch);
     renderBeamUI();
@@ -4951,7 +5321,11 @@ function applySphereLayer(): void {
     const info = spheres();
     const data = buildSphereData(prep);
     if (data && data.points.length > 0) {
-      const geometry = backend.createGlyphGeometry(sphereGlyphSet(data, sphereState.scale, sphereState.resolution));
+      const geometry = backend.createGlyphGeometry(
+        backend.caps.impostors
+          ? sphereImpostorSet(data, sphereState.scale)
+          : sphereGlyphSet(data, sphereState.scale, sphereState.resolution)
+      );
       const coloring = radiusColoring(
         SPHERE_COLOR,
         sphereState.colorByRadius && info.withRadius > 0
@@ -4976,6 +5350,18 @@ function applySphereLayer(): void {
  * built through `coordOf`, so the tubes follow a warped mesh exactly as the
  * sphere anchors do. There is no base-layer suppression — see BEAM_LAYER_ID.
  */
+/**
+ * Ray-cast sticks are clipped by their CENTRE (the mapper clips the one vertex
+ * a glyph is built from), so a member straddling the Clip plane would be drawn
+ * whole or dropped whole, where the tessellated tube is cut exactly. A long
+ * member is the case where that shows, so beams draw tessellated tubes while
+ * any pane has Clip on; `setCut` rebuilds the layer when that changes. Spheres
+ * are small enough that the centre test is within one radius of exact.
+ */
+function beamsUseImpostors(): boolean {
+  return backend.caps.impostors && !panes.some((p) => p.clip.active);
+}
+
 function applyBeamLayer(): void {
   removeLayer(BEAM_LAYER_ID);
   if (beamState.enabled && model && prepared) {
@@ -4989,7 +5375,11 @@ function applyBeamLayer(): void {
       coordOf: (nodeId) => coordOfPrep(prep, nodeId),
     });
     if (data.count > 0) {
-      const geometry = backend.createGlyphGeometry(beamGlyphSet(data, beamState.thickness, beamState.resolution));
+      const geometry = backend.createGlyphGeometry(
+        beamsUseImpostors()
+          ? stickImpostorSet(data, beamState.thickness)
+          : beamGlyphSet(data, beamState.thickness, beamState.resolution)
+      );
       const coloring = radiusColoring(
         BEAM_COLOR,
         beamState.colorBySection && info.withSection > 0
@@ -5498,7 +5888,7 @@ function collectCells(kinds: EntityKind[] | "all", pane?: Pane): Cell[] {
 
 // The vector FieldInfo currently selected to drive the deformation, if any.
 function selectedDeformInfo(pane: Pane): FieldInfo | undefined {
-  return scopeInfos(pane).find((i) => i.key === pane.field.deformKey && i.isVector);
+  return scopeInfos(pane).find((i) => i.key === pane.field.deformKey && isDeformable(i));
 }
 
 // When deformed shape is active, produce a warped copy of the geometry
@@ -5513,6 +5903,12 @@ function computeWarpedGeometry(pane: Pane): { prepared: PreparedNodes; model: Md
   const coords = new Float32Array(scopePrep.coords); // copy (never mutate the reference)
   const scale = pane.field.deformScale;
   for (let i = 0; i < scope.nodeCount; i++) {
+    if (!info.isVector) {
+      // Relief: a nodal scalar lifts the point along +Z.
+      const h = scalarAt(info, scope.nodeIds[i]);
+      if (h !== undefined && Number.isFinite(h)) coords[i * 3 + 2] += scale * h;
+      continue;
+    }
     const v = vectorAt(info, scope.nodeIds[i]);
     if (!v) continue;
     coords[i * 3] += scale * v[0];
@@ -6146,7 +6542,7 @@ async function startRecording(): Promise<void> {
         const info = fieldInfos.find(f => f.key === s.field.selectedKey);
         if (s.field.selectedKey && (!info || info.isVector !== s.vector)) throw new Error(`Selected field/component is missing at step ${currentFrameIndex + 1}: ${s.field.selectedKey}`);
         if (info && typeof s.field.component === "number" && s.field.component >= info.field.components) throw new Error(`Selected component ${s.field.component} of ${s.field.selectedKey} is missing at step ${currentFrameIndex + 1}.`);
-        if (s.field.modes.has("deformed") && !fieldInfos.some(f => f.key === s.field.deformKey && f.isVector)) throw new Error(`Deformation field is missing at step ${currentFrameIndex + 1}.`);
+        if (s.field.modes.has("deformed") && !fieldInfos.some(f => f.key === s.field.deformKey && isDeformable(f))) throw new Error(`Deformation field is missing at step ${currentFrameIndex + 1}.`);
       }
       restorePanes(true, step.kind === "timeline" || i === 0);
       if (step.kind === "turntable") {
@@ -6373,6 +6769,7 @@ function hideProbePanel(): void {
   probePanelEl.style.display = "none";
   probeState = undefined;
   probePoints = undefined;
+  probePointIds = [];
   removeLayer(PROBE_POINTS_ID);
   removeLayer(PROBE_LINE_ID);
   render();
@@ -6442,25 +6839,7 @@ function applyProbeResult(r: { seq?: number; probe?: ProbeResult; message?: stri
  */
 function restoreProbeOnFrame(): void {
   if (!probeVisible || !probePoints) return;
-  if (probePoints.length === 2 && probePointIds[0] !== undefined && probePointIds[1] !== undefined) {
-    removeLayer(PROBE_POINTS_ID);
-    removeLayer(PROBE_LINE_ID);
-    addLayer(
-      PROBE_POINTS_ID,
-      [
-        { nodeIds: new Int32Array([probePointIds[0]]) },
-        { nodeIds: new Int32Array([probePointIds[1]]) },
-      ],
-      PROBE_COLOR,
-      true
-    );
-    addLayer(
-      PROBE_LINE_ID,
-      [{ cellType: VtkCellType.LINE, nodeIds: Int32Array.from(probePointIds) }],
-      PROBE_COLOR,
-      true
-    );
-  }
+  if (probePointIds.length >= 2 && probePointIds.length === probePoints.length) drawProbeLayers();
   renderProbeUI();
   requestProbe();
 }
@@ -6483,7 +6862,7 @@ function hideInspectPanel(): void {
   inspectMode = false;
   inspectVisible = false;
   measuring = false;
-  measurePendingPoint = undefined;
+  measurePicked = [];
   probing = false;
   probePendingPoint = undefined;
   inspectPanelEl.style.display = "none";
@@ -6517,7 +6896,9 @@ function renderInspectUI(): void {
   const state: InspectPanelState = {
     selection: inspectSelection,
     measuring,
-    measurePending: measurePendingPoint ? 1 : 0,
+    measurePending: measurePicked.length,
+    measureAngle,
+    probeCount: probeVisible ? (probePoints?.length ?? 0) : 0,
     measureResult,
     probing,
     probePending: probePendingPoint ? 1 : 0,
@@ -6540,9 +6921,18 @@ function renderInspectUI(): void {
       const kind=target==="node"?"Nodal":inspectSelection?.entity?.kind==="Condition"?"Conditional":"Elemental";
       vscode.postMessage({type:"saveMonitor",kind,entityId:selection.id,variable});
     },
+    onToggleMeasureAngle: () => {
+      measureAngle = !measureAngle;
+      measurePicked = [];
+      measureResult = undefined;
+      removeLayer(MEASURE_POINTS_ID);
+      removeLayer(MEASURE_LINE_ID);
+      render();
+      renderInspectUI();
+    },
     onToggleMeasure: () => {
       measuring = !measuring;
-      measurePendingPoint = undefined;
+      measurePicked = [];
       if (!measuring) {
         removeLayer(MEASURE_POINTS_ID);
         removeLayer(MEASURE_LINE_ID);
@@ -6556,7 +6946,7 @@ function renderInspectUI(): void {
       // pending first-picks cannot share one click.
       probePendingPoint = undefined;
       measuring = false;
-      measurePendingPoint = undefined;
+      measurePicked = [];
       if (!probing) {
         removeLayer(PROBE_POINTS_ID);
         removeLayer(PROBE_LINE_ID);
@@ -6590,6 +6980,8 @@ let selectionVisible = false;
 let selectionSets: SelectionSet[] = [];
 let selectionActiveIndex = 0;
 let selectionMode: SelectionMode = "single";
+/** Box/lasso select through occluding surfaces (centroid projection) rather than the visible ones. */
+let selectionXray = false;
 let selectionVisibility: SelectionVisibilityMode = "normal";
 // The per-layer `visible` state before an Isolate/Hide, for Restore.
 const selectionBackup = new Map<string, boolean>();
@@ -6723,6 +7115,7 @@ function selectionPanelState(): SelectionPanelState {
     sets: selectionSets,
     activeIndex: selectionActiveIndex,
     mode: selectionMode,
+    xray: selectionXray,
     isolate: selectionVisibility === "isolate",
     partPaths: collectSubModelPartPaths(),
     fieldNames: fieldInfos.map((f) => f.field.variable),
@@ -6737,6 +7130,15 @@ function renderSelectionUI(): void {
       selectionActiveIndex = i;
       applySelectionOverlays();
       renderSelectionUI();
+    },
+    onSetXray: () => {
+      selectionXray = !selectionXray;
+      renderSelectionUI();
+      toast(
+        selectionXray
+          ? "X-ray: box and lasso now select every entity whose centre falls inside, hidden or not."
+          : "Visible only: box and lasso select what can be seen."
+      );
     },
     onSetMode: (mode) => {
       selectionMode = mode;
@@ -7322,7 +7724,7 @@ function clearCompare(note?: string): void {
         p.field.selectedKey = fieldInfos[0]?.key ?? "";
         resetFieldStateForSelection(p);
       }
-      if (!fieldInfos.some((inf) => inf.key === p.field.deformKey && inf.isVector)) {
+      if (!fieldInfos.some((inf) => inf.key === p.field.deformKey && isDeformable(inf))) {
         p.field.deformKey = fieldInfos.find((inf) => inf.isVector)?.key ?? "";
       }
     });
@@ -7437,7 +7839,7 @@ function resolveCompareFieldState(): void {
     }
     if (fs.modes.size === 0) fs.modes.add("contour");
   }
-  if (fs.deformKey && !st.infos.some((inf) => inf.key === fs.deformKey && inf.isVector)) {
+  if (fs.deformKey && !st.infos.some((inf) => inf.key === fs.deformKey && isDeformable(inf))) {
     fs.deformKey = st.infos.find((inf) => inf.isVector)?.key ?? "";
   }
 }
@@ -8161,35 +8563,42 @@ function handleMeasureClick(nodeId: number): void {
   if (!prepared) return;
   const coords = coordOfPrep(prepared, nodeId);
   if (!coords) return;
-  if (!measurePendingPoint) {
-    measurePendingPoint = { id: nodeId, coords };
+  const need = measureAngle ? 3 : 2;
+  if (measurePicked.length >= need) measurePicked = [];
+  if (measurePicked.length === 0) {
     measureResult = undefined;
     removeLayer(MEASURE_LINE_ID);
-    addLayer(MEASURE_POINTS_ID, [{ nodeIds: new Int32Array([nodeId]) }], MEASURE_COLOR, true);
-  } else {
-    const a = measurePendingPoint;
-    const dx = coords[0] - a.coords[0];
-    const dy = coords[1] - a.coords[1];
-    const dz = coords[2] - a.coords[2];
-    measureResult = {
-      aId: a.id,
-      bId: nodeId,
-      distance: Math.hypot(dx, dy, dz),
-      delta: [dx, dy, dz],
-    };
-    addLayer(
-      MEASURE_POINTS_ID,
-      [{ nodeIds: new Int32Array([a.id]) }, { nodeIds: new Int32Array([nodeId]) }],
-      MEASURE_COLOR,
-      true
-    );
+  }
+  measurePicked.push({ id: nodeId, coords });
+  const ids = measurePicked.map((p) => p.id);
+  addLayer(MEASURE_POINTS_ID, ids.map((id) => ({ nodeIds: new Int32Array([id]) })), MEASURE_COLOR, true);
+  if (measurePicked.length >= 2) {
     addLayer(
       MEASURE_LINE_ID,
-      [{ cellType: VtkCellType.LINE, nodeIds: new Int32Array([a.id, nodeId]) }],
+      [{ cellType: VtkCellType.LINE, nodeIds: Int32Array.from(ids) }],
       MEASURE_COLOR,
       true
     );
-    measurePendingPoint = undefined;
+  }
+  if (measurePicked.length === need) {
+    const [a, b, c] = measurePicked;
+    const dx = b.coords[0] - a.coords[0];
+    const dy = b.coords[1] - a.coords[1];
+    const dz = b.coords[2] - a.coords[2];
+    measureResult = {
+      aId: a.id,
+      bId: b.id,
+      distance: Math.hypot(dx, dy, dz),
+      delta: [dx, dy, dz],
+      ...(c
+        ? {
+            cId: c.id,
+            angle: angleAt(a.coords, b.coords, c.coords),
+            pathLength: polylineLength([a.coords, b.coords, c.coords]),
+          }
+        : {}),
+    };
+    measurePicked = [];
   }
   renderInspectUI();
   render();
@@ -8204,30 +8613,43 @@ function handleProbeClick(nodeId: number): void {
   if (!prepared) return;
   const coords = coordOfPrep(prepared, nodeId);
   if (!coords) return;
-  if (!probePendingPoint) {
+  if (probeVisible && probePoints && probePoints.length >= 2) {
+    // A third and later pick EXTENDS the polyline: the host already samples a
+    // polyline by arclength (samplePolyline), so only the picks change.
+    probePointIds = [...probePointIds, nodeId];
+    probePoints = [...probePoints, [...coords] as [number, number, number]];
+    drawProbeLayers();
+    renderProbeUI();
+    requestProbe();
+  } else if (!probePendingPoint) {
     probePendingPoint = { id: nodeId, coords };
     removeLayer(PROBE_LINE_ID);
     addLayer(PROBE_POINTS_ID, [{ nodeIds: new Int32Array([nodeId]) }], PROBE_COLOR, true);
   } else {
     const a = probePendingPoint;
     probePointIds = [a.id, nodeId];
-    addLayer(
-      PROBE_POINTS_ID,
-      [{ nodeIds: new Int32Array([a.id]) }, { nodeIds: new Int32Array([nodeId]) }],
-      PROBE_COLOR,
-      true
-    );
-    addLayer(
-      PROBE_LINE_ID,
-      [{ cellType: VtkCellType.LINE, nodeIds: new Int32Array([a.id, nodeId]) }],
-      PROBE_COLOR,
-      true
-    );
     probePendingPoint = undefined;
     showProbePanel([[...a.coords], [...coords]] as [number, number, number][]);
+    drawProbeLayers();
   }
   renderInspectUI();
   render();
+}
+
+/** The picked nodes and the line through them, for however many picks there are. */
+function drawProbeLayers(): void {
+  if (probePointIds.length === 0) return;
+  removeLayer(PROBE_POINTS_ID);
+  removeLayer(PROBE_LINE_ID);
+  addLayer(PROBE_POINTS_ID, probePointIds.map((id) => ({ nodeIds: new Int32Array([id]) })), PROBE_COLOR, true);
+  if (probePointIds.length >= 2) {
+    addLayer(
+      PROBE_LINE_ID,
+      [{ cellType: VtkCellType.LINE, nodeIds: Int32Array.from(probePointIds) }],
+      PROBE_COLOR,
+      true
+    );
+  }
 }
 
 /** The resolved part of handleInspectPick, shared by selection's gestures. */
@@ -8442,11 +8864,18 @@ function toggleSelectionPick(kind: EntityKind, entityId: number | undefined): vo
 }
 
 /**
- * ONE region-collect path for both region gestures: picks a grid inside
- * `region` and keeps the samples `inside` accepts. The box resolves the
+ * ONE region-collect path for both region gestures: finds the entities visible
+ * inside `region` and keeps those `inside` accepts. The box resolves the
  * rectangle itself; the lasso passes `pointInPolygon` — so box and lasso
  * resolve on the same path by construction, not by convention.
+ *
+ * With `caps.hardwareSelection` the backend reads an id buffer, which is exact
+ * to the pixel and visible-only. Otherwise (VTK-wasm) it falls back to picking
+ * a capped grid of points, which can miss a cell smaller than the grid step.
  */
+/** Upper bound on cells projected one by one for X-ray selection. */
+const XRAY_MAX_CELLS = 2_000_000;
+
 function collectRegionPicks(
   region: { left: number; top: number; right: number; bottom: number },
   inside: (x: number, y: number) => boolean,
@@ -8456,26 +8885,78 @@ function collectRegionPicks(
   const width = Math.max(0, region.right - region.left);
   const height = Math.max(0, region.bottom - region.top);
   if (width <= 0 || height <= 0) return;
-  // ~every 10 display px on each axis — the same resolution class the picker
-  // needs to catch cells of a standard view, capped so a huge band cannot
-  // turn into tens of thousands of picks.
-  const MAX_SAMPLES = 4_000;
-  const stepX = Math.max(4, Math.floor(width / Math.min(60, Math.ceil(width / 10))));
-  const stepY = Math.max(4, Math.floor(height / Math.min(60, Math.ceil(height / 10))));
   const set = ensureActiveSet();
+  const add = (kind: EntityKind, entityId: number): boolean => {
+    const list = set.kinds[kind];
+    if (list.includes(entityId)) return false;
+    list.push(entityId);
+    return true;
+  };
   let picked = 0;
-  for (let x = region.left + stepX / 2; x <= region.right; x += stepX) {
-    for (let y = region.top + stepY / 2; y <= region.bottom; y += stepY) {
-      if (!inside(x, y)) continue;
-      const r = pickAt(x, rect.height - y);
-      if (r?.entityId === undefined) continue;
-      const list = set.kinds[r.kind];
-      if (!list.includes(r.entityId)) {
-        list.push(r.entityId);
+  if (selectionXray) {
+    // Through the surface: every entity of a drawn block whose centroid
+    // projects into the region. Centroids come from the model's own
+    // connectivity (the layers' geometry holds only boundary faces), in the
+    // focused pane's warp like every other overlay. Clip is not honoured.
+    const paneIdx = focusedPaneIndex();
+    const view = focusedView();
+    const prep = (model && computeWarpedGeometry(focusedPane())?.prepared) || prepared;
+    const blocks = (model?.blocks ?? []).filter((b) => {
+      const layer = layers.get(blockLayerId(b));
+      return !!layer && layerShouldDraw(layer, paneIdx);
+    });
+    const total = blocks.reduce((n, b) => n + b.count, 0);
+    if (total > XRAY_MAX_CELLS) {
+      toast(`X-ray select is limited to ${XRAY_MAX_CELLS.toLocaleString()} entities (${total.toLocaleString()} are drawn); turn it off or hide layers.`);
+      return;
+    }
+    if (prep) {
+      for (const block of blocks) {
+        const cents = blockCentroids(block, prep);
+        for (let c = 0; c < block.count; c++) {
+          if (Number.isNaN(cents[c * 3])) continue;
+          const [x, y] = backend.worldToDisplay(view, cents[c * 3], cents[c * 3 + 1], cents[c * 3 + 2]);
+          if (x < region.left || x > region.right || y < region.top || y > region.bottom || !inside(x, y)) continue;
+          if (add(block.kind, block.entityIds[c])) picked++;
+        }
+      }
+    }
+  } else if (backend.caps.hardwareSelection && backend.selectRegion && comparePaneIndex() !== focusedPaneIndex()) {
+    const known = new Map<EntityKind, Set<number>>();
+    for (const k of ["Elements", "Conditions", "Geometries"] as EntityKind[]) known.set(k, new Set(set.kinds[k]));
+    const hits = backend.selectRegion(
+      focusedView(),
+      { left: region.left, right: region.right, bottom: rect.height - region.bottom, top: rect.height - region.top },
+      (x, yFromBottom) => inside(x, rect.height - yFromBottom)
+    );
+    for (const hit of hits) {
+      const layer = findLayerByProp(hit.prop);
+      if (!layer || layer.pickKind === undefined || !layer.cellEntityIds) continue;
+      const seen = known.get(layer.pickKind)!;
+      for (const cellId of hit.cellIds) {
+        const entityId = resolveEntity({ pointGlobalIds: layer.pointGlobalIds!, cellEntityIds: layer.cellEntityIds }, cellId);
+        if (entityId === undefined || seen.has(entityId)) continue;
+        seen.add(entityId);
+        set.kinds[layer.pickKind].push(entityId);
         picked++;
       }
     }
-    if (picked > MAX_SAMPLES) break;
+  } else {
+    // ~every 10 display px on each axis — the same resolution class the picker
+    // needs to catch cells of a standard view, capped so a huge band cannot
+    // turn into tens of thousands of picks.
+    const MAX_SAMPLES = 4_000;
+    const stepX = Math.max(4, Math.floor(width / Math.min(60, Math.ceil(width / 10))));
+    const stepY = Math.max(4, Math.floor(height / Math.min(60, Math.ceil(height / 10))));
+    for (let x = region.left + stepX / 2; x <= region.right; x += stepX) {
+      for (let y = region.top + stepY / 2; y <= region.bottom; y += stepY) {
+        if (!inside(x, y)) continue;
+        const r = pickAt(x, rect.height - y);
+        if (r?.entityId === undefined) continue;
+        if (add(r.kind, r.entityId)) picked++;
+      }
+      if (picked > MAX_SAMPLES) break;
+    }
   }
   for (const k of ["Elements", "Conditions", "Geometries"] as EntityKind[]) set.kinds[k].sort((a, b) => a - b);
   applySelectionOverlays();

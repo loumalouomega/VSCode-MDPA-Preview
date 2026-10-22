@@ -67,6 +67,22 @@ export function sphereGlyphSet(data: SphereGlyphData, scaleFactor: number, resol
   };
 }
 
+/**
+ * The impostor form of `sphereGlyphSet` (roadmap item 22 A): the same anchors
+ * and radius array, drawn as ray-cast spheres, so there is no resolution.
+ * The drawn radius is `scaleFactor * radii[i]`, exactly as for the tessellated set.
+ */
+export function sphereImpostorSet(data: SphereGlyphData, scaleFactor: number): GlyphSet {
+  return {
+    anchors: data.points,
+    arrays: [{ name: "radius", values: data.radii, components: 1, role: "scalars" }],
+    source: { kind: "impostorSphere" },
+    scaleArray: "radius",
+    scaleMode: "magnitude",
+    scaleFactor,
+  };
+}
+
 export interface GlyphRangeColor {
   stops: ColorStop[];
   min: number;
@@ -130,6 +146,45 @@ export function beamGlyphSet(data: BeamGlyphData, thickness: number, resolution:
     source: { kind: "cylinderX", resolution },
     orientationArray: "axis",
     scaleArray: "beamScale",
+    scaleMode: "components",
+    scaleFactor: 1,
+  };
+}
+
+/**
+ * The impostor form of `beamGlyphSet`: a ray-cast cylinder per cell, anchored
+ * at the midpoint. The stick mapper multiplies its orientation array by the
+ * length itself, so the axis is normalised here and the length rides in the
+ * 2-component scale array `[length, radius]`. `thickness` multiplies the
+ * radius only, as in `beamGlyphSet`. A zero-length axis keeps +X (such a cell
+ * is skipped upstream by `buildBeamSegments`; this only keeps the data finite).
+ */
+export function stickImpostorSet(data: BeamGlyphData, thickness: number): GlyphSet {
+  const dirs = new Float32Array(data.count * 3);
+  const scales = new Float32Array(data.count * 2);
+  for (let i = 0; i < data.count; i++) {
+    const o = i * 3;
+    const length = Math.hypot(data.axes[o], data.axes[o + 1], data.axes[o + 2]);
+    if (length > 0) {
+      dirs[o] = data.axes[o] / length;
+      dirs[o + 1] = data.axes[o + 1] / length;
+      dirs[o + 2] = data.axes[o + 2] / length;
+    } else {
+      dirs[o] = 1;
+    }
+    scales[i * 2] = length;
+    scales[i * 2 + 1] = data.radii[i] * thickness;
+  }
+  return {
+    anchors: data.centers,
+    arrays: [
+      { name: "stickAxis", values: dirs, components: 3, role: "array" },
+      { name: "stickScale", values: scales, components: 2, role: "array" },
+      { name: "radius", values: data.radii.slice(0, data.count), components: 1, role: "scalars" },
+    ],
+    source: { kind: "impostorStick" },
+    orientationArray: "stickAxis",
+    scaleArray: "stickScale",
     scaleMode: "components",
     scaleFactor: 1,
   };

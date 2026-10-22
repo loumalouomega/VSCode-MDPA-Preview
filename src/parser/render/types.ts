@@ -80,13 +80,20 @@ export interface PropStyle {
   diffuse?: number;
   specular?: number;
   backfaceCulling?: boolean;
+  /**
+   * Gouraud-style smooth shading from averaged point normals (vtk.js
+   * `PolyDataNormals`). Display only; it rounds hard edges because the filter
+   * has no feature angle, so it suits smooth surfaces. Mesh geometry only —
+   * glyph layers ignore it. Needs `caps.displayFilters`.
+   */
+  smoothShading?: boolean;
 }
 
 /** A per-point array carried by a glyph set. */
 export interface GlyphArray {
   name: string;
   values: Float32Array;
-  components: 1 | 3;
+  components: 1 | 2 | 3;
   /** Which attribute slot it occupies (vectors/scalars) or a plain added array. */
   role: "vectors" | "scalars" | "array";
 }
@@ -95,7 +102,16 @@ export type GlyphSource =
   | { kind: "arrow" }
   | { kind: "sphere"; resolution: number }
   /** A unit cylinder along +X (height 1, radius 0.5), capped. */
-  | { kind: "cylinderX"; resolution: number };
+  | { kind: "cylinderX"; resolution: number }
+  /**
+   * Ray-cast impostors (roadmap item 22 A): no tessellation, one point per
+   * glyph. `impostorSphere` reads the scale array as the radius (times
+   * `scaleFactor`); `impostorStick` reads `orientationArray` as a UNIT axis and
+   * `scaleArray` as `[length, radius]` (2 components). Only a backend that
+   * reports `caps.impostors` is handed these.
+   */
+  | { kind: "impostorSphere" }
+  | { kind: "impostorStick" };
 
 /**
  * An instanced-glyph layer (quiver arrows, face normals, spheres, beam tubes):

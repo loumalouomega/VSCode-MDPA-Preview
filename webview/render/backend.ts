@@ -36,12 +36,89 @@ import type {
   ScalarColoring,
   Vec3,
 } from "../../src/parser/render/types";
+import type { TileRect } from "../../src/parser/render/labelLayout";
+import type { LightPlacement } from "../../src/parser/render/lightMode";
 
 export type { Bounds6, DisplayGeometry, GlyphSet, PickHit, PropStyle, RGB, RendererKind, ScalarColoring, Vec3 };
 
 export interface BackendCaps {
   /** `render()` has drawn by the time it returns (the recorder copies right after). */
   syncRender: boolean;
+  /**
+   * Ray-cast sphere and cylinder impostors (`GlyphSource` `impostorSphere` /
+   * `impostorStick`) are supported. When false the caller builds the
+   * tessellated glyph sets instead and `impostorsReason` says why.
+   */
+  impostors: boolean;
+  impostorsReason?: string;
+  /**
+   * `selectRegion` is implemented: an exact, visible-only GPU id-buffer
+   * selection. When false callers sample `pick` over a grid instead.
+   */
+  hardwareSelection: boolean;
+  /** `PropStyle.smoothShading` (and the other display-only filters) are honoured. */
+  displayFilters: boolean;
+  /** `RView.setLight` is honoured (scene and positional lights). */
+  lightModes: boolean;
+  /**
+   * `RView.compositeMatrix`, `RenderBackend.viewTile` and `RView.depthSnapshot`
+   * are implemented, so a label pass can project every node in typed arrays and
+   * cull the hidden ones. When false the caller keeps the capped per-point path.
+   */
+  gpuLabels: boolean;
+  /** `RView.createPlaneWidget` is implemented (a draggable 3D clip-plane handle). */
+  widgets: boolean;
+  widgetsReason?: string;
+  /** `RView.createVolume` is implemented (image-data volume, slices and iso surfaces for a lattice). */
+  volume: boolean;
+  volumeReason?: string;
+}
+
+export type VolumeMode = "off" | "volume" | "slices" | "contour";
+
+/** A lattice as image data: `values` is nx*ny*nz, x fastest. */
+export interface VolumeLattice {
+  name: string;
+  dims: [number, number, number];
+  origin: Vec3;
+  spacing: Vec3;
+  values: Float32Array;
+}
+
+export interface RVolume {
+  /** World bounds of the lattice. */
+  bounds(): Bounds6;
+  setMode(mode: VolumeMode): void;
+  /** Flat `x,r,g,b` quadruples over `range` (the same ctf the surface colouring uses). */
+  setColoring(ctfPoints: number[], range: [number, number]): void;
+  /** Flat `x,a` pairs in data units. */
+  setOpacity(points: number[]): void;
+  /** Slice index per axis (clamped) and which of the three are drawn. */
+  setSlices(index: [number, number, number], visible: [boolean, boolean, boolean]): void;
+  /** Up to four iso values, drawn in `contour` mode. */
+  setIsoValues(values: number[]): void;
+  dispose(): void;
+}
+
+export interface RPlaneWidget {
+  setPlane(origin: Vec3, normal: Vec3): void;
+  /** The box the handle's size and drag limits follow. */
+  setBounds(bounds: Bounds6): void;
+  setVisible(visible: boolean): void;
+  dispose(): void;
+}
+
+export interface DepthSnapshot {
+  depth: Float32Array;
+  width: number;
+  height: number;
+}
+
+/** The cells of one prop that are visible inside a selected region. */
+export interface RegionPick<P> {
+  prop: P;
+  /** Cell ids in the prop's geometry (verts -> lines -> polys enumeration). */
+  cellIds: number[];
 }
 
 export interface RCamera {
@@ -125,6 +202,24 @@ export interface RView {
   setViewport(x0: number, y0: number, x1: number, y1: number): void;
   setBackground(r: number, g: number, b: number): void;
   getBackground(): RGB;
+  /** A fixed world-space light, or null for the camera-following headlight. Only when `caps.lightModes`. */
+  setLight(placement: LightPlacement | null): void;
+  /**
+   * A draggable plane handle (origin point, normal arrow, plane). `onChange`
+   * reports every drag step as plain origin/normal, `onInteraction(true|false)`
+   * brackets a drag. `setPlane` moves it without calling back. `caps.widgets`.
+   */
+  createPlaneWidget(onChange: (origin: Vec3, normal: Vec3) => void, onInteraction: (active: boolean) => void): RPlaneWidget;
+  /** Image-data rendering of a dense lattice. Only when `caps.volume`. */
+  createVolume(lattice: VolumeLattice): RVolume;
+  /** Row-major 4x4 view x projection for this view's tile (`caps.gpuLabels`). */
+  compositeMatrix(): number[];
+  /**
+   * The depth buffer as of the last render, NDC depth per DEVICE pixel with row
+   * 0 at the bottom, or undefined until one has been rendered after `on` was
+   * first set. `on = false` stops the (readback-per-render) probe. `caps.gpuLabels`.
+   */
+  depthSnapshot(on: boolean): DepthSnapshot | undefined;
   addProp(prop: RProp): void;
   removeProp(prop: RProp): void;
   resetCamera(bounds?: Bounds6): void;
@@ -152,7 +247,23 @@ export interface RenderBackend {
   createPlane(): RPlane;
   /** CSS pixels relative to the canvas, y measured from the BOTTOM. */
   pick(view: RView, cssX: number, cssYFromBottom: number): PickHit<RProp> | undefined;
+  /**
+   * Every cell of every PICKABLE prop that is visible inside the region (CSS
+   * pixels, y from the BOTTOM, like `pick`), exact to the pixel: the scene is
+   * drawn once into an id buffer, so a cell that covers a single pixel is found
+   * and a cell hidden behind another is not. `inside` refines the rectangle
+   * (the lasso passes a polygon test); it is called with pixel-centre CSS
+   * coordinates. Props that are not pickable are left out of the capture, so an
+   * overlay in front of a layer never hides it. Only when `caps.hardwareSelection`.
+   */
+  selectRegion?(
+    view: RView,
+    region: { left: number; bottom: number; right: number; top: number },
+    inside?: (cssX: number, cssYFromBottom: number) => boolean
+  ): RegionPick<RProp>[];
   /** World point -> CSS pixels relative to the canvas, top-left origin. */
+  /** This view's rectangle in CSS pixels, y from the canvas top (`caps.gpuLabels`). */
+  viewTile(view: RView): TileRect;
   worldToDisplay(view: RView, x: number, y: number, z: number): [number, number];
   /** The view under the pointer during the current/last pointer event, if any. */
   pokedView(): RView | undefined;

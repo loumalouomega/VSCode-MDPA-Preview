@@ -18,6 +18,8 @@ export interface SelectionPanelState {
   /** Which set picks / isolate / hide act on. */
   activeIndex: number;
   mode: SelectionMode;
+  /** Box/lasso reach hidden entities too (their centres, projected), not just the visible ones. */
+  xray: boolean;
   isolate: boolean;
   /** Named SubModelPart paths for the "Put in SubModelPart" input dropdown. */
   partPaths: string[];
@@ -31,6 +33,8 @@ export interface SelectionPanelHandlers {
   /** Switches the gesture mode in main.ts (the mode drives the pointer
    *  handling and which overlay the next gesture draws). */
   onSetMode(mode: SelectionMode): void;
+  /** Toggles through-the-surface selection for box and lasso. */
+  onSetXray(): void;
   /** Creates a new set seeded by a predicate built in the panel row. */
   onAddSeed(kind: string, params: Record<string, unknown>): void;
   /** Left-click "frame the active set's first highlight" (Frame button). */
@@ -133,6 +137,17 @@ export function renderSelectionPanel(
     modeRow.appendChild(seg);
   }
   container.appendChild(modeRow);
+  if (state.mode !== "single") {
+    container.appendChild(
+      smallBtn(
+        state.xray ? "X-ray: on" : "X-ray: off",
+        "Off: box and lasso pick what is visible, exactly, from the GPU. On: they pick every entity whose centre falls inside the region, including ones hidden behind others (slower on large meshes; ignores Clip)",
+        () => handlers.onSetXray()
+      )
+    );
+    const xr = container.lastElementChild as HTMLElement;
+    xr.classList.toggle("active", state.xray);
+  }
 
   const active = state.sets[state.activeIndex];
   const countLine = (s: SelectionSet): string => {

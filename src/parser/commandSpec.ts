@@ -336,6 +336,7 @@ const PANELS: CommandSpec[] = [
   ui("dataTable", "panel", "Data table of nodes/entities", "dataTable"),
   ui("record", "panel", "Video / frame-sequence recorder", "record"),
   ui("lighting", "panel", "Lighting controls", "lighting"),
+  ui("volume", "panel", "Volume view of a regular lattice", "volume"),
   ui("propertiesEditor", "panel", "Properties editor", "propertiesEditor"),
   ui("bookmarks", "panel", "Camera bookmarks", "bookmarks"),
 ];

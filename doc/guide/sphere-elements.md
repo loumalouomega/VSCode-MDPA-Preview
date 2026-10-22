@@ -25,7 +25,7 @@ A mesh with no radius field is *not* switched to spheres on its own — otherwis
 - **Show spheres** — toggle the glyphs. **Frame** zooms to them.
 - **Scale** — a multiplier on top of every particle's own radius. Useful for making a sparse cloud legible without editing the data.
 - **Constant radius** — used for particles the `RADIUS` field does not cover (and for all of them when there is no field). Prefilled with the suggestion.
-- **Detail** — sphere tessellation (8 / 16 / 32 / 48). Above ~50 000 particles the panel warns you off the finer settings.
+- **Detail** — sphere tessellation (8 / 16 / 32 / 48), shown only on the experimental VTK-wasm renderer; above ~50 000 particles the panel warns you off the finer settings. The default renderer draws the particles as ray-cast spheres, which are exact at any zoom, so there is nothing to tune. Under Clip a particle is kept or dropped whole according to its centre.
 - **Colour** — **By radius** maps the radii through the usual colormaps and legend, so a graded discretization is readable at a glance. Only offered when the mesh actually has a radius field.
 
 While the glyphs are shown, the underlying one-node layers are hidden — they would otherwise draw as points *inside* every sphere. Their visibility is restored when you turn the rendering off.

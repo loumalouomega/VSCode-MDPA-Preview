@@ -2162,6 +2162,7 @@ input.outline-label-input {
   #meshsize-panel,
   #sphere-panel,
   #beam-panel,
+  #volume-panel,
   #integral-panel,
   #streamline-panel,
   #flow-panel,
@@ -2200,7 +2201,7 @@ input.outline-label-input {
    out of the top of the viewport. The panels scroll internally
    (`overflow-y: auto`), so the lost height costs nothing but a scrollbar on a
    short window. */
-:is(#quality-panel, #export-report-panel, #meshsize-panel, #sphere-panel, #beam-panel, #integral-panel, #streamline-panel, #flow-panel, #link-panel, #optimization-panel, #wind-tunnel-panel, #inspect-panel, #selection-panel) {
+:is(#quality-panel, #export-report-panel, #meshsize-panel, #sphere-panel, #beam-panel, #volume-panel, #integral-panel, #streamline-panel, #flow-panel, #link-panel, #optimization-panel, #wind-tunnel-panel, #inspect-panel, #selection-panel) {
   bottom: calc(var(--nav-rest, 8px) + var(--nav-height, 0px) + var(--ui-s-3));
 }
 
@@ -2999,6 +3000,7 @@ input.outline-label-input {
 #meshsize-panel,
 #sphere-panel,
 #beam-panel,
+#volume-panel,
 #integral-panel,
 #streamline-panel,
 #flow-panel,
@@ -3117,6 +3119,14 @@ input.outline-label-input {
 
 .field-select {
   flex: 1;
+  min-width: 0;
+}
+
+.colormap-picker {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--ui-s-1);
   min-width: 0;
 }
 
@@ -4790,4 +4800,11 @@ button.pt-preflight-row:hover,
   padding-left: var(--ui-s-5);
   font-size: var(--ui-fs-sm);
   color: var(--ds-description-fg);
+}
+
+.volume-curve {
+  display: block;
+  margin: var(--ui-s-1) 0;
+  cursor: crosshair;
+  touch-action: none;
 }

@@ -14,3 +14,27 @@ declare module "@kitware/vtk.js/Rendering/OpenGL/CubeAxesActor" {
 declare module "@kitware/vtk.js/Rendering/OpenGL/Glyph3DMapper" {
   // Side-effect import — registers the OpenGL rendering backend.
 }
+
+declare module "@kitware/vtk.js/Filters/Core/PolyDataNormals" {
+  const vtkPolyDataNormals: {
+    newInstance(initialValues?: Record<string, unknown>): any;
+  };
+  export default vtkPolyDataNormals;
+}
+
+declare module "@kitware/vtk.js/Widgets/Widgets3D/ImplicitPlaneWidget" {
+  const vtkImplicitPlaneWidget: {
+    newInstance(initialValues?: Record<string, unknown>): any;
+  };
+  export default vtkImplicitPlaneWidget;
+}
+
+declare module "@kitware/vtk.js/Filters/General/ImageMarchingCubes" {
+  const vtkImageMarchingCubes: { newInstance(initialValues?: Record<string, unknown>): any };
+  export default vtkImageMarchingCubes;
+}
+
+declare module "@kitware/vtk.js/Rendering/OpenGL/ImageMapper" {}
+declare module "@kitware/vtk.js/Rendering/OpenGL/ImageSlice" {}
+declare module "@kitware/vtk.js/Rendering/OpenGL/Volume" {}
+declare module "@kitware/vtk.js/Rendering/OpenGL/VolumeMapper" {}

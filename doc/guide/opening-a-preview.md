@@ -58,7 +58,7 @@ The **View ▾** menu:
 
 | Item | What it does |
 |---|---|
-| **Node IDs** | Overlay node-id labels (toggle; capped at 1 000 nodes). |
+| **Node IDs** | Overlay node-id labels (toggle). With the vtk.js renderer every pane is labelled, nodes hidden behind a surface are left out and crowded labels thin out as you zoom out (at most 3 000 are drawn); the VTK-wasm renderer keeps the 1 000-node, single-pane limit. |
 | **Grid** | Toggle a labeled bounding-box [grid](./navigation#background-grid) (toggle). |
 | **Edges** | Toggle the mesh edge lines (toggle; on by default). |
 | **Level of detail** | Draw a decimated surface in place of the full layers to keep a huge mesh navigable; the mesh is untouched and picking is off while it shows (toggle; see [Simplify surface](./mesh-editing#simplify-surface)). |

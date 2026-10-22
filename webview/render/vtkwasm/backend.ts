@@ -258,6 +258,10 @@ function glyphSource(vtk: Vtk, set: GlyphSet): { pd: number; owned: number[] } {
     }
     case "cylinderX":
       return buildPolyData(vtk, unitCylinderX(set.source.resolution));
+    case "impostorSphere":
+    case "impostorStick":
+      // Guarded by caps.impostors === false: the caller builds tessellated sets here.
+      throw new Error("VTK-wasm does not draw impostor glyphs.");
   }
 }
 
@@ -677,6 +681,21 @@ class WasmView implements RView {
   getBackground(): RGB {
     return [...this.background] as RGB;
   }
+  createVolume(): never {
+    throw new Error("createVolume needs caps.volume");
+  }
+  createPlaneWidget(): never {
+    throw new Error("createPlaneWidget needs caps.widgets");
+  }
+  compositeMatrix(): number[] {
+    throw new Error("compositeMatrix needs caps.gpuLabels");
+  }
+  depthSnapshot(): undefined {
+    return undefined;
+  }
+  setLight(): void {
+    // caps.lightModes is false: the wasm session keeps its default headlight.
+  }
   addProp(prop: RProp): void {
     const p = prop as WasmProp;
     this.props.add(p);
@@ -847,7 +866,19 @@ export async function createVtkWasmBackend(opts: VtkWasmBackendOptions): Promise
   // hit exactly) pickable and keeps vtk.js's forgiveness near edges.
   const PICK_TOLERANCES = [1e-6, 0.025];
 
-  const caps: BackendCaps = { syncRender: true };
+  const caps: BackendCaps = {
+    syncRender: true,
+    impostors: false,
+    impostorsReason: "VTK-wasm has no ray-cast sphere or stick mapper; it draws tessellated glyphs.",
+    hardwareSelection: false,
+    displayFilters: false,
+    lightModes: false,
+    gpuLabels: false,
+    volume: false,
+    volumeReason: "VTK-wasm's session is not wired for image-data volume, slice or marching-cubes rendering; the surface view stays.",
+    widgets: false,
+    widgetsReason: "VTK-wasm's native session has no widget framework; the Clip slider and numeric normal stay.",
+  };
   let disposed = false;
 
   // --- Size ---------------------------------------------------------------
@@ -1196,6 +1227,9 @@ export async function createVtkWasmBackend(opts: VtkWasmBackendOptions): Promise
       const sx = r.width > 0 ? canvas.width / r.width : dpr();
       const sy = r.height > 0 ? canvas.height / r.height : dpr();
       return [(d[0] ?? 0) / sx, (canvas.height - (d[1] ?? 0)) / sy];
+    },
+    viewTile(): never {
+      throw new Error("viewTile needs caps.gpuLabels");
     },
     pokedView(): RView | undefined {
       return poked;

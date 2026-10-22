@@ -12,14 +12,30 @@ import "@kitware/vtk.js/Rendering/Profiles/Geometry";
 // Glyph3DMapper, so without this a glyph actor is built and added to the
 // renderer but draws nothing at all.
 import "@kitware/vtk.js/Rendering/OpenGL/Glyph3DMapper";
+// Same for the ray-cast impostor mappers (roadmap item 22 A).
+import "@kitware/vtk.js/Rendering/OpenGL/SphereMapper";
+import "@kitware/vtk.js/Rendering/OpenGL/StickMapper";
 import vtkGenericRenderWindow from "@kitware/vtk.js/Rendering/Misc/GenericRenderWindow";
 import vtkActor from "@kitware/vtk.js/Rendering/Core/Actor";
+import type { TileRect } from "../../../src/parser/render/labelLayout";
+import type { LightPlacement } from "../../../src/parser/render/lightMode";
+import vtkPixelSpaceCallbackMapper from "@kitware/vtk.js/Rendering/Core/PixelSpaceCallbackMapper";
+import "@kitware/vtk.js/Rendering/OpenGL/PixelSpaceCallbackMapper";
+import { createPlaneWidget } from "./widgets";
+import { createVolume } from "./volume";
+import vtkLight from "@kitware/vtk.js/Rendering/Core/Light";
 import vtkRenderer from "@kitware/vtk.js/Rendering/Core/Renderer";
 import vtkMapper from "@kitware/vtk.js/Rendering/Core/Mapper";
 import vtkGlyph3DMapper from "@kitware/vtk.js/Rendering/Core/Glyph3DMapper";
+import vtkSphereMapper from "@kitware/vtk.js/Rendering/Core/SphereMapper";
+import vtkStickMapper from "@kitware/vtk.js/Rendering/Core/StickMapper";
 import vtkPolyData from "@kitware/vtk.js/Common/DataModel/PolyData";
 import vtkDataArray from "@kitware/vtk.js/Common/Core/DataArray";
 import vtkPlane from "@kitware/vtk.js/Common/DataModel/Plane";
+import vtkHardwareSelector from "@kitware/vtk.js/Rendering/OpenGL/HardwareSelector";
+import * as HardwareSelectorConstants from "@kitware/vtk.js/Rendering/OpenGL/HardwareSelector/Constants";
+import { FieldAssociations } from "@kitware/vtk.js/Common/DataModel/DataSet/Constants";
+import vtkPolyDataNormals from "@kitware/vtk.js/Filters/Core/PolyDataNormals";
 import vtkCellPicker from "@kitware/vtk.js/Rendering/Core/CellPicker";
 import vtkArrowSource from "@kitware/vtk.js/Filters/Sources/ArrowSource";
 import vtkSphereSource from "@kitware/vtk.js/Filters/Sources/SphereSource";
@@ -38,19 +54,25 @@ import type {
   GlyphSet,
   GridAxes,
   OrientationMarker,
+  DepthSnapshot,
   PickHit,
   PropStyle,
+  RegionPick,
   RCamera,
   RGB,
   RGeometry,
   RPlane,
   RProp,
+  RPlaneWidget,
   RView,
+  RVolume,
   RenderBackend,
   ScalarBar,
   ScalarColoring,
   Vec3,
+  VolumeLattice,
 } from "../backend";
+import { decodeRegionCells } from "../../../src/parser/render/hardwareSelection";
 import { ctfFromPoints } from "./colorTransfer";
 import { setupScalarBar } from "./scalarBar";
 import { setupGridAxes } from "./gridAxes";
@@ -118,6 +140,17 @@ class VtkJsGeometry implements RGeometry {
     readonly data?: DisplayGeometry,
     readonly glyphs?: { set: GlyphSet; source: any }
   ) {}
+  private smooth: any;
+  /** The polydata with averaged point normals attached, built once on first use. */
+  smoothPolyData(): any {
+    if (!this.smooth) {
+      const f: any = vtkPolyDataNormals.newInstance();
+      f.setInputData(this.polyData);
+      f.update();
+      this.smooth = f.getOutputData();
+    }
+    return this.smooth;
+  }
   // vtk.js data objects are garbage collected with the mappers that reference
   // them; the scene code never deleted polydata explicitly, and removing a
   // layer already deletes every actor over it.
@@ -163,6 +196,9 @@ function glyphSource(set: GlyphSet): any {
         direction: [1, 0, 0],
         capping: true,
       });
+    case "impostorSphere":
+    case "impostorStick":
+      return undefined; // no source shape: the mapper draws the glyph itself
   }
 }
 
@@ -184,21 +220,33 @@ class VtkJsProp implements RProp {
     let mapper: any;
     if (g.kind === "glyphs" && g.glyphs) {
       const { set, source } = g.glyphs;
-      mapper = vtkGlyph3DMapper.newInstance();
-      mapper.setInputData(g.polyData, 0);
-      mapper.setInputConnection(source.getOutputPort(), 1);
-      if (set.orientationArray) {
+      if (set.source.kind === "impostorSphere") {
+        mapper = vtkSphereMapper.newInstance();
+        mapper.setScaleArray(set.scaleArray);
+        mapper.setScaleFactor(set.scaleFactor);
+        mapper.setInputData(g.polyData);
+      } else if (set.source.kind === "impostorStick") {
+        mapper = vtkStickMapper.newInstance();
+        mapper.setScaleArray(set.scaleArray);
         mapper.setOrientationArray(set.orientationArray);
-        mapper.setOrientationModeToDirection();
+        mapper.setInputData(g.polyData);
+      } else {
+        mapper = vtkGlyph3DMapper.newInstance();
+        mapper.setInputData(g.polyData, 0);
+        mapper.setInputConnection(source.getOutputPort(), 1);
+        if (set.orientationArray) {
+          mapper.setOrientationArray(set.orientationArray);
+          mapper.setOrientationModeToDirection();
+        }
+        // setScaleArray exists at runtime (macro.setGet) but is missing from vtk.js TS typedefs.
+        mapper.setScaleArray(set.scaleArray);
+        if (set.scaleMode === "components") mapper.setScaleModeToScaleByComponents();
+        else mapper.setScaleModeToScaleByMagnitude();
+        mapper.setScaleFactor(set.scaleFactor);
       }
-      // setScaleArray exists at runtime (macro.setGet) but is missing from vtk.js TS typedefs.
-      mapper.setScaleArray(set.scaleArray);
-      if (set.scaleMode === "components") mapper.setScaleModeToScaleByComponents();
-      else mapper.setScaleModeToScaleByMagnitude();
-      mapper.setScaleFactor(set.scaleFactor);
     } else {
       mapper = vtkMapper.newInstance();
-      mapper.setInputData(g.polyData);
+      mapper.setInputData(this.smoothShading ? g.smoothPolyData() : g.polyData);
     }
     this.mapper = mapper;
     if (this.coloring) this.applyColoring(this.coloring);
@@ -215,8 +263,18 @@ class VtkJsProp implements RProp {
     this.actor.setPickable(on);
   }
 
+  private smoothShading = false;
+
   setStyle(s: PropStyle): void {
     const p = this.actor.getProperty();
+    if (s.smoothShading !== undefined && s.smoothShading !== this.smoothShading) {
+      this.smoothShading = s.smoothShading;
+      if (this.geometry?.kind === "mesh" && this.mapper) {
+        this.mapper.setInputData(s.smoothShading ? this.geometry.smoothPolyData() : this.geometry.polyData);
+        if (s.smoothShading) p.setInterpolationToPhong();
+        else p.setInterpolationToGouraud(); // vtk.js default
+      }
+    }
     if (s.color) p.setColor(s.color[0], s.color[1], s.color[2]);
     if (s.edgeVisible !== undefined) p.setEdgeVisibility(s.edgeVisible);
     if (s.edgeColor) p.setEdgeColor(s.edgeColor[0], s.edgeColor[1], s.edgeColor[2]);
@@ -311,6 +369,10 @@ class VtkJsPlane implements RPlane {
 
 class VtkJsView implements RView {
   private cam: VtkJsCamera | undefined;
+  /** Normalised viewport, y from the BOTTOM (as vtk.js stores it). */
+  viewport: [number, number, number, number] = [0, 0, 1, 1];
+  canvas: HTMLCanvasElement | undefined;
+  private depthProbe: { actor: any; texels?: Uint8Array; snapshot?: DepthSnapshot } | undefined;
   constructor(
     readonly renderer: any,
     private readonly renderWindow: any,
@@ -322,13 +384,101 @@ class VtkJsView implements RView {
     return this.cam;
   }
   setViewport(x0: number, y0: number, x1: number, y1: number): void {
+    this.viewport = [x0, y0, x1, y1];
     this.renderer.setViewport(x0, y0, x1, y1);
+  }
+  createPlaneWidget(onChange: (origin: Vec3, normal: Vec3) => void, onInteraction: (active: boolean) => void): RPlaneWidget {
+    return createPlaneWidget(this.renderer, onChange, onInteraction);
+  }
+  createVolume(lattice: VolumeLattice): RVolume {
+    return createVolume(this.renderer, lattice);
+  }
+  compositeMatrix(): number[] {
+    const c = this.canvas;
+    const [x0, y0, x1, y1] = this.viewport;
+    const w = (c?.width ?? 1) * (x1 - x0);
+    const h = (c?.height ?? 1) * (y1 - y0);
+    const m = this.renderer.getActiveCamera().getCompositeProjectionMatrix(h > 0 ? w / h : 1, -1, 1);
+    return Array.from(m as ArrayLike<number>);
+  }
+  depthSnapshot(on: boolean): DepthSnapshot | undefined {
+    if (!on) {
+      if (this.depthProbe) {
+        this.renderer.removeActor(this.depthProbe.actor);
+        this.depthProbe = undefined;
+      }
+      return undefined;
+    }
+    if (!this.depthProbe) {
+      // A one-point prop whose only job is to have vtk.js hand us the depth
+      // texels after its opaque pass; the per-point callback is not used.
+      const probe: { actor: any; texels?: Uint8Array; snapshot?: DepthSnapshot } = { actor: undefined };
+      const poly = vtkPolyData.newInstance();
+      poly.getPoints().setData(new Float32Array(3), 3);
+      const mapper = vtkPixelSpaceCallbackMapper.newInstance({
+        useZValues: true,
+        callback: (_coords: unknown, _cam: unknown, _aspect: unknown, depth: Uint8Array | null) => {
+          if (depth) {
+            probe.texels = depth;
+            probe.snapshot = undefined;
+          }
+        },
+      });
+      mapper.setInputData(poly);
+      probe.actor = vtkActor.newInstance();
+      probe.actor.setMapper(mapper);
+      probe.actor.getProperty().setOpacity(1);
+      probe.actor.setPickable(false);
+      this.renderer.addActor(probe.actor);
+      this.depthProbe = probe;
+      return undefined;
+    }
+    const probe = this.depthProbe;
+    if (!probe.texels) return undefined;
+    if (!probe.snapshot) {
+      const c = this.canvas;
+      const width = c?.width ?? 0;
+      const height = c?.height ?? 0;
+      if (probe.texels.length !== width * height * 4) return undefined;
+      const depth = new Float32Array(width * height);
+      const t = probe.texels;
+      for (let i = 0; i < depth.length; i++) {
+        // The same RG decode vtk.js applies in PixelSpaceCallbackMapper.
+        depth[i] = ((t[i * 4] / 255) * 256 + t[i * 4 + 1] / 255) / 257 * 2 - 1;
+      }
+      probe.snapshot = { depth, width, height };
+    }
+    return probe.snapshot;
   }
   setBackground(r: number, g: number, b: number): void {
     this.renderer.setBackground(r, g, b);
   }
   getBackground(): RGB {
     return this.renderer.getBackground();
+  }
+  private fixedLight: any;
+  setLight(placement: LightPlacement | null): void {
+    const r = this.renderer;
+    if (this.fixedLight) {
+      r.removeLight(this.fixedLight);
+      this.fixedLight.delete?.();
+      this.fixedLight = undefined;
+    }
+    if (!placement) {
+      // Back to the renderer's own camera-following headlight.
+      r.setAutomaticLightCreation(true);
+      r.removeAllLights();
+      r.createLight();
+      return;
+    }
+    r.setAutomaticLightCreation(false);
+    r.removeAllLights();
+    const l = vtkLight.newInstance({ positional: placement.positional });
+    l.setLightTypeToSceneLight();
+    l.setPosition(...placement.position);
+    l.setFocalPoint(...placement.focalPoint);
+    r.addLight(l);
+    this.fixedLight = l;
   }
   addProp(prop: RProp): void {
     this.renderer.addActor((prop as VtkJsProp).actor);
@@ -379,6 +529,7 @@ export function createVtkJsBackend(opts: VtkJsBackendOptions): RenderBackend {
   };
   const wrap = (r: any): VtkJsView => {
     const v = new VtkJsView(r, renderWindow, forget);
+    v.canvas = canvas;
     views.set(r, v);
     return v;
   };
@@ -405,7 +556,8 @@ export function createVtkJsBackend(opts: VtkJsBackendOptions): RenderBackend {
   grw.resize();
 
   const cellPicker = vtkCellPicker.newInstance();
-  const caps: BackendCaps = { syncRender: true };
+  let hardwareSelector: any;
+  const caps: BackendCaps = { syncRender: true, impostors: true, hardwareSelection: true, displayFilters: true, lightModes: true, gpuLabels: true, widgets: true, volume: true };
 
   return {
     kind: "vtkjs",
@@ -453,6 +605,69 @@ export function createVtkJsBackend(opts: VtkJsBackendOptions): RenderBackend {
       if (!prop) return undefined;
       const positions: Vec3[] = cellPicker.getPickedPositions();
       return { prop, cellId: cellPicker.getCellId(), position: positions.length ? positions[0] : [0, 0, 0] };
+    },
+    selectRegion(view, region, inside): RegionPick<RProp>[] {
+      const renderer = (view as VtkJsView).renderer;
+      const cr = canvas.getBoundingClientRect();
+      const sx = cr.width > 0 ? canvas.width / cr.width : 1;
+      const sy = cr.height > 0 ? canvas.height / cr.height : 1;
+      const x0 = Math.max(0, Math.floor(Math.min(region.left, region.right) * sx));
+      const x1 = Math.min(canvas.width - 1, Math.floor(Math.max(region.left, region.right) * sx));
+      const y0 = Math.max(0, Math.floor(Math.min(region.bottom, region.top) * sy));
+      const y1 = Math.min(canvas.height - 1, Math.floor(Math.max(region.bottom, region.top) * sy));
+      if (x1 < x0 || y1 < y0) return [];
+      hardwareSelector ??= vtkHardwareSelector.newInstance();
+      const sel: any = hardwareSelector;
+      sel.setFieldAssociation(FieldAssociations.FIELD_ASSOCIATION_CELLS);
+      sel.attach(apiRW, renderer);
+      sel.setArea(x0, y0, x1, y1);
+      // Only pickable props take part: an overlay in front of a layer would
+      // otherwise hide it from the id buffer, and cube axes, glyph layers and
+      // the like are not selectable anyway. `pick` ignores them the same way.
+      const hidden: any[] = [];
+      for (const a of renderer.getActors()) {
+        const mine = propRegistry.get(a);
+        if (a.getVisibility() && !(mine && a.getPickable())) {
+          a.setVisibility(false);
+          hidden.push(a);
+        }
+      }
+      let ok = false;
+      try {
+        ok = sel.captureBuffers();
+      } finally {
+        for (const a of hidden) a.setVisibility(true);
+      }
+      if (!ok) return [];
+      const pass = (n: number) => sel.getPixelBuffer(n);
+      const { ACTOR_PASS, ID_LOW24, ID_HIGH24 } = HardwareSelectorConstants.PassTypes;
+      const actorPass = pass(ACTOR_PASS);
+      const lowPass = pass(ID_LOW24);
+      const highPass = pass(ID_HIGH24);
+      const props: any[] = sel.get("props").props;
+      const cells = decodeRegionCells(
+        {
+          width: x1 - x0 + 1,
+          height: y1 - y0 + 1,
+          actor: actorPass,
+          low24: lowPass,
+          high24: highPass ?? undefined,
+        },
+        props.length,
+        inside ? (x, y) => inside((x0 + x + 0.5) / sx, (y0 + y + 0.5) / sy) : undefined
+      );
+      sel.releasePixBuffers();
+      const out: RegionPick<RProp>[] = [];
+      for (const [index, ids] of cells) {
+        const prop = propRegistry.get(props[index]);
+        if (prop) out.push({ prop, cellIds: [...ids] });
+      }
+      return out;
+    },
+    viewTile(view: RView): TileRect {
+      const [x0, y0, x1, y1] = (view as VtkJsView).viewport;
+      const r = canvas.getBoundingClientRect();
+      return { left: x0 * r.width, top: (1 - y1) * r.height, width: (x1 - x0) * r.width, height: (y1 - y0) * r.height };
     },
     worldToDisplay(view: RView, x: number, y: number, z: number): [number, number] {
       const size = apiRW.getSize();
