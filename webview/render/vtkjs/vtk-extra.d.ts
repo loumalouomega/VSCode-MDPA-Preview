@@ -28,3 +28,13 @@ declare module "@kitware/vtk.js/Widgets/Widgets3D/ImplicitPlaneWidget" {
   };
   export default vtkImplicitPlaneWidget;
 }
+
+declare module "@kitware/vtk.js/Filters/General/ImageMarchingCubes" {
+  const vtkImageMarchingCubes: { newInstance(initialValues?: Record<string, unknown>): any };
+  export default vtkImageMarchingCubes;
+}
+
+declare module "@kitware/vtk.js/Rendering/OpenGL/ImageMapper" {}
+declare module "@kitware/vtk.js/Rendering/OpenGL/ImageSlice" {}
+declare module "@kitware/vtk.js/Rendering/OpenGL/Volume" {}
+declare module "@kitware/vtk.js/Rendering/OpenGL/VolumeMapper" {}

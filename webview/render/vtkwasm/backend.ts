@@ -681,6 +681,9 @@ class WasmView implements RView {
   getBackground(): RGB {
     return [...this.background] as RGB;
   }
+  createVolume(): never {
+    throw new Error("createVolume needs caps.volume");
+  }
   createPlaneWidget(): never {
     throw new Error("createPlaneWidget needs caps.widgets");
   }
@@ -871,6 +874,8 @@ export async function createVtkWasmBackend(opts: VtkWasmBackendOptions): Promise
     displayFilters: false,
     lightModes: false,
     gpuLabels: false,
+    volume: false,
+    volumeReason: "VTK-wasm's session is not wired for image-data volume, slice or marching-cubes rendering; the surface view stays.",
     widgets: false,
     widgetsReason: "VTK-wasm's native session has no widget framework; the Clip slider and numeric normal stay.",
   };

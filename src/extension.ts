@@ -467,6 +467,7 @@ export function activate(context: vscode.ExtensionContext): void {
         ["compareSplit", "compare another mesh in a split pane"],
         ["dataTable", "open the data table"],
         ["lighting", "adjust lighting"],
+        ["volume", "show a regular lattice as a volume"],
         ["bookmarks", "manage camera bookmarks"],
         ["record", "record the viewport"],
         ["propertiesEditor", "open the Properties editor"],

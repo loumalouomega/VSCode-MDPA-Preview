@@ -21,7 +21,7 @@ import {
   stickImpostorSet,
 } from "../src/parser/render/glyphSets";
 import { ctfPointsFromStops, fieldColoring } from "../src/parser/render/scalarColoring";
-import type { RPlaneWidget } from "./render/backend";
+import type { RPlaneWidget, RVolume } from "./render/backend";
 import type { Vec3 } from "../src/parser/render/types";
 import { angleAt, clipFromPlane, planeFromClip, polylineLength } from "../src/parser/render/widgetMath";
 import { lightPlacement } from "../src/parser/render/lightMode";
@@ -115,6 +115,9 @@ import {
   sphereStats,
 } from "../src/parser/sphereElements";
 import { BeamPanelInfo, BeamPanelState, renderBeamPanel } from "./beamPanel";
+import { renderVolumePanel, type VolumePanelState, type VolumeViewMode } from "./volumePanel";
+import { detectLattice, type Lattice } from "../src/parser/render/imageLattice";
+import { OPACITY_PRESETS, opacityToData } from "../src/parser/render/opacityTransfer";
 import {
   BeamStats,
   beamStats,
@@ -401,6 +404,8 @@ interface Layer {
    * rather than clobber each other — both must be clear for the layer to draw.
    */
   userSuppressed?: boolean;
+  /** Set while the Volume view stands in for the surface layers (kept apart so it composes with the other suppressions). */
+  volumeSuppressed?: boolean;
   /**
    * View-layer colour override (the topmost visible containing layer wins).
    * `color` keeps the palette original; this is the display override only, so
@@ -442,7 +447,7 @@ interface Layer {
 /** Whether a layer's actor should currently be drawn. */
 function layerShouldDraw(layer: Layer, paneIndex: number): boolean {
   return (
-    layer.visible && layer.built && !layer.suppressed && !layer.userSuppressed && paneDraws(layer.paneHidden, paneIndex) && compareDraws(layer, paneIndex)
+    layer.visible && layer.built && !layer.suppressed && !layer.userSuppressed && !layer.volumeSuppressed && paneDraws(layer.paneHidden, paneIndex) && compareDraws(layer, paneIndex)
   );
 }
 
@@ -518,6 +523,11 @@ const beamPanelEl = document.createElement("div");
 beamPanelEl.id = "beam-panel";
 beamPanelEl.style.display = "none";
 vtkSub.appendChild(beamPanelEl);
+
+const volumePanelEl = document.createElement("div");
+volumePanelEl.id = "volume-panel";
+volumePanelEl.style.display = "none";
+vtkSub.appendChild(volumePanelEl);
 
 const integralPanelEl = document.createElement("div");
 integralPanelEl.id = "integral-panel";
@@ -897,6 +907,7 @@ function copyCamera(from: RView, to: RView): void {
  */
 function setPaneLayout(next: PaneLayoutId): void {
   if (next === paneLayout) return;
+  disposeVolume(); // the volume belongs to one pane's renderer
   const rects = paneViewports(next);
   const keepIndex = focusedPaneIndex();
   const keep = panes[keepIndex];
@@ -1962,6 +1973,9 @@ function handleHostMessage(event: MessageEvent): void {
     case "beams":
       toggleBeamPanel();
       break;
+    case "volume":
+      toggleVolumePanel();
+      break;
     case "field":
       toggleFieldPanel();
       break;
@@ -2037,6 +2051,7 @@ function isVolumeBlock(block: EntityBlock): boolean {
 
 // --- Scene construction -------------------------------------------------
 function clearScene(): void {
+  disposeVolume();
   for (const layer of layers.values()) detachLayerFromPanes(layer);
   layers.clear();
   // The per-pane field/cut-cap overlays are not in `layers` — they belong to
@@ -3719,6 +3734,7 @@ function dispatchToolbarAction(action: string | undefined, _target?: HTMLElement
   else if (action === "viewMenu") viewMenu?.toggle();
   else if (action === "spheres") toggleSpherePanel();
   else if (action === "beams") toggleBeamPanel();
+  else if (action === "volume") toggleVolumePanel();
   else if (action === "normals") toggleNormals();
   else if (action === "integrals") toggleIntegralPanel();
   else if (action === "streamlines") toggleStreamlinePanel();
@@ -3944,6 +3960,7 @@ const LEFT_DOCK: { action: string; dismiss: () => void }[] = [
   { action: "meshSize", dismiss: () => dismissMeshSizePanel() },
   { action: "spheres", dismiss: () => dismissSpherePanel() },
   { action: "beams", dismiss: () => dismissBeamPanel() },
+  { action: "volume", dismiss: () => dismissVolumePanel() },
   { action: "integrals", dismiss: () => dismissIntegralPanel() },
   { action: "streamlines", dismiss: () => dismissStreamlinePanel() },
   { action: "flowBalance", dismiss: () => dismissFlowPanel() },
@@ -5058,6 +5075,176 @@ function renderSphereUI(): void {
     },
     onFrame: () => frameLayer(SPHERE_LAYER_ID),
   });
+}
+
+// --- Volume view (roadmap item 22 D) -------------------------------------------
+// A model that is a dense regular lattice (.vti, sampled grids) can be drawn as
+// image data: a volume with an editable opacity curve, three slices or iso
+// surfaces. Display only: the surface layers are SUPPRESSED (never edited or
+// hidden by intent) while it shows and come back on "Surface", and it is torn
+// down on any rebuild or layout change because it belongs to one pane's
+// renderer. Only where backend.caps.volume.
+const latticeCache = new WeakMap<MdpaModel, Lattice | null>();
+let volumeVisible = false;
+let volumeHandle: { rvolume: RVolume; scalar: string } | undefined;
+const volumeState: VolumePanelState = {
+  scalar: "",
+  mode: "off",
+  colormap: "Viridis",
+  opacity: OPACITY_PRESETS[0].points.map((p) => ({ ...p })),
+  slice: [0, 0, 0],
+  sliceOn: [true, true, true],
+  isoValues: [],
+};
+
+function currentLattice(): Lattice | undefined {
+  if (!model || !backend?.caps.volume) return undefined;
+  let l = latticeCache.get(model);
+  if (l === undefined) {
+    l = detectLattice(model) ?? null;
+    latticeCache.set(model, l);
+  }
+  return l ?? undefined;
+}
+
+function toggleVolumePanel(): void {
+  if (volumeVisible) hideVolumePanel();
+  else showVolumePanel();
+}
+
+function showVolumePanel(): void {
+  if (!model) return;
+  closeLeftDockExcept("volume");
+  volumePanelEl.style.display = "";
+  volumeVisible = true;
+  document.querySelector('[data-action="volume"]')?.classList.add("active");
+  renderVolumeUI();
+}
+
+/** Panel off screen, volume left as it is — see LEFT_DOCK. */
+function dismissVolumePanel(): void {
+  volumePanelEl.style.display = "none";
+  volumeVisible = false;
+  document.querySelector('[data-action="volume"]')?.classList.remove("active");
+}
+
+function hideVolumePanel(): void {
+  dismissVolumePanel();
+  setVolumeMode("off");
+}
+
+function syncVolumeSuppression(active: boolean): void {
+  for (const [id, layer] of layers) {
+    if (isOverlayLayer(id) || isCompareLayer(id)) continue;
+    layer.volumeSuppressed = active || undefined;
+    applyLayerVisibility(layer);
+  }
+}
+
+function disposeVolume(): void {
+  if (!volumeHandle) return;
+  volumeHandle.rvolume.setMode("off");
+  volumeHandle.rvolume.dispose();
+  volumeHandle = undefined;
+  volumeState.mode = "off";
+  syncVolumeSuppression(false);
+  if (volumeVisible) queueMicrotask(renderVolumeUI);
+}
+
+function volumeColoring(l: Lattice): void {
+  const sc = l.scalars.find((s) => s.name === volumeState.scalar);
+  if (!sc || !volumeHandle) return;
+  const [lo, hi] = sc.range;
+  volumeHandle.rvolume.setColoring(ctfPointsFromStops(getColormap(volumeState.colormap).stops, lo, hi), sc.range);
+  volumeHandle.rvolume.setOpacity(opacityToData(volumeState.opacity, sc.range));
+}
+
+function setVolumeMode(mode: VolumeViewMode): void {
+  const l = currentLattice();
+  if (mode === "off" || !l) {
+    disposeVolume();
+    render();
+    return;
+  }
+  if (!volumeState.scalar || !l.scalars.some((s) => s.name === volumeState.scalar)) {
+    volumeState.scalar = l.scalars[0].name;
+    volumeState.slice = [l.dims[0] >> 1, l.dims[1] >> 1, l.dims[2] >> 1];
+    const r = l.scalars[0].range;
+    volumeState.isoValues = [(r[0] + r[1]) / 2];
+  }
+  if (volumeHandle && volumeHandle.scalar !== volumeState.scalar) {
+    volumeHandle.rvolume.dispose();
+    volumeHandle = undefined;
+  }
+  if (!volumeHandle) {
+    const sc = l.scalars.find((s) => s.name === volumeState.scalar)!;
+    const rvolume = focusedPane().view.createVolume({
+      name: sc.name,
+      dims: l.dims,
+      origin: l.origin,
+      spacing: l.spacing,
+      values: sc.values,
+    });
+    volumeHandle = { rvolume, scalar: sc.name };
+    volumeColoring(l);
+  }
+  volumeState.mode = mode;
+  volumeHandle.rvolume.setSlices(volumeState.slice, volumeState.sliceOn);
+  volumeHandle.rvolume.setIsoValues(volumeState.isoValues);
+  volumeHandle.rvolume.setMode(mode);
+  syncVolumeSuppression(true);
+  render();
+}
+
+function renderVolumeUI(): void {
+  if (!volumeVisible) return;
+  const l = currentLattice();
+  renderVolumePanel(
+    volumePanelEl,
+    l ? { scalars: l.scalars.map((s) => ({ name: s.name, range: s.range })), dims: l.dims } : undefined,
+    volumeState,
+    {
+      onClose: () => hideVolumePanel(),
+      onScalar: (name) => {
+        const sc = l?.scalars.find((s) => s.name === name);
+        volumeState.scalar = name;
+        if (sc) volumeState.isoValues = [(sc.range[0] + sc.range[1]) / 2];
+        if (volumeState.mode !== "off") setVolumeMode(volumeState.mode);
+        renderVolumeUI();
+      },
+      onMode: (mode) => {
+        setVolumeMode(mode);
+        renderVolumeUI();
+      },
+      onColormap: (name) => {
+        volumeState.colormap = name;
+        if (l) volumeColoring(l);
+        render();
+        renderVolumeUI();
+      },
+      onOpacity: (points) => {
+        volumeState.opacity = points;
+        if (l) volumeColoring(l);
+        render();
+      },
+      onSlice: (axis, index) => {
+        volumeState.slice[axis] = index;
+        volumeHandle?.rvolume.setSlices(volumeState.slice, volumeState.sliceOn);
+        render();
+      },
+      onSliceVisible: (axis, on) => {
+        volumeState.sliceOn[axis] = on;
+        volumeHandle?.rvolume.setSlices(volumeState.slice, volumeState.sliceOn);
+        render();
+      },
+      onIsoValues: (values) => {
+        volumeState.isoValues = values;
+        volumeHandle?.rvolume.setIsoValues(values);
+        render();
+        renderVolumeUI();
+      },
+    }
+  );
 }
 
 // --- Beams / line elements -----------------------------------------------

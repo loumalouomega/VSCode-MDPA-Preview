@@ -69,6 +69,35 @@ export interface BackendCaps {
   /** `RView.createPlaneWidget` is implemented (a draggable 3D clip-plane handle). */
   widgets: boolean;
   widgetsReason?: string;
+  /** `RView.createVolume` is implemented (image-data volume, slices and iso surfaces for a lattice). */
+  volume: boolean;
+  volumeReason?: string;
+}
+
+export type VolumeMode = "off" | "volume" | "slices" | "contour";
+
+/** A lattice as image data: `values` is nx*ny*nz, x fastest. */
+export interface VolumeLattice {
+  name: string;
+  dims: [number, number, number];
+  origin: Vec3;
+  spacing: Vec3;
+  values: Float32Array;
+}
+
+export interface RVolume {
+  /** World bounds of the lattice. */
+  bounds(): Bounds6;
+  setMode(mode: VolumeMode): void;
+  /** Flat `x,r,g,b` quadruples over `range` (the same ctf the surface colouring uses). */
+  setColoring(ctfPoints: number[], range: [number, number]): void;
+  /** Flat `x,a` pairs in data units. */
+  setOpacity(points: number[]): void;
+  /** Slice index per axis (clamped) and which of the three are drawn. */
+  setSlices(index: [number, number, number], visible: [boolean, boolean, boolean]): void;
+  /** Up to four iso values, drawn in `contour` mode. */
+  setIsoValues(values: number[]): void;
+  dispose(): void;
 }
 
 export interface RPlaneWidget {
@@ -181,6 +210,8 @@ export interface RView {
    * brackets a drag. `setPlane` moves it without calling back. `caps.widgets`.
    */
   createPlaneWidget(onChange: (origin: Vec3, normal: Vec3) => void, onInteraction: (active: boolean) => void): RPlaneWidget;
+  /** Image-data rendering of a dense lattice. Only when `caps.volume`. */
+  createVolume(lattice: VolumeLattice): RVolume;
   /** Row-major 4x4 view x projection for this view's tile (`caps.gpuLabels`). */
   compositeMatrix(): number[];
   /**

@@ -619,6 +619,11 @@
         "category": "%category.KratosMdpa%"
       },
       {
+        "command": "kratos.mdpa.volume",
+        "title": "%command.kratos.mdpa.volume.title%",
+        "category": "%category.KratosMdpa%"
+      },
+      {
         "command": "kratos.mdpa.lighting",
         "title": "%command.kratos.mdpa.lighting.title%",
         "category": "%category.KratosMdpa%"

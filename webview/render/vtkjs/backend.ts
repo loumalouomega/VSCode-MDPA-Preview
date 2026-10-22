@@ -22,6 +22,7 @@ import type { LightPlacement } from "../../../src/parser/render/lightMode";
 import vtkPixelSpaceCallbackMapper from "@kitware/vtk.js/Rendering/Core/PixelSpaceCallbackMapper";
 import "@kitware/vtk.js/Rendering/OpenGL/PixelSpaceCallbackMapper";
 import { createPlaneWidget } from "./widgets";
+import { createVolume } from "./volume";
 import vtkLight from "@kitware/vtk.js/Rendering/Core/Light";
 import vtkRenderer from "@kitware/vtk.js/Rendering/Core/Renderer";
 import vtkMapper from "@kitware/vtk.js/Rendering/Core/Mapper";
@@ -64,10 +65,12 @@ import type {
   RProp,
   RPlaneWidget,
   RView,
+  RVolume,
   RenderBackend,
   ScalarBar,
   ScalarColoring,
   Vec3,
+  VolumeLattice,
 } from "../backend";
 import { decodeRegionCells } from "../../../src/parser/render/hardwareSelection";
 import { ctfFromPoints } from "./colorTransfer";
@@ -387,6 +390,9 @@ class VtkJsView implements RView {
   createPlaneWidget(onChange: (origin: Vec3, normal: Vec3) => void, onInteraction: (active: boolean) => void): RPlaneWidget {
     return createPlaneWidget(this.renderer, onChange, onInteraction);
   }
+  createVolume(lattice: VolumeLattice): RVolume {
+    return createVolume(this.renderer, lattice);
+  }
   compositeMatrix(): number[] {
     const c = this.canvas;
     const [x0, y0, x1, y1] = this.viewport;
@@ -551,7 +557,7 @@ export function createVtkJsBackend(opts: VtkJsBackendOptions): RenderBackend {
 
   const cellPicker = vtkCellPicker.newInstance();
   let hardwareSelector: any;
-  const caps: BackendCaps = { syncRender: true, impostors: true, hardwareSelection: true, displayFilters: true, lightModes: true, gpuLabels: true, widgets: true };
+  const caps: BackendCaps = { syncRender: true, impostors: true, hardwareSelection: true, displayFilters: true, lightModes: true, gpuLabels: true, widgets: true, volume: true };
 
   return {
     kind: "vtkjs",

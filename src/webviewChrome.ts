@@ -182,6 +182,7 @@ export const MENU_ACTION_COMMANDS: Readonly<Record<string, string>> = {
   meshSize: "kratos.mdpa.meshSize",
   spheres: "kratos.mdpa.sphereGlyphs",
   beams: "kratos.mdpa.beamGlyphs",
+  volume: "kratos.mdpa.volume",
   exportSkin: "kratos.mesh.exportSkin",
   exportPartitions: "kratos.mesh.exportPartitions",
   splitMesh: "kratos.mesh.splitMesh",
@@ -196,6 +197,7 @@ export const ADVANCED_MENU_HTML = `<div id="advanced-popup" class="hidden" role=
         <button type="button" class="file-menu-item" data-action="meshSize" role="menuitem" title="Mesh size (nodal / element) + box-whisker">${ic("meshSize")}<span>Mesh Size</span></button>
         <button type="button" class="file-menu-item" data-action="spheres" role="menuitem" title="Render one-node (particle) elements as spheres sized by RADIUS">${ic("spheres")}<span>Spheres…</span></button>
         <button type="button" class="file-menu-item" data-action="beams" role="menuitem" title="Render line (1D) elements as tubes sized by their CROSS_AREA section">${ic("beam")}<span>Beams…</span></button>
+        <button type="button" class="file-menu-item" data-action="volume" role="menuitem" title="Show a regular lattice (.vti, sampled grids) as a volume, slices or iso surfaces">${ic("fieldContour")}<span>Volume view…</span></button>
         <button type="button" class="file-menu-item" data-action="normals" role="menuitem" title="Draw face normals — an inverted element points its arrow against its neighbours">${ic("normals")}<span>Face normals</span></button>
         <button type="button" class="file-menu-item" data-action="integrals" role="menuitem" title="Cell-measure-weighted total and mean of every cell field, per mesh and per region">${ic("average")}<span>Field integrals…</span></button>
         <button type="button" class="file-menu-item" data-action="streamlines" role="menuitem" title="Trace steady streamlines of a nodal vector field from seed points, a line, a plane or a SubModelPart, and export them as line cells">${ic("fieldQuiver")}<span>Streamlines…</span></button>
