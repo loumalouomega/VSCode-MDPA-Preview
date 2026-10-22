@@ -25,6 +25,9 @@ import vtkStickMapper from "@kitware/vtk.js/Rendering/Core/StickMapper";
 import vtkPolyData from "@kitware/vtk.js/Common/DataModel/PolyData";
 import vtkDataArray from "@kitware/vtk.js/Common/Core/DataArray";
 import vtkPlane from "@kitware/vtk.js/Common/DataModel/Plane";
+import vtkHardwareSelector from "@kitware/vtk.js/Rendering/OpenGL/HardwareSelector";
+import * as HardwareSelectorConstants from "@kitware/vtk.js/Rendering/OpenGL/HardwareSelector/Constants";
+import { FieldAssociations } from "@kitware/vtk.js/Common/DataModel/DataSet/Constants";
 import vtkCellPicker from "@kitware/vtk.js/Rendering/Core/CellPicker";
 import vtkArrowSource from "@kitware/vtk.js/Filters/Sources/ArrowSource";
 import vtkSphereSource from "@kitware/vtk.js/Filters/Sources/SphereSource";
@@ -45,6 +48,7 @@ import type {
   OrientationMarker,
   PickHit,
   PropStyle,
+  RegionPick,
   RCamera,
   RGB,
   RGeometry,
@@ -56,6 +60,7 @@ import type {
   ScalarColoring,
   Vec3,
 } from "../backend";
+import { decodeRegionCells } from "../../../src/parser/render/hardwareSelection";
 import { ctfFromPoints } from "./colorTransfer";
 import { setupScalarBar } from "./scalarBar";
 import { setupGridAxes } from "./gridAxes";
@@ -425,7 +430,8 @@ export function createVtkJsBackend(opts: VtkJsBackendOptions): RenderBackend {
   grw.resize();
 
   const cellPicker = vtkCellPicker.newInstance();
-  const caps: BackendCaps = { syncRender: true, impostors: true };
+  let hardwareSelector: any;
+  const caps: BackendCaps = { syncRender: true, impostors: true, hardwareSelection: true };
 
   return {
     kind: "vtkjs",
@@ -473,6 +479,64 @@ export function createVtkJsBackend(opts: VtkJsBackendOptions): RenderBackend {
       if (!prop) return undefined;
       const positions: Vec3[] = cellPicker.getPickedPositions();
       return { prop, cellId: cellPicker.getCellId(), position: positions.length ? positions[0] : [0, 0, 0] };
+    },
+    selectRegion(view, region, inside): RegionPick<RProp>[] {
+      const renderer = (view as VtkJsView).renderer;
+      const cr = canvas.getBoundingClientRect();
+      const sx = cr.width > 0 ? canvas.width / cr.width : 1;
+      const sy = cr.height > 0 ? canvas.height / cr.height : 1;
+      const x0 = Math.max(0, Math.floor(Math.min(region.left, region.right) * sx));
+      const x1 = Math.min(canvas.width - 1, Math.floor(Math.max(region.left, region.right) * sx));
+      const y0 = Math.max(0, Math.floor(Math.min(region.bottom, region.top) * sy));
+      const y1 = Math.min(canvas.height - 1, Math.floor(Math.max(region.bottom, region.top) * sy));
+      if (x1 < x0 || y1 < y0) return [];
+      hardwareSelector ??= vtkHardwareSelector.newInstance();
+      const sel: any = hardwareSelector;
+      sel.setFieldAssociation(FieldAssociations.FIELD_ASSOCIATION_CELLS);
+      sel.attach(apiRW, renderer);
+      sel.setArea(x0, y0, x1, y1);
+      // Only pickable props take part: an overlay in front of a layer would
+      // otherwise hide it from the id buffer, and cube axes, glyph layers and
+      // the like are not selectable anyway. `pick` ignores them the same way.
+      const hidden: any[] = [];
+      for (const a of renderer.getActors()) {
+        const mine = propRegistry.get(a);
+        if (a.getVisibility() && !(mine && a.getPickable())) {
+          a.setVisibility(false);
+          hidden.push(a);
+        }
+      }
+      let ok = false;
+      try {
+        ok = sel.captureBuffers();
+      } finally {
+        for (const a of hidden) a.setVisibility(true);
+      }
+      if (!ok) return [];
+      const pass = (n: number) => sel.getPixelBuffer(n);
+      const { ACTOR_PASS, ID_LOW24, ID_HIGH24 } = HardwareSelectorConstants.PassTypes;
+      const actorPass = pass(ACTOR_PASS);
+      const lowPass = pass(ID_LOW24);
+      const highPass = pass(ID_HIGH24);
+      const props: any[] = sel.get("props").props;
+      const cells = decodeRegionCells(
+        {
+          width: x1 - x0 + 1,
+          height: y1 - y0 + 1,
+          actor: actorPass,
+          low24: lowPass,
+          high24: highPass ?? undefined,
+        },
+        props.length,
+        inside ? (x, y) => inside((x0 + x + 0.5) / sx, (y0 + y + 0.5) / sy) : undefined
+      );
+      sel.releasePixBuffers();
+      const out: RegionPick<RProp>[] = [];
+      for (const [index, ids] of cells) {
+        const prop = propRegistry.get(props[index]);
+        if (prop) out.push({ prop, cellIds: [...ids] });
+      }
+      return out;
     },
     worldToDisplay(view: RView, x: number, y: number, z: number): [number, number] {
       const size = apiRW.getSize();

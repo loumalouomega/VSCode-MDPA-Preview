@@ -133,7 +133,8 @@ import { buildCapturePlan, captureBackground, captureFieldLabel, captureStepLabe
 import { composeCaptureOverlays, CaptureOverlay } from "./captureCompositor";
 import { renderScreenshotPanel } from "./screenshotPanel";
 import { thresholdCells } from "../src/parser/thresholdCells";
-import { resolvePick } from "../src/parser/pickResolve";
+import { blockCentroids } from "../src/parser/render/hardwareSelection";
+import { resolveEntity, resolvePick } from "../src/parser/pickResolve";
 import { buildMembershipIndex, MembershipIndex } from "../src/parser/smpMembership";
 import { findIsolatedNodeIds, findIsolatedNodeIdsInScope } from "../src/parser/isolatedNodes";
 import { VtkCellType } from "../src/parser/geometryMap";
@@ -6631,6 +6632,8 @@ let selectionVisible = false;
 let selectionSets: SelectionSet[] = [];
 let selectionActiveIndex = 0;
 let selectionMode: SelectionMode = "single";
+/** Box/lasso select through occluding surfaces (centroid projection) rather than the visible ones. */
+let selectionXray = false;
 let selectionVisibility: SelectionVisibilityMode = "normal";
 // The per-layer `visible` state before an Isolate/Hide, for Restore.
 const selectionBackup = new Map<string, boolean>();
@@ -6764,6 +6767,7 @@ function selectionPanelState(): SelectionPanelState {
     sets: selectionSets,
     activeIndex: selectionActiveIndex,
     mode: selectionMode,
+    xray: selectionXray,
     isolate: selectionVisibility === "isolate",
     partPaths: collectSubModelPartPaths(),
     fieldNames: fieldInfos.map((f) => f.field.variable),
@@ -6778,6 +6782,15 @@ function renderSelectionUI(): void {
       selectionActiveIndex = i;
       applySelectionOverlays();
       renderSelectionUI();
+    },
+    onSetXray: () => {
+      selectionXray = !selectionXray;
+      renderSelectionUI();
+      toast(
+        selectionXray
+          ? "X-ray: box and lasso now select every entity whose centre falls inside, hidden or not."
+          : "Visible only: box and lasso select what can be seen."
+      );
     },
     onSetMode: (mode) => {
       selectionMode = mode;
@@ -8483,11 +8496,18 @@ function toggleSelectionPick(kind: EntityKind, entityId: number | undefined): vo
 }
 
 /**
- * ONE region-collect path for both region gestures: picks a grid inside
- * `region` and keeps the samples `inside` accepts. The box resolves the
+ * ONE region-collect path for both region gestures: finds the entities visible
+ * inside `region` and keeps those `inside` accepts. The box resolves the
  * rectangle itself; the lasso passes `pointInPolygon` — so box and lasso
  * resolve on the same path by construction, not by convention.
+ *
+ * With `caps.hardwareSelection` the backend reads an id buffer, which is exact
+ * to the pixel and visible-only. Otherwise (VTK-wasm) it falls back to picking
+ * a capped grid of points, which can miss a cell smaller than the grid step.
  */
+/** Upper bound on cells projected one by one for X-ray selection. */
+const XRAY_MAX_CELLS = 2_000_000;
+
 function collectRegionPicks(
   region: { left: number; top: number; right: number; bottom: number },
   inside: (x: number, y: number) => boolean,
@@ -8497,26 +8517,78 @@ function collectRegionPicks(
   const width = Math.max(0, region.right - region.left);
   const height = Math.max(0, region.bottom - region.top);
   if (width <= 0 || height <= 0) return;
-  // ~every 10 display px on each axis — the same resolution class the picker
-  // needs to catch cells of a standard view, capped so a huge band cannot
-  // turn into tens of thousands of picks.
-  const MAX_SAMPLES = 4_000;
-  const stepX = Math.max(4, Math.floor(width / Math.min(60, Math.ceil(width / 10))));
-  const stepY = Math.max(4, Math.floor(height / Math.min(60, Math.ceil(height / 10))));
   const set = ensureActiveSet();
+  const add = (kind: EntityKind, entityId: number): boolean => {
+    const list = set.kinds[kind];
+    if (list.includes(entityId)) return false;
+    list.push(entityId);
+    return true;
+  };
   let picked = 0;
-  for (let x = region.left + stepX / 2; x <= region.right; x += stepX) {
-    for (let y = region.top + stepY / 2; y <= region.bottom; y += stepY) {
-      if (!inside(x, y)) continue;
-      const r = pickAt(x, rect.height - y);
-      if (r?.entityId === undefined) continue;
-      const list = set.kinds[r.kind];
-      if (!list.includes(r.entityId)) {
-        list.push(r.entityId);
+  if (selectionXray) {
+    // Through the surface: every entity of a drawn block whose centroid
+    // projects into the region. Centroids come from the model's own
+    // connectivity (the layers' geometry holds only boundary faces), in the
+    // focused pane's warp like every other overlay. Clip is not honoured.
+    const paneIdx = focusedPaneIndex();
+    const view = focusedView();
+    const prep = (model && computeWarpedGeometry(focusedPane())?.prepared) || prepared;
+    const blocks = (model?.blocks ?? []).filter((b) => {
+      const layer = layers.get(blockLayerId(b));
+      return !!layer && layerShouldDraw(layer, paneIdx);
+    });
+    const total = blocks.reduce((n, b) => n + b.count, 0);
+    if (total > XRAY_MAX_CELLS) {
+      toast(`X-ray select is limited to ${XRAY_MAX_CELLS.toLocaleString()} entities (${total.toLocaleString()} are drawn); turn it off or hide layers.`);
+      return;
+    }
+    if (prep) {
+      for (const block of blocks) {
+        const cents = blockCentroids(block, prep);
+        for (let c = 0; c < block.count; c++) {
+          if (Number.isNaN(cents[c * 3])) continue;
+          const [x, y] = backend.worldToDisplay(view, cents[c * 3], cents[c * 3 + 1], cents[c * 3 + 2]);
+          if (x < region.left || x > region.right || y < region.top || y > region.bottom || !inside(x, y)) continue;
+          if (add(block.kind, block.entityIds[c])) picked++;
+        }
+      }
+    }
+  } else if (backend.caps.hardwareSelection && backend.selectRegion && comparePaneIndex() !== focusedPaneIndex()) {
+    const known = new Map<EntityKind, Set<number>>();
+    for (const k of ["Elements", "Conditions", "Geometries"] as EntityKind[]) known.set(k, new Set(set.kinds[k]));
+    const hits = backend.selectRegion(
+      focusedView(),
+      { left: region.left, right: region.right, bottom: rect.height - region.bottom, top: rect.height - region.top },
+      (x, yFromBottom) => inside(x, rect.height - yFromBottom)
+    );
+    for (const hit of hits) {
+      const layer = findLayerByProp(hit.prop);
+      if (!layer || layer.pickKind === undefined || !layer.cellEntityIds) continue;
+      const seen = known.get(layer.pickKind)!;
+      for (const cellId of hit.cellIds) {
+        const entityId = resolveEntity({ pointGlobalIds: layer.pointGlobalIds!, cellEntityIds: layer.cellEntityIds }, cellId);
+        if (entityId === undefined || seen.has(entityId)) continue;
+        seen.add(entityId);
+        set.kinds[layer.pickKind].push(entityId);
         picked++;
       }
     }
-    if (picked > MAX_SAMPLES) break;
+  } else {
+    // ~every 10 display px on each axis — the same resolution class the picker
+    // needs to catch cells of a standard view, capped so a huge band cannot
+    // turn into tens of thousands of picks.
+    const MAX_SAMPLES = 4_000;
+    const stepX = Math.max(4, Math.floor(width / Math.min(60, Math.ceil(width / 10))));
+    const stepY = Math.max(4, Math.floor(height / Math.min(60, Math.ceil(height / 10))));
+    for (let x = region.left + stepX / 2; x <= region.right; x += stepX) {
+      for (let y = region.top + stepY / 2; y <= region.bottom; y += stepY) {
+        if (!inside(x, y)) continue;
+        const r = pickAt(x, rect.height - y);
+        if (r?.entityId === undefined) continue;
+        if (add(r.kind, r.entityId)) picked++;
+      }
+      if (picked > MAX_SAMPLES) break;
+    }
   }
   for (const k of ["Elements", "Conditions", "Geometries"] as EntityKind[]) set.kinds[k].sort((a, b) => a - b);
   applySelectionOverlays();

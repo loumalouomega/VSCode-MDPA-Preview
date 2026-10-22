@@ -49,6 +49,18 @@ export interface BackendCaps {
    */
   impostors: boolean;
   impostorsReason?: string;
+  /**
+   * `selectRegion` is implemented: an exact, visible-only GPU id-buffer
+   * selection. When false callers sample `pick` over a grid instead.
+   */
+  hardwareSelection: boolean;
+}
+
+/** The cells of one prop that are visible inside a selected region. */
+export interface RegionPick<P> {
+  prop: P;
+  /** Cell ids in the prop's geometry (verts -> lines -> polys enumeration). */
+  cellIds: number[];
 }
 
 export interface RCamera {
@@ -159,6 +171,20 @@ export interface RenderBackend {
   createPlane(): RPlane;
   /** CSS pixels relative to the canvas, y measured from the BOTTOM. */
   pick(view: RView, cssX: number, cssYFromBottom: number): PickHit<RProp> | undefined;
+  /**
+   * Every cell of every PICKABLE prop that is visible inside the region (CSS
+   * pixels, y from the BOTTOM, like `pick`), exact to the pixel: the scene is
+   * drawn once into an id buffer, so a cell that covers a single pixel is found
+   * and a cell hidden behind another is not. `inside` refines the rectangle
+   * (the lasso passes a polygon test); it is called with pixel-centre CSS
+   * coordinates. Props that are not pickable are left out of the capture, so an
+   * overlay in front of a layer never hides it. Only when `caps.hardwareSelection`.
+   */
+  selectRegion?(
+    view: RView,
+    region: { left: number; bottom: number; right: number; top: number },
+    inside?: (cssX: number, cssYFromBottom: number) => boolean
+  ): RegionPick<RProp>[];
   /** World point -> CSS pixels relative to the canvas, top-left origin. */
   worldToDisplay(view: RView, x: number, y: number, z: number): [number, number];
   /** The view under the pointer during the current/last pointer event, if any. */
