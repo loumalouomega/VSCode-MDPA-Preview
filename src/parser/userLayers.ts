@@ -30,6 +30,7 @@
  * parts or fields.
  */
 
+import { MeasuresCache, validateMeasuresCache } from "./partMeasures";
 import { EntityKind, MdpaModel } from "./types";
 import { ENTITY_KINDS, KindIdSets, entityUniverses } from "./selectionCore";
 import { findSubModelPart } from "./subModelPartExtract";
@@ -70,6 +71,8 @@ export interface ViewSidecar {
   outline?: OutlineViewSettings;
   /** Reopenable view state (view-only). Additive key: absent in older files. */
   view?: Record<string, unknown>;
+  /** Cached whole-model and per-part length/area/volume. Additive key. */
+  measures?: MeasuresCache;
 }
 
 const DEFAULT_PALETTE: LayerColor[] = [
@@ -254,7 +257,8 @@ export function validateUserLayers(raw: unknown): { layers: UserLayer[]; warning
 export function serializeViewSidecar(
   layers: readonly UserLayer[],
   outline?: OutlineViewSettings,
-  view?: ViewState
+  view?: ViewState,
+  measures?: MeasuresCache
 ): string {
   const doc: ViewSidecar = {
     version: VIEW_SIDECAR_VERSION,
@@ -275,6 +279,7 @@ export function serializeViewSidecar(
   };
   if (outline) doc.outline = { flattenSubModelParts: outline.flattenSubModelParts };
   if (view && !isEmptyViewState(view)) doc.view = serializeViewState(view);
+  if (measures) doc.measures = measures;
   return JSON.stringify(doc, null, 2) + "\n";
 }
 
@@ -291,6 +296,8 @@ export function parseViewSidecar(text: string): {
   outline?: OutlineViewSettings;
   /** Present only when the file carries a `view` key. */
   view?: ViewState;
+  /** Present only when the file carries a valid `measures` key. */
+  measures?: MeasuresCache;
 } {
   let raw: unknown;
   try {
@@ -326,12 +333,15 @@ export function parseViewSidecar(text: string): {
     view = v.view;
     warnings.push(...v.warnings);
   }
+  // A bad cache is not worth a warning: it is recomputed.
+  const measures = r.measures !== undefined ? validateMeasuresCache(r.measures) : undefined;
   return {
     layers,
     warnings,
     version: version ?? VIEW_SIDECAR_VERSION,
     ...(outline ? { outline } : {}),
     ...(view ? { view } : {}),
+    ...(measures ? { measures } : {}),
   };
 }
 

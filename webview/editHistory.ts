@@ -78,17 +78,24 @@ function numVal(id: string): number {
   return Number((document.getElementById(id) as HTMLInputElement | null)?.value);
 }
 
+/** Adds the optional SubModelPart scope of a transform form (omitted = whole mesh). */
+function withPart(msg: Record<string, unknown>, id: string): Record<string, unknown> {
+  const part = (document.getElementById(id) as HTMLSelectElement | null)?.value;
+  if (part) msg.part = part;
+  return msg;
+}
+
 /** Builds the applyOp message for a transform form, or undefined if unknown. */
 function buildApplyMsg(op: string): Record<string, unknown> | undefined {
   switch (op) {
     case "mergeNodes":
       return { type: "applyOp", op, tolerance: numVal("merge-tol") };
     case "scale":
-      return { type: "applyOp", op, sx: numVal("scale-x"), sy: numVal("scale-y"), sz: numVal("scale-z") };
+      return withPart({ type: "applyOp", op, sx: numVal("scale-x"), sy: numVal("scale-y"), sz: numVal("scale-z") }, "scale-part");
     case "translate":
-      return { type: "applyOp", op, dx: numVal("trans-x"), dy: numVal("trans-y"), dz: numVal("trans-z") };
+      return withPart({ type: "applyOp", op, dx: numVal("trans-x"), dy: numVal("trans-y"), dz: numVal("trans-z") }, "trans-part");
     case "rotate":
-      return {
+      return withPart({
         type: "applyOp",
         op,
         axis: (document.getElementById("rot-axis") as HTMLSelectElement | null)?.value ?? "z",
@@ -96,7 +103,7 @@ function buildApplyMsg(op: string): Record<string, unknown> | undefined {
         cx: numVal("rot-cx"),
         cy: numVal("rot-cy"),
         cz: numVal("rot-cz"),
-      };
+      }, "rot-part");
     default:
       return undefined;
   }

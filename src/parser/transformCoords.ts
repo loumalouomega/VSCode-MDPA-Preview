@@ -1,6 +1,7 @@
 /**
  * Coordinate transforms — scale, translate, and rotate — as separate pure
- * operations. Each maps every node coordinate and recomputes the bounds.
+ * operations. Each maps every node coordinate (or only the nodes in the optional
+ * `nodeIds` set — a partial transform) and recomputes the bounds.
  *
  * Pure module: no vscode / DOM / vtk.js imports so it stays Node-testable. The
  * input is never mutated; a fresh MdpaModel is returned.
@@ -12,13 +13,18 @@ export type Axis = "x" | "y" | "z";
 type Vec3 = [number, number, number];
 
 /** Applies a per-point function to every node, recomputing bounds. */
-function mapCoords(model: MdpaModel, fn: (x: number, y: number, z: number) => Vec3): MdpaModel {
+function mapCoords(
+  model: MdpaModel,
+  fn: (x: number, y: number, z: number) => Vec3,
+  nodeIds?: ReadonlySet<number>
+): MdpaModel {
   const n = model.nodeCount;
   const coords = new Float32Array(n * 3);
   const min: Vec3 = [Infinity, Infinity, Infinity];
   const max: Vec3 = [-Infinity, -Infinity, -Infinity];
   for (let i = 0; i < n; i++) {
-    const p = fn(model.coords[i * 3], model.coords[i * 3 + 1], model.coords[i * 3 + 2]);
+    const x0 = model.coords[i * 3], y0 = model.coords[i * 3 + 1], z0 = model.coords[i * 3 + 2];
+    const p: Vec3 = !nodeIds || nodeIds.has(model.nodeIds[i]) ? fn(x0, y0, z0) : [x0, y0, z0];
     for (let k = 0; k < 3; k++) {
       coords[i * 3 + k] = p[k];
       if (p[k] < min[k]) min[k] = p[k];
@@ -38,13 +44,25 @@ function mapCoords(model: MdpaModel, fn: (x: number, y: number, z: number) => Ve
 }
 
 /** Per-axis scale about the origin. */
-export function scaleCoords(model: MdpaModel, sx: number, sy: number, sz: number): MdpaModel {
-  return mapCoords(model, (x, y, z) => [x * sx, y * sy, z * sz]);
+export function scaleCoords(
+  model: MdpaModel,
+  sx: number,
+  sy: number,
+  sz: number,
+  nodeIds?: ReadonlySet<number>
+): MdpaModel {
+  return mapCoords(model, (x, y, z) => [x * sx, y * sy, z * sz], nodeIds);
 }
 
 /** Translation by (dx, dy, dz). */
-export function translateCoords(model: MdpaModel, dx: number, dy: number, dz: number): MdpaModel {
-  return mapCoords(model, (x, y, z) => [x + dx, y + dy, z + dz]);
+export function translateCoords(
+  model: MdpaModel,
+  dx: number,
+  dy: number,
+  dz: number,
+  nodeIds?: ReadonlySet<number>
+): MdpaModel {
+  return mapCoords(model, (x, y, z) => [x + dx, y + dy, z + dz], nodeIds);
 }
 
 /**
@@ -57,7 +75,8 @@ export function rotateCoords(
   angleDeg: number,
   cx = 0,
   cy = 0,
-  cz = 0
+  cz = 0,
+  nodeIds?: ReadonlySet<number>
 ): MdpaModel {
   const a = (angleDeg * Math.PI) / 180;
   const c = Math.cos(a);
@@ -74,5 +93,5 @@ export function rotateCoords(
       case "z":
         return [cx + dx * c - dy * s, cy + dx * s + dy * c, z];
     }
-  });
+  }, nodeIds);
 }

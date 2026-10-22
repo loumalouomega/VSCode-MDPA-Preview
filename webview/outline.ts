@@ -40,6 +40,9 @@ export interface OutlineCounts {
   elements: number;
   geometries: number;
   subModelParts: number;
+  /** Subtree length/area/volume, already formatted (set once the measure is computed). */
+  measureLabel?: string;
+  measureText?: string;
 }
 
 export interface OutlineHandlers {
@@ -186,13 +189,14 @@ function openInfoMenu(anchor: HTMLElement, counts: OutlineCounts): void {
   const menu = document.createElement("div");
   menu.className = "outline-export-menu outline-info-menu";
   menu.setAttribute("role", "menu");
-  const rows: [string, number][] = [
+  const rows: [string, string | number][] = [
     ["Nodes", counts.nodes],
     ["Conditions", counts.conditions],
     ["Elements", counts.elements],
     ["Geometries", counts.geometries],
     ["SubModelParts", counts.subModelParts],
   ];
+  if (counts.measureLabel && counts.measureText) rows.push([counts.measureLabel, counts.measureText]);
   for (const [label, value] of rows) {
     const item = document.createElement("div");
     item.className = "outline-info-item";

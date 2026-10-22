@@ -10,14 +10,14 @@ import { combineSubModelParts } from "./subModelPartTree";
  * replayable recipe. Used by the host-side OperationHistory manager (src/opHistory.ts).
  */
 
-import { MdpaDiagnostic, MdpaModel, FieldBlockKind, EntityKind } from "./types";
+import { MdpaDiagnostic, MdpaModel, FieldBlockKind, EntityKind, SubModelPart } from "./types";
 import { meshExtname, meshStem } from "./meshFormats";
 import { OpName, OP_LABELS } from "./opLabels";
 import { linearToQuadratic } from "./linearToQuadratic";
 import { removeOrphanNodes } from "./removeOrphanNodes";
 import { mergeNodes } from "./mergeNodes";
 import { scaleCoords, translateCoords, rotateCoords, Axis } from "./transformCoords";
-import { extractSubModelPart } from "./subModelPartExtract";
+import { extractSubModelPart, findSubModelPart, subModelPartNodeIds } from "./subModelPartExtract";
 import { skinDistanceSurface } from "./extractSkin";
 import { deleteSubModelPart } from "./deleteSubModelPart";
 import {
@@ -222,15 +222,15 @@ export type OpRecord =
   | { op: "linearToQuadratic" }
   | { op: "removeOrphanNodes" }
   | { op: "mergeNodes"; tolerance: number }
-  | { op: "scale"; sx: number; sy: number; sz: number }
-  | { op: "translate"; dx: number; dy: number; dz: number }
-  | { op: "rotate"; axis: Axis; angle: number; cx?: number; cy?: number; cz?: number }
+  | { op: "scale"; sx: number; sy: number; sz: number; part?: string }
+  | { op: "translate"; dx: number; dy: number; dz: number; part?: string }
+  | { op: "rotate"; axis: Axis; angle: number; cx?: number; cy?: number; cz?: number; part?: string }
   | { op: "deleteSubModelPart"; path: string }
   | { op: "renameSubModelPart"; path: string; newName: string }
   | { op: "createSubModelPart"; parentPath: string; name: string }
   | { op: "moveSubModelPart"; path: string; newParentPath: string }
   | { op: "mergeSubModelParts"; sourcePath: string; targetPath: string }
-  | { op: "addSubModelPartEntities"; path: string; kind: SmpEntityKind; ids: number[] }
+  | { op: "addSubModelPartEntities"; path: string; kind: SmpEntityKind; ids: number[]; closure?: boolean }
   | { op: "removeSubModelPartEntities"; path: string; kind: SmpEntityKind; ids: number[] }
   | { op: "writeMeshSizeFields"; target: MeshSizeTarget }
   | { op: "setElementRadius"; value: number; mode: RadiusMode; target?: string }
@@ -629,6 +629,31 @@ async function withRemappedFields(
   }
 }
 
+/** True when a cell outside the part touches one of `scope`'s nodes. */
+function sharedWithOutside(model: MdpaModel, scope: ReadonlySet<number>, path: string): boolean {
+  const part = findSubModelPart(model, path);
+  if (!part) return false;
+  const inside = new Set<number>();
+  const walk = (p: SubModelPart): void => {
+    for (const id of p.elementIds) inside.add(id);
+    for (const id of p.conditionIds) inside.add(id);
+    for (const id of p.geometryIds) inside.add(id);
+    p.children.forEach(walk);
+  };
+  walk(part);
+  // Ids collide across kinds, so a per-kind check would be stricter; this is an advisory hint only.
+  for (const block of model.blocks) {
+    if (block.kind !== "Elements") continue;
+    for (let c = 0; c < block.count; c++) {
+      if (inside.has(block.entityIds[c])) continue;
+      for (let k = 0; k < block.stride; k++) {
+        if (scope.has(block.connectivity[c * block.stride + k])) return true;
+      }
+    }
+  }
+  return false;
+}
+
 /** Applies a single operation to `model` (pure; input never mutated). */
 export function applyOp(model: MdpaModel, rec: OpRecord): OpOutcome {
   switch (rec.op) {
@@ -655,24 +680,35 @@ export function applyOp(model: MdpaModel, rec: OpRecord): OpOutcome {
           : "";
       return { model: r.model, message: `Merged ${r.merged} coincident node(s).${dropped}` };
     }
-    case "scale": {
-      return {
-        model: scaleCoords(model, rec.sx, rec.sy, rec.sz),
-        message: `Scaled by (${rec.sx}, ${rec.sy}, ${rec.sz}).`,
-      };
-    }
-    case "translate": {
-      return {
-        model: translateCoords(model, rec.dx, rec.dy, rec.dz),
-        message: `Translated by (${rec.dx}, ${rec.dy}, ${rec.dz}).`,
-      };
-    }
+    case "scale":
+    case "translate":
     case "rotate": {
-      const cx = rec.cx ?? 0, cy = rec.cy ?? 0, cz = rec.cz ?? 0;
-      return {
-        model: rotateCoords(model, rec.axis, rec.angle, cx, cy, cz),
-        message: `Rotated ${rec.angle}° about ${rec.axis.toUpperCase()} through (${cx}, ${cy}, ${cz}).`,
-      };
+      let scope: Set<number> | undefined;
+      let where = "";
+      if (rec.part) {
+        scope = subModelPartNodeIds(model, rec.part);
+        if (!scope) return { model, noop: true, message: `SubModelPart "${rec.part}" not found.` };
+        if (scope.size === 0) return { model, noop: true, message: `SubModelPart "${rec.part}" has no nodes.` };
+        where = ` (${scope.size} node${scope.size === 1 ? "" : "s"} of "${rec.part}")`;
+      }
+      let out: MdpaModel;
+      let what: string;
+      if (rec.op === "scale") {
+        out = scaleCoords(model, rec.sx, rec.sy, rec.sz, scope);
+        what = `Scaled by (${rec.sx}, ${rec.sy}, ${rec.sz})`;
+      } else if (rec.op === "translate") {
+        out = translateCoords(model, rec.dx, rec.dy, rec.dz, scope);
+        what = `Translated by (${rec.dx}, ${rec.dy}, ${rec.dz})`;
+      } else {
+        const cx = rec.cx ?? 0, cy = rec.cy ?? 0, cz = rec.cz ?? 0;
+        out = rotateCoords(model, rec.axis, rec.angle, cx, cy, cz, scope);
+        what = `Rotated ${rec.angle}° about ${rec.axis.toUpperCase()} through (${cx}, ${cy}, ${cz})`;
+      }
+      let note = "";
+      if (scope && sharedWithOutside(model, scope, rec.part!)) {
+        note = " Some moved nodes are shared with cells outside the part, which will stretch.";
+      }
+      return { model: out, message: `${what}${where}.${note}` };
     }
     case "deleteSubModelPart": {
       const r = deleteSubModelPart(model, rec.path);
@@ -712,12 +748,34 @@ export function applyOp(model: MdpaModel, rec: OpRecord): OpOutcome {
       };
     }
     case "addSubModelPartEntities": {
-      const r = addSubModelPartEntities(model, rec.path, rec.kind, rec.ids);
-      if (r.changed === 0 && r.propagated === 0) {
+      // `closure`: the entities' nodes ride in first (a part with elements but no
+      // node list is unreadable to Kratos), exactly as createSubModelPartFromSelection does.
+      let base = model;
+      let nodesAdded = 0;
+      if (rec.closure && rec.kind !== "nodes" && rec.kind !== "constraints") {
+        const blockKind: EntityKind = rec.kind === "elements" ? "Elements" : rec.kind === "conditions" ? "Conditions" : "Geometries";
+        const wanted = new Set(rec.ids);
+        const nodeSet = new Set<number>();
+        for (const b of model.blocks) {
+          if (b.kind !== blockKind) continue;
+          for (let c = 0; c < b.count; c++) {
+            if (!wanted.has(b.entityIds[c])) continue;
+            for (let k = 0; k < b.stride; k++) nodeSet.add(b.connectivity[c * b.stride + k]);
+          }
+        }
+        if (nodeSet.size > 0) {
+          const w = addSubModelPartEntities(model, rec.path, "nodes", Array.from(nodeSet).sort((a, b) => a - b));
+          base = w.model;
+          nodesAdded = w.changed;
+        }
+      }
+      const r = addSubModelPartEntities(base, rec.path, rec.kind, rec.ids);
+      if (r.changed === 0 && r.propagated === 0 && nodesAdded === 0) {
         return { model, noop: true, message: r.message ?? `"${rec.path}" already has those ${rec.kind}.` };
       }
       const extra = r.propagated > 0 ? `, ${r.propagated} added to its ancestors` : "";
-      return { model: r.model, message: `Added ${r.changed} ${rec.kind} to "${rec.path}"${extra}.` };
+      const nodeNote = nodesAdded > 0 ? ` (+${nodesAdded} node${nodesAdded === 1 ? "" : "s"} of their cells)` : "";
+      return { model: r.model, message: `Added ${r.changed} ${rec.kind}${nodeNote} to "${rec.path}"${extra}.` };
     }
     case "removeSubModelPartEntities": {
       const r = removeSubModelPartEntities(model, rec.path, rec.kind, rec.ids);
@@ -1719,6 +1777,13 @@ function selectionSeedFromMessage(raw: unknown): SelectionSeed | null | undefine
       const propertyId = Number(seed.propertyId);
       return Number.isInteger(propertyId) && propertyId > 0 ? { kind: "property", propertyId } : null;
     }
+    case "formula": {
+      const expr = str(seed.expr);
+      const rule = seed.rule;
+      if (!expr || expr.length > 1000) return null;
+      if (rule !== undefined && rule !== "all" && rule !== "any" && rule !== "centroid") return null;
+      return { kind: "formula", expr, ...(rule ? { rule } : {}) };
+    }
     default:
       return null;
   }
@@ -1746,6 +1811,12 @@ export function opRecordFromMessage(
     const v = Number(msg[k]);
     return Number.isFinite(v) ? v : dflt ?? NaN;
   };
+  /** Optional SubModelPart scope: "" when absent, null when present but not a string. */
+  const partField = (): string | null => {
+    const v = msg.part;
+    if (v === undefined || v === null) return "";
+    return typeof v === "string" ? v.trim() : null;
+  };
   switch (op) {
     case "linearToQuadratic":
     case "removeOrphanNodes":
@@ -1756,19 +1827,27 @@ export function opRecordFromMessage(
     }
     case "scale": {
       const sx = num("sx", 1), sy = num("sy", 1), sz = num("sz", 1);
-      return [sx, sy, sz].every(Number.isFinite) ? { op, sx, sy, sz } : undefined;
+      const part = partField();
+      return [sx, sy, sz].every(Number.isFinite) && part !== null
+        ? { op, sx, sy, sz, ...(part ? { part } : {}) }
+        : undefined;
     }
     case "translate": {
       const dx = num("dx", 0), dy = num("dy", 0), dz = num("dz", 0);
-      return [dx, dy, dz].every(Number.isFinite) ? { op, dx, dy, dz } : undefined;
+      const part = partField();
+      return [dx, dy, dz].every(Number.isFinite) && part !== null
+        ? { op, dx, dy, dz, ...(part ? { part } : {}) }
+        : undefined;
     }
     case "rotate": {
       const axis = msg.axis;
       const angle = num("angle", 0);
       const cx = num("cx", 0), cy = num("cy", 0), cz = num("cz", 0);
+      const part = partField();
       return (axis === "x" || axis === "y" || axis === "z") &&
-        [angle, cx, cy, cz].every(Number.isFinite)
-        ? { op, axis, angle, cx, cy, cz }
+        [angle, cx, cy, cz].every(Number.isFinite) &&
+        part !== null
+        ? { op, axis, angle, cx, cy, cz, ...(part ? { part } : {}) }
         : undefined;
     }
     case "deleteSubModelPart": {
@@ -1823,6 +1902,9 @@ export function opRecordFromMessage(
       if (!Array.isArray(ids) || ids.length === 0) return undefined;
       const clean = ids.filter((v): v is number => typeof v === "number" && Number.isFinite(v));
       if (clean.length !== ids.length) return undefined;
+      if (op === "addSubModelPartEntities" && msg.closure === true) {
+        return { op, path, kind: kind as SmpEntityKind, ids: clean, closure: true };
+      }
       return { op, path, kind: kind as SmpEntityKind, ids: clean };
     }
     case "writeMeshSizeFields": {
@@ -2838,10 +2920,13 @@ function validateParams(rec: OpRecord, warnings: string[]): boolean {
         ? true
         : bad("missing/invalid tolerance");
     case "scale":
+      if (rec.part !== undefined && typeof rec.part !== "string") return bad("invalid part");
       return nums(["sx", "sy", "sz"]) ? true : bad("missing/invalid scale factors");
     case "translate":
+      if (rec.part !== undefined && typeof rec.part !== "string") return bad("invalid part");
       return nums(["dx", "dy", "dz"]) ? true : bad("missing/invalid translation");
     case "rotate": {
+      if (rec.part !== undefined && typeof rec.part !== "string") return bad("invalid part");
       const centerOk = (["cx", "cy", "cz"] as const).every(
         (k) => rec[k] === undefined || typeof rec[k] === "number"
       );
@@ -2935,7 +3020,8 @@ function validateParams(rec: OpRecord, warnings: string[]): boolean {
           (rec.seed.kind === "part" && rec.seed.path.length > 0) ||
           (rec.seed.kind === "field" && rec.seed.variable.length > 0 && Number.isFinite(rec.seed.lo) && Number.isFinite(rec.seed.hi) && FIELD_LOCATIONS.has(rec.seed.blockKind)) ||
           (rec.seed.kind === "quality" && rec.seed.metric.length > 0) ||
-          (rec.seed.kind === "property" && Number.isInteger(rec.seed.propertyId) && rec.seed.propertyId > 0));
+          (rec.seed.kind === "property" && Number.isInteger(rec.seed.propertyId) && rec.seed.propertyId > 0) ||
+          (rec.seed.kind === "formula" && typeof rec.seed.expr === "string" && rec.seed.expr.length > 0));
       if (!seedOK) return bad("invalid seed");
       const hasSeed = rec.seed !== undefined;
       const pickCount =

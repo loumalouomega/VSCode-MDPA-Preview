@@ -1078,7 +1078,7 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
         viewLayersPostedFor = fsPath;
         viewSidecar.post(fsPath);
       } else if (msg?.type === "viewLayersSave") {
-        viewSidecar.save(fsPath, msg as { layers?: unknown; outline?: unknown; view?: unknown });
+        viewSidecar.save(fsPath, msg as { layers?: unknown; outline?: unknown; view?: unknown; measures?: unknown });
       } else if (msg?.type === "ptGenerate") {
         session.ptController?.dispatch("generate");
       } else if (msg?.type === "ptStop") {

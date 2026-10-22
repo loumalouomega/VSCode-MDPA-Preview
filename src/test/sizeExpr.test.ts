@@ -223,3 +223,20 @@ test("remeshSizeExprVars appends globals, dropping reserved and field collisions
     undefined
   );
 });
+
+test("parsePredicate: comparisons, logic, precedence and NaN-is-false", async () => {
+  const { parsePredicate, validatePredicate, parseSizeExpr } = await import("../parser/sizeExpr");
+  const vars = ["x", "z", "t"];
+  const p = (src: string, scope: Record<string, number>): number => parsePredicate(src, vars).evaluate(scope);
+  assert.equal(p("z <= 0.0", { z: 0 }), 1);
+  assert.equal(p("z < 0", { z: 0 }), 0);
+  assert.equal(p("x > 1 && z <= 0 || t == 3", { x: 0, z: 5, t: 3 }), 1);
+  assert.equal(p("!(x > 1) && z != 2", { x: 0, z: 5 }), 1);
+  assert.equal(p("(x > 1 || z > 1) && t >= 0", { x: 2, z: 0, t: 1 }), 1);
+  assert.equal(p("2 * x + 1 >= 5", { x: 2 }), 1);
+  assert.equal(p("t > 0", { t: NaN }), 0);
+  assert.match(validatePredicate("z <== 0", vars) ?? "", /./);
+  assert.match(validatePredicate("w > 0", vars) ?? "", /Unknown name/);
+  // The arithmetic parser is unchanged: it still rejects comparison characters.
+  assert.throws(() => parseSizeExpr("x < 1", ["x"]), /Unexpected character/);
+});

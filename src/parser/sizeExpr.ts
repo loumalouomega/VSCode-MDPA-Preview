@@ -170,7 +170,7 @@ type Node =
   | { t: "num"; v: number }
   | { t: "var"; name: string }
   | { t: "const"; v: number }
-  | { t: "unary"; op: "-"; e: Node }
+  | { t: "unary"; op: "-" | "!"; e: Node }
   | { t: "binary"; op: string; l: Node; r: Node }
   | { t: "call"; name: string; args: Node[] };
 
@@ -184,7 +184,7 @@ type Token =
   | { k: "rparen" }
   | { k: "comma" };
 
-function tokenize(src: string): Token[] {
+function tokenize(src: string, predicate = false): Token[] {
   const tokens: Token[] = [];
   let i = 0;
   const isDigit = (c: string) => c >= "0" && c <= "9";
@@ -227,6 +227,20 @@ function tokenize(src: string): Token[] {
       i = j;
       continue;
     }
+    if (predicate) {
+      // Comparison / logic operators, only for `parsePredicate`.
+      const two = src.slice(i, i + 2);
+      if (two === "<=" || two === ">=" || two === "==" || two === "!=" || two === "&&" || two === "||") {
+        tokens.push({ k: "op", v: two });
+        i += 2;
+        continue;
+      }
+      if (c === "<" || c === ">" || c === "!") {
+        tokens.push({ k: "op", v: c });
+        i++;
+        continue;
+      }
+    }
     if ("+-*/%^".includes(c)) {
       tokens.push({ k: "op", v: c });
       i++;
@@ -244,11 +258,15 @@ function tokenize(src: string): Token[] {
 
 class Parser {
   private pos = 0;
-  constructor(private readonly tokens: Token[], private readonly allowed: Set<string>) {}
+  constructor(
+    private readonly tokens: Token[],
+    private readonly allowed: Set<string>,
+    private readonly predicate = false
+  ) {}
 
   parse(): Node {
     if (this.tokens.length === 0) throw new Error("Empty expression.");
-    const node = this.parseExpr();
+    const node = this.predicate ? this.parseOr() : this.parseExpr();
     if (this.pos < this.tokens.length) {
       throw new Error("Unexpected trailing input in the expression.");
     }
@@ -257,6 +275,46 @@ class Parser {
 
   private peek(): Token | undefined {
     return this.tokens[this.pos];
+  }
+
+  // Predicate grammar, above the arithmetic one:
+  //   or := and ('||' and)* ; and := not ('&&' not)* ; not := '!' not | cmp
+  //   cmp := expr (('<'|'<='|'>'|'>='|'=='|'!=') expr)?
+  private parseOr(): Node {
+    let node = this.parseAnd();
+    for (let tok = this.peek(); tok?.k === "op" && tok.v === "||"; tok = this.peek()) {
+      this.pos++;
+      node = { t: "binary", op: "||", l: node, r: this.parseAnd() };
+    }
+    return node;
+  }
+
+  private parseAnd(): Node {
+    let node = this.parseNot();
+    for (let tok = this.peek(); tok?.k === "op" && tok.v === "&&"; tok = this.peek()) {
+      this.pos++;
+      node = { t: "binary", op: "&&", l: node, r: this.parseNot() };
+    }
+    return node;
+  }
+
+  private parseNot(): Node {
+    const tok = this.peek();
+    if (tok?.k === "op" && tok.v === "!") {
+      this.pos++;
+      return { t: "unary", op: "!", e: this.parseNot() };
+    }
+    return this.parseCmp();
+  }
+
+  private parseCmp(): Node {
+    const l = this.parseExpr();
+    const tok = this.peek();
+    if (tok?.k === "op" && ["<", "<=", ">", ">=", "==", "!="].includes(tok.v)) {
+      this.pos++;
+      return { t: "binary", op: tok.v, l, r: this.parseExpr() };
+    }
+    return l;
   }
 
   // expr := term (('+' | '-') term)*
@@ -316,7 +374,7 @@ class Parser {
     }
     if (tok.k === "lparen") {
       this.pos++;
-      const e = this.parseExpr();
+      const e = this.predicate ? this.parseOr() : this.parseExpr();
       const close = this.peek();
       if (close?.k !== "rparen") throw new Error("Missing closing parenthesis.");
       this.pos++;
@@ -375,6 +433,11 @@ class Parser {
 
 // --- evaluation ---------------------------------------------------------------
 
+/** A predicate value is true when it is a non-zero number (NaN — a missing value — is false). */
+function truthy(v: number): boolean {
+  return v !== 0 && !Number.isNaN(v);
+}
+
 function evalNode(node: Node, scope: Record<string, number>): number {
   switch (node.t) {
     case "num":
@@ -383,11 +446,19 @@ function evalNode(node: Node, scope: Record<string, number>): number {
     case "var":
       return scope[node.name] ?? NaN;
     case "unary":
-      return -evalNode(node.e, scope);
+      return node.op === "!" ? (truthy(evalNode(node.e, scope)) ? 0 : 1) : -evalNode(node.e, scope);
     case "binary": {
+      if (node.op === "&&") return truthy(evalNode(node.l, scope)) && truthy(evalNode(node.r, scope)) ? 1 : 0;
+      if (node.op === "||") return truthy(evalNode(node.l, scope)) || truthy(evalNode(node.r, scope)) ? 1 : 0;
       const l = evalNode(node.l, scope);
       const r = evalNode(node.r, scope);
       switch (node.op) {
+        case "<": return l < r ? 1 : 0;
+        case "<=": return l <= r ? 1 : 0;
+        case ">": return l > r ? 1 : 0;
+        case ">=": return l >= r ? 1 : 0;
+        case "==": return l === r ? 1 : 0;
+        case "!=": return l !== r ? 1 : 0;
         case "+": return l + r;
         case "-": return l - r;
         case "*": return l * r;
@@ -441,6 +512,41 @@ export function parseSizeExpr(
     variablesUsed: [...used],
     evaluate: (scope) => evalNode(ast, scope),
   };
+}
+
+/**
+ * Parses a boolean predicate such as `z <= 0 && x > 1` over the same
+ * eval-free grammar, extended with comparisons (`< <= > >= == !=`) and logic
+ * (`&& || !`). `evaluate` returns 1 (true) or 0 (false); a comparison against a
+ * missing value (NaN) is false. A separate entry point so the remesh and
+ * field-calculator grammar is unchanged.
+ */
+export function parsePredicate(
+  src: string,
+  allowedVars: readonly string[] | ReadonlySet<string>
+): CompiledExpr {
+  const allowed = allowedVars instanceof Set ? allowedVars : new Set(allowedVars);
+  const ast = new Parser(tokenize(src, true), allowed, true).parse();
+  const used = new Set<string>();
+  collectVars(ast, used);
+  return {
+    source: src,
+    variablesUsed: [...used],
+    evaluate: (scope) => (truthy(evalNode(ast, scope)) ? 1 : 0),
+  };
+}
+
+/** `undefined` when `src` is a valid predicate, else the error message. */
+export function validatePredicate(
+  src: string,
+  allowedVars: readonly string[] | ReadonlySet<string>
+): string | undefined {
+  try {
+    parsePredicate(src, allowedVars);
+    return undefined;
+  } catch (err) {
+    return err instanceof Error ? err.message : String(err);
+  }
 }
 
 /**

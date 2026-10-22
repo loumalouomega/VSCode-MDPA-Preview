@@ -79,3 +79,37 @@ test("transforms do not mutate the input model", () => {
   rotateCoords(m, "z", 45);
   assert.deepEqual([...m.coords], before);
 });
+
+const PARTED = `Begin Nodes
+1 0.0 0.0 0.0
+2 2.0 0.0 0.0
+3 2.0 4.0 0.0
+4 5.0 5.0 0.0
+End Nodes
+
+Begin Elements Element2D3N
+1 1 1 2 3
+2 1 2 3 4
+End Elements
+
+Begin SubModelPart Left
+  Begin SubModelPartElements
+  1
+  End SubModelPartElements
+End SubModelPart
+`;
+
+test("a nodeIds set limits translate/scale/rotate to those nodes and still recomputes bounds", () => {
+  const m = parseMdpa(PARTED);
+  const part = new Set([1, 2, 3]);
+  const t = translateCoords(m, 10, 0, 0, part);
+  assert.deepEqual(coordOf(t, 1), [10, 0, 0]);
+  assert.deepEqual(coordOf(t, 4), [5, 5, 0]);
+  assert.deepEqual(t.bounds.max, [12, 5, 0]);
+  const s = scaleCoords(m, 2, 2, 1, part);
+  assert.deepEqual(coordOf(s, 3), [4, 8, 0]);
+  assert.deepEqual(coordOf(s, 4), [5, 5, 0]);
+  const r = rotateCoords(m, "z", 90, 0, 0, 0, part);
+  assert.deepEqual(coordOf(r, 4), [5, 5, 0]);
+  assert.equal(Math.round(coordOf(r, 2)[1]), 2);
+});

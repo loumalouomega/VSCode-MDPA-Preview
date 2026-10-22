@@ -415,6 +415,9 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
               <label class="edit-field"><span>z</span><input type="number" id="scale-z" class="edit-num" value="1" step="0.1"></label>
               <button type="button" class="edit-apply" data-op="scale" title="Apply scale">${ic("check")}</button>
             </div>
+            <div class="edit-form-row">
+              <label class="edit-field" title="Limit to the nodes of a SubModelPart"><span>part</span><select id="scale-part" class="edit-sel edit-sel-grow"><option value="">— whole mesh —</option></select></label>
+            </div>
           </div>
           <div class="edit-form collapsed">
             <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("translate")}<span>Translate</span></button>
@@ -424,12 +427,16 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
               <label class="edit-field"><span>z</span><input type="number" id="trans-z" class="edit-num" value="0" step="0.1"></label>
               <button type="button" class="edit-apply" data-op="translate" title="Apply translation">${ic("check")}</button>
             </div>
+            <div class="edit-form-row">
+              <label class="edit-field" title="Limit to the nodes of a SubModelPart"><span>part</span><select id="trans-part" class="edit-sel edit-sel-grow"><option value="">— whole mesh —</option></select></label>
+            </div>
           </div>
           <div class="edit-form collapsed">
             <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("rotate")}<span>Rotate</span></button>
             <div class="edit-form-row">
               <label class="edit-field"><span>axis</span><select id="rot-axis" class="edit-sel"><option value="x">X</option><option value="y">Y</option><option value="z" selected>Z</option></select></label>
               <label class="edit-field"><span>deg</span><input type="number" id="rot-angle" class="edit-num" value="90" step="15"></label>
+              <label class="edit-field" title="Limit to the nodes of a SubModelPart"><span>part</span><select id="rot-part" class="edit-sel edit-sel-grow"><option value="">— whole mesh —</option></select></label>
             </div>
             <div class="edit-form-row">
               <span class="edit-row-label">center</span>

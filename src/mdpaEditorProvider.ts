@@ -863,7 +863,7 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
       } else if (msg?.type === "viewLayersSave") {
         // Same boundary: a sidecar write is not a mesh edit, so no markDirty,
         // no history, no document change event.
-        viewSidecar.save(fsPath, msg as { layers?: unknown; outline?: unknown; view?: unknown });
+        viewSidecar.save(fsPath, msg as { layers?: unknown; outline?: unknown; view?: unknown; measures?: unknown });
       } else if (msg?.type === "ptGenerate") {
         session.ptController?.dispatch("generate");
       } else if (msg?.type === "ptStop") {

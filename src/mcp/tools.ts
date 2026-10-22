@@ -1,3 +1,4 @@
+import { computePartMeasures, measureName, PartMeasures } from "../parser/partMeasures";
 import { discoverOutputs } from '../problemtype/outputDiscovery';
 import { exportCaseResults, normalizeExportFormats } from "../problemtype/resultExport";
 import { boundSteps, convergenceToCsv, summarizeConvergence, type ConvergenceStep } from '../problemtype/convergence';
@@ -410,10 +411,13 @@ function blockSummary(b: EntityBlock): object {
   return { kind: b.kind, name: b.name, count: b.count, stride: b.stride, vtkCellType: b.vtkCellType };
 }
 
-function smpTree(p: SubModelPart): object {
+function smpTree(p: SubModelPart, measures?: PartMeasures): object {
+  const m = measures?.parts[p.path];
   return {
     name: p.name,
     path: p.path,
+    // Length / area / volume of the part's subtree (mesh units); omitted when it has no measurable cells.
+    ...(m ? { measure: { kind: measureName(m.dimension).toLowerCase(), value: m.value } } : {}),
     counts: {
       nodes: p.nodeIds.length,
       elements: p.elementIds.length,
@@ -423,7 +427,7 @@ function smpTree(p: SubModelPart): object {
       // a fixed-shape object where a 0 is an answer.
       constraints: p.constraintIds.length,
     },
-    children: p.children.map(smpTree),
+    children: p.children.map((c) => smpTree(c, measures)),
   };
 }
 
@@ -609,6 +613,7 @@ export async function meshInfo(args: {
   // cells in question, so every other report is unchanged.
   const spheres = sphereStats(model);
   const beams = beamStats(model);
+  const measures = computePartMeasures(model);
   // Nodes referenced by no cell connectivity (connectivity-only: a node listed
   // in a SubModelPart but in no block still counts — see isolatedNodes.ts).
   // Reported only when non-empty, like `spheres`/`beams` below. Ids are capped
@@ -625,7 +630,16 @@ export async function meshInfo(args: {
     is3D: model.is3D,
     bounds: model.bounds,
     blocks: model.blocks.map(blockSummary),
-    subModelParts: model.subModelParts.map(smpTree),
+    subModelParts: model.subModelParts.map((p) => smpTree(p, measures)),
+    ...(measures.total
+      ? {
+          measure: {
+            kind: measureName(measures.total.dimension).toLowerCase(),
+            value: measures.total.value,
+            ...(measures.boundary ? { boundaryArea: measures.boundary.value } : {}),
+          },
+        }
+      : {}),
     fields: model.fields.map((f) => ({
       variable: f.variable,
       kind: f.kind,
@@ -2554,7 +2568,7 @@ export async function meshSelect(args: {
   const src = await loadMesh(args.path, undefined, args.timeStep, undefined, undefined, undefined, execution.signal);
   const raw = args.seed as { kind?: unknown } | null;
   const kind = raw?.kind;
-  if (typeof kind !== "string") throw new Error('seed.kind is required: "part" | "field" | "quality" | "property".');
+  if (typeof kind !== "string") throw new Error('seed.kind is required: "part" | "field" | "quality" | "property" | "formula".');
   let seed: SelectionSeed;
   try {
     seed = JSON.parse(JSON.stringify(raw)) as SelectionSeed;

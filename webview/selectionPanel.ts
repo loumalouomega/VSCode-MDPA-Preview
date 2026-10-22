@@ -36,7 +36,7 @@ export interface SelectionPanelHandlers {
   /** Toggles through-the-surface selection for box and lasso. */
   onSetXray(): void;
   /** Creates a new set seeded by a predicate built in the panel row. */
-  onAddSeed(kind: string, params: Record<string, unknown>): void;
+  onAddSeed(kind: string, params: Record<string, unknown>): boolean;
   /** Left-click "frame the active set's first highlight" (Frame button). */
   onFrame(): void;
   /** Creates a SubModelPart from the ACTIVE set via an ordinary applyOp. */
@@ -269,7 +269,7 @@ export function renderSelectionPanel(
   const kindSel = document.createElement("select");
   kindSel.id = "sel-seed-kind";
   kindSel.className = "edit-sel";
-  for (const [v, t] of [["part", "SubModelPart"], ["field", "Field range"], ["quality", "Quality metric"], ["property", "Property id"]] as const) {
+  for (const [v, t] of [["part", "SubModelPart"], ["field", "Field range"], ["quality", "Quality metric"], ["property", "Property id"], ["formula", "Formula (e.g. z <= 0)"]] as const) {
     const o = document.createElement("option");
     o.value = v;
     o.textContent = t;
@@ -333,6 +333,26 @@ export function renderSelectionPanel(
   anyLabel.appendChild(anyCheck);
   anyLabel.appendChild(document.createTextNode("any"));
   seedRow.appendChild(anyLabel);
+  const exprInput = document.createElement("input");
+  exprInput.type = "text";
+  exprInput.id = "sel-seed-expr";
+  exprInput.className = "edit-text";
+  exprInput.placeholder = "z <= 0.0 && x > 1";
+  exprInput.title =
+    "Boolean formula over x, y, z, nodal fields and globals: < <= > >= == != && || ! and + - * / ^ functions. " +
+    "Example: z <= 0.0 selects the base of the model.";
+  seedRow.appendChild(exprInput);
+  const ruleSel = document.createElement("select");
+  ruleSel.id = "sel-seed-rule";
+  ruleSel.className = "edit-sel";
+  ruleSel.title = "all: every node of a cell satisfies the formula · any: at least one · centroid: at the cell centroid";
+  for (const [v, t] of [["all", "all nodes"], ["any", "any node"], ["centroid", "centroid"]] as const) {
+    const o = document.createElement("option");
+    o.value = v;
+    o.textContent = t;
+    ruleSel.appendChild(o);
+  }
+  seedRow.appendChild(ruleSel);
   container.appendChild(seedRow);
 
   const confirmRow = document.createElement("div");
@@ -347,35 +367,61 @@ export function renderSelectionPanel(
   go.className = "panel-btn";
   go.textContent = "Add set";
   go.title = "Resolve the seed against the CURRENT model and add it";
-  go.addEventListener("click", () => {
-    const kindSel = document.getElementById("sel-seed-kind") as HTMLSelectElement;
-    const name = ((document.getElementById("sel-seed-name") as HTMLInputElement)?.value ?? "").trim() || "Set " + (state.sets.length + 1);
-    const kind = kindSel.value;
+  /** Builds the seed from the row and adds the set; true when a set was added. */
+  const addSeed = (): boolean => {
+    const kind = (document.getElementById("sel-seed-kind") as HTMLSelectElement).value;
     if (kind === "part") {
       const path = (document.getElementById("sel-seed-part") as HTMLSelectElement)?.value ?? "";
-      if (path) handlers.onAddSeed("part", { kind: "part", path });
-      return;
+      return path ? handlers.onAddSeed("part", { kind: "part", path }) : false;
     }
     if (kind === "field") {
       const lo = Number((document.getElementById("sel-seed-lo") as HTMLInputElement)?.value ?? Number.NaN);
       const hi = Number((document.getElementById("sel-seed-hi") as HTMLInputElement)?.value ?? Number.NaN);
       const any = Boolean((document.getElementById("sel-seed-any") as HTMLInputElement)?.checked);
       const variable = (document.getElementById("sel-seed-field") as HTMLSelectElement)?.value ?? "";
-      if (!Number.isFinite(lo) || !Number.isFinite(hi) || !variable) return;
-      handlers.onAddSeed("field", { kind: "field", variable, blockKind: "Nodal", lo, hi, rule: any ? "any" : "all" });
-      return;
+      if (!Number.isFinite(lo) || !Number.isFinite(hi) || !variable) return false;
+      return handlers.onAddSeed("field", { kind: "field", variable, blockKind: "Nodal", lo, hi, rule: any ? "any" : "all" });
     }
     if (kind === "property") {
       const id = Number((document.getElementById("sel-seed-prop") as HTMLInputElement)?.value ?? Number.NaN);
-      if (!Number.isInteger(id) || id <= 0) return;
-      handlers.onAddSeed("property", { kind: "property", propertyId: id });
+      if (!Number.isInteger(id) || id <= 0) return false;
+      return handlers.onAddSeed("property", { kind: "property", propertyId: id });
     }
     if (kind === "quality") {
       const metric = (document.getElementById("sel-seed-quality") as HTMLSelectElement)?.value ?? "";
-      if (metric) handlers.onAddSeed("quality", { kind: "quality", metric });
+      return metric ? handlers.onAddSeed("quality", { kind: "quality", metric }) : false;
+    }
+    if (kind === "formula") {
+      const expr = ((document.getElementById("sel-seed-expr") as HTMLInputElement)?.value ?? "").trim();
+      const rule = (document.getElementById("sel-seed-rule") as HTMLSelectElement)?.value ?? "all";
+      return expr ? handlers.onAddSeed("formula", { kind: "formula", expr, rule }) : false;
+    }
+    return false;
+  };
+  go.addEventListener("click", () => {
+    addSeed();
+  });
+  exprInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      addSeed();
     }
   });
   confirmRow.appendChild(go);
+  const goPart = document.createElement("button");
+  goPart.className = "panel-btn";
+  goPart.id = "sel-seed-create-part";
+  goPart.textContent = "Add & create SubModelPart";
+  goPart.title = "Add the set, then turn it into a top-level SubModelPart named like the set (its nodes ride along)";
+  goPart.addEventListener("click", () => {
+    const name = ((document.getElementById("sel-seed-name") as HTMLInputElement)?.value ?? "").trim();
+    if (!name) {
+      (document.getElementById("sel-seed-name") as HTMLInputElement | null)?.focus();
+      return;
+    }
+    if (addSeed()) handlers.onNewSubModelPart(name, "");
+  });
+  confirmRow.appendChild(goPart);
   container.appendChild(confirmRow);
 
   // The seed row shows only the inputs the chosen kind reads.
@@ -388,6 +434,8 @@ export function renderSelectionPanel(
     anyLabel.style.display = kind === "field" ? "" : "none";
     qualitySel.style.display = kind === "quality" ? "" : "none";
     propInput.style.display = kind === "property" ? "" : "none";
+    exprInput.style.display = kind === "formula" ? "" : "none";
+    ruleSel.style.display = kind === "formula" ? "" : "none";
   };
   kindSel.addEventListener("change", syncSeedVisibility);
   syncSeedVisibility();

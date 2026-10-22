@@ -35,18 +35,19 @@ export class ViewSidecarHost {
 
   /** Reads the sidecar for `fsPath` and posts it to the webview. */
   post(fsPath: string): void {
-    const { layers, warnings, outline, view } = loadViewLayers(fsPath);
+    const { layers, warnings, outline, view, measures } = loadViewLayers(fsPath);
     this.warn(warnings);
     void this.webview.postMessage({
       type: "viewLayers",
       layers,
       outline,
       view: view ? serializeViewState(view) : undefined,
+      measures,
     });
   }
 
   /** Handles a webview `viewLayersSave`. Keys the message omits keep their on-disk value. */
-  save(fsPath: string, msg: { layers?: unknown; outline?: unknown; view?: unknown }): void {
-    this.warn(saveViewLayers(fsPath, msg.layers, msg.outline, msg.view).warnings);
+  save(fsPath: string, msg: { layers?: unknown; outline?: unknown; view?: unknown; measures?: unknown }): void {
+    this.warn(saveViewLayers(fsPath, msg.layers, msg.outline, msg.view, msg.measures).warnings);
   }
 }

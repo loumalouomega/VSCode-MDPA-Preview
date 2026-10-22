@@ -131,7 +131,7 @@ test("errors name the problem and give a hint", () => {
 
 test("usageLine shows required, optional and enum params", () => {
   const spec = COMMANDS.find((c) => c.name === "rotate")!;
-  assert.equal(usageLine(spec), "rotate axis=<x|y|z> [angle=<number>] [cx=<number>] [cy=<number>] [cz=<number>]");
+  assert.equal(usageLine(spec), "rotate axis=<x|y|z> [angle=<number>] [cx=<number>] [cy=<number>] [cz=<number>] [part=<part>]");
 });
 
 test("help resolves a command by name or via ?", () => {

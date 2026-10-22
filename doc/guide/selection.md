@@ -25,6 +25,14 @@ survives onto unrelated ids is the whole contract: predicates keep working
 across edits because the predicate still matches, and frozen picks shrink to
 their survivors honestly.
 
+## Selecting with a formula
+
+In the seed builder choose **Formula** and type a boolean expression over `x`, `y`, `z`, nodal fields and globals, using `< <= > >= == != && || !`, for example `z <= 0.0` (the base of the model) or `x > 1 && TEMP > 300`. The rule decides how a cell qualifies: *all nodes* (default), *any node* or at its *centroid*. **Add & create SubModelPart** turns the result into a part in one step. The same seed works in `mesh_select` and `createSubModelPartFromSelection`: `{"kind":"formula","expr":"z <= 0.0"}`.
+
+## Area and volume
+
+The Information section shows the model's volume (or area in 2D) and the SubModelPart info menu (the ⓘ button) shows each part's length, area or volume. The numbers are cached in the `.kratosview.json` sidecar and recomputed when the mesh changes. `mesh_info` reports them as `measure`.
+
 ## Surviving a reopen
 
 Selection sets are **view state**, so they are saved beside the mesh in

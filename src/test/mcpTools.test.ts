@@ -236,6 +236,15 @@ test("mesh_info summarizes counts, blocks, SMP tree and fields", async () => {
   const paths = info.subModelParts.map((p) => p.path);
   assert.deepEqual(paths, ["Parts", "Support", "Loaded"]);
   assert.equal(info.diagnostics.total, 0);
+  // Length/area/volume: the whole model and each part (parts without cells of their own may omit it).
+  const withMeasure = info as unknown as {
+    measure: { kind: string; value: number; boundaryArea?: number };
+    subModelParts: { path: string; measure?: { kind: string; value: number } }[];
+  };
+  assert.equal(withMeasure.measure.kind, "volume");
+  assert.ok(withMeasure.measure.value > 0);
+  assert.ok((withMeasure.measure.boundaryArea ?? 0) > 0);
+  assert.equal(withMeasure.subModelParts.find((p) => p.path === "Parts")?.measure?.kind, "volume");
   // The whole summary must be JSON-clean: no typed arrays leaking through.
   const roundTrip = JSON.parse(JSON.stringify(info));
   assert.deepEqual(roundTrip, info);
@@ -662,7 +671,7 @@ test("mesh_transform runs a level-set split that keeps materials, and validates 
     outputPath: out,
   })) as { outcomes: { op: string; noop?: boolean; message: string }[] };
   assert.equal(result.outcomes[1].op, "levelset");
-  assert.ok(!result.outcomes[1].noop, result.outcomes[1].message);
+  assert.ok(!result.outcomes[1].noop, result.outcomes[1].message ?? "");
   const model = parseMdpa(fs.readFileSync(out, "utf8"));
   // keepMaterials means the original block survives instead of collapsing into
   // MMG_Domain_* blocks, and the side rides two generated SubModelParts.
@@ -4607,4 +4616,31 @@ test("mesh_batch_transform refuses an existing writer companion and warns on .vt
   })) as any;
   assert.equal(dry.plan.length, 1);
   assert.match((dry.warnings ?? []).join("\n"), /model-dependent companions/);
+});
+
+test("mesh_select and mesh_transform accept a formula seed (all/any/centroid) and chain into a part + partial translate", async () => {
+  const dir = tmpDir();
+  const p = writeSelFixture(dir);
+  const ids = async (seed: Record<string, unknown>): Promise<number[]> =>
+    ((await meshSelect({ path: p, seed })) as { elementIds: number[] }).elementIds.sort();
+  assert.deepEqual(await ids({ kind: "formula", expr: "x > 0.5", rule: "centroid" }), [1]);
+  assert.deepEqual(await ids({ kind: "formula", expr: "y <= 0", rule: "any" }), [1, 2]);
+  assert.deepEqual(await ids({ kind: "formula", expr: "temp >= 100 && temp <= 200" }), [1]);
+  await assert.rejects(() => meshSelect({ path: p, seed: { kind: "formula", expr: "y <= 0" } }), /No cell satisfies/);
+  await assert.rejects(() => meshSelect({ path: p, seed: { kind: "formula", expr: "y <<< 0" } }));
+
+  const out = path.join(dir, "formula_part.mdpa");
+  const result = (await meshTransform({
+    path: p,
+    ops: [
+      { op: "createSubModelPartFromSelection", parentPath: "", name: "Base", seed: { kind: "formula", expr: "temp >= 100", rule: "all" } },
+      { op: "translate", dx: 0, dy: 0, dz: 5, part: "Base" },
+    ],
+    outputPath: out,
+  })) as { outcomes: { noop: boolean; message?: string }[] };
+  assert.ok(!result.outcomes[0].noop, result.outcomes[0].message ?? "");
+  assert.ok(!result.outcomes[1].noop, result.outcomes[1].message ?? "");
+  const model = parseMdpa(fs.readFileSync(out, "utf8"));
+  const z = (id: number): number => model.coords[[...model.nodeIds].indexOf(id) * 3 + 2];
+  assert.deepEqual([z(1), z(2), z(3), z(4)], [5, 5, 5, 0]);
 });
