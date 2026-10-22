@@ -1,5 +1,5 @@
 /**
- * Periodic pairs checked against the mesh (roadmap item 21): before a case with a
+ * Periodic pairs checked against the mesh (former roadmap item 21, delivered 2026-10-20): before a case with a
  * periodic boundary is written, translating the master part by the declared
  * direction × magnitude must land every slave node on a master node.
  *

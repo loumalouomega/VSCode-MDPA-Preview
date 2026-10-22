@@ -1,5 +1,5 @@
 /**
- * Per-run workspaces (roadmap item 6): where an isolated run keeps the inputs
+ * Per-run workspaces (former roadmap item 6, delivered 2026-10-19): where an isolated run keeps the inputs
  * it generated from, and the copy of the source case that starts it.
  *
  * Pure (no vscode) and shared by the sidebar's Run and the MCP `case_run` tool,

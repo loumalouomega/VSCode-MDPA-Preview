@@ -297,8 +297,8 @@ export function rewriteOpenFoamPatches(
   // allowlist) is downgraded to `patch`, named in the diagnostic below.
   const KEYLESS_PATCH_TYPES = new Set(["patch", "wall", "empty", "symmetry", "symmetryPlane"]);
   const recovered = model.source?.openfoam?.patchTypes ?? {};
-  // roadmap item 13: the patch's remaining statements (`neighbourPatch`,
-  // `transform`, `inGroups`, …). With them a non-keyless type is written whole.
+  // The patch's remaining statements (`neighbourPatch`, `transform`, `inGroups`, …) survive on the
+  // model (former roadmap item 13, delivered 2026-10-19) and are written whole for a non-keyless type.
   const dictionaries = model.source?.openfoam?.patchDictionaries ?? {};
   const outputNames = new Set(groups.map((g) => g.part.name));
   const downgraded: string[] = [];
@@ -379,7 +379,7 @@ export function rewriteOpenFoamPatches(
 }
 
 /**
- * Roadmap item 13: a patch with `nFaces 0` has no boundary faces, so it has no
+ * former roadmap item 13, delivered 2026-10-19: a patch with `nFaces 0` has no boundary faces, so it has no
  * conditions and no SubModelPart, and a rewrite of `boundary` from the model
  * silently drops it. This re-adds the zero-face patches of the case on disk
  * (`baseline`, from `parseOpenFoamBoundary`) that the written `boundaryText`

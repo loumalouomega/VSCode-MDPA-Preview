@@ -126,7 +126,7 @@ test("an already-packed series is not itself packable", async () => {
   assert.deepEqual(await discoverSeriesFiles(dest), []);
 });
 
-// ---- .pvd: the container for a series that changes topology (former roadmap item 20)
+// ---- .pvd: the container for a series that changes topology (former roadmap item 20, delivered 2026-09-29)
 
 /** Writes a pack's index + step files the way both hosts must. */
 function writePvdOut(
@@ -227,7 +227,7 @@ test("a .pvd index points at its own step directory, one escaped path and all", 
 });
 
 test("a series whose mesh changes between steps packs to .pvd and reads back per step", async () => {
-  // The case item 20 exists for. The SAME series is refused by the XDMF packer,
+  // The case former roadmap item 20, delivered 2026-09-29 exists for. The SAME series is refused by the XDMF packer,
   // whose single grid cannot represent it.
   await assert.rejects(
     packXdmfSeries(growingSteps(), { stem: "bad" }),

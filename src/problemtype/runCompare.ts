@@ -1,5 +1,5 @@
 /**
- * Comparing two saved runs (roadmap item 6): what changed between them, as
+ * Comparing two saved runs (former roadmap item 6, delivered 2026-10-19): what changed between them, as
  * facts about identity, settings, inputs and outputs — never as a judgement
  * about which run is "better".
  *

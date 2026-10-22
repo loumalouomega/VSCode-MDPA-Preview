@@ -1,7 +1,7 @@
 /**
  * runCompare.ts — comparing two saved runs by what each one recorded.
  *
- * The contract under test is the acceptance criterion of roadmap item 6: two
+ * The contract under test is the acceptance criterion of former roadmap item 6, delivered 2026-10-19: two
  * runs of cases sharing a source folder must be comparable without their files
  * colliding, and a legacy receipt must never be upgraded by hashing today's
  * bytes. So every fixture here is a run DIRECTORY with its own receipt and

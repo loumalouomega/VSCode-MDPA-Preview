@@ -4,9 +4,31 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [5.18.0] - 2026-10-22
 
 ### Added
+
+- **Part measures.** The Information section reports the model's volume (area in 2D), and each SubModelPart's ⓘ menu reports its length, area or volume. Measures come from the pure `partMeasures.ts` (quadratic cells use their corner nodes), are cached in the `.kratosview.json` sidecar with a structural fingerprint and only when the computation was expensive, and are exposed headlessly as `mesh_info`'s `measure`. A Conditions part reports the area of its faces.
+
+- **Transforming one SubModelPart.** Scale, Translate and Rotate accept an optional `part` (SubModelPart path) in the sidebar, the command line and MCP, and move only that part's nodes — its listed nodes plus the nodes of its elements, conditions and geometries, including child parts. Cells shared with the rest of the mesh stretch, and the outcome message says so; an unknown or node-less part is a no-op with the reason.
+
+- **Formula selection seeds.** The Selection panel's seed builder, `mesh_select` and `createSubModelPartFromSelection` accept `{"kind":"formula","expr":"z <= 0.0"}`, a boolean expression over `x`, `y`, `z`, nodal fields and globals with `< <= > >= == != && || !`. A cell qualifies when all its nodes do (default), any node does, or its centroid does; NaN compares false. A formula seed chains into a SubModelPart like any other seed.
+
+- **Pick nodes directly into a selection.** The Selection panel's **Pick nodes** toggle makes Ctrl+click collect node ids, and **Add & create SubModelPart** carries them into the new part alongside the picked cells. `createSubModelPartFromSelection` gains `nodes`, and `addSubModelPartEntities` gains `closure` to add the nodes of the selected cells.
+
+- **GPU box and lasso selection, plus X-ray.** On the vtk.js renderer, Box and Lasso read the GPU's id buffer through `HardwareSelector`, so they pick exactly the visible cells inside the region — down to a one-pixel cell and never one hidden behind another — instead of the capped picker grid; pixels from every pane and prop are decoded by the Node-tested `hardwareSelection.ts`, with non-pickable overlays hidden during the capture. The new **X-ray** toggle instead projects each entity's centroid, hidden entities included, ignoring Clip and capped at two million entities. The VTK-wasm renderer keeps the sampled-grid fallback.
+
+- **Ray-cast spheres and beams.** Where the renderer exposes impostors (vtk.js), sphere and beam layers are drawn with `vtkSphereMapper`/`vtkStickMapper` — one point per glyph, clipped by the glyph centre — and the panels hide the tessellation control; the beams fall back to tessellated cylinders while any pane has Clip on. VTK-wasm keeps the tessellated glyph path.
+
+- **Volume view for dense regular lattices.** **Advanced ▸ Volume view…** recognises a dense regular hexahedron lattice with a nodal scalar from its coordinates alone and shows it as a ray-marched volume with an editable opacity curve, three orthogonal slices or up to four marching-cubes iso surfaces, coloured from the usual colormap. It is display only (the surface layers are suppressed), and any scene rebuild returns to Surface. Vtk.js only.
+
+- **Clip plane handle, angle measure and extendable probe polyline.** With Clip on, the vtk.js renderer shows a draggable `ImplicitPlaneWidget` that stays in step with the slider and numeric normal and snaps to an axis within 2°; a plane parallel to the view direction still needs the slider. Measure gains an **Angle** mode (three nodes, angle at the middle one and path length), and further clicks extend a probe line into a polyline. All are node-snapped.
+
+- **Smooth shading, scalar relief and light modes.** The Lighting panel adds smooth shading (averaged point normals; no feature angle, so off by default) and a nodal scalar in the "Deform by" selector that lifts the mesh along Z as a relief. **Light** chooses a camera-following headlight, a scene light fixed in model space, or a point light with azimuth/elevation, re-placed after a layout or scene change. Vtk.js only.
+
+- **Searchable colormap presets.** The colormap control gains 27 ParaView presets (diverging, sequential, rainbow) generated into `colormapPresets.ts` and appended to the original twelve, with search, category groups and a **Colour-blind safe only** filter. The legend, the in-scene scalar bar and the screenshot burn-in all read the same stops.
+
+- **Depth-culled GPU-assisted node labels.** Node IDs are projected per pane in typed arrays, culled against a one-readPixels depth snapshot, decluttered on a grid and drawn from a pooled set of at most 3 000 DOM labels — so there is no node-count cap and every pane layout works. The depth probe runs only while Node IDs are on. Vtk.js only.
 
 - **A fitted STEP now says how far it lies from the mesh you exported.** Every `.step` export measures the fitted B-rep against the skin it was fitted from and reports it — `skin deviation` is the largest distance between a face and the skin, with its RMS beside it, which is the tessellation's own chordal error rather than the fit's tolerance (reported separately, as before). The fit also states whether the solid came out **closed** (every edge of a shell borders two faces), so an open shell shows up in the export's message instead of in the CAD reader later. For a unit box the message reads `STEP: fitted CAD B-rep via fitCad — 6 planes (closed solid; skin deviation 1.24e-16 (RMS 5.12e-17)); …`; a cylinder tessellated with 32 facets lands 4.81e-3 from its skin. The measurement is on by default (`fitCad: {faceDeviation: false}` switches it off) and costs about 15 % on an 81,920-triangle skin. The same numbers reach the export report and the MCP `mesh_convert` / `case_optimization_cad` replies.
 
@@ -14,11 +36,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
+- **Five completed roadmap items are closed** (case preflight and isolated run workspaces, in-place save for directory-based cases, verifying the fluid problemtypes and the virtual wind tunnel against a Kratos run, the fluid follow-ups, and the unused vtk.js capabilities). Each was removed from `doc/roadmap.md` without renumbering, so the numbering now runs 0–2, 7, 10–12, 15–19 with gaps at 3–6, 8, 9, 13, 14, 20–22. Their delivery is recorded in `CHANGELOG.md` and their implementation details in `CLAUDE.md`; the citation sweep gives each former item a delivery date, because the numbers 6, 13, 20, 21 and 22 were already used by earlier, differently numbered items. Documentation only.
+
 - **The shipped meshio++ runtime's licence statement is corrected.** meshio++ 17.11.0 compiles **Eigen (MPL-2.0)** into the lean WebAssembly artifact for the MED transpose, so the lean pair is no longer plain MIT: it is MIT AND MPL-2.0 (file-level copyleft, Eigen's own source stays available), and the full pair — OpenCASCADE, zstd, lz4, bzip2, KaHIP — keeps MIT AND (LGPL-2.1-only WITH OCCT-exception-1.0). The README said "licensed MIT" for both, which has been wrong for the full pair since 17.2.0; the component list, versions and licences are in `dist/meshio/THIRD_PARTY_NOTICES.md`, shipped with the extension.
 
 - **Derived meshes and partition export no longer block the host.** Export slice / isosurface / region / simplified surface / grid, Export partitions… (curve or KaHIP) and the MCP `mesh_derive` / `mesh_split` tools run their synchronous meshio++ call in a worker thread (`dist/derivedWorker.js`), so a large input leaves the UI responsive and Cancel (or a cancelled MCP request) terminates the work and releases its WASM heap. Streamline traces keep their in-process per-seed progress. Results are unchanged. Measured on a 64,000-cell block: max host stall for a slice 462 ms to 10 ms, for a KaHIP partition 1,056 ms to 9 ms.
 
 - **Dependency refresh (meshio++ 17.10.0 → 17.11.0).** The declared range is now `^17.11.0`; the binding diff is additive (upstream's ABI moves to 32, which does not affect a prebuilt-WASM consumer). Live format-key diff on both published artifact pairs: no reader or writer key added, removed or flipped (lean 81 readers/82 writers, full 83/82), and `transientAudit.test.ts` passes unedited. The release adds the `refinePatches` operation, six planar-domain generators and fifteen new `fitCad` options; `faceDeviation` is adopted (above), while `refinePatches`, the new generators and the remaining fit options are recorded as unrouted in `mesh_capabilities` with their reasons — `refineSegmentation` was measured to be a no-op on every shape tried (0 iterations, 0 splits, 0 merges) at about 30 % more time, so the export does not ask for it. `dist/meshio/` grows about 4.8 MB raw (lean +0.30 MB, full +2.12 MB per variant), and the packaged `.vsix` grows from 51.87 MB to **53.21 MB**.
+
+### Fixed
+
+- **The selection seed builder is shown before a set exists, and part measures no longer wait for a sidecar reply.** The builder used to be hidden until a selection set had been created, so a formula or field seed could not be written into an empty panel; it is now shown from the start. Measures also ran only after the view sidecar's cache reply, so a host or harness without a sidecar never showed them — the cache is now an optimisation, and the computation proceeds after a short grace period.
 
 ## [5.17.0] - 2026-10-20
 

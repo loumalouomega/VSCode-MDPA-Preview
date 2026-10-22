@@ -348,7 +348,7 @@ test("parseAsciiLabelList reads a plain labelList, malformed input is undefined"
   assert.deepEqual(parseAsciiLabelList("0\n(\n)\n"), [], "an empty list is a legal, non-undefined answer");
 });
 
-test("roadmap item 13: parseOpenFoamBoundary retains every statement but type/nFaces/startFace", () => {
+test("former roadmap item 13, delivered 2026-10-19: parseOpenFoamBoundary retains every statement but type/nFaces/startFace", () => {
   const text = [
     "FoamFile { version 2.0; format ascii; class polyBoundaryMesh; object boundary; }",
     "3",
@@ -374,13 +374,13 @@ test("roadmap item 13: parseOpenFoamBoundary retains every statement but type/nF
   assert.equal(patches[2].dict, undefined);
 });
 
-test("roadmap item 13: a quoted or digit-leading patch name is no longer skipped", () => {
+test("former roadmap item 13, delivered 2026-10-19: a quoted or digit-leading patch name is no longer skipped", () => {
   const text = 'FoamFile { object boundary; }\n2\n(\n  "in.let" { type patch; nFaces 1; startFace 0; }\n  1side { type wall; nFaces 1; startFace 1; }\n)\n';
   const patches = parseOpenFoamBoundary(text, []);
   assert.deepEqual(patches.map((p) => p.name), ["in.let", "1side"]);
 });
 
-test("roadmap item 13: applyOpenFoamPatches keeps each patch's extra statements in source.openfoam.patchDictionaries", () => {
+test("former roadmap item 13, delivered 2026-10-19: applyOpenFoamPatches keeps each patch's extra statements in source.openfoam.patchDictionaries", () => {
   const out = applyOpenFoamPatches(
     taggedModel([0, -1, -1, -1, -2, -2, -2]),
     [

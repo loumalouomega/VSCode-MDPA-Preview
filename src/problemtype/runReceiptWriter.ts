@@ -1,5 +1,5 @@
 /**
- * The shared writer for `.kkss-execution.json` (roadmap item 6 / item 19).
+ * The shared writer for `.kkss-execution.json` (former roadmap item 6, delivered 2026-10-19 / item 19).
  *
  * One receipt contract, two producers: the MCP server's queue-owned runs and
  * the extension's own isolated runs. This module is the ONLY writer — a second

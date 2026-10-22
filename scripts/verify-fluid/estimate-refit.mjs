@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Measures what the virtual wind tunnel really costs, against what its plan estimated
-// (roadmap item 21). The estimate in src/problemtype/windTunnel/estimate.ts was fitted on two
+// (former roadmap item 21, delivered 2026-10-20). The estimate in src/problemtype/windTunnel/estimate.ts was fitted on two
 // runs before the wall snap and the refinement regions existed, and its peak memory came from
 // ONE process. Each case here runs in a FRESH child process with the same worker runners the
 // extension host installs (MMG, the meshio++ oracles, meshio++ read and write), so the peak

@@ -1,5 +1,5 @@
 /**
- * Roadmap item 13 over MCP: `mesh_transform` without `outputPath` and
+ * former roadmap item 13, delivered 2026-10-19 over MCP: `mesh_transform` without `outputPath` and
  * `mesh_convert` onto the source are the in-place saves, they follow the same
  * ownership plan as the extension's Save, and every OTHER write into the case
  * a model came from is refused. Own file (own process): each case loads wasm.

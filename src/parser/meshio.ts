@@ -484,7 +484,7 @@ export interface MeshioModule {
   hasKahip(): boolean;
 
   /**
-   * Provenance (former roadmap item 6): with a scope open, a writer records the richer
+   * Provenance (former roadmap item 6, delivered 2026-10-01): with a scope open, a writer records the richer
    * header block (source, target, notes, timestamp) into the target format's
    * header slot — but only a format that HAS a slot. `readProvenance` says
    * whether one came out (`recognised`), which is the only way to know.
@@ -2172,7 +2172,7 @@ export async function writeMeshioBytes(
     exodusAttributes: fmt === "exodus",
     dim: fmt === "triangle" ? 2 : 3,
     // Zone files come from the parts: no per-block cell region (a block is
-    // not a zone) and face zones as side regions (roadmap item 13).
+    // not a zone) and face zones as side regions (former roadmap item 13, delivered 2026-10-19).
     openfoamZones: fmt === "openfoam",
   });
   const out = writeMeshToBytes(m, mesh, e, fmt, opts.stem, opts.provenance);

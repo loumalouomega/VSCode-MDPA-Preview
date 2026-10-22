@@ -42,7 +42,7 @@ export interface PreparationReport {
   run?: PreparationRun;
   /**
    * The CAD export this case's mesh came from, when a CAD-Preview handoff
-   * (`<mesh>.handoff.json`, roadmap item 6) sat beside the source mesh: the CAD
+   * (`<mesh>.handoff.json`, former roadmap item 6, delivered 2026-10-19) sat beside the source mesh: the CAD
    * document's name and content revision and the export's replay fingerprint,
    * so the chain CAD bytes → exported mesh → case mesh is recorded once, in the
    * portable identity-only form the rest of this report uses (no paths).

@@ -115,7 +115,7 @@ export interface MeshCapabilities {
   fidelity: MeshFidelityCapabilities;
   /**
    * What each WRITER did with the reference mesh when it was measured
-   * (former roadmap item 6): per category retained/transformed/omitted, or why the
+   * (former roadmap item 6, delivered 2026-10-01): per category retained/transformed/omitted, or why the
    * writer could not be measured. The same table the export report reads, so an
    * agent can ask before writing what a format will keep.
    */

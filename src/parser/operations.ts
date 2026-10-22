@@ -2866,7 +2866,7 @@ export function serializeOps(
   ops: OpRecord[],
   source: string,
   /**
-   * Optional header naming what wrote the recipe (former roadmap item 6). `parseOpsJson`
+   * Optional header naming what wrote the recipe (former roadmap item 6, delivered 2026-10-01). `parseOpsJson`
    * reads only `operations`, so an old reader ignores it and `RECIPE_VERSION`
    * stays 1. Machine-local solver status never belongs here.
    */

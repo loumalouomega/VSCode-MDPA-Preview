@@ -1,5 +1,5 @@
 /**
- * In-place save of a single-region OpenFOAM case (roadmap item 13).
+ * In-place save of an OpenFOAM case (former roadmap item 13, delivered 2026-10-19).
  *
  * An OpenFOAM case is a DIRECTORY, and the meshio++ writer only knows six
  * `constant/polyMesh` files plus a `0/<field>` per field. Everything else in
@@ -43,13 +43,14 @@
  * file yet is written new with `zeroGradient` patches, as an export does.
  *
  * Multi-region (`constant/<region>/polyMesh`) and decomposed (`processorN/`)
- * cases are saved in place for **geometry-only** edits: the merged model's
+ * cases are saved in place: a **geometry-only** edit maps the merged model's
  * node slice of each region (regions in sorted order, as the reader merges
- * them) or each processor's `pointProcAddressing` maps the model's
- * coordinates back onto the per-region / per-processor `points` files, and
- * every mapping is verified against the file before anything is written.
- * Topology edits and field edits for those shapes stay refused / untouched;
- * item 13 stays open for them.
+ * them) or each processor's `pointProcAddressing` back onto the per-region /
+ * per-processor `points` files, and every mapping is verified against the file
+ * before anything is written. A topology or field edit for those shapes is
+ * saved in place too, through a different plan — `planRegionTopology` (each
+ * changed region rewritten from its wrapper part) or `planDecomposedTopology`
+ * (re-partitioned natively).
  *
  * Node-only (it reads the case), but free of `vscode`, so the extension and
  * the MCP server share one rulebook and cannot disagree about a refusal.
@@ -124,7 +125,7 @@ const INDEX_KEYED_POLYMESH = new Set([
   "boundaryProcAddressing",
 ]);
 /**
- * Zone files the writer owns since the zone integration (roadmap item 13):
+ * Zone files the writer owns since the zone integration (former roadmap item 13, delivered 2026-10-19):
  * genuine zone parts round-trip through named regions, so a topology rewrite
  * replaces these files instead of being blocked by them. `sets/` and the
  * level/history files still have no writer home and keep blocking.
@@ -322,7 +323,7 @@ function layoutPoint(layout: PointsLayout, i: number): [number, number, number] 
  * or `planDecomposedTopology` (decomposed: re-partitioned natively).
  */
 /**
- * Field edits for a decomposed case in geometry mode (roadmap item 13): the
+ * Field edits for a decomposed case in geometry mode (former roadmap item 13, delivered 2026-10-19): the
  * model's Elemental values sliced per processor through the on-disk
  * cellProcAddressing, replacing internalField surgically like the other
  * shapes. The addressing must partition the reconstructed mesh — each global
@@ -523,7 +524,7 @@ async function planDistributedGeometry(opts: PlanOptions, caseDir: string, shape
   }
   if (regionShape) {
     // Field edits per region: surgical internalField replacement in the
-    // displayed time's region directories (roadmap item 13).
+    // displayed time's region directories (former roadmap item 13, delivered 2026-10-19).
     const regionFieldDiagnostics: MdpaDiagnostic[] = [];
     for (const region of shape.regions) {
       const sub = extractSubModelPart(opts.model, region);

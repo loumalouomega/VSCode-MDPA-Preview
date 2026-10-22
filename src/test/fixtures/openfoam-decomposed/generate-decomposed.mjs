@@ -123,8 +123,8 @@ for (const [proc, memfsDir] of [[0, "/p0/constant/polyMesh"], [1, "/p1/constant/
   }
 }
 
-// Zone files, written by hand like a real decomposePar leaves them (roadmap
-// item 13, increment E): one cell zone spanning both processors, the
+// Zone files, written by hand like a real decomposePar leaves them (former roadmap item 13, delivered
+// 2026-10-19 (increment E)): one cell zone spanning both processors, the
 // interface face as a face zone on both sides, and a point zone over the
 // shared interface points. Local numbering per processor.
 const zoneFile = (cls, obj, zoneType, labelKey, zones) =>

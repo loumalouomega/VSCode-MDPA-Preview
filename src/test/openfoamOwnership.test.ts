@@ -1,5 +1,5 @@
 /**
- * Roadmap item 13: in-place save of a single-region OpenFOAM case. Runs the real
+ * former roadmap item 13, delivered 2026-10-19: in-place save of a single-region OpenFOAM case. Runs the real
  * meshio++ reader/writer (no skip guard — a hard dependency) over a copy of
  * `fixtures/openfoam-inplace/case`: two hexahedra, a cyclic bottom/top pair, a
  * wall, time directories 0 / 0.5 / 1 with nonuniform fields, system/, constant/

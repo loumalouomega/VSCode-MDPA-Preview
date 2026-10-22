@@ -1,5 +1,5 @@
 /**
- * Rendering a run comparison as Markdown (roadmap item 6).
+ * Rendering a run comparison as Markdown (former roadmap item 6, delivered 2026-10-19).
  *
  * The Kratos Runs `kratos.runs.compare` command opens this report for two
  * runs the user picked; `runCompare.ts` stays the evidence-only core, so this

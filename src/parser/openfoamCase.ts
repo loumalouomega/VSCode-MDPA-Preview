@@ -184,7 +184,7 @@ export interface OpenFoamPatch {
    * `nFaces` and `startFace` removed — those three are re-derived at write
    * time. `undefined` when the entry has nothing else. This is what lets a
    * non-keyless patch type (`cyclic`, `processor`, …) survive a rewrite
-   * instead of being downgraded to `patch` (roadmap item 13).
+   * instead of being downgraded to `patch` (former roadmap item 13, delivered 2026-10-19).
    */
   dict?: string;
   /** The name was invented because the entry could not be read. */
@@ -626,7 +626,7 @@ export async function collectDecomposedOpenFoamCase(
     throw new Error(`Not a decomposed OpenFOAM case: no processorN/constant/polyMesh under ${caseDir}.`);
   }
   const REQUIRED = [...OPENFOAM_REQUIRED_FILES, "pointProcAddressing", "cellProcAddressing", "faceProcAddressing"];
-  // Zone files ride along when present (roadmap item 13, increment E); the
+  // Zone files ride along when present (former roadmap item 13, delivered 2026-10-19 (increment E)); the
   // kernel maps them through the addressing lists, like the serial reader.
   const OPTIONAL = ["neighbour", "boundary", "boundaryProcAddressing", ...OPENFOAM_ZONE_FILES];
   const files: MeshioInputFile[] = [];

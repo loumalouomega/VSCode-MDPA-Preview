@@ -1,5 +1,5 @@
 /**
- * Case preflight (roadmap item 6, first increment): everything worth telling
+ * Case preflight (former roadmap item 6, delivered 2026-10-19 (first increment)): everything worth telling
  * the user about a case BEFORE it is generated, as structured findings.
  *
  * Pure module: no vscode / DOM / fs imports, so the sidebar (through
@@ -81,7 +81,7 @@ export interface PreflightOptions {
   qualityMaxElements?: number;
   /**
    * The CAD handoff beside the source mesh, when the caller read one
-   * (`readHandoff` in `handoffFile.ts`, roadmap item 6). Passed in rather than
+   * (`readHandoff` in `handoffFile.ts`, former roadmap item 6, delivered 2026-10-19). Passed in rather than
    * read here, so this module stays fs-free; omitted for an in-memory model.
    */
   handoff?: HandoffRead;
@@ -415,7 +415,7 @@ export async function preflightCase(
     }
   }
 
-  // --- 8. The CAD export this mesh came from (roadmap item 6): a handoff
+  // --- 8. The CAD export this mesh came from (former roadmap item 6, delivered 2026-10-19): a handoff
   // receipt beside the mesh says which Parts became which groups, and whether
   // the mesh still is the export it describes. Reported here, at the case
   // level, because that is where the assignments it can invalidate live.

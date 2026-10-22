@@ -118,7 +118,7 @@ test("the cell estimate grows when the first height shrinks and stays finite and
   assert.ok(coarse.notes.length > 0);
 });
 
-test("a refinement region adds its own volume at its own size (roadmap item 21)", () => {
+test("a refinement region adds its own volume at its own size (former roadmap item 21, delivered 2026-10-20)", () => {
   const base = { volume: 274, surfaceArea: Math.PI, wall: { firstHeight: 0.01, growth: 1.2, tangentialSize: 0.05, hmax: 1.2, maxAspect: 20 } };
   const plain = estimateMesh(base);
   const regioned = estimateMesh({ ...base, regions: [{ volume: 13.52, size: 0.15 }] });
@@ -129,7 +129,7 @@ test("a refinement region adds its own volume at its own size (roadmap item 21)"
   assert.ok(estimateMesh({ ...base, regions: [{ volume: -1, size: 0.15 }] }).expectedTetrahedra === plain.expectedTetrahedra);
 });
 
-test("refinement region volumes are the box product, the ellipsoid and the frustum (roadmap item 21)", () => {
+test("refinement region volumes are the box product, the ellipsoid and the frustum (former roadmap item 21, delivered 2026-10-20)", () => {
   assert.equal(refinementRegionVolume({ shape: "box", min: [1.2, -0.8, -0.8], max: [3.2, 1.8, 1.8], size: 0.15 }), 2 * 2.6 * 2.6);
   const ball = refinementRegionVolume({ shape: "ellipsoid", center: [0, 0, 0], radii: [1, 2, 3], size: 0.1 });
   assert.ok(Math.abs(ball - (4 / 3) * Math.PI * 6) < 1e-9);
@@ -138,7 +138,7 @@ test("refinement region volumes are the box product, the ellipsoid and the frust
   assert.equal(refinementRegionVolume({ shape: "box", min: [0, 0, 0], max: [0, 0, 0], size: 0.1 }), 0);
 });
 
-test("the fitted estimate stays within a factor of two of the ten worker runs (roadmap item 21)", () => {
+test("the fitted estimate stays within a factor of two of the ten worker runs (former roadmap item 21, delivered 2026-10-20)", () => {
   const fixture = JSON.parse(fs.readFileSync(path.resolve(__dirname, "../../src/test/fixtures/windTunnel/estimate-refit-2026-10-20.json"), "utf8"));
   const measured = fixture.results.filter((r: { measured?: unknown }) => r.measured);
   assert.ok(measured.length >= 10);

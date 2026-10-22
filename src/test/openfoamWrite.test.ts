@@ -224,7 +224,7 @@ test("roadmap item 3: no recovered type info at all keeps the old, unqualified m
   assert.ok(diagnostics.some((d) => /patch types defaulted to "patch"/.test(d.message)));
 });
 
-test("roadmap item 13: a cyclic patch keeps its retained dictionary (neighbourPatch, transform, inGroups)", () => {
+test("former roadmap item 13, delivered 2026-10-19: a cyclic patch keeps its retained dictionary (neighbourPatch, transform, inGroups)", () => {
   const model = modelWith([part("left", [1, 3, 5]), part("right", [2, 4, 6])]);
   model.source = {
     format: "openfoam",
@@ -246,7 +246,7 @@ test("roadmap item 13: a cyclic patch keeps its retained dictionary (neighbourPa
   assert.ok(!diagnostics.some((d) => /downgraded/.test(d.message)), "nothing downgraded");
 });
 
-test("roadmap item 13: a cyclic patch whose partner is gone still downgrades, naming why", () => {
+test("former roadmap item 13, delivered 2026-10-19: a cyclic patch whose partner is gone still downgrades, naming why", () => {
   const model = modelWith([part("left", [1, 3, 5]), part("right", [2, 4, 6])]);
   model.source = {
     format: "openfoam",

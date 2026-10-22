@@ -445,7 +445,7 @@ export function registerAllTools(server: McpServer): void {
     runCancellable(meshCompare)
   );
 
-  // Shared by every tool that writes a mesh (former roadmap item 6): the reply carries
+  // Shared by every tool that writes a mesh (former roadmap item 6, delivered 2026-10-01): the reply carries
   // an export `report`, and these two arguments say what else to do about it.
   const provenanceArg = z
     .enum(["auto", "sidecar", "none"])

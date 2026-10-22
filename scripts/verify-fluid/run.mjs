@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Verification harness for roadmap item 20: one small case per fluid formulation
+// Verification harness for the fluid problemtypes (former roadmap item 20, delivered 2026-10-17): one small case per fluid formulation
 // family through the existing Run path (`caseRun`: generate + spawn + status),
 // reporting pass/fail/skip per family. Skips cleanly when the Kratos
 // installation lacks an application the family needs.
@@ -13,7 +13,7 @@
 // Exit codes: 0 = every family passed or skipped, 1 = a family failed,
 //   2 = environment error (no Kratos at all, bad flags).
 //
-// Roadmap item 21 adds, to the same harness: the three RANS models on the wizard's
+// The same harness also covers (former roadmap item 21, delivered 2026-10-20): the three RANS models on the wizard's
 // body-fitted sphere (first row in the logarithmic layer, y+ read back and compared
 // with the report's), periodic pairs for the core Fluid process and the exact nodal
 // RANS one (the pairing is checked on the result, not only accepted), and the stop
@@ -575,7 +575,7 @@ const FAMILIES = [
     state: null,
     check: checkTunnelWall,
   },
-  // Item 21: the three RANS models on the wizard's sphere. The first row targets y+ 50 (the logarithmic
+  // The three RANS models on the wizard's sphere (former roadmap item 21, delivered 2026-10-20). The first row targets y+ 50 (the logarithmic
   // layer), so the wall function sees the layer it assumes; the report's y+ is compared with the solver's.
   ...["k_epsilon", "k_omega", "k_omega_sst"].map((model) => ({
     id: `tunnel-sphere-rans-${model.replace(/_/g, "-")}`,
@@ -590,7 +590,7 @@ const FAMILIES = [
     state: null,
     check: checkTunnelWall,
   })),
-  // Item 21: periodic pairs. The mesh splits the side walls into the pair; the result is read back and
+  // Periodic pairs (former roadmap item 21, delivered 2026-10-20). The mesh splits the side walls into the pair; the result is read back and
   // every y = 0 node must equal its y = 1 partner.
   {
     id: "fluid-periodic",
@@ -612,7 +612,7 @@ const FAMILIES = [
     pairedVariables: ["VELOCITY", "PRESSURE", "TURBULENT_KINETIC_ENERGY"],
     check: checkPeriodic,
   })),
-  // Item 21 (upstream watch): monolithic BDF2 with a classic element segfaults stock Kratos 10.4.3 and 10.4.4 after the
+  // Upstream watch (former roadmap item 21, delivered 2026-10-20): monolithic BDF2 with a classic element segfaults stock Kratos 10.4.3 and 10.4.4 after the
   // first step starts. The generator keeps BDF2 as an option (it is what Kratos' own tests use) and defaults to Bossak;
   // this family says when Kratos fixes it. A crash is KNOWN; a completed run means the guard can be revisited.
   {
@@ -631,7 +631,7 @@ const FAMILIES = [
       matches: ({ log, message }) => /SIGSEGV|segmentation fault/i.test(`${message ?? ""} ${log}`) && !/Analysis -END-/.test(log),
     },
   },
-  // Item 21: stop behavior, through case_run and case_stop.
+  // Stop behavior (former roadmap item 21, delivered 2026-10-20), through case_run and case_stop.
   {
     id: "stop-fluid",
     apps: ["FluidDynamicsApplication"],

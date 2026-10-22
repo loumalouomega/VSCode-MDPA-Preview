@@ -598,7 +598,7 @@ export class PtController {
   }
 
   /**
-   * Plans and fills a per-run workspace (`kratos.run.isolate`, roadmap item 6):
+   * Plans and fills a per-run workspace (`kratos.run.isolate`, former roadmap item 6, delivered 2026-10-19):
    * the mesh and case state are COPIED into `<caseDir>/<runsFolder>/<stem>-<id>/`
    * so this run generates and solves in a directory of its own, and the case's
    * own folder is never written underneath a run in flight. The copy is what the

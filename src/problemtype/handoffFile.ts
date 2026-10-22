@@ -1,5 +1,5 @@
 /**
- * The fs half of the CAD handoff consumer (roadmap item 6): reads the manifest
+ * The fs half of the CAD handoff consumer (former roadmap item 6, delivered 2026-10-19): reads the manifest
  * beside a mesh and the mesh's own revision, and hands both to the pure
  * `handoffFindings`.
  *

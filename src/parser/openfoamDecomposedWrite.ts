@@ -1,5 +1,5 @@
 /**
- * Native decomposed OpenFOAM writer (roadmap item 13, increment D).
+ * Native decomposed OpenFOAM writer (former roadmap item 13, delivered 2026-10-19 (increment D)).
  *
  * The WASM binding exposes no decomposed write — upstream's
  * `foam_write_decomposed` is C++-core-only — so a topology edit on a

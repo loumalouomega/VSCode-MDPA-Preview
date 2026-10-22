@@ -69,4 +69,4 @@ The tree row reads, for example, *Convergence — step 12 · res 2.1e-6 · 4 cou
 
 ## Not provided
 
-CoSimIO and external (non-Kratos) solvers, MPI/Trilinos variants, the FSIApplication's IBQN and randomized-SVD accelerators, and embedded FSI are not offered. Per-solver output attribution in isolated run folders belongs to the run-workspace work (roadmap item 6).
+CoSimIO and external (non-Kratos) solvers, MPI/Trilinos variants, the FSIApplication's IBQN and randomized-SVD accelerators, and embedded FSI are not offered. Per-solver output attribution in isolated run folders belongs to the run-workspace work (former roadmap item 6, delivered 2026-10-19).

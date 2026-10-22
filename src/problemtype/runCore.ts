@@ -103,7 +103,7 @@ export interface RunRecord {
   caseDir: string;
   stem: string;
   /**
-   * The isolated run workspace this run executes in (roadmap item 6). Absent
+   * The isolated run workspace this run executes in (former roadmap item 6, delivered 2026-10-19). Absent
    * for an ordinary run in the case's own folder; when present, `caseDir` is
    * this directory, so results, logs and convergence resolve beside the
    * executed mesh while the case's own evidence stays where the user keeps it.

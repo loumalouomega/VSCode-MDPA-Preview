@@ -1130,7 +1130,7 @@ interface WriteInfo {
   /**
    * The write is an in-place save onto `sourceFile` (`mesh_transform` without
    * `outputPath`, `mesh_convert` onto its own input). Only then may an OpenFOAM
-   * case be rewritten, and only through the ownership plan (roadmap item 13).
+   * case be rewritten, and only through the ownership plan (former roadmap item 13, delivered 2026-10-19).
    */
   inPlace?: boolean;
   /** Numeric time directory index the model was read at (OpenFOAM in-place saves). */

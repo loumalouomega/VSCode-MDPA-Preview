@@ -226,7 +226,7 @@ export interface SourceMetadata {
    * `cyclic`'s `neighbourPatch`) is downgraded to `patch` with a warning,
    * since this extension has nowhere to keep the extra keys either.
    *
-   * `patchDictionaries` (roadmap item 13) is that missing home: the patch's
+   * `patchDictionaries` (former roadmap item 13, delivered 2026-10-19) is that missing home: the patch's
    * remaining statements (`neighbourPatch`, `transform`, `inGroups`, …) as
    * text, keyed identically. With it a non-keyless type is written back
    * whole; without it the downgrade above still applies.

@@ -1,5 +1,5 @@
 // Regenerates src/test/fixtures/openfoam-inplace/case — the fixture for roadmap
-// item 13 (in-place save). Run after `npm run compile && npm run build:tests`:
+// former roadmap item 13, delivered 2026-10-19 (in-place save). Run after `npm run compile && npm run build:tests`:
 //
 //   node src/test/fixtures/openfoam-inplace/generate-inplace.mjs
 //

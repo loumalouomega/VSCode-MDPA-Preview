@@ -1,5 +1,5 @@
 /**
- * The consuming half of CAD-Preview's simulation handoff (roadmap item 6,
+ * The consuming half of CAD-Preview's simulation handoff (former roadmap item 6, delivered 2026-10-19,
  * "CAD handoff consumption").
  *
  * CAD-Preview writes `<exported mesh>.handoff.json` beside the mesh it exported:

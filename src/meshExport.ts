@@ -591,7 +591,7 @@ export async function saveMesh(
 const OPENFOAM_INPLACE_WARNED_KEY = "openfoamInPlaceSaveWarned";
 
 /**
- * Save for an OpenFOAM case (roadmap item 13): plans the write against the case
+ * Save for an OpenFOAM case (former roadmap item 13, delivered 2026-10-19): plans the write against the case
  * on disk (`openfoamOwnership.ts`), refuses by file name when something would be
  * left inconsistent, otherwise writes only the planned files. FALSE means
  * nothing was written, so the dirty marker stays.

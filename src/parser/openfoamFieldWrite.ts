@@ -200,7 +200,7 @@ export function qualifyingVolumeFields(
  * the entry cannot be located safely (no `internalField`, an unterminated
  * list, a binary file, or a class that does not match `cls`) — the caller then
  * leaves the file alone and says so. The in-place save's answer to "an
- * existing field file is never overwritten wholesale" (roadmap item 13).
+ * existing field file is never overwritten wholesale" (former roadmap item 13, delivered 2026-10-19).
  */
 export function replaceInternalField(
   text: string,
