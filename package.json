@@ -979,6 +979,12 @@
           "minimum": 0,
           "markdownDescription": "%config.kratos.preview.summaryThresholdMb.markdownDescription%"
         },
+        "kratos.preview.frameCacheMb": {
+          "type": "number",
+          "default": 256,
+          "minimum": 0,
+          "markdownDescription": "%config.kratos.preview.frameCacheMb.markdownDescription%"
+        },
         "kratos.plots.persistentCache": {
           "type": "boolean",
           "default": false,
@@ -1283,6 +1289,7 @@
     "mcp": "node dist/mcpServer.js",
     "bench:heartbeat": "node scripts/bench/host-heartbeat.mjs",
     "bench:plot": "node scripts/bench/plot-budget.mjs",
+    "bench:large-mesh": "node scripts/bench/large-mesh.mjs",
     "install-ext": "bash install.sh",
     "reinstall": "bash scripts/reinstall-local.sh"
   },

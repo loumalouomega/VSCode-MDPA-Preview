@@ -13,7 +13,8 @@ import { saveScreenshot } from "./mediaExport";
 import { RecordingController } from "./recordingController";
 import * as path from "node:path";
 import * as fs from "node:fs";
-import { parseMeshFile, probeInFileSteps, readMeshTimeSteps } from "./parser/meshFileParser";
+import { parseMeshFile, probeInFileSteps, readMeshTimeSteps, statMeshSource } from "./parser/meshFileParser";
+import { FrameCache, frameKey } from "./parser/frameCache";
 import {
   contentWatchGlob,
   TIMELINE_EXTENSIONS,
@@ -423,6 +424,65 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
     let captureSourceChanged = false;
     const requestCurrent = (generation?: number): boolean => generation === undefined || generation === frameRequestGeneration;
 
+    // Parsed frames, bounded by `kratos.preview.frameCacheMb` (0 = off). Holds
+    // the RAW model as the file describes it; the edit history is replayed onto
+    // a hit exactly as onto a fresh parse. Cleared whenever the watcher fires.
+    const frameCache = new FrameCache(0);
+    const refreshFrameCacheBudget = (): void => {
+      const mb = vscode.workspace.getConfiguration("kratos").get<number>("preview.frameCacheMb", 256);
+      frameCache.setBudget(Number.isFinite(mb) ? mb * 1024 * 1024 : 0);
+    };
+    refreshFrameCacheBudget();
+    const frameCacheConfig = vscode.workspace.onDidChangeConfiguration((e) => {
+      if (e.affectsConfiguration("kratos.preview.frameCacheMb")) refreshFrameCacheBudget();
+    });
+    webviewPanel.onDidDispose(() => { frameCacheConfig.dispose(); frameCache.clear(); });
+
+    /** One filename-series frame as parsed from disk (subparts merged), through the cache. */
+    const loadGroupFrame = async (
+      group: VtkFileGroup, rootPath: string, rank: number, step: string,
+      onProgress?: (phase: string, bytesRead: number, totalBytes: number) => void
+    ): Promise<MdpaModel | undefined> => {
+      const key = frameKey(rootPath, `${group.rootPrefix}:${rank}:${step}`);
+      let stamp: string | undefined;
+      if (frameCache.enabled) {
+        try { stamp = (await statMeshSource(rootPath)).stamp; } catch { stamp = undefined; }
+        const hit = stamp !== undefined ? frameCache.get(key, stamp) : undefined;
+        if (hit) return hit;
+      }
+      const rootModel = await frameReads.run((signal) => parseMeshFile(rootPath, onProgress, { signal }));
+      if (rootModel === undefined) return undefined;
+      rootModel.subModelParts = await mergeSubparts(rootModel, group, dir, rank, step, group.rootPrefix);
+      if (stamp !== undefined) frameCache.set(key, stamp, rootModel);
+      return rootModel;
+    };
+
+    /** One step of an in-file series as parsed from disk, through the cache. */
+    const loadInFileFrame = async (
+      timeStep: number,
+      onProgress?: (phase: string, bytesRead: number, totalBytes: number) => void
+    ): Promise<MdpaModel | undefined> => {
+      const key = frameKey(fsPath, `t${timeStep}`);
+      let stamp: string | undefined;
+      if (frameCache.enabled) {
+        try { stamp = (await statMeshSource(fsPath)).stamp; } catch { stamp = undefined; }
+        const hit = stamp !== undefined ? frameCache.get(key, stamp) : undefined;
+        if (hit) return hit;
+      }
+      const model = await frameReads.run((signal) => parseMeshFile(fsPath, onProgress, { timeStep, signal }));
+      if (model !== undefined && stamp !== undefined) frameCache.set(key, stamp, model);
+      return model;
+    };
+
+    /** Reads the next step into the cache while the user looks at this one; any newer request cancels it. */
+    const prefetchGroupFrame = (group: VtkFileGroup, frameIndex: number, rank: number, generation?: number): void => {
+      if (!frameCache.enabled || session.disposed || !requestCurrent(generation)) return;
+      const step = group.steps[frameIndex + 1];
+      const file = step === undefined ? undefined : fileFor(group, group.rootPrefix, rank, step);
+      if (step === undefined || !file) return;
+      void loadGroupFrame(group, path.join(dir, file), rank, step).catch(() => undefined);
+    };
+
     const postFrame = async (
       group: VtkFileGroup,
       frameIndex: number,
@@ -441,28 +501,12 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
 
       try {
         const rootPath = path.join(dir, rootFile);
-        const rootModel = await frameReads.run((signal) =>
-          parseMeshFile(
-            rootPath,
-            (phase, bytesRead, totalBytes) => {
-              if (!session.disposed) {
-                webviewPanel.webview.postMessage({ type: "progress", phase, bytesRead, totalBytes });
-              }
-            },
-            { signal }
-          )
-        );
+        const rootModel = await loadGroupFrame(group, rootPath, rank, step, (phase, bytesRead, totalBytes) => {
+          if (!session.disposed) {
+            webviewPanel.webview.postMessage({ type: "progress", phase, bytesRead, totalBytes });
+          }
+        });
         if (rootModel === undefined) return;
-
-        // Merge subpart files into rootModel.subModelParts
-        rootModel.subModelParts = await mergeSubparts(
-          rootModel,
-          group,
-          dir,
-          rank,
-          step,
-          group.rootPrefix
-        );
 
         if (!requestCurrent(generation)) return;
         if (captureLocked && captureSourceChanged && !restoring) throw new Error("Source changed during capture.");
@@ -482,6 +526,7 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
           webviewPanel.webview.postMessage({ type: "opState", ...session.history.state() });
           maybeInitPt();
           if (requestId === undefined) await applyPendingOps();
+          else prefetchGroupFrame(group, frameIndex, rank, generation);
         }
       } catch (err) {
         if (!session.disposed) {
@@ -521,17 +566,11 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
       if (!timeValues) { webviewPanel.webview.postMessage({ type: "vtkFrameError", requestId, message: "Timeline is unavailable." }); return; }
       const clamped = Math.min(Math.max(frameIndex, 0), timeValues.length - 1);
       try {
-        const model = await frameReads.run((signal) =>
-          parseMeshFile(
-            fsPath,
-            (phase, bytesRead, totalBytes) => {
-              if (!session.disposed) {
-                webviewPanel.webview.postMessage({ type: "progress", phase, bytesRead, totalBytes });
-              }
-            },
-            { timeStep: clamped, signal }
-          )
-        );
+        const model = await loadInFileFrame(clamped, (phase, bytesRead, totalBytes) => {
+          if (!session.disposed) {
+            webviewPanel.webview.postMessage({ type: "progress", phase, bytesRead, totalBytes });
+          }
+        });
         if (model === undefined || !requestCurrent(generation)) return;
         if (captureLocked && captureSourceChanged && !restoring) throw new Error("Source changed during capture.");
         const adopted = await adoptFrame(model, skipAsyncOps);
@@ -556,6 +595,7 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
           webviewPanel.webview.postMessage({ type: "opState", ...session.history.state() });
           maybeInitPt();
           if (requestId === undefined) await applyPendingOps();
+          else if (frameCache.enabled && clamped + 1 < timeValues.length && requestCurrent(generation)) void loadInFileFrame(clamped + 1).catch(() => undefined);
         }
       } catch (err) {
         if (!session.disposed) {
@@ -578,6 +618,7 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
      */
     let rediscoverDebounce: ReturnType<typeof setTimeout> | undefined;
     const scheduleRediscover = (): void => {
+      frameCache.clear(); // the directory changed: no cached frame is trusted
       if (captureLocked) {
         captureSourceChanged = true;
         webviewPanel.webview.postMessage({ type: "recordingSourceChanged" });

@@ -4,6 +4,12 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- `kratos.preview.frameCacheMb` (default 256, `0` = off): a bounded cache of parsed timeline frames, with read-ahead of the next step, so stepping through a series no longer re-reads every file.
+- `npm run bench:large-mesh`: a Node-level benchmark of parse, wire conversion, payload size, level-of-detail and memory on a synthetic million-cell block.
+
 ## [5.18.0] - 2026-10-22
 
 ### Added
