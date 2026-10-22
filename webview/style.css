@@ -3120,6 +3120,14 @@ input.outline-label-input {
   min-width: 0;
 }
 
+.colormap-picker {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--ui-s-1);
+  min-width: 0;
+}
+
 /* Five independent mode toggles in a 3-column track: the shared segmented recipe
    (above) with a grid layout. Several can be on at once, so `.active` is the
    accent fill rather than the quiet lift. */

@@ -6,18 +6,19 @@
 // log/banded transforms and range math stay Node-testable.
 
 import { ColorStop, interpolateStops } from "../src/parser/fieldScalars";
+import { COLORMAP_PRESETS } from "../src/parser/colormapPresets";
+import type { ColormapCategoryName, ColormapInfo } from "../src/parser/colormapSearch";
 
 export type { ColorStop };
 
-export interface Colormap {
-  name: string;
+export interface Colormap extends ColormapInfo {
   stops: ColorStop[];
 }
 
 // Rainbow / jet is the default (first entry). The matplotlib-family maps
 // (Viridis, Plasma, Inferno, Magma, Cividis, Turbo) are coarse resamplings of
 // the published tables — close enough visually at gradient resolution.
-export const COLORMAPS: Colormap[] = [
+const BASE_COLORMAPS: Omit<Colormap, "category" | "colorblindSafe">[] = [
   {
     name: "Rainbow",
     stops: [
@@ -137,6 +138,32 @@ export const COLORMAPS: Colormap[] = [
       [1.0, 1.0, 1.0, 1.0],
     ],
   },
+];
+
+// The original twelve keep their order (Rainbow first, the default). Category
+// and colour-blind safety are stated per map; only the matplotlib family minus
+// Turbo, Cividis (designed for it) and Grayscale are marked safe.
+const BASE_META: Record<string, [ColormapCategoryName, boolean]> = {
+  Rainbow: ["rainbow", false],
+  Viridis: ["sequential", true],
+  Plasma: ["sequential", true],
+  Inferno: ["sequential", true],
+  Magma: ["sequential", true],
+  Cividis: ["sequential", true],
+  Turbo: ["rainbow", false],
+  "Cool-warm": ["diverging", true],
+  "Blue-Orange": ["diverging", true],
+  Spectral: ["diverging", false],
+  HSV: ["rainbow", false],
+  Grayscale: ["sequential", true],
+};
+
+export const COLORMAPS: Colormap[] = [
+  ...BASE_COLORMAPS.map((c): Colormap => {
+    const [category, colorblindSafe] = BASE_META[c.name] ?? ["other", false];
+    return { ...c, category, colorblindSafe };
+  }),
+  ...COLORMAP_PRESETS.map((p): Colormap => ({ name: p.name, category: p.category, colorblindSafe: p.colorblindSafe, stops: p.stops })),
 ];
 
 export const DEFAULT_COLORMAP = COLORMAPS[0].name;

@@ -10,7 +10,7 @@
 import { displayAlternatives, displayScaleFor, labelWithUnit } from "../src/parser/fieldDimensions";
 import { FieldInfo, isDeformable, rangeForComponent } from "./fieldData";
 import { COLORMAPS, getColormap } from "./colormaps";
-import { legendFromStops } from "./panelWidgets";
+import { colormapSelectControl, legendFromStops } from "./panelWidgets";
 import { TOOLBAR_ICONS } from "../src/toolbarIcons";
 import { glyph } from "../src/uiGlyphs";
 import {
@@ -409,17 +409,7 @@ function buildUnitSelect(state: FieldPanelState, info: FieldInfo, handlers: Fiel
 }
 
 function buildColormapSelect(state: FieldPanelState, handlers: FieldPanelHandlers): HTMLElement {
-  const sel = document.createElement("select");
-  sel.className = "field-select";
-  for (const cm of COLORMAPS) {
-    const opt = document.createElement("option");
-    opt.value = cm.name;
-    opt.textContent = cm.name;
-    if (cm.name === state.colormap) opt.selected = true;
-    sel.appendChild(opt);
-  }
-  sel.addEventListener("change", () => handlers.onSelectColormap(sel.value));
-  return sel;
+  return colormapSelectControl(state.colormap, (name) => handlers.onSelectColormap(name));
 }
 
 // Editable min/max range (with a lock/reset toggle), log-scale checkbox
