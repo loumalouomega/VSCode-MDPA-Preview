@@ -17,6 +17,11 @@ import "@kitware/vtk.js/Rendering/OpenGL/SphereMapper";
 import "@kitware/vtk.js/Rendering/OpenGL/StickMapper";
 import vtkGenericRenderWindow from "@kitware/vtk.js/Rendering/Misc/GenericRenderWindow";
 import vtkActor from "@kitware/vtk.js/Rendering/Core/Actor";
+import type { TileRect } from "../../../src/parser/render/labelLayout";
+import type { LightPlacement } from "../../../src/parser/render/lightMode";
+import vtkPixelSpaceCallbackMapper from "@kitware/vtk.js/Rendering/Core/PixelSpaceCallbackMapper";
+import "@kitware/vtk.js/Rendering/OpenGL/PixelSpaceCallbackMapper";
+import vtkLight from "@kitware/vtk.js/Rendering/Core/Light";
 import vtkRenderer from "@kitware/vtk.js/Rendering/Core/Renderer";
 import vtkMapper from "@kitware/vtk.js/Rendering/Core/Mapper";
 import vtkGlyph3DMapper from "@kitware/vtk.js/Rendering/Core/Glyph3DMapper";
@@ -47,6 +52,7 @@ import type {
   GlyphSet,
   GridAxes,
   OrientationMarker,
+  DepthSnapshot,
   PickHit,
   PropStyle,
   RegionPick,
@@ -358,6 +364,10 @@ class VtkJsPlane implements RPlane {
 
 class VtkJsView implements RView {
   private cam: VtkJsCamera | undefined;
+  /** Normalised viewport, y from the BOTTOM (as vtk.js stores it). */
+  viewport: [number, number, number, number] = [0, 0, 1, 1];
+  canvas: HTMLCanvasElement | undefined;
+  private depthProbe: { actor: any; texels?: Uint8Array; snapshot?: DepthSnapshot } | undefined;
   constructor(
     readonly renderer: any,
     private readonly renderWindow: any,
@@ -369,13 +379,95 @@ class VtkJsView implements RView {
     return this.cam;
   }
   setViewport(x0: number, y0: number, x1: number, y1: number): void {
+    this.viewport = [x0, y0, x1, y1];
     this.renderer.setViewport(x0, y0, x1, y1);
+  }
+  compositeMatrix(): number[] {
+    const c = this.canvas;
+    const [x0, y0, x1, y1] = this.viewport;
+    const w = (c?.width ?? 1) * (x1 - x0);
+    const h = (c?.height ?? 1) * (y1 - y0);
+    const m = this.renderer.getActiveCamera().getCompositeProjectionMatrix(h > 0 ? w / h : 1, -1, 1);
+    return Array.from(m as ArrayLike<number>);
+  }
+  depthSnapshot(on: boolean): DepthSnapshot | undefined {
+    if (!on) {
+      if (this.depthProbe) {
+        this.renderer.removeActor(this.depthProbe.actor);
+        this.depthProbe = undefined;
+      }
+      return undefined;
+    }
+    if (!this.depthProbe) {
+      // A one-point prop whose only job is to have vtk.js hand us the depth
+      // texels after its opaque pass; the per-point callback is not used.
+      const probe: { actor: any; texels?: Uint8Array; snapshot?: DepthSnapshot } = { actor: undefined };
+      const poly = vtkPolyData.newInstance();
+      poly.getPoints().setData(new Float32Array(3), 3);
+      const mapper = vtkPixelSpaceCallbackMapper.newInstance({
+        useZValues: true,
+        callback: (_coords: unknown, _cam: unknown, _aspect: unknown, depth: Uint8Array | null) => {
+          if (depth) {
+            probe.texels = depth;
+            probe.snapshot = undefined;
+          }
+        },
+      });
+      mapper.setInputData(poly);
+      probe.actor = vtkActor.newInstance();
+      probe.actor.setMapper(mapper);
+      probe.actor.getProperty().setOpacity(1);
+      probe.actor.setPickable(false);
+      this.renderer.addActor(probe.actor);
+      this.depthProbe = probe;
+      return undefined;
+    }
+    const probe = this.depthProbe;
+    if (!probe.texels) return undefined;
+    if (!probe.snapshot) {
+      const c = this.canvas;
+      const width = c?.width ?? 0;
+      const height = c?.height ?? 0;
+      if (probe.texels.length !== width * height * 4) return undefined;
+      const depth = new Float32Array(width * height);
+      const t = probe.texels;
+      for (let i = 0; i < depth.length; i++) {
+        // The same RG decode vtk.js applies in PixelSpaceCallbackMapper.
+        depth[i] = ((t[i * 4] / 255) * 256 + t[i * 4 + 1] / 255) / 257 * 2 - 1;
+      }
+      probe.snapshot = { depth, width, height };
+    }
+    return probe.snapshot;
   }
   setBackground(r: number, g: number, b: number): void {
     this.renderer.setBackground(r, g, b);
   }
   getBackground(): RGB {
     return this.renderer.getBackground();
+  }
+  private fixedLight: any;
+  setLight(placement: LightPlacement | null): void {
+    const r = this.renderer;
+    if (this.fixedLight) {
+      r.removeLight(this.fixedLight);
+      this.fixedLight.delete?.();
+      this.fixedLight = undefined;
+    }
+    if (!placement) {
+      // Back to the renderer's own camera-following headlight.
+      r.setAutomaticLightCreation(true);
+      r.removeAllLights();
+      r.createLight();
+      return;
+    }
+    r.setAutomaticLightCreation(false);
+    r.removeAllLights();
+    const l = vtkLight.newInstance({ positional: placement.positional });
+    l.setLightTypeToSceneLight();
+    l.setPosition(...placement.position);
+    l.setFocalPoint(...placement.focalPoint);
+    r.addLight(l);
+    this.fixedLight = l;
   }
   addProp(prop: RProp): void {
     this.renderer.addActor((prop as VtkJsProp).actor);
@@ -426,6 +518,7 @@ export function createVtkJsBackend(opts: VtkJsBackendOptions): RenderBackend {
   };
   const wrap = (r: any): VtkJsView => {
     const v = new VtkJsView(r, renderWindow, forget);
+    v.canvas = canvas;
     views.set(r, v);
     return v;
   };
@@ -453,7 +546,7 @@ export function createVtkJsBackend(opts: VtkJsBackendOptions): RenderBackend {
 
   const cellPicker = vtkCellPicker.newInstance();
   let hardwareSelector: any;
-  const caps: BackendCaps = { syncRender: true, impostors: true, hardwareSelection: true, displayFilters: true };
+  const caps: BackendCaps = { syncRender: true, impostors: true, hardwareSelection: true, displayFilters: true, lightModes: true, gpuLabels: true };
 
   return {
     kind: "vtkjs",
@@ -559,6 +652,11 @@ export function createVtkJsBackend(opts: VtkJsBackendOptions): RenderBackend {
         if (prop) out.push({ prop, cellIds: [...ids] });
       }
       return out;
+    },
+    viewTile(view: RView): TileRect {
+      const [x0, y0, x1, y1] = (view as VtkJsView).viewport;
+      const r = canvas.getBoundingClientRect();
+      return { left: x0 * r.width, top: (1 - y1) * r.height, width: (x1 - x0) * r.width, height: (y1 - y0) * r.height };
     },
     worldToDisplay(view: RView, x: number, y: number, z: number): [number, number] {
       const size = apiRW.getSize();

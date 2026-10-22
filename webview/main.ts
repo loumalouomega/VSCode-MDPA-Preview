@@ -21,6 +21,8 @@ import {
   stickImpostorSet,
 } from "../src/parser/render/glyphSets";
 import { ctfPointsFromStops, fieldColoring } from "../src/parser/render/scalarColoring";
+import { lightPlacement } from "../src/parser/render/lightMode";
+import { layoutLabels, occludedPoints, projectPoints } from "../src/parser/render/labelLayout";
 import type { ScalarColoring } from "../src/parser/render/types";
 import { renderStreamlinePanel, StreamlinePanelState } from "./streamlinePanel";
 import {
@@ -989,6 +991,7 @@ function setPaneLayout(next: PaneLayoutId): void {
     clearCompare();
     toast(`Compare with ${name} closed by the layout change — reopen it in the new layout.`);
   }
+  applyLightPlacement();
   render();
 }
 
@@ -2373,6 +2376,7 @@ function buildScene(resetCam = true): void {
   // merely re-created layers does not read as a user change worth saving.
   applyPendingView();
   rebaselineView();
+  if (lightingState.light.mode !== "headlight") applyLightPlacement();
 }
 
 function allIn(nodeIds: ArrayLike<number>, set: Set<number>): boolean {
@@ -2718,7 +2722,18 @@ function lightingStyle(): PropStyle {
   };
 }
 
+// The light is per renderer, not per prop, so it is placed against the visible
+// bounds of the focused pane and re-placed after a model change.
+function applyLightPlacement(): void {
+  if (!backend.caps.lightModes) return;
+  for (const pane of panes) {
+    const b = pane.view.computeVisiblePropBounds();
+    pane.view.setLight(lightPlacement(lightingState.light, b));
+  }
+}
+
 function applyLightingToAllLayers(): void {
+  applyLightPlacement();
   for (const layer of layers.values()) {
     styleLayer(layer, lightingStyle());
   }
@@ -2757,12 +2772,17 @@ function renderLightingUI(): void {
       applyLightingToAllLayers();
       renderLightingUI();
     },
+    onLightAngle: (light) => {
+      lightingState = { ...lightingState, light };
+      applyLightPlacement();
+      render();
+    },
     onReset: () => {
-      lightingState = { ...DEFAULT_LIGHTING_STATE };
+      lightingState = { ...DEFAULT_LIGHTING_STATE, light: { ...DEFAULT_LIGHTING_STATE.light } };
       applyLightingToAllLayers();
       renderLightingUI();
     },
-  }, { displayFilters: backend.caps.displayFilters });
+  }, { displayFilters: backend.caps.displayFilters, lightModes: backend.caps.lightModes });
 }
 
 // --- Camera bookmarks --------------------------------------------------------
@@ -3333,6 +3353,20 @@ function setNodeIds(on: boolean): void {
   const btn = document.querySelector('[data-action="nodeIds"]');
   btn?.classList.toggle("active", on);
   labelsEl.textContent = "";
+  labelPool.length = 0;
+  gpuLabelKey = "";
+  gpuProbeRequested = false;
+  if (!on) eachPane((p) => p.view.depthSnapshot?.(false));
+  if (on && backend.caps.gpuLabels) {
+    // Projection, declutter and (1x1 and split alike) occlusion culling run on
+    // typed arrays against each pane's own matrix, so neither the node-count
+    // cap nor the single-pane restriction applies.
+    messageEl.textContent = "";
+    if (!model) return;
+    stopLabelLoop();
+    startLabelLoop();
+    return;
+  }
   if (on && paneLayout !== "1x1") {
     // Labels are projected through ONE camera into one overlay div, so in a
     // split they would land over the wrong panes. Refuse and say so, the way
@@ -3378,8 +3412,77 @@ function stopLabelLoop(): void {
   }
 }
 
+// --- GPU-assisted node labels (roadmap item 22 F) ---------------------------
+// Every node is projected per pane in typed arrays, hidden ones are culled
+// against the depth buffer, a grid declutters what is left and a pooled set of
+// DOM labels is positioned. The work is redone only when a camera, a pane
+// rectangle or the rendered frame changed.
+const GPU_LABEL_MAX = 3000;
+const GPU_LABEL_CELL = 38;
+let gpuLabelKey = "";
+let gpuProbeRequested = false;
+const labelPool: HTMLElement[] = [];
+
+function updateGpuNodeLabels(): void {
+  if (!model) return;
+  const canvasRect = renderRoot.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  const keyParts: string[] = [String(captureSceneRevision), String(canvasRect.width), String(canvasRect.height)];
+  const frames = panes.map((pane) => {
+    const matrix = pane.view.compositeMatrix();
+    keyParts.push(matrix.join(","));
+    return { pane, matrix, tile: backend.viewTile(pane.view) };
+  });
+  const key = keyParts.join("|");
+  if (key === gpuLabelKey) return;
+  gpuLabelKey = key;
+  const pts = model.coords as Float32Array;
+  const kept: { x: number; y: number; id: number }[] = [];
+  let occludedCount = 0;
+  for (const f of frames) {
+    const proj = projectPoints(f.matrix, pts, f.tile);
+    let hidden: Uint8Array | undefined;
+    // Occlusion needs the pane's own depth texels; ask every pane so the probe
+    // is in place for the next frame, and use the snapshot once it exists.
+    const snap = f.pane.view.depthSnapshot(true);
+    if (!snap && !gpuProbeRequested) {
+      // The probe only receives depth during a render, so draw once; the
+      // rendered-frame counter then changes the key and the next tick lays out.
+      gpuProbeRequested = true;
+      requestAnimationFrame(() => render());
+    }
+    if (snap) {
+      hidden = occludedPoints(proj, snap.depth, snap.width, snap.height, dpr, canvasRect.height, 2e-3);
+    }
+    const picked = layoutLabels(proj, f.tile, { maxLabels: GPU_LABEL_MAX, cell: GPU_LABEL_CELL, hidden });
+    if (hidden) for (let i = 0; i < hidden.length; i++) occludedCount += hidden[i];
+    for (const i of picked) kept.push({ x: proj.x[i], y: proj.y[i], id: model.nodeIds[i] });
+  }
+  for (let i = 0; i < kept.length; i++) {
+    let el = labelPool[i];
+    if (!el) {
+      el = document.createElement("div");
+      el.className = "node-label";
+      labelPool[i] = el;
+      labelsEl.appendChild(el);
+    }
+    el.textContent = String(kept[i].id);
+    el.style.left = `${kept[i].x}px`;
+    el.style.top = `${kept[i].y}px`;
+    el.style.display = "";
+  }
+  for (let i = kept.length; i < labelPool.length; i++) labelPool[i].style.display = "none";
+  // Read by the Chromium check; also handy when a label looks wrong.
+  labelsEl.dataset.shown = String(kept.length);
+  labelsEl.dataset.occluded = String(occludedCount);
+}
+
 function updateNodeLabels(): void {
   if (!showNodeIds) return;
+  if (backend.caps.gpuLabels) {
+    updateGpuNodeLabels();
+    return;
+  }
   const view = focusedView();
   const children = labelsEl.children;
   for (let i = 0; i < children.length; i++) {

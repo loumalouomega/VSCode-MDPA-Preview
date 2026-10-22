@@ -681,6 +681,15 @@ class WasmView implements RView {
   getBackground(): RGB {
     return [...this.background] as RGB;
   }
+  compositeMatrix(): number[] {
+    throw new Error("compositeMatrix needs caps.gpuLabels");
+  }
+  depthSnapshot(): undefined {
+    return undefined;
+  }
+  setLight(): void {
+    // caps.lightModes is false: the wasm session keeps its default headlight.
+  }
   addProp(prop: RProp): void {
     const p = prop as WasmProp;
     this.props.add(p);
@@ -857,6 +866,8 @@ export async function createVtkWasmBackend(opts: VtkWasmBackendOptions): Promise
     impostorsReason: "VTK-wasm has no ray-cast sphere or stick mapper; it draws tessellated glyphs.",
     hardwareSelection: false,
     displayFilters: false,
+    lightModes: false,
+    gpuLabels: false,
   };
   let disposed = false;
 
@@ -1206,6 +1217,9 @@ export async function createVtkWasmBackend(opts: VtkWasmBackendOptions): Promise
       const sx = r.width > 0 ? canvas.width / r.width : dpr();
       const sy = r.height > 0 ? canvas.height / r.height : dpr();
       return [(d[0] ?? 0) / sx, (canvas.height - (d[1] ?? 0)) / sy];
+    },
+    viewTile(): never {
+      throw new Error("viewTile needs caps.gpuLabels");
     },
     pokedView(): RView | undefined {
       return poked;

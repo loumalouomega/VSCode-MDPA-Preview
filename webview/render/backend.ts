@@ -36,6 +36,8 @@ import type {
   ScalarColoring,
   Vec3,
 } from "../../src/parser/render/types";
+import type { TileRect } from "../../src/parser/render/labelLayout";
+import type { LightPlacement } from "../../src/parser/render/lightMode";
 
 export type { Bounds6, DisplayGeometry, GlyphSet, PickHit, PropStyle, RGB, RendererKind, ScalarColoring, Vec3 };
 
@@ -56,6 +58,20 @@ export interface BackendCaps {
   hardwareSelection: boolean;
   /** `PropStyle.smoothShading` (and the other display-only filters) are honoured. */
   displayFilters: boolean;
+  /** `RView.setLight` is honoured (scene and positional lights). */
+  lightModes: boolean;
+  /**
+   * `RView.compositeMatrix`, `RenderBackend.viewTile` and `RView.depthSnapshot`
+   * are implemented, so a label pass can project every node in typed arrays and
+   * cull the hidden ones. When false the caller keeps the capped per-point path.
+   */
+  gpuLabels: boolean;
+}
+
+export interface DepthSnapshot {
+  depth: Float32Array;
+  width: number;
+  height: number;
 }
 
 /** The cells of one prop that are visible inside a selected region. */
@@ -146,6 +162,16 @@ export interface RView {
   setViewport(x0: number, y0: number, x1: number, y1: number): void;
   setBackground(r: number, g: number, b: number): void;
   getBackground(): RGB;
+  /** A fixed world-space light, or null for the camera-following headlight. Only when `caps.lightModes`. */
+  setLight(placement: LightPlacement | null): void;
+  /** Row-major 4x4 view x projection for this view's tile (`caps.gpuLabels`). */
+  compositeMatrix(): number[];
+  /**
+   * The depth buffer as of the last render, NDC depth per DEVICE pixel with row
+   * 0 at the bottom, or undefined until one has been rendered after `on` was
+   * first set. `on = false` stops the (readback-per-render) probe. `caps.gpuLabels`.
+   */
+  depthSnapshot(on: boolean): DepthSnapshot | undefined;
   addProp(prop: RProp): void;
   removeProp(prop: RProp): void;
   resetCamera(bounds?: Bounds6): void;
@@ -188,6 +214,8 @@ export interface RenderBackend {
     inside?: (cssX: number, cssYFromBottom: number) => boolean
   ): RegionPick<RProp>[];
   /** World point -> CSS pixels relative to the canvas, top-left origin. */
+  /** This view's rectangle in CSS pixels, y from the canvas top (`caps.gpuLabels`). */
+  viewTile(view: RView): TileRect;
   worldToDisplay(view: RView, x: number, y: number, z: number): [number, number];
   /** The view under the pointer during the current/last pointer event, if any. */
   pokedView(): RView | undefined;
