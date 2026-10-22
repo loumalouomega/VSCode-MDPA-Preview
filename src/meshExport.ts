@@ -715,7 +715,8 @@ export async function pickStepFit(): Promise<FitCadOptions | false | undefined> 
         fit: {} as FitCadOptions,
         detail:
           "Analytic faces where a primitive fits (plane/sphere/cylinder/cone/torus, fillets, threads); " +
-          "freeform patches or facets where none does. Needs a closed, consistently wound triangle skin.",
+          "freeform patches or facets where none does. Needs a closed, consistently wound triangle skin. " +
+          "The fit measures the solid against that skin and reports the deviation and whether it is closed.",
       },
       {
         label: "Fit — analytic primitives only",

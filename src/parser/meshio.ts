@@ -199,6 +199,13 @@ export interface MeshioModule {
    * in `CadJsonInfo` shape, which `writeMesh(..., "cad_json", {info})` writes
    * back out. Used by the `.step` export's auto-fit (writeStepModel).
    *
+   * meshio++ 17.11.0 adds to the report: `closed` (whether every edge of a
+   * shell borders two faces), and — with the `faceDeviation` option — the
+   * measured two-sided distance between each face and the skin
+   * (`hausdorffMax`/`hausdorffRms`; NaN when it was not measured). It also
+   * adds `refinePatches` (a standalone operation, unrouted here) and six
+   * planar-domain generators; see meshCapabilities' operations.unavailable.
+   *
    * @throws {Error} on a mesh that is not a closed, consistently wound
    *   triangle surface, or an unknown options key.
    */
@@ -1905,7 +1912,9 @@ function writeMeshToBytes(
  *    patches where they do not. The AP214 STEP comes back from `stepPath`,
  *    and the solid's B-rep also rides beside it as a `<stem>.cad.json`
  *    companion (via `writeMesh(..., "cad_json", {info})`). The diagnostic
- *    names the fitted face types so the report says WHICH export ran.
+ *    names the fitted face types so the report says WHICH export ran, whether
+ *    the solid came out closed, and how far it lies from the skin it was
+ *    fitted from (`faceDeviation`, meshio++ 17.11.0).
  *  - Anything else — quad skins, open surfaces, `fitCad: false`, a fit that
  *    failed or a full artifact that would not load — falls through to the
  *    faceted `step` writer, WITHOUT `info` (the writer refuses it: "STEP
@@ -1957,7 +1966,17 @@ async function writeStepModel(
       // convention writeMeshToBytes uses.
       const root = "/mio_out";
       m.FS.mkdir(root);
-      const fit = m.fitCad(mesh, { ...(opts.fitCad ?? {}), stepPath: `${root}/${name}` });
+      // `faceDeviation` (meshio++ 17.11.0) measures the fitted solid against
+      // the skin it was fitted FROM: the two-sided distance between each face
+      // and the mesh the user exported. Forced ON, so the export can state how
+      // far the B-rep lies from the geometry — a caller may still switch it
+      // off with `fitCad: {faceDeviation: false}`. `stepPath` stays forced
+      // last, so a caller-supplied object can never move the write.
+      const fit = m.fitCad(mesh, {
+        faceDeviation: true,
+        ...(opts.fitCad ?? {}),
+        stepPath: `${root}/${name}`,
+      });
       if (!fit.valid) {
         throw new Error(`the fitted B-rep failed OpenCASCADE's validity check`);
       }
@@ -1996,7 +2015,18 @@ async function writeStepModel(
   return writeMeshToBytes(m, mesh, e, "step", opts.stem, opts.provenance);
 }
 
-/** The fitted-face census a fitCad diagnostic reports: which types ran, and what was demoted. */
+/**
+ * The fitted-face census a fitCad diagnostic reports: which types ran, what
+ * was demoted, whether the solid came out closed, and — when the fit measured
+ * it — how far the fitted solid lies from the skin it was fitted from.
+ *
+ * The two deviations are DIFFERENT quantities and are never conflated:
+ * `maxDeviation` is upstream's own fit tolerance (how far a face may sit from
+ * its primitive), while `hausdorffMax`/`hausdorffRms` (meshio++ 17.11.0's
+ * `faceDeviation`) is the measured two-sided distance between each face and
+ * the skin — the chordal error the tessellation itself carries. The second is
+ * NaN when the caller switched the measurement off, and then it is not stated.
+ */
 function describeFitCad(fit: FitCadResult): string {
   const named: [string, number][] = [
     ["plane", fit.numPlane],
@@ -2015,9 +2045,20 @@ function describeFitCad(fit: FitCadResult): string {
     parts.push(`${fit.numFacetedFaces} demoted to faceted`);
   }
   const faces = parts.length > 0 ? parts.join(", ") : `${fit.numFaces} faceted`;
-  return fit.maxDeviation > 0
-    ? `${faces} (max deviation ${fit.maxDeviation.toPrecision(3)})`
-    : faces;
+  const notes: string[] = [];
+  if (fit.maxDeviation > 0) {
+    notes.push(`max deviation ${fit.maxDeviation.toPrecision(3)}`);
+  }
+  // 17.11.0: every edge of a shell borders two faces.
+  if (typeof fit.closed === "boolean") {
+    notes.push(fit.closed ? "closed solid" : "OPEN solid");
+  }
+  if (Number.isFinite(fit.hausdorffMax)) {
+    notes.push(
+      `skin deviation ${fit.hausdorffMax.toPrecision(3)} (RMS ${fit.hausdorffRms.toPrecision(3)})`
+    );
+  }
+  return notes.length > 0 ? `${faces} (${notes.join("; ")})` : faces;
 }
 
 /**
@@ -2085,7 +2126,9 @@ export async function writeMeshioBytes(
      * The `.step` export's fit controls (writeStepModel): an options object
      * rides `fitCad` verbatim, `false` skips fitting and writes the faceted
      * solid directly, and undefined asks the kernel's own defaults. Ignored
-     * by every other format.
+     * by every other format. The fit always measures the solid against the
+     * skin (`faceDeviation`, meshio++ 17.11.0) unless the object switches
+     * that off.
      */
     fitCad?: FitCadOptions | false;
   } = {}

@@ -932,6 +932,17 @@ test("meshio++ 17.2.0: a closed triangle skin exports as a FITTED STEP with a .c
   // analytically: six plane faces, nothing demoted.
   assert.ok(diagnostics.some((d) => d.message.includes("fitted CAD B-rep via fitCad")));
   assert.ok(diagnostics.some((d) => d.message.includes("6 planes")));
+  // meshio++ 17.11.0: the fit reports whether the solid came out closed, and
+  // (with `faceDeviation`, which this export always asks for) how far the
+  // fitted solid lies from the skin it was fitted from. A cube's six planes
+  // are exact, so the deviation is at the floating-point floor.
+  const fitNote = diagnostics.find((d) => d.message.includes("fitted CAD B-rep via fitCad"))!;
+  assert.ok(fitNote.message.includes("closed solid"), fitNote.message);
+  assert.ok(fitNote.message.includes("skin deviation"), fitNote.message);
+  assert.ok(
+    /skin deviation [0-9.e-]+ \(RMS [0-9.e-]+\)/.test(fitNote.message),
+    fitNote.message
+  );
   // The companion is a real, readable CAD JSON of the SAME solid.
   const cad = companions.find((c) => c.name === "box.cad.json")!;
   const back = await readMeshioModel("box.cad.json", [{ name: "box.cad.json", data: cad.data }], ".cad.json");

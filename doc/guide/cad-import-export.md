@@ -28,7 +28,8 @@ The fit runs on the model's **boundary skin**: a volume model exports its bounda
 
 What you get back, and how you know which path ran:
 
-- A fitted export writes the AP214 STEP and states the census in its diagnostics and the export report — for a unit box: `STEP: fitted CAD B-rep via fitCad — 6 planes; the B-rep also rides beside it as box.cad.json.` The **`<stem>.cad.json` companion** is the fitted solid's B-rep in Kratos CAD JSON shape, written automatically beside the `.step`.
+- A fitted export writes the AP214 STEP and states the census in its diagnostics and the export report — for a unit box: `STEP: fitted CAD B-rep via fitCad — 6 planes (closed solid; skin deviation 1.24e-16 (RMS 5.12e-17)); the B-rep also rides beside it as box.cad.json.` The **`<stem>.cad.json` companion** is the fitted solid's B-rep in Kratos CAD JSON shape, written automatically beside the `.step`.
+- **How far the solid lies from your mesh.** Every fit measures the fitted B-rep against the skin it was fitted from and reports it: `skin deviation` is the largest distance between a face and the skin, with its RMS beside it — the tessellation's own chordal error, not the fit's tolerance (which is reported separately as `max deviation`). A unit box fits exactly (1.24e-16); a cylinder tessellated with 32 facets lands 4.81e-3 from its skin. The fit also states whether the solid came out **closed** (every edge of a shell borders two faces), so an open shell shows up in the message instead of in the CAD reader later. Pass `faceDeviation: false` in the `fitCad` object to switch the measurement off.
 - A skipped or failed fit falls back to the **faceted** STEP writer (planar faces, no B-rep, no companion) and says so, naming why. The faceted writer refuses an open or inconsistently wound surface by name (`… is not a closed, consistently wound solid: N open … run repair first`), and the eligibility check refuses the same thing up front with the remedy: **Extract Skin** gives a volume mesh its boundary, **Repair** closes a leaky surface.
 
 The export report (and `verify`) treat the `.step` like any other target — the file is re-read through the CAD reader when verification is on.
@@ -81,11 +82,12 @@ The side channel has one sharp rule: **any applied edit drops it.** A mesh you t
                                      "sampleSubdivisions": 24, "outputPath": "sampled.vtu" } }
 ```
 
-`mesh_convert`'s `fitCad` object takes upstream's options minus `stepPath` (the write owns that path); unknown keys are refused by the kernel itself, and `fitCad: false` writes the faceted solid only.
+`mesh_convert`'s `fitCad` object takes upstream's options minus `stepPath` (the write owns that path); unknown keys are refused by the kernel itself, and `fitCad: false` writes the faceted solid only. The fit always measures the solid against the skin (`faceDeviation`, meshio++ 17.11.0) unless the object says `faceDeviation: false`.
 
 ## What is deliberately not here
 
 - **No interactive segmentation**: `fitCad` segments the skin itself; upstream's `segment`/`fitPrimitives` ops stay unexposed, and the fit controls are the export's.
+- **No segmentation refinement**: meshio++ 17.11.0 can refine the segmentation before fitting (`refineSegmentation`, and the standalone `refinePatches`). Measured on the shapes tried here, it changed nothing — 0 iterations, 0 splits, 0 merges — at about 30 % more time, so the export does not ask for it and the standalone op stays unexposed.
 - **No `igaEvaluate`**: patch-wise parametric evaluation is reachable later if a workflow asks for it; refine and sample cover the mesh workflows.
 - **No glTF writer routing**: the kernel has one, and an explicit `outputFormat: "gltf"` reaches it through `mesh_convert`, but no extension maps to it — nothing in this extension emits glTF yet.
 
