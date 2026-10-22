@@ -1304,7 +1304,7 @@
     "typescript": "^5.4.5"
   },
   "dependencies": {
-    "@kitware/vtk.js": "^37.4.3",
+    "@kitware/vtk.js": "^37.4.4",
     "@kratos-flowgraph/flowgraph": "^1.0.2",
     "@loumalouomega/mmg-wasm": "^0.1.0",
     "@meshioplusplus/wasm": "^17.11.0",
