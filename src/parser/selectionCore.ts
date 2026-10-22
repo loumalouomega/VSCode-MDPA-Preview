@@ -71,6 +71,8 @@ export interface SelectionSet {
   name: string;
   seed: SelectionSeed;
   kinds: { Elements: number[]; Conditions: number[]; Geometries: number[] };
+  /** Nodes picked directly (session-only; they ride into a SubModelPart created from the set). */
+  nodes?: number[];
 }
 
 /** A seed resolution: a non-undefined `reason` means nothing was selected. */

@@ -180,7 +180,7 @@ function countOfKind(model: MdpaModel, kind: EntityKind): number {
 function resolveSelectionIds(
   model: MdpaModel,
   rec: Extract<OpRecord, { op: "createSubModelPartFromSelection" }>
-): { kinds: Record<EntityKind, number[]>; reason?: string } {
+): { kinds: Record<EntityKind, number[]>; nodes?: number[]; reason?: string } {
   if (rec.seed) {
     const r = resolveSeed(model, rec.seed);
     if (r.reason) return { kinds: { Elements: [], Conditions: [], Geometries: [] }, reason: r.reason };
@@ -204,7 +204,14 @@ function resolveSelectionIds(
     if (before !== kinds[kind].length)
       return { kinds: { Elements: [], Conditions: [], Geometries: [] }, reason: "the selection names entities that are not in the mesh — refresh the selection and try again." };
   }
-  return { kinds };
+  let nodes: number[] | undefined;
+  if (Array.isArray(rec.nodes) && rec.nodes.length > 0) {
+    const known = new Set<number>(model.nodeIds);
+    nodes = clean(rec.nodes);
+    if (nodes.some((id) => !known.has(id)))
+      return { kinds: { Elements: [], Conditions: [], Geometries: [] }, reason: "the selection names nodes that are not in the mesh — refresh the selection and try again." };
+  }
+  return nodes ? { kinds, nodes } : { kinds };
 }
 
 /**
@@ -256,6 +263,8 @@ export type OpRecord =
       elements?: number[];
       conditions?: number[];
       geometries?: number[];
+      /** Extra NODE ids picked directly (explicit picks only; not combinable with a seed). */
+      nodes?: number[];
       seed?: SelectionSeed;
     }
   // DELETE the selected entities (the complement of a selection-driven export:
@@ -834,8 +843,8 @@ export function applyOp(model: MdpaModel, rec: OpRecord): OpOutcome {
       return r.changed ? { model: r.model, message: r.message } : { model, noop: true, message: r.message };
     }
     case "createSubModelPartFromSelection": {
-      const { kinds, reason } = resolveSelectionIds(model, rec);
-      const total = kinds.Elements.length + kinds.Conditions.length + kinds.Geometries.length;
+      const { kinds, nodes: pickedNodes, reason } = resolveSelectionIds(model, rec);
+      const total = kinds.Elements.length + kinds.Conditions.length + kinds.Geometries.length + (pickedNodes?.length ?? 0);
       if (total === 0) {
         return {
           model,
@@ -858,7 +867,7 @@ export function applyOp(model: MdpaModel, rec: OpRecord): OpOutcome {
       // the subset rule holds for the whole tree (Kratos' AddNode cascade
       // only pushes adds UP, and a part with elements but no node list is
       // unreadable by the mdpa reader).
-      const nodeSet = new Set<number>();
+      const nodeSet = new Set<number>(pickedNodes ?? []);
       for (const b of model.blocks) {
         const ids = kinds[b.kind];
         if (!ids.length) continue;
@@ -2006,10 +2015,15 @@ export function opRecordFromMessage(
         if (clean.length !== msg.geometries.length) return undefined;
         rec.geometries = clean;
       }
+      if (Array.isArray(msg.nodes)) {
+        const clean = msg.nodes.filter((v): v is number => typeof v === "number" && Number.isFinite(v));
+        if (clean.length !== msg.nodes.length) return undefined;
+        if (clean.length > 0) rec.nodes = clean;
+      }
       const seed = selectionSeedFromMessage(msg.seed);
       if (seed === null) return undefined;
       if (seed) rec.seed = seed;
-      const pickCount = (rec.elements?.length ?? 0) + (rec.conditions?.length ?? 0) + (rec.geometries?.length ?? 0);
+      const pickCount = (rec.elements?.length ?? 0) + (rec.conditions?.length ?? 0) + (rec.geometries?.length ?? 0) + (rec.nodes?.length ?? 0);
       if (seed && pickCount > 0) return undefined; // one source, not both
       if (!seed && pickCount === 0) return undefined;
       return rec;
@@ -3027,7 +3041,8 @@ function validateParams(rec: OpRecord, warnings: string[]): boolean {
       const pickCount =
         (Array.isArray(rec.elements) ? rec.elements.length : 0) +
         (Array.isArray(rec.conditions) ? rec.conditions.length : 0) +
-        (Array.isArray(rec.geometries) ? rec.geometries.length : 0);
+        (Array.isArray(rec.geometries) ? rec.geometries.length : 0) +
+        (Array.isArray(rec.nodes) ? rec.nodes.length : 0);
       if (hasSeed && pickCount > 0) return bad("a seed and explicit id lists are mutually exclusive");
       if (!hasSeed && pickCount === 0) return bad("no selection given (id lists or a seed)");
       return true;

@@ -3616,12 +3616,17 @@ function invalidateMeasures(): void {
   scheduleMeasures();
 }
 
-function scheduleMeasures(): void {
+function scheduleMeasures(patient = false): void {
   if (measureTimer !== undefined) clearTimeout(measureTimer);
   measureTimer = setTimeout(() => {
     measureTimer = undefined;
-    // Without the sidecar reply the cache is unknown; the `viewLayers` handler reschedules.
-    if (!model || !viewSidecarLoaded || partMeasures) return;
+    if (!model || partMeasures) return;
+    // Wait (once) for the sidecar reply so its cache can be used; if it never
+    // comes (no sidecar host), measure anyway — the cache is only an optimisation.
+    if (!viewSidecarLoaded && !patient) {
+      scheduleMeasures(true);
+      return;
+    }
     const key = measureKey(model);
     if (measuresCache && measuresCache.key === key) {
       partMeasures = measuresCache;
@@ -3636,7 +3641,7 @@ function scheduleMeasures(): void {
     renderStats();
     applyMeasuresToOutline(outlineRoots);
     renderOutlineFromState();
-  }, 400);
+  }, patient ? 1500 : 400);
 }
 
 function renderStats(): void {
@@ -7056,6 +7061,7 @@ let selectionActiveIndex = 0;
 let selectionMode: SelectionMode = "single";
 /** Box/lasso select through occluding surfaces (centroid projection) rather than the visible ones. */
 let selectionXray = false;
+let selectionPickNodes = false;
 let selectionVisibility: SelectionVisibilityMode = "normal";
 // The per-layer `visible` state before an Isolate/Hide, for Restore.
 const selectionBackup = new Map<string, boolean>();
@@ -7190,6 +7196,7 @@ function selectionPanelState(): SelectionPanelState {
     activeIndex: selectionActiveIndex,
     mode: selectionMode,
     xray: selectionXray,
+    pickNodes: selectionPickNodes,
     isolate: selectionVisibility === "isolate",
     partPaths: collectSubModelPartPaths(),
     fieldNames: fieldInfos.map((f) => f.field.variable),
@@ -7213,6 +7220,11 @@ function renderSelectionUI(): void {
           ? "X-ray: box and lasso now select every entity whose centre falls inside, hidden or not."
           : "Visible only: box and lasso select what can be seen."
       );
+    },
+    onSetPickNodes: () => {
+      selectionPickNodes = !selectionPickNodes;
+      renderSelectionUI();
+      toast(selectionPickNodes ? "Ctrl+click now picks nodes." : "Ctrl+click picks entities.");
     },
     onSetMode: (mode) => {
       selectionMode = mode;
@@ -7261,8 +7273,9 @@ function renderSelectionUI(): void {
       const activeSet = activeSelectionSet();
       if (!activeSet) return;
       const kinds = activeSet.kinds;
+      const nodes = activeSet.nodes ?? [];
       const total = kinds.Elements.length + kinds.Conditions.length + kinds.Geometries.length;
-      if (total === 0) {
+      if (total + nodes.length === 0) {
         toast("The active set is empty — pick something first.");
         return;
       }
@@ -7274,8 +7287,9 @@ function renderSelectionUI(): void {
         elements: kinds.Elements,
         conditions: kinds.Conditions,
         geometries: kinds.Geometries,
+        ...(nodes.length > 0 ? { nodes } : {}),
       });
-      toast(`Creating SubModelPart "${name}" from the set (${total} entities, nodes follow their cells).`);
+      toast(`Creating SubModelPart "${name}" from the set (${total} entities${nodes.length ? `, ${nodes.length} picked node(s)` : ""}; nodes follow their cells).`);
     },
     onExportActive: () => {
       const activeSet = activeSelectionSet();
@@ -8919,6 +8933,24 @@ renderRoot.addEventListener("pointerup", (ev: PointerEvent) => {
 // buttons or while the panel is closed, the mode's stated trade.
 
 /** Toggles one resolved entity into the active set; creates the set. */
+/** Ctrl+click in node mode: toggles one node in the active set's `nodes`. */
+function toggleSelectionNode(nodeId: number | undefined): void {
+  if (!model || nodeId === undefined) return;
+  let set: SelectionSet;
+  try {
+    set = ensureActiveSet();
+  } catch {
+    return;
+  }
+  const nodes = (set.nodes ??= []);
+  const at = nodes.indexOf(nodeId);
+  if (at >= 0) nodes.splice(at, 1);
+  else nodes.push(nodeId);
+  nodes.sort((a, b) => a - b);
+  toast(`Node ${nodeId} ${at >= 0 ? "removed from" : "added to"} "${set.name}" (${nodes.length} node${nodes.length === 1 ? "" : "s"} picked).`);
+  renderSelectionUI();
+}
+
 function toggleSelectionPick(kind: EntityKind, entityId: number | undefined): void {
   if (!model || entityId === undefined) return;
   let set: SelectionSet;
@@ -9201,7 +9233,8 @@ renderRoot.addEventListener("pointerup", (ev: PointerEvent) => {
   if (ev.button === 0 && (ev.ctrlKey || ev.metaKey)) {
     const rect = renderRoot.getBoundingClientRect();
     const r = pickAt(ev.clientX - rect.left, rect.height - (ev.clientY - rect.top));
-    toggleSelectionPick(r?.kind ?? undefined as unknown as EntityKind, r?.entityId);
+    if (selectionPickNodes) toggleSelectionNode(r?.nodeId);
+    else toggleSelectionPick(r?.kind ?? undefined as unknown as EntityKind, r?.entityId);
   }
 });
 window.addEventListener("keydown", (ev: KeyboardEvent) => {

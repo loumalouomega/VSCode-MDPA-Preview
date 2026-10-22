@@ -20,6 +20,8 @@ export interface SelectionPanelState {
   mode: SelectionMode;
   /** Box/lasso reach hidden entities too (their centres, projected), not just the visible ones. */
   xray: boolean;
+  /** Ctrl+click picks the clicked NODE instead of its entity. */
+  pickNodes: boolean;
   isolate: boolean;
   /** Named SubModelPart paths for the "Put in SubModelPart" input dropdown. */
   partPaths: string[];
@@ -35,6 +37,8 @@ export interface SelectionPanelHandlers {
   onSetMode(mode: SelectionMode): void;
   /** Toggles through-the-surface selection for box and lasso. */
   onSetXray(): void;
+  /** Toggles node picking for Ctrl+click. */
+  onSetPickNodes(): void;
   /** Creates a new set seeded by a predicate built in the panel row. */
   onAddSeed(kind: string, params: Record<string, unknown>): boolean;
   /** Left-click "frame the active set's first highlight" (Frame button). */
@@ -149,6 +153,15 @@ export function renderSelectionPanel(
     xr.classList.toggle("active", state.xray);
   }
 
+  const nodeBtn = smallBtn(
+    state.pickNodes ? "Pick nodes: on" : "Pick nodes: off",
+    "On: Ctrl+click picks the nearest NODE of the clicked entity instead of the entity. Picked nodes go into a SubModelPart made from the set; picking an element or condition always brings its nodes along",
+    () => handlers.onSetPickNodes()
+  );
+  nodeBtn.id = "sel-pick-nodes";
+  nodeBtn.classList.toggle("active", state.pickNodes);
+  container.appendChild(nodeBtn);
+
   const active = state.sets[state.activeIndex];
   const countLine = (s: SelectionSet): string => {
     const c = s.kinds;
@@ -188,79 +201,81 @@ export function renderSelectionPanel(
     container.appendChild(hint);
   }
 
-  if (!active) return;
+  // The seed builder below must exist with no set yet (that is how the first set is seeded).
+  if (active) {
 
-  // active-set actions
-  const actions = document.createElement("div");
-  actions.className = "inspect-actions";
-  const frameBtn = document.createElement("button");
-  frameBtn.className = "panel-btn";
-  frameBtn.innerHTML = `<span class="ui-glyph">${glyph("maximize")}</span> Frame`;
-  frameBtn.title = "Frame the selection";
-  frameBtn.addEventListener("click", () => handlers.onFrame());
-  actions.appendChild(frameBtn);
-  actions.appendChild(smallBtn("New SubModelPart", "Create a SubModelPart holding the selection (an ordinary, undoable operation)", () => {
-    const nameInput = document.getElementById("sel-smp-name") as HTMLInputElement | null;
-    const parent = document.getElementById("sel-smp-parent") as HTMLSelectElement | null;
-    const name = (nameInput?.value ?? "").trim();
-    if (!name) {
-      nameInput?.focus();
-      return;
-    }
-    handlers.onNewSubModelPart(name, parent?.value ?? "");
-  }));
-  actions.appendChild(smallBtn("Export", "Export the selection as its own mesh file (original ids preserved)", () => handlers.onExportActive()));
-  actions.appendChild(smallBtn("Delete entities", "DELETE the selected entities as one undoable edit — conditions on the surviving region stay, constraints vanish with their nodes, fields and SubModelParts follow, orphan nodes are cleaned up", () => handlers.onDeleteActive(), true));
-  actions.appendChild(smallBtn("Clear", "Empty the active set (it keeps its seed)", () => handlers.onClearActive()));
-  actions.querySelectorAll("button").forEach(button => button.dataset.selectionRequired = "");
-  container.appendChild(actions);
-
-  const subRow = document.createElement("div");
-  subRow.className = "inspect-actions";
-  const subInput = document.createElement("input");
-  subInput.type = "text";
-  subInput.id = "sel-smp-name";
-  subInput.className = "edit-text";
-  subInput.placeholder = "SubModelPart name";
-  subInput.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") {
+    // active-set actions
+    const actions = document.createElement("div");
+    actions.className = "inspect-actions";
+    const frameBtn = document.createElement("button");
+    frameBtn.className = "panel-btn";
+    frameBtn.innerHTML = `<span class="ui-glyph">${glyph("maximize")}</span> Frame`;
+    frameBtn.title = "Frame the selection";
+    frameBtn.addEventListener("click", () => handlers.onFrame());
+    actions.appendChild(frameBtn);
+    actions.appendChild(smallBtn("New SubModelPart", "Create a SubModelPart holding the selection (an ordinary, undoable operation)", () => {
+      const nameInput = document.getElementById("sel-smp-name") as HTMLInputElement | null;
       const parent = document.getElementById("sel-smp-parent") as HTMLSelectElement | null;
-      const name = subInput.value.trim();
-      if (name) handlers.onNewSubModelPart(name, parent?.value ?? "");
-    }
-  });
-  subRow.appendChild(subInput);
-  const parentSel = document.createElement("select");
-  parentSel.id = "sel-smp-parent";
-  parentSel.className = "edit-sel";
-  parentSel.title = "Parent SubModelPart (none = top level)";
-  const optNone = document.createElement("option");
-  optNone.value = "";
-  optNone.textContent = "— top level —";
-  parentSel.appendChild(optNone);
-  for (const p of state.partPaths) {
-    const o = document.createElement("option");
-    o.value = p;
-    o.textContent = p;
-    parentSel.appendChild(o);
-  }
-  subRow.appendChild(parentSel);
-  container.appendChild(subRow);
+      const name = (nameInput?.value ?? "").trim();
+      if (!name) {
+        nameInput?.focus();
+        return;
+      }
+      handlers.onNewSubModelPart(name, parent?.value ?? "");
+    }));
+    actions.appendChild(smallBtn("Export", "Export the selection as its own mesh file (original ids preserved)", () => handlers.onExportActive()));
+    actions.appendChild(smallBtn("Delete entities", "DELETE the selected entities as one undoable edit — conditions on the surviving region stay, constraints vanish with their nodes, fields and SubModelParts follow, orphan nodes are cleaned up", () => handlers.onDeleteActive(), true));
+    actions.appendChild(smallBtn("Clear", "Empty the active set (it keeps its seed)", () => handlers.onClearActive()));
+    actions.querySelectorAll("button").forEach(button => button.dataset.selectionRequired = "");
+    container.appendChild(actions);
 
-  // visibility actions
-  const visActions = document.createElement("div");
-  visActions.className = "inspect-actions";
-  const isolateBtn = document.createElement("button");
-  isolateBtn.className = "panel-btn";
-  isolateBtn.classList.toggle("active", state.isolate);
-  isolateBtn.textContent = "Isolate";
-  isolateBtn.title = "Show only the selection: every block layer the selection does not touch is suppressed";
-  isolateBtn.addEventListener("click", () => handlers.onIsolate());
-  visActions.appendChild(isolateBtn);
-  visActions.appendChild(smallBtn("Hide", "Suppress every block layer the selection touches (block granularity)", () => handlers.onHide()));
-  visActions.querySelectorAll("button").forEach(button => button.dataset.selectionRequired = "");
-  visActions.appendChild(smallBtn("Restore", "Undo every Isolate/Hide suppression", () => handlers.onRestore()));
-  container.appendChild(visActions);
+    const subRow = document.createElement("div");
+    subRow.className = "inspect-actions";
+    const subInput = document.createElement("input");
+    subInput.type = "text";
+    subInput.id = "sel-smp-name";
+    subInput.className = "edit-text";
+    subInput.placeholder = "SubModelPart name";
+    subInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        const parent = document.getElementById("sel-smp-parent") as HTMLSelectElement | null;
+        const name = subInput.value.trim();
+        if (name) handlers.onNewSubModelPart(name, parent?.value ?? "");
+      }
+    });
+    subRow.appendChild(subInput);
+    const parentSel = document.createElement("select");
+    parentSel.id = "sel-smp-parent";
+    parentSel.className = "edit-sel";
+    parentSel.title = "Parent SubModelPart (none = top level)";
+    const optNone = document.createElement("option");
+    optNone.value = "";
+    optNone.textContent = "— top level —";
+    parentSel.appendChild(optNone);
+    for (const p of state.partPaths) {
+      const o = document.createElement("option");
+      o.value = p;
+      o.textContent = p;
+      parentSel.appendChild(o);
+    }
+    subRow.appendChild(parentSel);
+    container.appendChild(subRow);
+
+    // visibility actions
+    const visActions = document.createElement("div");
+    visActions.className = "inspect-actions";
+    const isolateBtn = document.createElement("button");
+    isolateBtn.className = "panel-btn";
+    isolateBtn.classList.toggle("active", state.isolate);
+    isolateBtn.textContent = "Isolate";
+    isolateBtn.title = "Show only the selection: every block layer the selection does not touch is suppressed";
+    isolateBtn.addEventListener("click", () => handlers.onIsolate());
+    visActions.appendChild(isolateBtn);
+    visActions.appendChild(smallBtn("Hide", "Suppress every block layer the selection touches (block granularity)", () => handlers.onHide()));
+    visActions.querySelectorAll("button").forEach(button => button.dataset.selectionRequired = "");
+    visActions.appendChild(smallBtn("Restore", "Undo every Isolate/Hide suppression", () => handlers.onRestore()));
+    container.appendChild(visActions);
+  }
 
   // --- seed builder ---
   container.appendChild(section("Seed a new set from"));
