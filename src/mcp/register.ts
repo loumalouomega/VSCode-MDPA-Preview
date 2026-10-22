@@ -742,7 +742,7 @@ export function registerAllTools(server: McpServer): void {
           .union([z.boolean(), z.record(z.string(), z.unknown())])
           .optional()
           .describe(
-            "STEP targets only. false = skip fitting, write the faceted solid. An object carries fitCad options: tolerance (number; <=0 automatic), exactEdges (bool), types (array of plane/sphere/cylinder/cone/torus), meshDeflection (number), maxDemotionRounds (int), freeform (bool), freeformDegree (3-8), freeformMaxControl (int), freeformSplit (bool), fillets (bool), threads (bool); unknown keys are refused by the kernel."
+            "STEP targets only. false = skip fitting, write the faceted solid. An object carries fitCad options: tolerance (number; <=0 automatic), exactEdges (bool), types (array of plane/sphere/cylinder/cone/torus), meshDeflection (number), maxDemotionRounds (int), freeform (bool), freeformDegree (3-8), freeformMaxControl (int), freeformSplit (bool), fillets (bool), threads (bool); unknown keys are refused by the kernel. The fit measures the solid against the skin it was fitted from by default (faceDeviation, meshio++ 17.11.0), and the export then states how far the solid lies from that skin and whether it came out closed; faceDeviation:false switches the measurement off."
           ),
         timeStep,
         piece,
@@ -1247,7 +1247,7 @@ export function registerAllTools(server: McpServer): void {
           .union([z.boolean(), z.record(z.string(), z.unknown())])
           .optional()
           .describe(
-            "false = skip fitting, write the faceted solid. An object carries fitCad options: tolerance (number; <=0 automatic), exactEdges (bool), types (array of plane/sphere/cylinder/cone/torus), meshDeflection (number), maxDemotionRounds (int), freeform (bool), freeformDegree (3-8), freeformMaxControl (int), freeformSplit (bool), fillets (bool), threads (bool); unknown keys are refused by the kernel."
+            "false = skip fitting, write the faceted solid. An object carries fitCad options: tolerance (number; <=0 automatic), exactEdges (bool), types (array of plane/sphere/cylinder/cone/torus), meshDeflection (number), maxDemotionRounds (int), freeform (bool), freeformDegree (3-8), freeformMaxControl (int), freeformSplit (bool), fillets (bool), threads (bool); unknown keys are refused by the kernel. The fit measures the solid against the skin it was fitted from by default (faceDeviation, meshio++ 17.11.0), and the export then states how far the solid lies from that skin and whether it came out closed; faceDeviation:false switches the measurement off."
           ),
         outputPath: z.string().optional().describe("Output .step file (default <case>_optimized.step in the case folder)"),
         excludeNewest: z.boolean().optional().describe("Drop the newest frame (a killed run can leave it half-written)"),

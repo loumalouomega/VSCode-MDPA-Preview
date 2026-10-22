@@ -1358,7 +1358,7 @@ test("mesh_capabilities reports the live build next to the routing tables", asyn
       adoptingOperations: string[];
     };
   };
-  assert.equal(caps.packageVersion, "17.10.0");
+  assert.equal(caps.packageVersion, "17.11.0");
   assert.ok(caps.backend.length > 0);
   assert.equal(caps.hasCgnslib, true);
   // 15.x bump (roadmap item 3) added vtkhdf/pvd/pvtu/pvtp/pcd/xyz/lsdyna/frd/
@@ -1391,7 +1391,13 @@ test("mesh_capabilities reports the live build next to the routing tables", asyn
   // add no reader or writer key either (still 81/82 lean, 83/82 full, verified
   // live); their delta is additive — KaHIP linked into the FULL artifact only
   // (hasKahip), a kernel-free fitCad backend on lean, `segment` method
-  // "primitive" and procedural mesh generators, the last two unrouted.
+  // "primitive" and procedural mesh generators, the last two unrouted. The
+  // 17.11.0 bump adds no reader or writer key either (still 81/82 lean, 83/82
+  // full, verified live): its delta is the `refinePatches` operation, six more
+  // planar-domain generators and fifteen new fitCad options — the first two
+  // unrouted (see meshCapabilities' operations.unavailable), the last adopted
+  // by the .step export (faceDeviation: the fitted solid is measured against
+  // the skin it came from).
   assert.equal(caps.live.readers.length, 81);
   assert.equal(caps.live.writers.length, 82);
   // 17.2.0 ships a FULL artifact beside the lean one; mesh_capabilities

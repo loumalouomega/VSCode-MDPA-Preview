@@ -1161,6 +1161,13 @@ export interface StepFitOptions {
   fillets?: boolean;
   /** Try thread faces, tapered and of varying pitch included (default true). */
   threads?: boolean;
+  /**
+   * Measure the fitted solid against the skin it was fitted from (meshio++
+   * 17.11.0). ON by default here: the export then states the measured
+   * deviation and whether the solid is closed. `false` switches the
+   * measurement off.
+   */
+  faceDeviation?: boolean;
 }
 
 function provenanceModeOf(v: string | undefined): ProvenanceMode {
