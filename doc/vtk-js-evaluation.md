@@ -1,4 +1,6 @@
-# vtk.js capability evaluations (roadmap item 22, increment G)
+# vtk.js capability evaluations (roadmap item 22, closed 2026-10-22)
+
+Roadmap item 22 ("Unused vtk.js capabilities") is delivered and removed from the roadmap. Increments A (impostors) and B (hardware selection) are recorded in `CLAUDE.md`; this page holds the measured verdicts for what was evaluated rather than built (increment G) and the delivery notes and negatives of increments C–F, one section each below.
 
 Measured verdicts for the vtk.js 37.4.3 modules that were evaluated rather than built, in the manner of the [VTK-wasm spike](./vtk-wasm-spike.md). Environment: headless Chromium with SwiftShader (`/opt/pw-browsers`), the same setup as the screenshot harness; nothing here was run on a real GPU or inside a VS Code webview, so each verdict says what it rests on.
 

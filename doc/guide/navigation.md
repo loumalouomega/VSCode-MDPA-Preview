@@ -50,7 +50,7 @@ The **Find** toolbar button (or the **Find Entity by ID** command) opens a searc
 
 The **Inspect** toolbar button turns clicks on the mesh into a probe — no id needed up front, unlike Find. Click any node, element, or condition and a floating panel shows its id, block, SubModelPart membership, and every field value defined at it (both the clicked entity and its nearest node, when both resolve). The picked entity is highlighted and a **Frame** button zooms to it.
 
-Inside the panel, a **Measure** toggle switches to a two-click distance tool: click a first node, then a second, and the panel reports the distance and Δx/Δy/Δz between them with a line drawn in the 3D view.
+Inside the panel, a **Measure** toggle switches to a two-click distance tool: click a first node, then a second, and the panel reports the distance and Δx/Δy/Δz between them with a line drawn in the 3D view. While measuring, **Angle** switches to three clicks: the panel reports the angle at the second node and the length of the path through all three. **Probe line** takes two clicks to open its profile; further clicks extend the probe into a polyline.
 
 ## Extras
 
@@ -59,6 +59,7 @@ Inside the panel, a **Measure** toggle switches to a two-click distance tool: cl
 - **Layer opacity** — hover any outline row (mesh block or SubModelPart) for a small opacity button that opens a live 0–100% slider.
 - **Scene theme** — the dropdown in the ⋯ popover's Appearance section switches the viewport between Auto, Dark, Light, and Scientific palettes.
 - **Persp / Ortho** — the dock's button toggles the camera between perspective and orthographic (parallel) projection.
-- **Advanced ▸ Lighting…** — global specular / ambient / diffuse sliders and a backface-culling toggle (useful for spotting an inverted shell element from the inside).
+- **Advanced ▸ Lighting…** — global specular / ambient / diffuse sliders and a backface-culling toggle (useful for spotting an inverted shell element from the inside). **Light** chooses a headlight that follows the camera (the default), a light fixed in the scene, or a point light, with azimuth and elevation sliders; a fixed light keeps a ridge or a dent looking the same as you orbit. **Smooth shading** shades with averaged point normals, which suits curved surfaces and rounds the hard edges of a boxy mesh. These need the vtk.js renderer.
+- **Clip handle** — with **Clip** on, a draggable plane sits in the model: drag its surface to move the cut along its normal, or its arrow to tilt it. The slider and the numeric normal stay in step, and a plane dropped square to an axis snaps back to that X/Y/Z preset. Looking straight down the plane's normal the handle cannot move along it; use the slider there. The vtk.js renderer only.
 - **Advanced ▸ Camera Bookmarks…** — save the current view under a name and restore it later; the list is kept in the preview's [saved view](./view-layers#saved-view) beside the mesh, and a **Camera JSON** textarea lets you copy a view out (or paste one in and click Apply) for sharing across sessions.
 - **Standard views** — press `1`–`6` for the six axis-aligned views (±X/±Y/±Z) or `i` for an isometric-style corner view; same views as clicking a face of the orientation cube.

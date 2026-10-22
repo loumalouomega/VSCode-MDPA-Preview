@@ -14,6 +14,10 @@ The **Field** toolbar button (or the **Field Visualization** command) plots the 
 - **Range** — the color range defaults to the field's data range; type your own min/max to override it (the reset button restores the default), tick **Log scale** for a logarithmic mapping (only available when the range is strictly positive), and pick a **Bands** count (Continuous, 5, 10, or 20) for discrete color steps instead of a smooth gradient.
 - **Show scalar bar in scene** — draws a legend directly in the 3D view (bottom-right) instead of only in the panel. Unlike the panel legend, this one is captured by the **Screenshot** button; leave it off and a screenshot still gets a legend composited onto it automatically.
 
+## Colormaps
+
+The colormap control lists the twelve built-in maps plus 27 ParaView presets (diverging, sequential, rainbow), grouped by category. Type in the search box to narrow the list and tick **Colour-blind safe only** to keep the maps rated safe by their published sources (marked ✓). The legend, the in-scene scalar bar and the screenshot burn-in all use the chosen map.
+
 ## Contour
 
 Color the mesh by a scalar. Nodal fields are drawn as smooth interpolated point-data; elemental / conditional fields are drawn flat per cell. **Vector fields are colored by magnitude.** On a volume mesh, boundary faces inherit their owning cell's value.
@@ -38,7 +42,7 @@ Show only the Elements/Conditions whose value falls inside an editable **"Show o
 
 ## Deformed shape
 
-Warp the geometry by a **vector** field to visualize displacement — the standard FE post-processing view. The deformation has its **own** "Deform by" selector (independent of the coloring variable), so you can deform by `DISPLACEMENT` while coloring by a stress scalar, and a **Warp scale** slider exaggerates or damps the motion. The warp is *global*: with Deformed shape on, Contour, Quiver, and Isosurface all render on the deformed geometry, while the undeformed reference mesh stays visible as a wireframe. Combine Deformed + Contour for the canonical "deformed shape colored by displacement" plot.
+Warp the geometry by a **vector** field to visualize displacement — the standard FE post-processing view. The deformation has its **own** "Deform by" selector (independent of the coloring variable), so you can deform by `DISPLACEMENT` while coloring by a stress scalar, and a **Warp scale** slider exaggerates or damps the motion. The warp is *global*: with Deformed shape on, Contour, Quiver, and Isosurface all render on the deformed geometry, while the undeformed reference mesh stays visible as a wireframe. Combine Deformed + Contour for the canonical "deformed shape colored by displacement" plot. A **nodal scalar** is also offered in the "Deform by" selector (as "height along Z"): it lifts the mesh along +Z by the scalar times the warp scale, which turns a 2D field into a relief.
 
 ::: tip
 See also [Mesh size](./mesh-size) for a related Field-like view of the per-node and per-element mesh size, with a box-and-whisker of the element-size distribution.

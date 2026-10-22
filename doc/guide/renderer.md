@@ -40,6 +40,18 @@ Everything the preview offers works with either renderer: layers, opacity, wiref
 - **Picking near edges.** VTK-wasm first picks the exact cell under the pointer and falls back to vtk.js's tolerance only when that misses. A click squarely on a surface therefore always resolves the cell you see, while a click just off an edge or a line is still forgiving.
 - **Translucency.** Both renderers use order-independent translucency. Under VTK-wasm a translucent wireframe lying exactly on an opaque surface is hidden by that surface, for example the dimmed mesh under a contour at reduced model opacity. Depth peeling, which would draw it, is not available in WebGL2.
 
+## What only the vtk.js renderer offers
+
+These need vtk.js capabilities the VTK-wasm session is not wired for, and are simply absent (or fall back) under VTK-wasm:
+
+- **Ray-cast spheres and tubes** for particle and beam layers (VTK-wasm draws tessellated glyphs and shows the Detail control).
+- **GPU box and lasso selection** that picks exactly what is visible (VTK-wasm samples a capped grid), and the Selection panel's X-ray toggle.
+- **Smooth shading**, **light modes** (scene and point lights) and the scalar-relief option's smooth look in the Lighting panel.
+- **Node IDs on every pane** with hidden nodes left out (VTK-wasm: 1 000 nodes, single pane).
+- **The Clip plane handle** and the **Volume view** for regular lattices.
+
+The reasons each is unavailable, and the measurements behind them, are in `doc/vtk-js-evaluation.md`.
+
 ## Security and size
 
 The runtime needs one Content Security Policy (CSP) relaxation, and only when VTK-wasm is selected: `'wasm-unsafe-eval'`, which allows compiling WebAssembly, and `connect-src` scoped to the extension's own files, so the runtime can load its `.wasm`. JavaScript `eval` stays blocked. The upstream JavaScript glue is rewritten at build time so it needs no `eval`, and every build checks the rewritten glue against a pinned checksum. With vtk.js selected, the policy is exactly what it was before.
