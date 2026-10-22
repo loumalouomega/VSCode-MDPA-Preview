@@ -21,3 +21,10 @@ declare module "@kitware/vtk.js/Filters/Core/PolyDataNormals" {
   };
   export default vtkPolyDataNormals;
 }
+
+declare module "@kitware/vtk.js/Widgets/Widgets3D/ImplicitPlaneWidget" {
+  const vtkImplicitPlaneWidget: {
+    newInstance(initialValues?: Record<string, unknown>): any;
+  };
+  export default vtkImplicitPlaneWidget;
+}

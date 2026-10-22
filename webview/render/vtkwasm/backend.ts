@@ -681,6 +681,9 @@ class WasmView implements RView {
   getBackground(): RGB {
     return [...this.background] as RGB;
   }
+  createPlaneWidget(): never {
+    throw new Error("createPlaneWidget needs caps.widgets");
+  }
   compositeMatrix(): number[] {
     throw new Error("compositeMatrix needs caps.gpuLabels");
   }
@@ -868,6 +871,8 @@ export async function createVtkWasmBackend(opts: VtkWasmBackendOptions): Promise
     displayFilters: false,
     lightModes: false,
     gpuLabels: false,
+    widgets: false,
+    widgetsReason: "VTK-wasm's native session has no widget framework; the Clip slider and numeric normal stay.",
   };
   let disposed = false;
 

@@ -36,8 +36,13 @@ export interface InspectSelection {
 export interface MeasureResult {
   aId: number;
   bId: number;
+  /** Distance between the first two picks. */
   distance: number;
   delta: [number, number, number];
+  /** Angle mode: the third pick, the angle AT the second pick (degrees) and the a-b-c path length. */
+  cId?: number;
+  angle?: number;
+  pathLength?: number;
 }
 
 export interface InspectPanelState {
@@ -45,6 +50,10 @@ export interface InspectPanelState {
   measuring: boolean;
   /** How many points the in-progress measurement has picked so far (0/1). */
   measurePending: number;
+  /** Angle mode: three picks, reporting the angle at the middle one. */
+  measureAngle?: boolean;
+  /** Points on the probe polyline once its panel is open (2+ means further picks extend it). */
+  probeCount?: number;
   measureResult?: MeasureResult;
   probing: boolean;
   /** How many points the in-progress probe line has picked so far (0/1). */
@@ -58,6 +67,8 @@ export interface InspectPanelHandlers {
   onClose(): void;
   onFrame(): void;
   onToggleMeasure(): void;
+  /** Switch Measure between two picks (distance) and three (angle at the middle one). */
+  onToggleMeasureAngle?(): void;
   /** Probe line: two picks the way Measure takes them, then the
    *  distance-versus-value plot (webview/probePanel.ts) opens on the pair. */
   onToggleProbe(): void;
@@ -152,6 +163,15 @@ export function renderInspectPanel(
   measureBtn.title = "Click two nodes to measure the distance between them";
   measureBtn.addEventListener("click", () => handlers.onToggleMeasure());
   measureRow.appendChild(measureBtn);
+  if (state.measuring && handlers.onToggleMeasureAngle) {
+    const angleBtn = document.createElement("button");
+    angleBtn.className = "panel-btn";
+    angleBtn.classList.toggle("active", !!state.measureAngle);
+    angleBtn.textContent = "Angle";
+    angleBtn.title = "Pick three nodes: reports the angle at the second one";
+    angleBtn.addEventListener("click", () => handlers.onToggleMeasureAngle?.());
+    measureRow.appendChild(angleBtn);
+  }
   const probeBtn = document.createElement("button");
   probeBtn.className = "panel-btn";
   probeBtn.classList.toggle("active", state.probing);
@@ -165,21 +185,24 @@ export function renderInspectPanel(
     const hint = document.createElement("div");
     hint.className = "inspect-summary";
     const pending = state.measuring ? state.measurePending : state.probePending;
-    hint.textContent =
-      pending === 0
-        ? state.measuring
-          ? "Click a first node."
-          : "Click a first node for the probe line."
-        : state.measuring
-          ? "Click a second node."
-          : "Click a second node — the profile plot opens.";
+    const ordinal = ["first", "second", "third"];
+    if (state.measuring) {
+      const total = state.measureAngle ? 3 : 2;
+      hint.textContent = `Click a ${ordinal[Math.min(pending, total - 1)]} node.`;
+    } else if ((state.probeCount ?? 0) >= 2) {
+      hint.textContent = "Click more nodes to extend the probe line.";
+    } else {
+      hint.textContent = pending === 0 ? "Click a first node for the probe line." : "Click a second node — the profile plot opens.";
+    }
     container.appendChild(hint);
   }
 
   if (state.measureResult) {
     const r = state.measureResult;
-    container.appendChild(section(`Distance: node ${r.aId} → node ${r.bId}`));
-    container.appendChild(row("Distance", fmt(r.distance)));
+    container.appendChild(section(r.cId !== undefined ? `Angle: node ${r.aId} → ${r.bId} → ${r.cId}` : `Distance: node ${r.aId} → node ${r.bId}`));
+    if (r.angle !== undefined) container.appendChild(row("Angle at node " + r.bId, `${fmt(r.angle)}°`));
+    container.appendChild(row(r.cId !== undefined ? "Distance a–b" : "Distance", fmt(r.distance)));
+    if (r.pathLength !== undefined) container.appendChild(row("Path a–b–c", fmt(r.pathLength)));
     container.appendChild(row("Δx, Δy, Δz", fmtValue(r.delta)));
   }
 

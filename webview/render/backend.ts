@@ -66,6 +66,17 @@ export interface BackendCaps {
    * cull the hidden ones. When false the caller keeps the capped per-point path.
    */
   gpuLabels: boolean;
+  /** `RView.createPlaneWidget` is implemented (a draggable 3D clip-plane handle). */
+  widgets: boolean;
+  widgetsReason?: string;
+}
+
+export interface RPlaneWidget {
+  setPlane(origin: Vec3, normal: Vec3): void;
+  /** The box the handle's size and drag limits follow. */
+  setBounds(bounds: Bounds6): void;
+  setVisible(visible: boolean): void;
+  dispose(): void;
 }
 
 export interface DepthSnapshot {
@@ -164,6 +175,12 @@ export interface RView {
   getBackground(): RGB;
   /** A fixed world-space light, or null for the camera-following headlight. Only when `caps.lightModes`. */
   setLight(placement: LightPlacement | null): void;
+  /**
+   * A draggable plane handle (origin point, normal arrow, plane). `onChange`
+   * reports every drag step as plain origin/normal, `onInteraction(true|false)`
+   * brackets a drag. `setPlane` moves it without calling back. `caps.widgets`.
+   */
+  createPlaneWidget(onChange: (origin: Vec3, normal: Vec3) => void, onInteraction: (active: boolean) => void): RPlaneWidget;
   /** Row-major 4x4 view x projection for this view's tile (`caps.gpuLabels`). */
   compositeMatrix(): number[];
   /**

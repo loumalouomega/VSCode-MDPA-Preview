@@ -21,6 +21,9 @@ import {
   stickImpostorSet,
 } from "../src/parser/render/glyphSets";
 import { ctfPointsFromStops, fieldColoring } from "../src/parser/render/scalarColoring";
+import type { RPlaneWidget } from "./render/backend";
+import type { Vec3 } from "../src/parser/render/types";
+import { angleAt, clipFromPlane, planeFromClip, polylineLength } from "../src/parser/render/widgetMath";
 import { lightPlacement } from "../src/parser/render/lightMode";
 import { layoutLabels, occludedPoints, projectPoints } from "../src/parser/render/labelLayout";
 import type { ScalarColoring } from "../src/parser/render/types";
@@ -1524,7 +1527,9 @@ let inspectMode = false;
 let inspectVisible = false;
 let inspectSelection: InspectSelection | undefined;
 let measuring = false;
-let measurePendingPoint: { id: number; coords: [number, number, number] } | undefined;
+/** Nodes picked so far by the in-progress measurement (2, or 3 in Angle mode). */
+let measurePicked: { id: number; coords: [number, number, number] }[] = [];
+let measureAngle = false;
 let measureResult: MeasureResult | undefined;
 // The probe line's two-click mode, alongside Measure above.
 let probing = false;
@@ -2092,7 +2097,7 @@ function buildScene(resetCam = true): void {
   // layers along with everything else, so only the state needs resetting).
   membershipIndex = undefined;
   inspectSelection = undefined;
-  measurePendingPoint = undefined;
+  measurePicked = [];
   measureResult = undefined;
   probePendingPoint = undefined;
   if (inspectVisible) renderInspectUI();
@@ -3018,53 +3023,104 @@ function updateClipPlane(pane: Pane): void {
   // pane), so the same t means the same relative position on either mesh.
   const b = scopeModel(pane)?.bounds;
   if (!b) return;
-  const t = pane.clip.t;
   const showReadout = pane === focusedPane();
-  const fn = pane.clip.freeNormal;
-
-  if (pane.clip.axis === "free") {
-    const len = Math.hypot(fn[0], fn[1], fn[2]);
-    let normal: [number, number, number] =
-      len > 1e-9 ? [fn[0] / len, fn[1] / len, fn[2] / len] : [0, 0, 1];
-    if (pane.clip.flipped) normal = [-normal[0], -normal[1], -normal[2]];
-    let min = Infinity;
-    let max = -Infinity;
-    for (const c of bboxCorners(b)) {
-      const d = c[0] * normal[0] + c[1] * normal[1] + c[2] * normal[2];
-      if (d < min) min = d;
-      if (d > max) max = d;
-    }
-    const dist = min + t * (max - min);
-    // Any point P with dot(P, normal) = dist lies on the plane; normal*dist is
-    // the simplest such point since normal is unit length.
-    const origin: [number, number, number] = [normal[0] * dist, normal[1] * dist, normal[2] * dist];
-    pane.clipPlane.setNormal(normal);
-    pane.clipPlane.setOrigin(origin);
-    if (cutPositionEl && showReadout) {
-      const n = normal.map((v) => v.toFixed(2)).join(", ");
+  const plane = planeFromClip(pane.clip, b);
+  pane.clipPlane.setNormal(plane.normal);
+  pane.clipPlane.setOrigin(plane.origin);
+  if (cutPositionEl && showReadout) {
+    if (pane.clip.axis === "free") {
+      const dist = plane.origin[0] * plane.normal[0] + plane.origin[1] * plane.normal[1] + plane.origin[2] * plane.normal[2];
+      const n = plane.normal.map((v) => v.toFixed(2)).join(", ");
       cutPositionEl.textContent = `n=(${n})  d=${dist.toPrecision(4)}`;
-      cutPositionEl.title = cutPositionEl.textContent; // the dock cell ellipsizes it
+    } else {
+      cutPositionEl.textContent = `${"XYZ"[pane.clip.axis]} = ${plane.origin[pane.clip.axis].toPrecision(4)}`;
     }
+    cutPositionEl.title = cutPositionEl.textContent; // the dock cell ellipsizes it
+  }
+  syncClipWidget(pane);
+}
+
+// --- Clip handle (roadmap item 22 C) -------------------------------------------
+// A draggable 3D plane that is a VIEW of `pane.clip`: a drag is mapped back to
+// the clip state by widgetMath.clipFromPlane (an axis preset when it lands
+// square, Free otherwise) and everything else — slider, readout, cap — follows
+// through the same writers the slider uses. Only where caps.widgets.
+const clipWidgets = new Map<Pane, { widget: RPlaneWidget; last?: { origin: Vec3; normal: Vec3 }; dragging: boolean }>();
+
+function coplanar(a: { origin: Vec3; normal: Vec3 }, b: { origin: Vec3; normal: Vec3 }, tol: number): boolean {
+  const dot = a.normal[0] * b.normal[0] + a.normal[1] * b.normal[1] + a.normal[2] * b.normal[2];
+  if (Math.abs(dot) < 0.9995) return false;
+  const d = [b.origin[0] - a.origin[0], b.origin[1] - a.origin[1], b.origin[2] - a.origin[2]];
+  return Math.abs(d[0] * a.normal[0] + d[1] * a.normal[1] + d[2] * a.normal[2]) <= tol;
+}
+
+function syncClipWidget(pane: Pane): void {
+  if (!backend.caps.widgets) return;
+  for (const p of [...clipWidgets.keys()]) if (!panes.includes(p)) clipWidgets.delete(p);
+  const b = scopeModel(pane)?.bounds;
+  let entry = clipWidgets.get(pane);
+  if (!pane.clip.active || !b) {
+    entry?.widget.setVisible(false);
     return;
   }
-
-  const axis = pane.clip.axis;
-  const normals: [number, number, number][] = [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
-  const n = normals[axis];
-  const normal: [number, number, number] = pane.clip.flipped
-    ? [-n[0], -n[1], -n[2]]
-    : [n[0], n[1], n[2]];
-  const min = b.min[axis];
-  const max = b.max[axis];
-  const pos = min + t * (max - min);
-  const origin: [number, number, number] = [0, 0, 0];
-  origin[axis] = pos;
-  pane.clipPlane.setNormal(normal);
-  pane.clipPlane.setOrigin(origin);
-  if (cutPositionEl && showReadout) {
-    cutPositionEl.textContent = `${"XYZ"[axis]} = ${pos.toPrecision(4)}`;
-    cutPositionEl.title = cutPositionEl.textContent;
+  if (!entry) {
+    const created: { widget: RPlaneWidget; last?: { origin: Vec3; normal: Vec3 }; dragging: boolean } = {
+      widget: undefined as unknown as RPlaneWidget,
+      dragging: false,
+    };
+    created.widget = pane.view.createPlaneWidget(
+      (origin, normal) => {
+        const box = scopeModel(pane)?.bounds;
+        if (!box) return;
+        created.last = { origin, normal };
+        Object.assign(pane.clip, clipFromPlane({ origin, normal }, box, pane.clip));
+        if (pane === focusedPane()) syncClipUI();
+        else updateClipPlane(pane);
+        scheduleCutCapRebuild(pane);
+        render();
+      },
+      (active) => {
+        created.dragging = active;
+        const h = window as unknown as { __HARNESS__?: unknown; __widgetInteractions?: number };
+        if (h.__HARNESS__ === true && active) h.__widgetInteractions = (h.__widgetInteractions ?? 0) + 1;
+      }
+    );
+    clipWidgets.set(pane, created);
+    entry = created;
   }
+  const diag = Math.hypot(b.max[0] - b.min[0], b.max[1] - b.min[1], b.max[2] - b.min[2]) || 1;
+  entry.widget.setBounds([b.min[0], b.max[0], b.min[1], b.max[1], b.min[2], b.max[2]]);
+  const want = { origin: pane.clipPlane.getOrigin() as Vec3, normal: pane.clipPlane.getNormal() as Vec3 };
+  // Do not fight the drag, and do not move a handle the user left on an
+  // equivalent plane (the canonical origin differs from where they dropped it).
+  if (!entry.dragging && !(entry.last && coplanar(entry.last, want, diag * 1e-4))) {
+    entry.widget.setPlane(want.origin, want.normal);
+    entry.last = undefined;
+  }
+  entry.widget.setVisible(true);
+}
+
+// Chromium checks only: the screenshot harness (it sets the
+// window.__HARNESS__ marker) can ask where the clip handle is on screen.
+if ((window as unknown as { __HARNESS__?: unknown }).__HARNESS__ === true) {
+  (window as unknown as Record<string, unknown>).__clipHandleProbe = (frac = 0.3):
+    | { x: number; y: number; t: number; active: boolean; plane: { x: number; y: number } }
+    | undefined => {
+    const pane = focusedPane();
+    const o = pane.clipPlane.getOrigin();
+    const n = pane.clipPlane.getNormal();
+    const r = renderRoot.getBoundingClientRect();
+    const [x, y] = backend.worldToDisplay(pane.view, o[0], o[1], o[2]);
+    // A point on the plane away from the origin handle: where a drag moves the plane.
+    const b = scopeModel(pane)?.bounds;
+    const span = b ? Math.max(b.max[0] - b.min[0], b.max[1] - b.min[1], b.max[2] - b.min[2]) : 1;
+    const helper: [number, number, number] = Math.abs(n[0]) < 0.9 ? [1, 0, 0] : [0, 1, 0];
+    const u = [n[1] * helper[2] - n[2] * helper[1], n[2] * helper[0] - n[0] * helper[2], n[0] * helper[1] - n[1] * helper[0]];
+    const ul = Math.hypot(u[0], u[1], u[2]) || 1;
+    const k = (frac * span) / ul;
+    const [px, py] = backend.worldToDisplay(pane.view, o[0] + u[0] * k, o[1] + u[1] * k, o[2] + u[2] * k);
+    return { x: r.left + x, y: r.top + y, t: pane.clip.t, active: pane.clip.active, plane: { x: r.left + px, y: r.top + py } };
+  };
 }
 
 /** Points one pane's props at (or away from) that pane's clipping plane. */
@@ -3134,6 +3190,7 @@ function setCut(on: boolean): void {
   pane.clip.active = on;
   syncClipToggleUI(pane);
   if (on) updateClipPlane(pane);
+  else syncClipWidget(pane);
   applyClipToPane(pane);
   buildCutCap(pane);
   if (beamState.enabled) {
@@ -6525,6 +6582,7 @@ function hideProbePanel(): void {
   probePanelEl.style.display = "none";
   probeState = undefined;
   probePoints = undefined;
+  probePointIds = [];
   removeLayer(PROBE_POINTS_ID);
   removeLayer(PROBE_LINE_ID);
   render();
@@ -6594,25 +6652,7 @@ function applyProbeResult(r: { seq?: number; probe?: ProbeResult; message?: stri
  */
 function restoreProbeOnFrame(): void {
   if (!probeVisible || !probePoints) return;
-  if (probePoints.length === 2 && probePointIds[0] !== undefined && probePointIds[1] !== undefined) {
-    removeLayer(PROBE_POINTS_ID);
-    removeLayer(PROBE_LINE_ID);
-    addLayer(
-      PROBE_POINTS_ID,
-      [
-        { nodeIds: new Int32Array([probePointIds[0]]) },
-        { nodeIds: new Int32Array([probePointIds[1]]) },
-      ],
-      PROBE_COLOR,
-      true
-    );
-    addLayer(
-      PROBE_LINE_ID,
-      [{ cellType: VtkCellType.LINE, nodeIds: Int32Array.from(probePointIds) }],
-      PROBE_COLOR,
-      true
-    );
-  }
+  if (probePointIds.length >= 2 && probePointIds.length === probePoints.length) drawProbeLayers();
   renderProbeUI();
   requestProbe();
 }
@@ -6635,7 +6675,7 @@ function hideInspectPanel(): void {
   inspectMode = false;
   inspectVisible = false;
   measuring = false;
-  measurePendingPoint = undefined;
+  measurePicked = [];
   probing = false;
   probePendingPoint = undefined;
   inspectPanelEl.style.display = "none";
@@ -6669,7 +6709,9 @@ function renderInspectUI(): void {
   const state: InspectPanelState = {
     selection: inspectSelection,
     measuring,
-    measurePending: measurePendingPoint ? 1 : 0,
+    measurePending: measurePicked.length,
+    measureAngle,
+    probeCount: probeVisible ? (probePoints?.length ?? 0) : 0,
     measureResult,
     probing,
     probePending: probePendingPoint ? 1 : 0,
@@ -6692,9 +6734,18 @@ function renderInspectUI(): void {
       const kind=target==="node"?"Nodal":inspectSelection?.entity?.kind==="Condition"?"Conditional":"Elemental";
       vscode.postMessage({type:"saveMonitor",kind,entityId:selection.id,variable});
     },
+    onToggleMeasureAngle: () => {
+      measureAngle = !measureAngle;
+      measurePicked = [];
+      measureResult = undefined;
+      removeLayer(MEASURE_POINTS_ID);
+      removeLayer(MEASURE_LINE_ID);
+      render();
+      renderInspectUI();
+    },
     onToggleMeasure: () => {
       measuring = !measuring;
-      measurePendingPoint = undefined;
+      measurePicked = [];
       if (!measuring) {
         removeLayer(MEASURE_POINTS_ID);
         removeLayer(MEASURE_LINE_ID);
@@ -6708,7 +6759,7 @@ function renderInspectUI(): void {
       // pending first-picks cannot share one click.
       probePendingPoint = undefined;
       measuring = false;
-      measurePendingPoint = undefined;
+      measurePicked = [];
       if (!probing) {
         removeLayer(PROBE_POINTS_ID);
         removeLayer(PROBE_LINE_ID);
@@ -8325,35 +8376,42 @@ function handleMeasureClick(nodeId: number): void {
   if (!prepared) return;
   const coords = coordOfPrep(prepared, nodeId);
   if (!coords) return;
-  if (!measurePendingPoint) {
-    measurePendingPoint = { id: nodeId, coords };
+  const need = measureAngle ? 3 : 2;
+  if (measurePicked.length >= need) measurePicked = [];
+  if (measurePicked.length === 0) {
     measureResult = undefined;
     removeLayer(MEASURE_LINE_ID);
-    addLayer(MEASURE_POINTS_ID, [{ nodeIds: new Int32Array([nodeId]) }], MEASURE_COLOR, true);
-  } else {
-    const a = measurePendingPoint;
-    const dx = coords[0] - a.coords[0];
-    const dy = coords[1] - a.coords[1];
-    const dz = coords[2] - a.coords[2];
-    measureResult = {
-      aId: a.id,
-      bId: nodeId,
-      distance: Math.hypot(dx, dy, dz),
-      delta: [dx, dy, dz],
-    };
-    addLayer(
-      MEASURE_POINTS_ID,
-      [{ nodeIds: new Int32Array([a.id]) }, { nodeIds: new Int32Array([nodeId]) }],
-      MEASURE_COLOR,
-      true
-    );
+  }
+  measurePicked.push({ id: nodeId, coords });
+  const ids = measurePicked.map((p) => p.id);
+  addLayer(MEASURE_POINTS_ID, ids.map((id) => ({ nodeIds: new Int32Array([id]) })), MEASURE_COLOR, true);
+  if (measurePicked.length >= 2) {
     addLayer(
       MEASURE_LINE_ID,
-      [{ cellType: VtkCellType.LINE, nodeIds: new Int32Array([a.id, nodeId]) }],
+      [{ cellType: VtkCellType.LINE, nodeIds: Int32Array.from(ids) }],
       MEASURE_COLOR,
       true
     );
-    measurePendingPoint = undefined;
+  }
+  if (measurePicked.length === need) {
+    const [a, b, c] = measurePicked;
+    const dx = b.coords[0] - a.coords[0];
+    const dy = b.coords[1] - a.coords[1];
+    const dz = b.coords[2] - a.coords[2];
+    measureResult = {
+      aId: a.id,
+      bId: b.id,
+      distance: Math.hypot(dx, dy, dz),
+      delta: [dx, dy, dz],
+      ...(c
+        ? {
+            cId: c.id,
+            angle: angleAt(a.coords, b.coords, c.coords),
+            pathLength: polylineLength([a.coords, b.coords, c.coords]),
+          }
+        : {}),
+    };
+    measurePicked = [];
   }
   renderInspectUI();
   render();
@@ -8368,30 +8426,43 @@ function handleProbeClick(nodeId: number): void {
   if (!prepared) return;
   const coords = coordOfPrep(prepared, nodeId);
   if (!coords) return;
-  if (!probePendingPoint) {
+  if (probeVisible && probePoints && probePoints.length >= 2) {
+    // A third and later pick EXTENDS the polyline: the host already samples a
+    // polyline by arclength (samplePolyline), so only the picks change.
+    probePointIds = [...probePointIds, nodeId];
+    probePoints = [...probePoints, [...coords] as [number, number, number]];
+    drawProbeLayers();
+    renderProbeUI();
+    requestProbe();
+  } else if (!probePendingPoint) {
     probePendingPoint = { id: nodeId, coords };
     removeLayer(PROBE_LINE_ID);
     addLayer(PROBE_POINTS_ID, [{ nodeIds: new Int32Array([nodeId]) }], PROBE_COLOR, true);
   } else {
     const a = probePendingPoint;
     probePointIds = [a.id, nodeId];
-    addLayer(
-      PROBE_POINTS_ID,
-      [{ nodeIds: new Int32Array([a.id]) }, { nodeIds: new Int32Array([nodeId]) }],
-      PROBE_COLOR,
-      true
-    );
-    addLayer(
-      PROBE_LINE_ID,
-      [{ cellType: VtkCellType.LINE, nodeIds: new Int32Array([a.id, nodeId]) }],
-      PROBE_COLOR,
-      true
-    );
     probePendingPoint = undefined;
     showProbePanel([[...a.coords], [...coords]] as [number, number, number][]);
+    drawProbeLayers();
   }
   renderInspectUI();
   render();
+}
+
+/** The picked nodes and the line through them, for however many picks there are. */
+function drawProbeLayers(): void {
+  if (probePointIds.length === 0) return;
+  removeLayer(PROBE_POINTS_ID);
+  removeLayer(PROBE_LINE_ID);
+  addLayer(PROBE_POINTS_ID, probePointIds.map((id) => ({ nodeIds: new Int32Array([id]) })), PROBE_COLOR, true);
+  if (probePointIds.length >= 2) {
+    addLayer(
+      PROBE_LINE_ID,
+      [{ cellType: VtkCellType.LINE, nodeIds: Int32Array.from(probePointIds) }],
+      PROBE_COLOR,
+      true
+    );
+  }
 }
 
 /** The resolved part of handleInspectPick, shared by selection's gestures. */

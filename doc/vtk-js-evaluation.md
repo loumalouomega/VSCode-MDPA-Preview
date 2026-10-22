@@ -50,3 +50,17 @@ Delivered, each with a Chromium check under `scripts/screenshots/`:
 Evaluated and not adopted:
 
 - **Skybox / Texture / PBR** (decided from the vtk.js source, not a measured spike): PBR interpolation needs an environment texture, i.e. a shipped HDR/cube image (bundle size and an `img-src` policy change), and the capture path assumes a flat or transparent background that the screenshot, recorder and theme picker all rely on. A reflective environment also hurts an engineering view, where the point is to read geometry, not to look photographic. The flat scene-theme background stays.
+
+# Increment C: interactive widgets
+
+Delivered (`scripts/screenshots/check-widgets.mjs`):
+
+- **Clip plane handle** — vtk.js `ImplicitPlaneWidget` behind `BackendCaps.widgets` / `RView.createPlaneWidget` (`webview/render/vtkjs/widgets.ts`). The handle is a view of `PaneClipState`: `src/parser/render/widgetMath.ts` maps a dragged plane back to the clip state (`clipFromPlane`: an X/Y/Z preset when it lands within 2° of an axis, Free otherwise, `t` clamped so a handle dragged outside the model parks on its face) and the clip state to the plane (`planeFromClip`, which `updateClipPlane` now uses too, so there is one source of truth). Slider, numeric normal and cap follow a drag through the same writers the slider uses. Measured: dragging the plane surface in the isometric view moved the slider from 30 % to 7 %, and moving the slider moves the handle. VTK-wasm keeps the slider only (`widgets: false`, with a reason).
+- **Known limit, from vtk.js:** the widget drags the plane along its normal by projecting the pointer ray onto that line, and `projectDisplayToLine` returns nothing when the view direction is (almost) parallel to the line. Looking straight down the clip normal — the default view for a Z clip of a flat model — the handle cannot move along it; the slider still works. The check therefore switches to the isometric view first.
+- **Measure angle** — Measure gains an Angle mode (three node picks, angle at the middle one, plus the a–b–c path length), computed by `angleAt` / `polylineLength` in `widgetMath.ts` (Node-tested) and drawn with the existing measure overlay layers.
+- **Probe polyline** — after the first two picks open the Probe line panel, further node picks extend the polyline (`probePoints`/`probePointIds`, redrawn by `drawProbeLayers`); the host already samples a polyline by arclength, so no message changed.
+
+Evaluated and not adopted:
+
+- **LineWidget / AngleWidget / PolyLineWidget / LabelWidget** (decided from the source): they place their handles through a manipulator (a camera-facing plane, or `PickerManipulator`, which returns a surface point), not onto mesh nodes. Measure and the probe report node ids and use node coordinates, and the Inspect pick already resolves them; handles at arbitrary surface points would lose that. The native angle and polyline above keep the node snapping.
+- **InteractiveOrientationWidget** as an alternative to the orientation cube: the cube already snaps to the six standard views, labels its faces and follows the focused pane, so replacing it would only lose behaviour.
