@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed
+
+- Virtual wind tunnel: the carve step failed ("Nothing to measure") or emptied the mesh since the remesh began keeping empty SubModelParts, because the lattice's empty `Fluid` part blocked renaming the fluid domain; the empty placeholders are now dropped before the rename, and a failed rename is an error instead of silent.
+
 ### Added
 
 - `mesh_info` and `mesh_convert` accept `fields`: read only the named point/cell data arrays of a meshio++ format (upstream's `arrays` selective read). Measured: the XDMF and Gmsh readers honour it; MED and Exodus return every array, and the result says so in its diagnostics.

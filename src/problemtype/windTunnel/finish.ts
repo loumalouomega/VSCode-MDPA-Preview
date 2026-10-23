@@ -90,10 +90,22 @@ export function finishCarvedMesh(input: MdpaModel, names: FinishNames = DEFAULT_
     model = deleteSubModelPart(model, p.path).model;
     removedTetrahedra += before - model.blocks.reduce((s, b) => s + (b.stride === 4 ? b.count : 0), 0);
   }
+  // The remesh now keeps SubModelParts that own no entities, so the lattice's
+  // empty placeholders ("Fluid", "Body") survive the carve and would block the
+  // rename below with a sibling-name collision.
+  const isEmptyPart = (p: SubModelPart): boolean =>
+    p.nodeIds.length + p.elementIds.length + p.conditionIds.length === 0 && (p.children ?? []).length === 0;
+  const dropEmptyNamed = (name: string): void => {
+    const empty = model.subModelParts.find((p) => p.name === name && isEmptyPart(p));
+    if (empty) model = { ...model, subModelParts: model.subModelParts.filter((p) => p !== empty) };
+  };
+  dropEmptyNamed(names.fluid);
+  dropEmptyNamed(names.body);
   const rename = (from: string, to: string): void => {
     if (!model.subModelParts.some((p) => p.path === from)) return;
     const r = renameSubModelPart(model, from, to);
-    if (r.renamed) model = r.model;
+    if (!r.renamed) throw new Error(`Could not rename "${from}" to "${to}": a part with that name already exists.`);
+    model = r.model;
   };
   rename(fluid[0].path, names.fluid);
   rename("MMG_Interface", names.body);
