@@ -37,6 +37,7 @@ import { restrictToCells } from "./parser/selectCells";
 import { extractSkinModel } from "./parser/extractSkin";
 import { deriveMesh, DeriveSpec, DeriveResult, DERIVE_KINDS } from "./parser/deriveMesh";
 import { estimateGrid, describeGridEstimate, triangleSurfaceOf, GRID_MAX_CELLS, GRID_CONFIRM_CELLS } from "./parser/gridSample";
+import { GENERATOR_SHAPES, GENERATOR_EXAMPLES, GeneratorShape, estimateGeneratedCells, GENERATE_MAX_CELLS } from "./parser/kernelMeshes";
 import { exportReportHtml } from "./parser/exportReportHtml";
 import { writeRawMeshioBytes, meshioFullInstalled } from "./parser/meshio";
 import { partitionParts, partitionManifest } from "./parser/partitionExport";
@@ -104,6 +105,9 @@ export interface MenuMessage {
     | "menuSplitMesh"
     | "menuExportSimplified"
     | "menuExportGrid"
+    | "menuExportOctree"
+    | "menuExportCadSurface"
+    | "menuGenerateMesh"
     | "menuExportTable"
     | "menuExportSeries"
     | "menuExportAnalysis"
@@ -183,6 +187,9 @@ export async function runMenu(
   else if (msg.type === "menuSplitMesh") await splitMesh(ctx);
   else if (msg.type === "menuExportSimplified") await exportSimplified(ctx, msg.format, msg.outputFormat);
   else if (msg.type === "menuExportGrid") await exportGrid(ctx);
+  else if (msg.type === "menuExportOctree") await exportOctreeMesh(ctx);
+  else if (msg.type === "menuExportCadSurface") await exportCadSurface(ctx);
+  else if (msg.type === "menuGenerateMesh") await exportGenerated(ctx);
   else if (msg.type === "menuExportTable")
     await exportDataTable(ctx, msg.kind ?? "Nodes", msg.format, msg.opts);
   else if (msg.type === "menuExportSeries")
@@ -1082,6 +1089,104 @@ export async function exportSimplified(ctx: ExportContext, targetExt?: string, o
   });
   if (answer === undefined) return;
   await exportDerived(ctx, { kind: "decimate", ratio: Number(answer) / 100 }, targetExt, outputFormat);
+}
+
+/**
+ * Advanced ▸ Octree volume mesh…: a tetrahedral, hexahedral or castellated
+ * mesh of the INSIDE of the open surface (or of a solid's skin), graded on an
+ * octree (meshio++ octreeMesh). Asks for the output kind and the leaf-size
+ * range; the kernel validates the rest. Never an edit of the open mesh.
+ */
+export async function exportOctreeMesh(ctx: ExportContext): Promise<void> {
+  let diag: number;
+  try {
+    const b = triangleSurfaceOf(ctx.model).surface.bounds;
+    diag = Math.hypot(b.max[0] - b.min[0], b.max[1] - b.min[1], b.max[2] - b.min[2]);
+  } catch (err) {
+    vscode.window.showWarningMessage(err instanceof Error ? err.message : String(err));
+    return;
+  }
+  const output = await vscode.window.showQuickPick(
+    [
+      { label: "Tetrahedra", description: "conforming graded tetrahedra fitted to the surface", value: "tet" as const },
+      { label: "Hexahedra", description: "all-hexahedral mesh by the octree dual", value: "hex" as const },
+      { label: "Castellated hexahedra", description: "octree leaves with a stair-stepped surrogate boundary", value: "castellated" as const },
+    ],
+    { title: "Octree volume mesh — output", placeHolder: "What to produce" }
+  );
+  if (!output) return;
+  const positive = (v: string) => (Number.isFinite(Number(v)) && Number(v) > 0 ? undefined : "A positive number.");
+  const maxAnswer = await vscode.window.showInputBox({
+    title: "Octree volume mesh — largest leaf edge",
+    prompt: "Edge length, in mesh units, of the coarsest cells far from the surface.",
+    value: String(Number((diag / 8).toPrecision(3))),
+    validateInput: positive,
+  });
+  if (maxAnswer === undefined) return;
+  const minAnswer = await vscode.window.showInputBox({
+    title: "Octree volume mesh — smallest leaf edge",
+    prompt: "Edge length of the finest cells at the surface. Each halving multiplies the cell count by up to eight.",
+    value: String(Number((Number(maxAnswer) / 8).toPrecision(3))),
+    validateInput: (v) => positive(v) ?? (Number(v) > Number(maxAnswer) ? "Not above the largest edge." : undefined),
+  });
+  if (minAnswer === undefined) return;
+  await exportDerived(ctx, { kind: "octreeMesh", options: { output: output.value, maxSize: Number(maxAnswer), minSize: Number(minAnswer) } });
+}
+
+/**
+ * File ▸ Mesh CAD faces…: triangulates the faces of the open B-rep (a
+ * `.cad.json`, or a STEP/IGES read) into one conforming surface mesh. The
+ * B-rep side channel exists only while the model is unedited.
+ */
+export async function exportCadSurface(ctx: ExportContext): Promise<void> {
+  if (!ctx.model.nurbs) {
+    vscode.window.showWarningMessage(
+      "This mesh carries no CAD B-rep. Open a .cad.json (or a STEP/IGES file) first — and only while it is unedited, because any edit drops the B-rep."
+    );
+    return;
+  }
+  const b = ctx.model.bounds;
+  const diag = b ? Math.hypot(b.max[0] - b.min[0], b.max[1] - b.min[1], b.max[2] - b.min[2]) : 0;
+  const answer = await vscode.window.showInputBox({
+    title: "Mesh CAD faces — target edge length",
+    prompt: "Edge length, in model units, the faces are triangulated to. A face that cannot be meshed is reported, never meshed wrong.",
+    value: diag > 0 ? String(Number((diag / 40).toPrecision(2))) : "1",
+    validateInput: (v) => (Number.isFinite(Number(v)) && Number(v) > 0 ? undefined : "A positive number."),
+  });
+  if (answer === undefined) return;
+  await exportDerived(ctx, { kind: "cadSurface", targetSize: Number(answer) });
+}
+
+/**
+ * File ▸ Generate mesh…: a procedural mesh made from nothing. The shape is
+ * picked from a list and its arguments are edited as JSON, prefilled with an
+ * example that makes a useful mesh; an oversized request is refused before
+ * the kernel runs. Written through the derived-mesh path, beside the open mesh.
+ */
+export async function exportGenerated(ctx: ExportContext): Promise<void> {
+  const pick = await vscode.window.showQuickPick(
+    GENERATOR_SHAPES.map((shape) => ({ label: shape, description: GENERATOR_EXAMPLES[shape].description })),
+    { title: "Generate mesh — shape", placeHolder: "Procedural mesh" }
+  );
+  if (!pick) return;
+  const shape = pick.label as GeneratorShape;
+  const answer = await vscode.window.showInputBox({
+    title: `Generate ${shape} — parameters (JSON)`,
+    prompt: "Arguments by name; leave {} for the kernel defaults. \"order\": 2 gives quadratic cells.",
+    value: JSON.stringify(GENERATOR_EXAMPLES[shape].params),
+    validateInput: (v) => {
+      try {
+        const p = JSON.parse(v);
+        if (typeof p !== "object" || p === null || Array.isArray(p)) return "A JSON object.";
+        const cells = estimateGeneratedCells(shape, p);
+        return cells > GENERATE_MAX_CELLS ? `About ${Math.round(cells).toLocaleString("en-US")} cells — over the ${GENERATE_MAX_CELLS.toLocaleString("en-US")}-cell limit.` : undefined;
+      } catch {
+        return "Not valid JSON.";
+      }
+    },
+  });
+  if (answer === undefined) return;
+  await exportDerived(ctx, { kind: "generate", shape, params: JSON.parse(answer) });
 }
 
 /**

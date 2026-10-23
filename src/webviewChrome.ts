@@ -189,6 +189,9 @@ export const MENU_ACTION_COMMANDS: Readonly<Record<string, string>> = {
   splitMesh: "kratos.mesh.splitMesh",
   simplify: "kratos.mesh.exportSimplified",
   sampleGrid: "kratos.mesh.exportGrid",
+  octreeMesh: "kratos.mesh.exportOctree",
+  cadSurface: "kratos.mesh.exportCadSurface",
+  generateMesh: "kratos.mesh.generate",
   nodeIds: "kratos.mdpa.toggleNodeIds",
   screenshot: "kratos.mdpa.screenshot",
   commandLine: "kratos.mdpa.commandLine",
@@ -215,6 +218,9 @@ export const ADVANCED_MENU_HTML = `<div id="advanced-popup" class="hidden" role=
         <button type="button" class="file-menu-item" data-action="splitMesh" role="menuitem" title="Write one file per connected body, element type or field value">${ic("crop")}<span>Split mesh…</span></button>
         <button type="button" class="file-menu-item" data-action="simplify" role="menuitem" title="Write a simplified COPY of a triangle surface (quadric-error edge collapse): survivors keep their ids and boundary/creases are pinned">${ic("remesh")}<span>Simplify surface…</span></button>
         <button type="button" class="file-menu-item" data-action="sampleGrid" role="menuitem" title="Write a voxel occupancy or a signed-distance volume of the surface on a regular lattice (.vti keeps the sdf header)">${ic("grid")}<span>Sample to grid…</span></button>
+        <button type="button" class="file-menu-item" data-action="octreeMesh" role="menuitem" title="Write a tetrahedral or hexahedral volume mesh of the inside of the surface, graded on an octree (meshio++ octreeMesh)">${ic("remesh")}<span>Octree volume mesh…</span></button>
+        <button type="button" class="file-menu-item" data-action="cadSurface" role="menuitem" title="Triangulate the faces of the open CAD B-rep (.cad.json, STEP/IGES) into one conforming surface mesh, one SubModelPart per CAD face">${ic("remesh")}<span>Mesh CAD faces…</span></button>
+        <button type="button" class="file-menu-item" data-action="generateMesh" role="menuitem" title="Write a procedural mesh from nothing: rectangle, box, disk, sphere, cylinder, annulus, L-shape, plate with a hole, honeycomb or reference cells">${ic("grid")}<span>Generate mesh…</span></button>
         <div class="file-menu-sep"></div>
         <button type="button" class="file-menu-item" data-action="propertiesEditor" role="menuitem" title="Browse and edit the Begin Properties sets: values, assign to a SubModelPart, clone or delete — beams' CROSS_AREA is one of these">${ic("edit")}<span>Properties editor…</span></button>
         <button type="button" class="file-menu-item" data-action="lighting" role="menuitem" title="Specular / ambient / diffuse + backface culling">${ic("lighting")}<span>Lighting…</span></button>
@@ -892,6 +898,39 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
                   <button type="button" class="edit-apply edit-apply-mmg" data-op="partition" title="Split the mesh into parts: a Hilbert curve (balanced by cell count) or KaHIP (minimizes the edge cut between parts)" data-run-title="Split the mesh into balanced parts"><span class="apply-play">${ic("play")}</span><span class="apply-stop">${ic("stop")}</span></button>
                 </div>
                 <div class="edit-progress hidden" id="partition-progress">
+                  <div class="edit-progress-track"><div class="edit-progress-bar"></div></div>
+                  <div class="edit-progress-msg"></div>
+                </div>
+              </div>
+              <div class="edit-form collapsed">
+                <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("partition")}<span>Segment surface patches</span></button>
+                <div class="edit-form-row">
+                  <label class="edit-field"><span>feature °</span><input type="number" id="segment-angle" class="edit-num" value="30" min="0" max="180" step="1"></label>
+                  <label class="edit-field"><span>method</span><select id="segment-method" class="edit-sel edit-sel-mid">
+                    <option value="angle" selected>region growing</option>
+                    <option value="primitive">by primitive</option>
+                  </select></label>
+                  <label class="edit-field"><span>min cells</span><input type="number" id="segment-mincells" class="edit-num" value="1" min="1" step="1"></label>
+                  <label class="edit-field"><span>in part</span><select id="segment-part" class="edit-sel edit-sel-mid"><option value="">whole surface</option></select></label>
+                  <label class="edit-check"><input type="checkbox" id="segment-createparts"><span>as SubModelParts</span></label>
+                  <button type="button" class="edit-apply edit-apply-mmg" data-op="segment" title="Label the smooth patches of a surface mesh (SEGMENT_PATCH), bounded by feature edges; a volume mesh must be reduced to its skin first" data-run-title="Label the surface patches"><span class="apply-play">${ic("play")}</span><span class="apply-stop">${ic("stop")}</span></button>
+                </div>
+                <div class="edit-progress hidden" id="segment-progress">
+                  <div class="edit-progress-track"><div class="edit-progress-bar"></div></div>
+                  <div class="edit-progress-msg"></div>
+                </div>
+              </div>
+              <div class="edit-form collapsed">
+                <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("partition")}<span>Refine patches</span></button>
+                <div class="edit-form-row">
+                  <label class="edit-field"><span>tolerance</span><input type="number" id="refinepatches-tolerance" class="edit-num" value="0.001" min="0" step="any"></label>
+                  <label class="edit-field"><span>iterations</span><input type="number" id="refinepatches-iterations" class="edit-num" value="10" min="0" step="1"></label>
+                  <label class="edit-check"><input type="checkbox" id="refinepatches-split" checked><span>split</span></label>
+                  <label class="edit-check"><input type="checkbox" id="refinepatches-merge" checked><span>merge</span></label>
+                  <label class="edit-check"><input type="checkbox" id="refinepatches-createparts"><span>as SubModelParts</span></label>
+                  <button type="button" class="edit-apply edit-apply-mmg" data-op="refinePatches" title="Move patch boundaries, split freeform patches and merge neighbours until a plane, sphere, cylinder, cone or torus explains each patch — needs the SEGMENT_PATCH labels of a Segment step" data-run-title="Refine the surface patches"><span class="apply-play">${ic("play")}</span><span class="apply-stop">${ic("stop")}</span></button>
+                </div>
+                <div class="edit-progress hidden" id="refinepatches-progress">
                   <div class="edit-progress-track"><div class="edit-progress-bar"></div></div>
                   <div class="edit-progress-msg"></div>
                 </div>

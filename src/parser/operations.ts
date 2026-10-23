@@ -49,6 +49,7 @@ import { deleteEntities } from "./selectCells";
 import { smoothModel, SmoothMethod, SmoothParams } from "./smoothMesh";
 import { reorderModel, ReorderMethod, REORDER_METHODS } from "./reorderMesh";
 import { partitionModel, PartitionMethod, PARTITION_VARIABLE } from "./partitionMesh";
+import { SEGMENT_VARIABLE, segmentModel, refinePatchesModel, segmentProblem, refinePatchesProblem, SegmentParams, RefinePatchesParams } from "./segmentMesh";
 import { linearize } from "./linearize";
 import { refineModel } from "./refineMesh";
 import { RefineSelector, REFINE_COMPARES, RefineCompare } from "./refineSelect";
@@ -280,6 +281,8 @@ export type OpRecord =
   | ({ op: "smooth" } & SmoothParams)
   | { op: "reorder"; method: ReorderMethod }
   | { op: "partition"; nparts: number; method?: PartitionMethod; createParts?: boolean }
+  | ({ op: "segment" } & SegmentParams)
+  | ({ op: "refinePatches" } & RefinePatchesParams)
   | { op: "linearize" }
   | { op: "refine"; levels?: number; select?: RefineSelector }
   | { op: "simplexify" }
@@ -401,6 +404,8 @@ const ASYNC_OPS = new Set<OpName>([
   "smooth",
   "reorder",
   "partition",
+  "segment",
+  "refinePatches",
   "mergeMesh",
   "fieldGradient",
   "fieldHessian",
@@ -495,6 +500,8 @@ const ORACLE_OPS: ReadonlySet<OpName> = new Set<OpName>([
   "smooth",
   "reorder",
   "partition",
+  "segment",
+  "refinePatches",
   "fieldGradient",
   "fieldHessian",
   "estimateError",
@@ -1132,6 +1139,8 @@ export function applyOp(model: MdpaModel, rec: OpRecord): OpOutcome {
     case "smooth":
     case "reorder":
     case "partition":
+    case "segment":
+    case "refinePatches":
     case "mergeMesh":
     case "fieldGradient":
     case "fieldHessian":
@@ -1559,6 +1568,26 @@ async function applyAsyncOpInProcess(
           `${r.bandwidthAfter}${delta}.`,
       };
     }
+    case "segment": {
+      const { op: _op, ...params } = rec;
+      const r = await segmentModel(model, params);
+      if (r.labelled === 0) return { model, noop: true, message: "No surface cells to segment." };
+      return {
+        model: r.model,
+        message:
+          `Segmented ${r.labelled} surface cell(s) into ${r.numPatches} patch(es) as ${SEGMENT_VARIABLE} ` +
+          `(${r.details}).${params.createParts ? " One Patch_<k> SubModelPart per patch." : ""}`,
+      };
+    }
+    case "refinePatches": {
+      const { op: _op, ...params } = rec;
+      const r = await refinePatchesModel(model, params);
+      if (r.labelled === 0) return { model, noop: true, message: r.details || "No segmented surface cells to refine." };
+      return {
+        model: r.model,
+        message: `Refined ${r.labelled} labelled cell(s) into ${r.numPatches} patch(es) (${r.details}).`,
+      };
+    }
     case "partition": {
       const r = await partitionModel(model, rec);
       if (r.assigned === 0) return { model, noop: true, message: "No cells to partition." };
@@ -1638,6 +1667,8 @@ const KNOWN_OPS = new Set<OpName>([
   "reorder",
   "renumber",
   "partition",
+  "segment",
+  "refinePatches",
   "linearize",
   "refine",
   "simplexify",
@@ -2268,6 +2299,46 @@ export function opRecordFromMessage(
       }
       if (msg.createParts !== undefined) rec.createParts = Boolean(msg.createParts);
       return rec;
+    }
+    case "segment": {
+      const rec: Extract<OpRecord, { op: "segment" }> = { op };
+      for (const k of ["featureAngle", "normalTolerance", "curvatureTolerance", "tolerance"] as const) {
+        if (msg[k] === undefined || msg[k] === "") continue;
+        const v = Number(msg[k]);
+        if (!Number.isFinite(v)) return undefined;
+        rec[k] = v;
+      }
+      if (msg.minPatchCells !== undefined && msg.minPatchCells !== "") {
+        const v = Number(msg.minPatchCells);
+        if (!Number.isFinite(v)) return undefined;
+        rec.minPatchCells = Math.floor(v);
+      }
+      if (typeof msg.method === "string" && msg.method !== "") rec.method = msg.method as SegmentParams["method"];
+      if (typeof msg.part === "string" && msg.part.trim() !== "") rec.part = msg.part.trim();
+      if (msg.createParts !== undefined) rec.createParts = Boolean(msg.createParts);
+      return segmentProblem(rec) ? undefined : rec;
+    }
+    case "refinePatches": {
+      const rec: Extract<OpRecord, { op: "refinePatches" }> = { op };
+      for (const k of ["tolerance", "normalWeight", "epsilon", "featureAngle", "ransacSeed"] as const) {
+        if (msg[k] === undefined || msg[k] === "") continue;
+        const v = Number(msg[k]);
+        if (!Number.isFinite(v)) return undefined;
+        rec[k] = v;
+      }
+      for (const k of ["maxIterations", "minPatchCells"] as const) {
+        if (msg[k] === undefined || msg[k] === "") continue;
+        const v = Number(msg[k]);
+        if (!Number.isFinite(v)) return undefined;
+        rec[k] = Math.floor(v);
+      }
+      for (const k of ["relative", "allowSplit", "allowMerge", "createParts"] as const) {
+        if (msg[k] !== undefined) rec[k] = Boolean(msg[k]);
+      }
+      if (msg.types !== undefined && msg.types !== "") {
+        rec.types = (Array.isArray(msg.types) ? msg.types : String(msg.types).split(/[ ,]+/).filter(Boolean)) as RefinePatchesParams["types"];
+      }
+      return refinePatchesProblem(rec) ? undefined : rec;
     }
     case "linearize":
       return { op };
@@ -3148,6 +3219,14 @@ function validateParams(rec: OpRecord, warnings: string[]): boolean {
       return rec.method === undefined || PARTITION_METHODS.has(rec.method)
         ? true
         : bad("invalid method");
+    }
+    case "segment": {
+      const problem = segmentProblem(rec);
+      return problem ? bad(problem) : true;
+    }
+    case "refinePatches": {
+      const problem = refinePatchesProblem(rec);
+      return problem ? bad(problem) : true;
     }
     case "linearize":
     case "simplexify":

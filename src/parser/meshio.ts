@@ -4,7 +4,13 @@ import type {
   FitCadOptions,
   FitCadResult,
   IgaOptions,
+  MeshCadSurfaceOptions,
+  MeshCadSurfaceResult,
   MfemInfo,
+  OctreeMeshOptions,
+  OctreeMeshResult,
+  RefinePatchesOptions,
+  RefinePatchesResult,
   RegionEdit,
   RegionSelector,
 } from "@meshioplusplus/wasm";
@@ -210,6 +216,91 @@ export interface MeshioModule {
    *   triangle surface, or an unknown options key.
    */
   fitCad(mesh: MeshioMesh, options?: FitCadOptions): FitCadResult;
+
+  /**
+   * Triangulate the faces of a B-rep (`CadJsonInfo`: a `.cad.json` read, or a
+   * full artifact's STEP/IGES read) into one conforming surface mesh (meshio++
+   * >= 17.13.0), no CAD kernel. A face that cannot be meshed is listed in
+   * `faces` with its status and reason; `strict` throws instead.
+   */
+  meshCadSurface(info: CadJsonInfo, options: MeshCadSurfaceOptions): MeshCadSurfaceResult;
+
+  /**
+   * Mesh the inside of a skin on a balanced octree (meshio++ >= 17.13.0):
+   * conforming graded tetrahedra (`output: "tet"`), castellated hexahedral
+   * leaves or all-hexahedra by the octree dual.
+   */
+  octreeMesh(mesh: MeshioMesh, options?: OctreeMeshOptions): OctreeMeshResult;
+
+  /**
+   * The older adaptive octree around a skin (17.8.0), positional arguments as
+   * the typings declare them; `null` takes the default.
+   */
+  octree(
+    mesh: MeshioMesh,
+    rootCells?: number[] | null,
+    minLevel?: number,
+    maxLevel?: number,
+    bounds?: number[] | null,
+    padding?: number,
+    paddingRelative?: number,
+    dimension?: number,
+    sampleDistance?: number,
+    balance?: string,
+    fill?: string,
+    sign?: string,
+    attachDistance?: boolean,
+    evenOdd?: boolean,
+    maxCells?: number
+  ): {
+    mesh: MeshioMesh;
+    dimension: number;
+    numLeaves: number;
+    numBoundary: number;
+    numNonManifold: number;
+    numInconsistent: number;
+  };
+
+  /**
+   * Split a surface into smooth patches (cell data `segment:patch`, -1 off the
+   * surface). The mesh comes back unchanged apart from the added data.
+   */
+  segment(
+    mesh: MeshioMesh,
+    featureAngle?: number,
+    normalTolerance?: number,
+    curvatureTolerance?: number,
+    minPatchCells?: number,
+    region?: string,
+    prefix?: string,
+    method?: "angle" | "primitive",
+    tolerance?: number
+  ): {
+    mesh: MeshioMesh;
+    numPatches: number;
+    numMerged: number;
+    numFeatureEdges: number;
+    numBoundaryEdges: number;
+    numNonManifoldEdges: number;
+  };
+
+  /** Variational refinement of the `segment:patch` labels (17.11.0). */
+  refinePatches(mesh: MeshioMesh, options?: RefinePatchesOptions): RefinePatchesResult;
+
+  /** Procedural generators (17.9.0, planar-domain ones 17.11.0); `null` = default. */
+  rectangle(dims?: number[] | null, size?: number[] | null, origin?: number[] | null, cellType?: string, split?: string, order?: number, maxCells?: number): MeshioMesh;
+  box(dims?: number[] | null, size?: number[] | null, origin?: number[] | null, cellType?: string, order?: number, maxCells?: number): MeshioMesh;
+  disk(radius?: number, n?: number, center?: number[] | null, cellType?: string, order?: number, maxCells?: number): MeshioMesh;
+  uvSphere(radius?: number, nu?: number, nv?: number, center?: number[] | null, cellType?: string, order?: number, maxCells?: number): MeshioMesh;
+  icosaSphere(radius?: number, subdivisions?: number, center?: number[] | null, order?: number, maxCells?: number): MeshioMesh;
+  cylinder(radius?: number, height?: number, nxy?: number, nz?: number, center?: number[] | null, cellType?: string, order?: number, maxCells?: number): MeshioMesh;
+  referenceTriangle(n?: number, size?: number[] | null, origin?: number[] | null, order?: number, maxCells?: number): MeshioMesh;
+  ngon(sides?: number, radius?: number, rings?: number, center?: number[] | null, order?: number, maxCells?: number): MeshioMesh;
+  annulus(innerRadius?: number, outerRadius?: number, ntheta?: number, nr?: number, angle?: number, center?: number[] | null, cellType?: string, order?: number, maxCells?: number): MeshioMesh;
+  lshape(n?: number, size?: number, center?: number[] | null, cellType?: string, order?: number, maxCells?: number): MeshioMesh;
+  plateWithHole(radius?: number, size?: number, nt?: number, nr?: number, center?: number[] | null, cellType?: string, order?: number, maxCells?: number): MeshioMesh;
+  honeycomb(dims?: number[] | null, edge?: number, origin?: number[] | null, maxCells?: number): MeshioMesh;
+  referenceCells(types?: string[] | null, pairs?: boolean): MeshioMesh;
 
   /**
    * The IGA ops over a NURBS side channel (meshio++ >= 16.42.0's mfem info,
@@ -2064,6 +2155,34 @@ function describeFitCad(fit: FitCadResult): string {
     notes.push(
       `skin deviation ${fit.hausdorffMax.toPrecision(3)} (RMS ${fit.hausdorffRms.toPrecision(3)})`
     );
+  }
+  // 17.13.0: the freeform pipeline. Only stated when it did something beyond
+  // the legacy mode, so a default fit reads exactly as before.
+  if (fit.freeformMode && fit.freeformMode !== "legacy") {
+    const free: string[] = [`freeform ${fit.freeformMode}`];
+    if (fit.numFreeformAdaptive > 0) free.push(`${fit.numFreeformAdaptive} adaptive patch(es)`);
+    if (fit.numNetworkPatches > 0) {
+      free.push(`${fit.numNetworkPatches} network patch(es), ${fit.numExtraordinaryVertices} extraordinary vertex(es)`);
+    }
+    if (Number.isFinite(fit.maxG1AngleDeg) && fit.maxG1AngleDeg > 0) {
+      free.push(`max G1 jump ${fit.maxG1AngleDeg.toPrecision(3)}°`);
+    }
+    if (Number.isFinite(fit.maxFreeformDistance) && fit.maxFreeformDistance > 0) {
+      free.push(`freeform distance ${fit.maxFreeformDistance.toPrecision(3)}`);
+    }
+    notes.push(free.join(", "));
+  }
+  if (typeof fit.facetAreaFraction === "number" && fit.facetAreaFraction > 0) {
+    notes.push(`${(100 * fit.facetAreaFraction).toPrecision(3)}% of the area stayed faceted`);
+  }
+  if (fit.brepChecked) notes.push("B-rep checked");
+  // Outside the legacy mode the report lists every patch it tried; name why
+  // a patch was demoted, which is the question a user asks next.
+  const demoted = (fit.faces ?? []).filter((f) => f.demotionReason !== "none");
+  if (demoted.length > 0) {
+    const reasons = new Map<string, number>();
+    for (const f of demoted) reasons.set(f.demotionReason, (reasons.get(f.demotionReason) ?? 0) + 1);
+    notes.push(`demotions: ${[...reasons].map(([r, n]) => `${n} ${r}`).join(", ")}`);
   }
   return notes.length > 0 ? `${faces} (${notes.join("; ")})` : faces;
 }

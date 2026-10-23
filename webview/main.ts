@@ -3913,6 +3913,9 @@ function dispatchToolbarAction(action: string | undefined, _target?: HTMLElement
   else if (action === "splitMesh") vscode.postMessage({ type: "menuSplitMesh" });
   else if (action === "simplify") vscode.postMessage({ type: "menuExportSimplified" });
   else if (action === "sampleGrid") vscode.postMessage({ type: "menuExportGrid" });
+  else if (action === "octreeMesh") vscode.postMessage({ type: "menuExportOctree" });
+  else if (action === "cadSurface") vscode.postMessage({ type: "menuExportCadSurface" });
+  else if (action === "generateMesh") vscode.postMessage({ type: "menuGenerateMesh" });
   else if (action === "find") toggleFindBar();
   else if (action === "field") toggleFieldPanel();
   else if (action === "inspect") toggleInspectMode();

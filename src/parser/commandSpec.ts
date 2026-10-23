@@ -204,6 +204,8 @@ const OPERATIONS: CommandSpec[] = [
   op("renumber", "Compact ids into gapless runs", "target(all|nodes|entities) start:int", "renumber target=all"),
   op("reorder", "Reorder node storage (rcm, morton, hilbert)", "method(rcm|morton|hilbert)!", "reorder method=rcm", ["method"]),
   op("partition", "Attach a PARTITION_INDEX field (domain decomposition)", "nparts:int! method(sfc|kahip|auto) createParts:bool", "partition nparts=4", ["nparts"]),
+  op("segment", "Label surface patches (SEGMENT_PATCH) by region growing between feature edges", "featureAngle:number normalTolerance:number curvatureTolerance:number minPatchCells:int method(angle|primitive) tolerance:number part:part createParts:bool", "segment featureAngle=30 method=angle"),
+  op("refinePatches", "Refine SEGMENT_PATCH so primitives (plane, sphere, cylinder, cone, torus) explain each patch", "tolerance:number relative:bool normalWeight:number epsilon:number featureAngle:number maxIterations:int minPatchCells:int ransacSeed:int types:json allowSplit:bool allowMerge:bool createParts:bool", "refinePatches tolerance=0.001 maxIterations=10"),
   // Transforms
   op("scale", "Scale about the origin (optionally only the nodes of a SubModelPart)", "sx:number sy:number sz:number part:part", "scale sx=2 sy=2 sz=2"),
   op("translate", "Translate the mesh (optionally only the nodes of a SubModelPart)", "dx:number dy:number dz:number part:part", "translate dx=1 dy=0 dz=0"),
@@ -353,6 +355,9 @@ const FILES: CommandSpec[] = [
   post("splitMesh", "file", "Split into components/types/fields", "menuSplitMesh"),
   post("simplify", "file", "Export a simplified surface copy", "menuExportSimplified"),
   post("sampleGrid", "file", "Sample to a grid / voxelization / SDF volume", "menuExportGrid"),
+  post("octreeMesh", "file", "Write an octree tetrahedral/hexahedral volume mesh of the surface", "menuExportOctree"),
+  post("cadSurface", "file", "Triangulate the faces of the open CAD B-rep", "menuExportCadSurface"),
+  post("generateMesh", "file", "Write a procedural mesh (rectangle, box, sphere, …)", "menuGenerateMesh"),
   {
     ...post("exportTable", "file", "Export the data table as CSV/XLSX", "menuExportTable", "format(.csv|.xlsx)! kind(Nodes|Elements|Conditions|Geometries)! membership:bool submodelpart:part nodeColumns:bool", "exportTable .csv Nodes", { positional: ["format", "kind"] }),
     exec: {
