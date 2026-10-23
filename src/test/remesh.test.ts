@@ -159,6 +159,33 @@ test("expr mode: a bad expression fails fast with a message (no MMG run)", async
   assert.match(bad.message, /bogus/);
 });
 
+test("remesh keeps the whole SubModelPart tree, including parts that own no entities", async () => {
+  const m = cube();
+  const lower = m.subModelParts[0];
+  const empty = (name: string, parent: string, children: typeof lower.children = []) => ({
+    name,
+    path: parent ? `${parent}/${name}` : name,
+    nodeIds: new Int32Array(0),
+    elementIds: new Int32Array(0),
+    conditionIds: new Int32Array(0),
+    geometryIds: new Int32Array(0),
+    constraintIds: new Int32Array(0),
+    children,
+  });
+  // An empty interface group with an empty child, nested under a real part and
+  // beside it.
+  lower.children = [empty("contact", "Lower", [empty("contact_child", "Lower/contact")])];
+  m.subModelParts.push(empty("Outer", "", [empty("Inner", "Outer")]));
+  const r = await remeshModel(m, { mode: "factor", factor: 0.4 });
+  assert.ok(!r.noop, r.message);
+  const paths: string[] = [];
+  const walk = (ps: typeof lower.children) => ps.forEach((p) => { paths.push(p.path); walk(p.children); });
+  walk(r.model.subModelParts);
+  assert.deepEqual(paths.sort(), [
+    "Lower", "Lower/contact", "Lower/contact/contact_child", "Outer", "Outer/Inner",
+  ].sort());
+});
+
 test("expr mode: per-part override refines only the named SubModelPart", async () => {
   // Global size keeps the mesh coarse; the "Lower" part is refined hard.
   const r = await remeshModel(cube(), {
@@ -358,7 +385,9 @@ test("keepMaterials returns split cells to their own block and part", async () =
   assert.ok(!plain.noop, plain.message);
   const plainNames = plain.model.blocks.map((b) => b.name);
   assert.ok(plainNames.includes("MMG_Domain_Inside"), plainNames.join(","));
-  assert.ok(!plain.model.subModelParts.some((p) => p.path === "Lower"), "Lower should be lost");
+  // The part itself stays in the tree (structure is kept) but owns no cells.
+  const plainLower = plain.model.subModelParts.find((p) => p.path === "Lower");
+  assert.ok(!plainLower || plainLower.elementIds.length === 0, "Lower should have lost its cells");
 
   const r = await levelsetModel(cube(), { variable: "DISTANCE", keepMaterials: true });
   assert.ok(!r.noop, r.message);

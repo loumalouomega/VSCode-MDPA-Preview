@@ -1407,14 +1407,16 @@ function rebuildModel(
       connectivity: Int32Array.from(b.connectivity),
     }));
 
-  // Rebuild the SubModelPart tree, keeping only parts that still own entities
-  // (or have surviving descendants); node lists come from cell connectivity.
+  // Rebuild the SubModelPart tree. EVERY part is kept, even one that owns no
+  // entities (a contact/interface group the model declares but leaves empty, or
+  // a pure container): the tree is the user's structure and pruning it silently
+  // renames the paths a solver's ProjectParameters refers to. Node lists come
+  // from cell connectivity.
   const rebuildParts = (parts: SubModelPart[]): SubModelPart[] => {
     const out: SubModelPart[] = [];
     for (const part of parts) {
       const children = rebuildParts(part.children);
       const ents = pathEntities.get(part.path);
-      if (!ents && children.length === 0) continue;
       const nodes = pathNodes.get(part.path);
       out.push({
         name: part.name,
