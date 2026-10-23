@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert";
-import { toWireModel, fieldRowCount, shouldStageFields, stagedHead, toWireField } from "../parser/modelWire";
+import { toWireModel, fieldRowCount, shouldStageFields, stagedHead, toWireField, wireFieldKey } from "../parser/modelWire";
 import { MdpaModel } from "../parser/types";
 
 function minimalModel(): MdpaModel {
@@ -74,10 +74,17 @@ test("staging is off below the row threshold and on above it", () => {
   assert.strictEqual(shouldStageFields({ ...model, fields: [] }, 0), false);
 });
 
-test("stagedHead keeps geometry and drops fields without mutating the model", () => {
+test("stagedHead keeps geometry and field metadata without rows, without mutating the model", () => {
   const model = minimalModel();
   const head = stagedHead(model);
-  assert.strictEqual(head.fields.length, 0);
+  assert.strictEqual(head.fields.length, 1);
+  assert.strictEqual(head.fields[0].variable, "DISTANCE");
+  assert.strictEqual(head.fields[0].components, 1);
+  assert.strictEqual(head.fields[0].ids.length, 0);
+  assert.strictEqual(head.fields[0].values.length, 0);
+  assert.strictEqual(head.fields[0].fixed, undefined);
+  assert.strictEqual(head.fields[0].pendingRows, 3);
+  assert.strictEqual(wireFieldKey(head.fields[0]), "Nodal:DISTANCE");
   assert.strictEqual(head.coords, model.coords);
   assert.strictEqual(model.fields.length, 1);
   assert.deepStrictEqual(Array.from(toWireField(model.fields[0]).values as unknown as number[]), [0.1, 0.2, 0.3]);

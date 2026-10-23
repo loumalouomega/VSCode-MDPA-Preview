@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+- Large `.mdpa` loads send field metadata first and fetch each field's rows only when something reads them (`requestField`).
+- Webview chrome localisation foundation: `localizeHtml` with per-string English fallback, a `qps-ploc` pseudo-locale and the VS Code display language passed to the preview as `data-locale`. English output is unchanged.
+
+## [Unreleased]
+
 ### Fixed
 
 - Virtual wind tunnel: the carve step failed ("Nothing to measure") or emptied the mesh since the remesh began keeping empty SubModelParts, because the lattice's empty `Fluid` part blocked renaming the fluid domain; the empty placeholders are now dropped before the rename, and a failed rename is an error instead of silent.

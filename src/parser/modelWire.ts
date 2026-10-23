@@ -72,7 +72,28 @@ export const STAGED_FIELD_ROWS = 2_000_000;
  * carries the whole field volume and the first paint does not wait for it.
  */
 export function stagedHead(model: MdpaModel): MdpaModel {
-  return { ...model, fields: [] };
+  return { ...model, fields: model.fields.map(toWireFieldMeta) };
+}
+
+/**
+ * A field without its rows: name, kind, components, dimensions and numeric
+ * type travel; `ids`/`values` are empty and `pendingRows` says how many rows a
+ * later `toWireField` will deliver. The webview asks for the rows when a
+ * feature actually reads them.
+ */
+export function toWireFieldMeta(field: FieldData): FieldData {
+  const { fixed: _fixed, ...rest } = field;
+  return {
+    ...rest,
+    ids: [] as unknown as Int32Array,
+    values: [] as unknown as Float64Array,
+    pendingRows: field.ids.length,
+  };
+}
+
+/** The `${kind}:${variable}` key the webview uses for a field. */
+export function wireFieldKey(field: Pick<FieldData, "kind" | "variable">): string {
+  return `${field.kind}:${field.variable}`;
 }
 
 /** True when a model's fields are big enough to be delivered after its geometry. */
