@@ -63,6 +63,7 @@ export function renderPreviewHtml(ctx: PreviewHtmlContext): string {
     cspSource: ctx.webview.cspSource,
     nonce: getNonce(),
     title: ctx.title,
+    locale: vscode.env.language,
     theme: ctx.theme,
     flowgraphOrientation: ctx.withFlowgraph
       ? vscode.workspace

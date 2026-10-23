@@ -7,6 +7,7 @@
 import { TOOLBAR_ICONS } from "./toolbarIcons";
 import { glyph, type UiGlyphId } from "./uiGlyphs";
 import { PLOT_PANE_HTML } from "./parser/plot/html";
+import { localizeHtml, pickCatalogue } from "./parser/i18n/messages";
 export { PLOT_PANE_HTML };
 import {
   EXPORT_FORMAT_LABELS,
@@ -1344,6 +1345,8 @@ export function getNonce(): string {
  * `vscode.Uri.joinPath` at the call site. `previewHtml.ts` does that resolution.
  */
 export interface PreviewHtmlOptions {
+  /** VS Code display language (`es`, `qps-ploc`…); absent or unknown = English. */
+  locale?: string;
   plotLibraryUri?: string;
   plotStyleUri?: string;
   /** `media/webview.js`, as a webview-safe URI. */
@@ -1439,8 +1442,9 @@ export function buildPreviewHtml(o: PreviewHtmlOptions): string {
     (o.rendererFallback ? ` data-renderer-fallback="${o.rendererFallback}"` : "");
   const emptyHint = o.startEmpty ? EMPTY_HINT_HTML : "";
 
-  return /* html */ `<!DOCTYPE html>
-<html lang="en">
+  const localeAttr = o.locale && o.locale.toLowerCase() !== "en" ? ` data-locale="${o.locale.replace(/[^A-Za-z0-9_-]/g, "")}"` : "";
+  const doc = /* html */ `<!DOCTYPE html>
+<html lang="${o.locale ? o.locale.replace(/[^A-Za-z0-9_-]/g, "") : "en"}">
 <head>
   <meta charset="UTF-8" />
   <meta http-equiv="Content-Security-Policy" content="${csp}" />
@@ -1450,7 +1454,7 @@ export function buildPreviewHtml(o: PreviewHtmlOptions): string {
    ${o.plotStyleUri ? `<link href="${o.plotStyleUri}" rel="stylesheet" />` : ""}
   <title>${o.title}</title>
 </head>
-<body data-theme="${o.theme}"${orientationAttr}${startEmptyAttr}${rendererAttr}>
+<body data-theme="${o.theme}"${localeAttr}${orientationAttr}${startEmptyAttr}${rendererAttr}>
   ${LOADING_HTML}
   <div id="app" style="display:none">
     ${MENUBAR_HTML}
@@ -1489,6 +1493,9 @@ export function buildPreviewHtml(o: PreviewHtmlOptions): string {
   <script nonce="${o.nonce}" id="preview-main" src="${o.scriptUri}" data-plot-library="${o.plotLibraryUri??""}"></script>
 </body>
 </html>`;
+  // Localise the body only (the head carries the CSP and URIs).
+  const bodyAt = doc.indexOf("<body");
+  return doc.slice(0, bodyAt) + localizeHtml(doc.slice(bodyAt), pickCatalogue(o.locale));
 }
 
 /**

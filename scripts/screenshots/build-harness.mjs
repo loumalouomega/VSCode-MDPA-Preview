@@ -248,6 +248,7 @@ async function loadChrome() {
   fs.writeFileSync(
     entry,
     `export * from "${path.join(ROOT, "src", "webviewChrome").replace(/\\/g, "/")}";
+export { localizeHtml, pickCatalogue } from "${path.join(ROOT, "src", "parser", "i18n", "messages").replace(/\\/g, "/")}";
 export { TOOLBAR_ICONS } from "${path.join(ROOT, "src", "toolbarIcons").replace(/\\/g, "/")}";`
   );
   const outfile = path.join(OUT_DIR, "webviewChrome.cjs");
@@ -322,7 +323,7 @@ const THEME_VARS = `
 
 async function main() {
   fs.mkdirSync(OUT_DIR, { recursive: true });
-  const { SIDEBAR_HTML, MENUBAR_HTML, STATUSBAR_HTML, COMMANDLINE_HTML, ADVANCED_MENU_HTML, VIEW_MENU_HTML, TOOLBAR_HTML, CUT_PANEL_HTML, LOADING_HTML, FLOWGRAPH_PANE_HTML, PLOT_PANE_HTML, buildCsp } =
+  const { SIDEBAR_HTML, MENUBAR_HTML, STATUSBAR_HTML, COMMANDLINE_HTML, ADVANCED_MENU_HTML, VIEW_MENU_HTML, TOOLBAR_HTML, CUT_PANEL_HTML, LOADING_HTML, FLOWGRAPH_PANE_HTML, PLOT_PANE_HTML, buildCsp, localizeHtml, pickCatalogue } =
     await loadChrome();
 
   // HARNESS_SCENE=spheres swaps in the particle mesh from issue #63, with a
@@ -570,7 +571,11 @@ async function main() {
   </script>
 </body>
 </html>`;
-  fs.writeFileSync(path.join(OUT_DIR, "index.html"), html);
+  // HARNESS_LOCALE=qps-ploc|es localises the body exactly as buildPreviewHtml does.
+  const loc = process.env.HARNESS_LOCALE;
+  const bodyAt = html.indexOf("<body");
+  const out = loc ? html.slice(0, bodyAt) + localizeHtml(html.slice(bodyAt), pickCatalogue(loc)) : html;
+  fs.writeFileSync(path.join(OUT_DIR, "index.html"), out);
   console.log(`Harness written to ${OUT_DIR}`);
 }
 
