@@ -47,6 +47,8 @@ export const OP_LABELS: Record<OpName, string> = {
   reorder: "Reorder nodes (storage order)",
   renumber: "Renumber (compact ids)",
   partition: "Partition",
+  segment: "Segment surface patches",
+  refinePatches: "Refine patches",
   linearize: "Quadratic → Linear",
   refine: "Refine",
   simplexify: "Simplexify",

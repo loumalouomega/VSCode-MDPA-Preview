@@ -896,6 +896,39 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
                   <div class="edit-progress-msg"></div>
                 </div>
               </div>
+              <div class="edit-form collapsed">
+                <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("partition")}<span>Segment surface patches</span></button>
+                <div class="edit-form-row">
+                  <label class="edit-field"><span>feature °</span><input type="number" id="segment-angle" class="edit-num" value="30" min="0" max="180" step="1"></label>
+                  <label class="edit-field"><span>method</span><select id="segment-method" class="edit-sel edit-sel-mid">
+                    <option value="angle" selected>region growing</option>
+                    <option value="primitive">by primitive</option>
+                  </select></label>
+                  <label class="edit-field"><span>min cells</span><input type="number" id="segment-mincells" class="edit-num" value="1" min="1" step="1"></label>
+                  <label class="edit-field"><span>in part</span><select id="segment-part" class="edit-sel edit-sel-mid"><option value="">whole surface</option></select></label>
+                  <label class="edit-check"><input type="checkbox" id="segment-createparts"><span>as SubModelParts</span></label>
+                  <button type="button" class="edit-apply edit-apply-mmg" data-op="segment" title="Label the smooth patches of a surface mesh (SEGMENT_PATCH), bounded by feature edges; a volume mesh must be reduced to its skin first" data-run-title="Label the surface patches"><span class="apply-play">${ic("play")}</span><span class="apply-stop">${ic("stop")}</span></button>
+                </div>
+                <div class="edit-progress hidden" id="segment-progress">
+                  <div class="edit-progress-track"><div class="edit-progress-bar"></div></div>
+                  <div class="edit-progress-msg"></div>
+                </div>
+              </div>
+              <div class="edit-form collapsed">
+                <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("partition")}<span>Refine patches</span></button>
+                <div class="edit-form-row">
+                  <label class="edit-field"><span>tolerance</span><input type="number" id="refinepatches-tolerance" class="edit-num" value="0.001" min="0" step="any"></label>
+                  <label class="edit-field"><span>iterations</span><input type="number" id="refinepatches-iterations" class="edit-num" value="10" min="0" step="1"></label>
+                  <label class="edit-check"><input type="checkbox" id="refinepatches-split" checked><span>split</span></label>
+                  <label class="edit-check"><input type="checkbox" id="refinepatches-merge" checked><span>merge</span></label>
+                  <label class="edit-check"><input type="checkbox" id="refinepatches-createparts"><span>as SubModelParts</span></label>
+                  <button type="button" class="edit-apply edit-apply-mmg" data-op="refinePatches" title="Move patch boundaries, split freeform patches and merge neighbours until a plane, sphere, cylinder, cone or torus explains each patch — needs the SEGMENT_PATCH labels of a Segment step" data-run-title="Refine the surface patches"><span class="apply-play">${ic("play")}</span><span class="apply-stop">${ic("stop")}</span></button>
+                </div>
+                <div class="edit-progress hidden" id="refinepatches-progress">
+                  <div class="edit-progress-track"><div class="edit-progress-bar"></div></div>
+                  <div class="edit-progress-msg"></div>
+                </div>
+              </div>
             </div>
           </div>
           <div class="sb-subsection collapsed" data-subsection="selection">

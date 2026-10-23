@@ -307,6 +307,8 @@ const ASYNC_BUILDERS: Record<string, () => Record<string, unknown> | undefined> 
   smooth: buildSmoothMsg,
   reorder: buildReorderMsg,
   partition: buildPartitionMsg,
+  segment: buildSegmentMsg,
+  refinePatches: buildRefinePatchesMsg,
   mergeMesh: buildMergeMeshMsg,
   fieldGradient: buildFieldGradientMsg,
   fieldHessian: buildFieldHessianMsg,
@@ -671,6 +673,7 @@ export function setMeshModParts(parts: { path: string; children: unknown[] }[]):
   fillPartSelect("scale-part", paths, "— whole mesh —", false);
   fillPartSelect("trans-part", paths, "— whole mesh —", false);
   fillPartSelect("rot-part", paths, "— whole mesh —", false);
+  fillPartSelect("segment-part", paths, "whole surface", false);
   fillPartSelect("sw-target", paths, "— none —", true);
   fillPartSelect("sw-move", paths, "— all nodes —", false);
   fillPartSelect("sw-pin", paths, "— none —", false);
@@ -1533,6 +1536,44 @@ function buildPartitionMsg(): Record<string, unknown> | undefined {
   const method = (document.getElementById("partition-method") as HTMLSelectElement | null)?.value;
   if (method === "kahip") msg.method = method;
   if (checked("partition-createparts")) msg.createParts = true;
+  return msg;
+}
+
+function buildSegmentMsg(): Record<string, unknown> | undefined {
+  const msg: Record<string, unknown> = { type: "applyOp", op: "segment" };
+  const angle = optNum("segment-angle");
+  if (angle !== undefined) {
+    if (angle < 0 || angle > 180) return undefined;
+    msg.featureAngle = angle;
+  }
+  const method = (document.getElementById("segment-method") as HTMLSelectElement | null)?.value;
+  if (method === "primitive") msg.method = method;
+  const minCells = optNum("segment-mincells");
+  if (minCells !== undefined) {
+    if (!(minCells >= 1)) return undefined;
+    msg.minPatchCells = Math.floor(minCells);
+  }
+  const part = (document.getElementById("segment-part") as HTMLSelectElement | null)?.value;
+  if (part) msg.part = part;
+  if (checked("segment-createparts")) msg.createParts = true;
+  return msg;
+}
+
+function buildRefinePatchesMsg(): Record<string, unknown> | undefined {
+  const msg: Record<string, unknown> = { type: "applyOp", op: "refinePatches" };
+  const tol = optNum("refinepatches-tolerance");
+  if (tol !== undefined) {
+    if (!(tol > 0)) return undefined;
+    msg.tolerance = tol;
+  }
+  const iterations = optNum("refinepatches-iterations");
+  if (iterations !== undefined) {
+    if (!(iterations >= 0)) return undefined;
+    msg.maxIterations = Math.floor(iterations);
+  }
+  if (!checked("refinepatches-split")) msg.allowSplit = false;
+  if (!checked("refinepatches-merge")) msg.allowMerge = false;
+  if (checked("refinepatches-createparts")) msg.createParts = true;
   return msg;
 }
 
