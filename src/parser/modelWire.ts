@@ -37,7 +37,7 @@ export function toWireModel(model: MdpaModel): MdpaModel {
   };
 }
 
-function toWireField(field: FieldData): FieldData {
+export function toWireField(field: FieldData): FieldData {
   const wire: FieldData = {
     ...field,
     // Deliberately not real typed arrays — see the module doc comment. The
@@ -50,4 +50,32 @@ function toWireField(field: FieldData): FieldData {
     wire.fixed = Array.from(field.fixed) as unknown as Uint8Array;
   }
   return wire;
+}
+
+/**
+ * Total field rows (`ids.length` summed over every field) — the quantity that
+ * dominates a posted model's size: a measured 1M-hexahedron block carried
+ * ~136 MB of field rows against ~52 MB of geometry.
+ */
+export function fieldRowCount(model: MdpaModel): number {
+  let rows = 0;
+  for (const f of model.fields) rows += f.ids.length;
+  return rows;
+}
+
+/** Above this many field rows an initial load is staged: geometry first, fields after. */
+export const STAGED_FIELD_ROWS = 2_000_000;
+
+/**
+ * The geometry-first half of a staged delivery: the same model with no fields.
+ * The fields follow one message each (`toWireField`), so no single message
+ * carries the whole field volume and the first paint does not wait for it.
+ */
+export function stagedHead(model: MdpaModel): MdpaModel {
+  return { ...model, fields: [] };
+}
+
+/** True when a model's fields are big enough to be delivered after its geometry. */
+export function shouldStageFields(model: MdpaModel, threshold: number = STAGED_FIELD_ROWS): boolean {
+  return model.fields.length > 0 && fieldRowCount(model) > threshold;
 }

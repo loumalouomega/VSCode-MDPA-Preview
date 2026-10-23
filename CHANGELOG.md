@@ -4,6 +4,12 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Staged field delivery for large `.mdpa` meshes: when a freshly opened mesh carries more than 2 million field rows, the preview now receives the geometry first and the fields one message each (`fieldsPending` / `modelField`), then rebuilds the scene once. Smaller meshes, edits and timeline frames are unchanged. Not yet verified inside VS Code.
+
 ## [5.19.0] - 2026-10-23
 
 ### Added

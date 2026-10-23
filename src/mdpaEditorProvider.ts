@@ -15,7 +15,7 @@ import { groupVtkFiles, fileFor, findGroupForFile, VtkFileGroup } from "./parser
 import { createSeriesScanController } from "./seriesScanHost";
 import { serializeGroup } from "./seriesScanJob";
 import { MdpaModel } from "./parser/types";
-import { toWireModel } from "./parser/modelWire";
+import { toWireModel, toWireField, stagedHead, shouldStageFields } from "./parser/modelWire";
 import { renderPreviewHtml } from "./previewHtml";
 import {
   ExportContext,
@@ -244,6 +244,8 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
       viewLayersPostedFor = fsPath;
       viewSidecar.post(fsPath);
     };
+
+    let fieldStageSeq = 0;
 
     /** Posts an edited model in place: a `vtkFrame` while a series is shown, else `model`. */
     const postEdited = (model: MdpaModel, midNodes?: number[]): void => {
@@ -515,13 +517,34 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
           // (camera preserved) — posting the raw parse first would reset the
           // camera and flash the un-edited mesh.
           if (!replayNeeded) {
-            webviewPanel.webview.postMessage({
-              type: "model",
-              model: toWireModel(model),
-              fileName,
-              keepCamera: hadBase,
-            });
-            webviewPanel.webview.postMessage({ type: "opState", ...session.history.state() });
+            if (!hadBase && shouldStageFields(model)) {
+              // Geometry first, then one message per field (webview rebuilds once
+              // the last arrives). A newer model supersedes via `stageId`.
+              const stageId = ++fieldStageSeq;
+              webviewPanel.webview.postMessage({
+                type: "model",
+                model: stagedHead(model),
+                fileName,
+                keepCamera: false,
+                fieldsPending: model.fields.length,
+                stageId,
+              });
+              webviewPanel.webview.postMessage({ type: "opState", ...session.history.state() });
+              void (async () => {
+                for (const field of model.fields) {
+                  if (session.disposed || stageId !== fieldStageSeq) return;
+                  await webviewPanel.webview.postMessage({ type: "modelField", stageId, field: toWireField(field) });
+                }
+              })();
+            } else {
+              webviewPanel.webview.postMessage({
+                type: "model",
+                model: toWireModel(model),
+                fileName,
+                keepCamera: hadBase,
+              });
+              webviewPanel.webview.postMessage({ type: "opState", ...session.history.state() });
+            }
           }
           session.ensurePt();
           ensureViewLayers();
