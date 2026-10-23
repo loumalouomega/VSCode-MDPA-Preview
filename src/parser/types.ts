@@ -62,6 +62,12 @@ export interface FieldData {
   ids: Int32Array;
   values: Float64Array; // row-major, length = ids.length * components
   fixed?: Uint8Array; // nodal is_fixed flag per record (NodalData only)
+  /**
+   * Webview only: set on a metadata-only field of a staged delivery. `ids` and
+   * `values` are empty until the field is requested; the value is the row
+   * count the full field will carry.
+   */
+  pendingRows?: number;
 }
 
 export interface MdpaDiagnostic {

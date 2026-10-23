@@ -7,6 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ## [Unreleased]
 
 ### Added
+- Large `.mdpa` loads send field metadata first and fetch each field's rows only when something reads them (`requestField`).
 - Webview chrome localisation foundation: `localizeHtml` with per-string English fallback, a `qps-ploc` pseudo-locale and the VS Code display language passed to the preview as `data-locale`. English output is unchanged.
 
 ## [Unreleased]

@@ -15,7 +15,7 @@ import { groupVtkFiles, fileFor, findGroupForFile, VtkFileGroup } from "./parser
 import { createSeriesScanController } from "./seriesScanHost";
 import { serializeGroup } from "./seriesScanJob";
 import { MdpaModel } from "./parser/types";
-import { toWireModel, toWireField, stagedHead, shouldStageFields } from "./parser/modelWire";
+import { toWireModel, toWireField, stagedHead, shouldStageFields, wireFieldKey } from "./parser/modelWire";
 import { renderPreviewHtml } from "./previewHtml";
 import {
   ExportContext,
@@ -246,6 +246,9 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
     };
 
     let fieldStageSeq = 0;
+    // The parsed model behind the current staged delivery; field rows are sent
+    // from it on request (`requestField`) and never pushed.
+    let stagedModel: MdpaModel | undefined;
 
     /** Posts an edited model in place: a `vtkFrame` while a series is shown, else `model`. */
     const postEdited = (model: MdpaModel, midNodes?: number[]): void => {
@@ -518,8 +521,9 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
           // camera and flash the un-edited mesh.
           if (!replayNeeded) {
             if (!hadBase && shouldStageFields(model)) {
-              // Geometry first, then one message per field (webview rebuilds once
-              // the last arrives). A newer model supersedes via `stageId`.
+              // Geometry and field metadata first; each field's rows follow only
+              // when the webview asks (`requestField`). A newer model supersedes
+              // via `stageId`.
               const stageId = ++fieldStageSeq;
               webviewPanel.webview.postMessage({
                 type: "model",
@@ -530,12 +534,7 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
                 stageId,
               });
               webviewPanel.webview.postMessage({ type: "opState", ...session.history.state() });
-              void (async () => {
-                for (const field of model.fields) {
-                  if (session.disposed || stageId !== fieldStageSeq) return;
-                  await webviewPanel.webview.postMessage({ type: "modelField", stageId, field: toWireField(field) });
-                }
-              })();
+              stagedModel = model;
             } else {
               webviewPanel.webview.postMessage({
                 type: "model",
@@ -806,6 +805,14 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
         session.docInfo?.sync(true);
         session.postEngineStatus();
         void postModel().finally(plotPreviewReady);
+      } else if (msg?.type === "requestField") {
+        // Field rows on demand (staged delivery). Answered only for the model
+        // the webview is currently showing; any newer post supersedes it.
+        const sm = stagedModel;
+        if (sm && msg.stageId === fieldStageSeq && !session.disposed) {
+          const f = sm.fields.find((x) => wireFieldKey(x) === msg.key);
+          if (f) void webviewPanel.webview.postMessage({ type: "modelField", stageId: msg.stageId, key: msg.key, field: toWireField(f) });
+        }
       } else if (plots?.receive(msg)) {
         // Read-only plot requests belong to this preview, not the active editor.
       } else if (msg?.type === "plotOpen") {

@@ -17,6 +17,8 @@ export interface FieldInfo {
   rangeCache: [number, number][];
   /** Set by main.ts per model message: does a Variables row claim this field? */
   hasVariableRow?: boolean;
+  /** Staged delivery: the rows have not arrived yet; lookups are empty and the range is a placeholder. */
+  pending?: boolean;
 }
 
 export function fieldKey(field: FieldData): string {
@@ -29,6 +31,9 @@ function componentSlot(component: FieldComponent): number {
 
 export function buildFieldInfo(field: FieldData): FieldInfo {
   const isVector = field.components > 1;
+  if (field.pendingRows) {
+    return { field, key: fieldKey(field), isVector, indexById: new Map(), scalarMin: 0, scalarMax: 1, rangeCache: [[0, 1]], pending: true };
+  }
   const indexById = new Map<number, number>();
   for (let i = 0; i < field.ids.length; i++) indexById.set(field.ids[i], i);
   const [scalarMin, scalarMax] = computeFieldRange(field, "mag");

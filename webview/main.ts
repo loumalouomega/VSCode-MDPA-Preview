@@ -1630,9 +1630,7 @@ function handleHostMessage(event: MessageEvent): void {
       model = msg.model as MdpaModel;
       // Staged delivery: geometry now, fields one message each (`modelField`);
       // the scene is rebuilt once when the last one lands.
-      stagedFields = msg.fieldsPending
-        ? { stageId: msg.stageId as number, count: msg.fieldsPending as number, fields: [] }
-        : undefined;
+      stagedFields = msg.fieldsPending ? { stageId: msg.stageId as number, requested: new Set() } : undefined;
       midNodeIds = (msg.midNodes as number[] | undefined) ?? [];
       buildScene(!msg.keepCamera);
       showRendererNote();
@@ -1660,15 +1658,16 @@ function handleHostMessage(event: MessageEvent): void {
     case "modelField": {
       const st = stagedFields;
       if (!st || !model || msg.stageId !== st.stageId) break; // superseded by a newer model
-      st.fields.push(msg.field as FieldData);
-      if (st.fields.length < st.count) break;
-      stagedFields = undefined;
-      model = { ...model, fields: st.fields };
-      snapshotVisibility();
-      buildScene(false);
-      setMeshModFields(model.fields, model.globals);
-      setVariablesModel(model.fields, model.subModelParts, model.globals);
-      syncNavOffset();
+      const loaded = msg.field as FieldData;
+      const key = `${loaded.kind}:${loaded.variable}`;
+      model = { ...model, fields: model.fields.map((f) => (`${f.kind}:${f.variable}` === key ? loaded : f)) };
+      const idx = fieldInfos.findIndex((f) => f.key === key);
+      if (idx >= 0) {
+        const fresh = buildFieldInfo(loaded);
+        fresh.hasVariableRow = fieldInfos[idx].hasVariableRow;
+        fieldInfos[idx] = fresh;
+      }
+      onFieldValuesLoaded(loaded);
       break;
     }
     case "meshSummary": {
@@ -2116,7 +2115,50 @@ function snapshotVisibility(): void {
   );
 }
 
-let stagedFields: { stageId: number; count: number; fields: FieldData[] } | undefined;
+let stagedFields: { stageId: number; requested: Set<string> } | undefined;
+
+/**
+ * Staged delivery sends field metadata only; the rows of a field are fetched
+ * the first time something reads them. Returns true when every named field
+ * (or every field, with no argument) already has its rows.
+ */
+function ensureFieldValues(keys?: Iterable<string>): boolean {
+  const st = stagedFields;
+  if (!st || !model) return true;
+  let ready = true;
+  for (const f of model.fields) {
+    const key = `${f.kind}:${f.variable}`;
+    if (!f.pendingRows) continue;
+    if (keys && ![...keys].includes(key)) continue;
+    ready = false;
+    if (st.requested.has(key)) continue;
+    st.requested.add(key);
+    vscode.postMessage({ type: "requestField", stageId: st.stageId, key });
+  }
+  return ready;
+}
+
+/** A requested field's rows arrived: refresh everything that was waiting on it. */
+function onFieldValuesLoaded(loaded: FieldData): void {
+  if (!model) return;
+  snapshotVisibility();
+  // Particle radius and beam sections feed the base scene, not a pane overlay.
+  if (loaded.variable === "RADIUS" || loaded.variable === "CROSS_AREA") {
+    buildScene(false);
+  } else {
+    const key = `${loaded.kind}:${loaded.variable}`;
+    eachPane((p) => {
+      if (p.field.selectedKey === key) resetFieldStateForSelection(p);
+    });
+    applyFieldModeAll();
+    renderFieldPanelUI();
+  }
+  setMeshModFields(model.fields, model.globals);
+  setVariablesModel(model.fields, model.subModelParts, model.globals);
+  if (dataTableVisible) renderDataTable();
+  if (inspectVisible) renderInspectUI();
+  syncNavOffset();
+}
 
 function buildScene(resetCam = true): void {
   if (!model) return;
@@ -2347,6 +2389,21 @@ function buildScene(resetCam = true): void {
       p.field.deformKey = infos.find((i) => i.isVector)?.key ?? "";
     }
   });
+  if (stagedFields) {
+    const need = new Set<string>();
+    eachPane((p) => {
+      if (p.field.selectedKey) need.add(p.field.selectedKey);
+      if (p.field.modes.has("deformed") && p.field.deformKey) need.add(p.field.deformKey);
+    });
+    for (const f of model.fields) {
+      if (f.variable === "RADIUS" || f.variable === "CROSS_AREA") need.add(`${f.kind}:${f.variable}`);
+    }
+    for (const g of Object.values(model.globals ?? {})) {
+      const spec = g as { variable?: string; kind?: string };
+      if (spec.variable) for (const f of model.fields) if (f.variable === spec.variable) need.add(`${f.kind}:${f.variable}`);
+    }
+    ensureFieldValues(need);
+  }
 
   invalidateMeasures();
   renderStats();
@@ -4935,6 +4992,7 @@ function toggleDataTablePanel(): void {
 
 function showDataTablePanel(): void {
   if (!model) return;
+  ensureFieldValues();
   dataTablePanelEl.style.display = "";
   dataTableVisible = true;
   scheduleViewSave();
@@ -6131,6 +6189,8 @@ function applyFieldModeAll(): void {
 function applyFieldMode(pane: Pane): void {
   clearPaneFieldOverlays(pane);
   const fs = pane.field;
+  // Staged delivery: fetch the rows this pane needs; the reply re-applies.
+  if (stagedFields) ensureFieldValues([fs.selectedKey, fs.deformKey].filter(Boolean));
   const info = selectedFieldInfo(pane);
   const deformed = fs.modes.has("deformed");
   const scope = scopeModel(pane);
@@ -6951,6 +7011,7 @@ function toggleInspectMode(): void {
 
 function showInspectPanel(): void {
   if (!model) return;
+  ensureFieldValues();
   inspectMode = true;
   inspectVisible = true;
   inspectPanelEl.style.display = "";
