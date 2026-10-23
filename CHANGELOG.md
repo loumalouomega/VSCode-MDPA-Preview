@@ -4,11 +4,21 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [5.19.0] - 2026-10-23
 
 ### Added
+
 - `kratos.preview.frameCacheMb` (default 256, `0` = off): a bounded cache of parsed timeline frames, with read-ahead of the next step, so stepping through a series no longer re-reads every file.
+
 - `npm run bench:large-mesh`: a Node-level benchmark of parse, wire conversion, payload size, level-of-detail and memory on a synthetic million-cell block.
+
+### Changed
+
+- **Dependency refresh (`@kitware/vtk.js` 37.4.3 → 37.4.4).** A patch release of the renderer dependency; no source change accompanied it, and the webview bundles the new version.
+
+### Fixed
+
+- **Remeshing keeps the whole SubModelPart tree.** The rebuild used to drop every part that no longer owned an entity and had no surviving child, so a remesh silently removed empty contact or interface groups and pure containers — renaming paths that a solver's `ProjectParameters` refers to. Every declared part is now kept, empty or not, and the parts report still lists a part with no cells; a test covers a nested tree with empty parts.
 
 ## [5.18.0] - 2026-10-22
 
