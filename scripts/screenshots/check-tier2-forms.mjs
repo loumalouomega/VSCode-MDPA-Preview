@@ -153,7 +153,7 @@ m = await fillAndClick({ "cmp-field": fieldOption, "cmp-corr": "spatial", "cmp-a
 assert.deepEqual(m, { type: "applyOp", op: "compareField", path: "/tmp/other.vtu", kind, variable, correspondence: "spatial", sourceVariable: "T2", atol: 0.01, output: "CMP" });
 
 // --- Field panel exports: Isosurface and Threshold modes --------------------------------
-const sent = () => page.evaluate(() => window.SENT_MESSAGES.filter((x) => x.type === "menuExportDerived" || x.type === "menuExportPartitions" || x.type === "menuSplitMesh" || x.type === "menuExportGrid"));
+const sent = () => page.evaluate(() => window.SENT_MESSAGES.filter((x) => x.type === "menuExportDerived" || x.type === "menuExportPartitions" || x.type === "menuSplitMesh" || x.type === "menuExportGrid" || x.type === "menuExportOctree" || x.type === "menuExportCadSurface" || x.type === "menuGenerateMesh"));
 await page.evaluate(() => document.querySelector('[data-action="field"]')?.click());
 await page.waitForTimeout(300);
 const clickMode = (label) => page.evaluate((l) => [...document.querySelectorAll("#field-panel .field-mode-btn")].find((b) => b.textContent.trim() === l)?.click(), label);
@@ -195,8 +195,19 @@ assert.equal(derived[0].derive.kind, "slice");
 assert.equal(derived[0].derive.origin.length, 3);
 assert.ok(Math.abs(Math.hypot(...derived[0].derive.normal) - 1) < 1e-6, "the normal is a unit vector");
 
+// --- Segment / Refine patches (meshio++ 17.13.0 patch ops) ---------------------------------
+m = await fillAndClick({ "segment-angle": 45, "segment-method": "primitive", "segment-mincells": 3, "segment-createparts": true }, '[data-op="segment"]');
+assert.deepEqual(m, { type: "applyOp", op: "segment", featureAngle: 45, method: "primitive", minPatchCells: 3, createParts: true });
+m = await fillAndClick({ "segment-method": "angle", "segment-createparts": false }, '[data-op="segment"]');
+assert.equal("method" in m || "createParts" in m, false, "defaults are not sent");
+assert.equal(await fillAndClick({ "segment-angle": 400 }, '[data-op="segment"]'), undefined, "an angle over 180 posts nothing");
+await page.evaluate(() => { document.getElementById("segment-angle").value = "30"; });
+m = await fillAndClick({ "refinepatches-tolerance": 0.01, "refinepatches-iterations": 4, "refinepatches-split": false, "refinepatches-merge": true, "refinepatches-createparts": true }, '[data-op="refinePatches"]');
+assert.deepEqual(m, { type: "applyOp", op: "refinePatches", tolerance: 0.01, maxIterations: 4, allowSplit: false, createParts: true });
+assert.equal(await fillAndClick({ "refinepatches-tolerance": 0 }, '[data-op="refinePatches"]'), undefined, "a zero tolerance posts nothing");
+
 // --- Advanced menu: partitions and split ------------------------------------------------
-for (const [action, type] of [["exportPartitions", "menuExportPartitions"], ["splitMesh", "menuSplitMesh"], ["sampleGrid", "menuExportGrid"]]) {
+for (const [action, type] of [["exportPartitions", "menuExportPartitions"], ["splitMesh", "menuSplitMesh"], ["sampleGrid", "menuExportGrid"], ["octreeMesh", "menuExportOctree"], ["cadSurface", "menuExportCadSurface"], ["generateMesh", "menuGenerateMesh"]]) {
   const n = (await sent()).length;
   await page.evaluate((a) => document.querySelector(`#advanced-popup [data-action="${a}"]`).click(), action);
   assert.deepEqual((await sent()).slice(n).map((x) => x.type), [type], `${action} posts ${type}`);

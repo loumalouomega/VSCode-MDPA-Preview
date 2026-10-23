@@ -8,7 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
-- meshio++ is now `^17.13.0` (17.12.0 was never published). The binding diff is additive and fully adopted; live format keys are unchanged (lean 81 readers / 82 writers, full 83 / 82) and `transientAudit` passes unedited. `dist/meshio/` grows by about 0.97 MB (lean) and 0.9 MB (full) per variant pair.
+- meshio++ is now `^17.13.0` (17.12.0 was never published). The binding diff is additive and fully adopted; live format keys are unchanged (lean 81 readers / 82 writers, full 83 / 82) and `transientAudit` passes unedited. `dist/meshio/` is 91 MB raw (lean wasm +0.97 MB, full +0.9 MB per variant) and the packaged `.vsix` grows from 53.21 MB to **54.11 MB**.
 
 - **Octree volume mesh** (Advanced menu, `kratos.mesh.exportOctree`, `mesh_derive` kind `octreeMesh`): tetrahedra, hexahedra or castellated hexahedra inside a closed surface on a balanced octree, with the quality report in the summary, `inside`/`boundary` SubModelParts, boundary faces as Conditions and `SDF_DISTANCE`. The 17.8.0 adaptive `octree` is available as kind `octree`.
 
