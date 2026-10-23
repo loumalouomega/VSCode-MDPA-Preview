@@ -1436,6 +1436,11 @@ export type MeshioAugment = { kind: "openfoam"; parsed: OpenFoamParsedField[] };
 export interface MeshioReadOptions {
   piece?: number | null;
   dropGhosts?: boolean;
+  /**
+   * Read only these `point_data`/`cell_data` arrays (upstream's own names,
+   * case-sensitive, before `sanitizeVariable`). `undefined` reads them all.
+   */
+  arrays?: string[] | null;
 }
 
 /** What each kind of meshio++ read returns. */
@@ -1633,7 +1638,8 @@ async function readModelWith(
         lenient ||
         wantInfo ||
         opts?.piece !== undefined ||
-        opts?.dropGhosts !== undefined;
+        opts?.dropGhosts !== undefined ||
+        opts?.arrays !== undefined;
       const mesh = !wantSelective
         ? m.readMesh(mainPath, fmt)
         : m.readMeshSelective(mainPath, {
@@ -1643,6 +1649,7 @@ async function readModelWith(
             info: wantInfo,
             piece: opts?.piece,
             dropGhosts: opts?.dropGhosts,
+            arrays: opts?.arrays,
           });
       if (fmt !== candidates[0]) {
         diagnostics.push({

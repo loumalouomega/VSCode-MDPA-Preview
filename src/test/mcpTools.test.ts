@@ -4644,3 +4644,38 @@ test("mesh_select and mesh_transform accept a formula seed (all/any/centroid) an
   const z = (id: number): number => model.coords[[...model.nodeIds].indexOf(id) * 3 + 2];
   assert.deepEqual([z(1), z(2), z(3), z(4)], [5, 5, 5, 0]);
 });
+
+// Selective field read (roadmap item 7): meshio++'s `arrays` option. Measured
+// per format: the XDMF and Gmsh readers honour it; MED and Exodus return
+// everything, which is why the diagnostic says so.
+test("mesh_info's fields reads only the named arrays where the reader supports it", async () => {
+  const model = parseMdpa(
+    "Begin Nodes\n1 0 0 0\n2 1 0 0\n3 0 1 0\nEnd Nodes\n" +
+      "Begin Elements Element2D3N\n1 0 1 2 3\nEnd Elements\n" +
+      "Begin NodalData AAA\n1 0 1.0\n2 0 2.0\n3 0 3.0\nEnd NodalData\n" +
+      "Begin NodalData BBB\n1 0 4.0\n2 0 5.0\n3 0 6.0\nEnd NodalData\n"
+  );
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "selective-"));
+  try {
+    for (const ext of [".xdmf", ".msh"]) {
+      const written = await writeMeshFileAsync(model, ext, {});
+      const file = path.join(dir, `a${ext}`);
+      fs.writeFileSync(file, written.data);
+      for (const c of written.companions ?? []) fs.writeFileSync(path.join(dir, c.name), c.data);
+      const all = (await meshInfo({ path: file })) as { fields: { variable: string }[] };
+      assert.ok(all.fields.some((f) => f.variable === "BBB"), ext);
+      const sel = (await meshInfo({ path: file, fields: ["AAA"] })) as { fields: { variable: string }[] };
+      assert.ok(sel.fields.some((f) => f.variable === "AAA"), ext);
+      assert.ok(!sel.fields.some((f) => f.variable === "BBB"), ext);
+      // The selective result must not poison the cache for the default read.
+      const again = (await meshInfo({ path: file })) as { fields: { variable: string }[] };
+      assert.ok(again.fields.some((f) => f.variable === "BBB"), ext);
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("mesh_info's fields is refused for a format with its own parser", async () => {
+  await assert.rejects(() => meshInfo({ path: path.resolve(__dirname, "../../src/test/fixtures/mdpa/beam_frame.mdpa"), fields: ["X"] }), /fields is only accepted/);
+});

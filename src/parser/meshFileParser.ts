@@ -1,3 +1,4 @@
+import { sanitizeVariable } from "./meshioConvert";
 import { collectCaeFiles, caeSourcePaths } from "./caeFiles";
 /**
  * Format dispatcher: routes a mesh file to the right parser by extension and
@@ -245,6 +246,11 @@ export interface ParseMeshOptions {
    * Reaches the meshio dispatch only, same as `piece`.
    */
   dropGhosts?: boolean;
+  /**
+   * Selective field read (roadmap item 7): only these `point_data`/`cell_data`
+   * arrays are read, by upstream's names. Reaches the meshio dispatch only.
+   */
+  fields?: string[];
   /**
    * roadmap item 3, Step 5: selects one region of a multi-region OpenFOAM
    * case (`constant/<region>/polyMesh`), instead of merging every region.
@@ -599,9 +605,22 @@ export async function parseMeshFile(
             // `dropGhosts: false` still overrides it.
             dropGhosts:
               opts?.dropGhosts ?? (ext === ".pvtu" || ext === ".pvtp" ? true : undefined),
+            arrays: opts?.fields,
             signal,
           }
         );
+        if (opts?.fields) {
+          // A misspelt name would otherwise read as "that field is empty".
+          const have = new Set(model.fields.map((f) => f.variable));
+          const missing = opts.fields.filter((n) => !have.has(sanitizeVariable(n)));
+          model.diagnostics.push({
+            line: 0,
+            message:
+              `Selective read: ${opts.fields.length} array(s) requested` +
+              (missing.length > 0 ? `; not found in the file: ${missing.join(", ")}.` : ".") +
+              " Readers without selective-read support return every array.",
+          });
+        }
         // FLAC3D group handling (roadmap item 3) — see flac3dGroups.ts. Order
         // matters: reclassify faces into Conditions FIRST (it reads block
         // vtkCellType, which naming never touches), then clean the region

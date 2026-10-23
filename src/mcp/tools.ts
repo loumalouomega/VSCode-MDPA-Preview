@@ -286,7 +286,9 @@ export async function loadMesh(
    * parsers check it only between stages. Rejects "cancelled", and a cancelled
    * read is never cached.
    */
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  /** Selective field read (meshio++ formats only); bypasses the cache like `piece`. */
+  fields?: string[]
 ): Promise<{ model: MdpaModel; ext: string; sourceText?: string }> {
   if (signal?.aborted) throw new Error("cancelled");
   const abs = path.resolve(fsPath);
@@ -314,7 +316,11 @@ export async function loadMesh(
   if (region !== undefined && ext !== ".foam") {
     throw new Error(`region is only accepted for OpenFOAM cases (.foam), not "${ext}".`);
   }
+  if (fields !== undefined && !isMeshioReadExtension(ext)) {
+    throw new Error(`fields is only accepted for the extended (meshio++) formats, not "${ext}".`);
+  }
   const bypassCache =
+    fields !== undefined ||
     Boolean(inputFormat) ||
     (timeStep !== undefined && timeStep !== 0) ||
     piece !== undefined ||
@@ -343,6 +349,7 @@ export async function loadMesh(
       piece,
       dropGhosts,
       foamRegion: region,
+      fields,
       signal,
     });
   } else {
@@ -544,6 +551,8 @@ export async function meshInfo(args: {
   dropGhosts?: boolean;
   /** Selects one region of a multi-region OpenFOAM case (.foam) instead of merging every region. */
   region?: string;
+  /** Read only these point/cell data arrays (meshio++ formats; upstream names, case-sensitive). */
+  fields?: string[];
 }, execution: PlotExecution = {}): Promise<object> {
   if (args.summary === true) {
     // Two combination errors only — never an ineligibility refusal.
@@ -596,7 +605,8 @@ export async function meshInfo(args: {
     args.piece,
     args.dropGhosts,
     args.region,
-    execution.signal
+    execution.signal,
+    args.fields
   );
   // Gated on IN_FILE_TIMELINE_EXTENSIONS, not every meshio format: Exodus's
   // readMetadata always falls back to a full read
@@ -1608,6 +1618,8 @@ export async function meshConvert(args: {
   dropGhosts?: boolean;
   /** Selects one region of a multi-region OpenFOAM input case (.foam) instead of merging every region. */
   region?: string;
+  /** Read only these point/cell data arrays (meshio++ formats; upstream names, case-sensitive). */
+  fields?: string[];
   /** The `.step` target's fit controls (see StepFitOptions); `false` writes the faceted solid only. Other targets ignore it. */
   fitCad?: StepFitOptions | false;
   provenance?: string;
@@ -1620,7 +1632,8 @@ export async function meshConvert(args: {
     args.piece,
     args.dropGhosts,
     args.region,
-    execution.signal
+    execution.signal,
+    args.fields
   );
   const warnings: string[] = [];
   const { path: written, report } = await writeModelReported(
