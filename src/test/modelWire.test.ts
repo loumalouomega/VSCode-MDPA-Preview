@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert";
-import { toWireModel } from "../parser/modelWire";
+import { toWireModel, fieldRowCount, shouldStageFields, stagedHead, toWireField } from "../parser/modelWire";
 import { MdpaModel } from "../parser/types";
 
 function minimalModel(): MdpaModel {
@@ -64,4 +64,21 @@ test("toWireModel handles a model with zero fields", () => {
   model.fields = [];
   const wire = toWireModel(model);
   assert.deepStrictEqual(wire.fields, []);
+});
+
+test("staging is off below the row threshold and on above it", () => {
+  const model = minimalModel();
+  assert.strictEqual(fieldRowCount(model), 3);
+  assert.strictEqual(shouldStageFields(model), false);
+  assert.strictEqual(shouldStageFields(model, 2), true);
+  assert.strictEqual(shouldStageFields({ ...model, fields: [] }, 0), false);
+});
+
+test("stagedHead keeps geometry and drops fields without mutating the model", () => {
+  const model = minimalModel();
+  const head = stagedHead(model);
+  assert.strictEqual(head.fields.length, 0);
+  assert.strictEqual(head.coords, model.coords);
+  assert.strictEqual(model.fields.length, 1);
+  assert.deepStrictEqual(Array.from(toWireField(model.fields[0]).values as unknown as number[]), [0.1, 0.2, 0.3]);
 });

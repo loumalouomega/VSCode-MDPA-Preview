@@ -1628,6 +1628,11 @@ function handleHostMessage(event: MessageEvent): void {
       delete document.body.dataset.meshSummary;
       hideSummaryOverlay(summaryOverlayEl);
       model = msg.model as MdpaModel;
+      // Staged delivery: geometry now, fields one message each (`modelField`);
+      // the scene is rebuilt once when the last one lands.
+      stagedFields = msg.fieldsPending
+        ? { stageId: msg.stageId as number, count: msg.fieldsPending as number, fields: [] }
+        : undefined;
       midNodeIds = (msg.midNodes as number[] | undefined) ?? [];
       buildScene(!msg.keepCamera);
       showRendererNote();
@@ -1652,6 +1657,20 @@ function handleHostMessage(event: MessageEvent): void {
       navControls.show();
       syncNavOffset();
       break;
+    case "modelField": {
+      const st = stagedFields;
+      if (!st || !model || msg.stageId !== st.stageId) break; // superseded by a newer model
+      st.fields.push(msg.field as FieldData);
+      if (st.fields.length < st.count) break;
+      stagedFields = undefined;
+      model = { ...model, fields: st.fields };
+      snapshotVisibility();
+      buildScene(false);
+      setMeshModFields(model.fields, model.globals);
+      setVariablesModel(model.fields, model.subModelParts, model.globals);
+      syncNavOffset();
+      break;
+    }
     case "meshSummary": {
       // The file was NOT loaded: there is no model, which is what actually
       // disables every `if (!model) return` path (edit, export, analyses).
@@ -2096,6 +2115,8 @@ function snapshotVisibility(): void {
     [...layers.entries()].filter(([, l]) => l.paneHidden).map(([id, l]) => [id, [...l.paneHidden!]])
   );
 }
+
+let stagedFields: { stageId: number; count: number; fields: FieldData[] } | undefined;
 
 function buildScene(resetCam = true): void {
   if (!model) return;

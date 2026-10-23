@@ -278,6 +278,14 @@ export function registerAllTools(server: McpServer): void {
         "there is nothing to select. Ignored by every other format."
     );
 
+  const fields = z
+    .array(z.string())
+    .optional()
+    .describe(
+      "Read only these point_data/cell_data arrays (selective read, meshio++ formats only), by the file's own array names, case-sensitive. " +
+        "Omit to read every array. Names the file does not carry are reported in diagnostics. Refused for formats with their own parser (.mdpa, VTK, STL, OBJ, PLY)."
+    );
+
   const metadataOnly = z
     .boolean()
     .optional()
@@ -316,7 +324,7 @@ export function registerAllTools(server: McpServer): void {
         "`spheres` (one-node/particle cells: how many, whether they carry a RADIUS, and a suggested one if not), and " +
         "`beams` (line cells: `sectioned` counts those resolving a CROSS_AREA, while the stricter `elementsSectioned` counts only Elements — a mesh where the two differ sharply is usually a 2D boundary skin sharing a structural part's properties, not a frame), and " +
         "`isolatedNodes` (nodes referenced by no cell connectivity — connectivity-only, so a node listed in a SubModelPart but in no block still counts: `count` plus the `ids`, capped at 1000 with `truncated: true` when capped). Pass `summary: true` to report the file shape WITHOUT parsing it, for every supported format, with an explicit `cost` saying what that took.",
-      inputSchema: { path: meshPath, inputFormat, timeStep, metadataOnly, summary, piece, dropGhosts, region },
+      inputSchema: { path: meshPath, inputFormat, timeStep, metadataOnly, summary, piece, dropGhosts, region, fields },
     },
     runCancellable(meshInfo)
   );
@@ -749,6 +757,7 @@ export function registerAllTools(server: McpServer): void {
         piece,
         dropGhosts,
         region,
+        fields,
         provenance: provenanceArg,
         verify: verifyArg,
       },
