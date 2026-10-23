@@ -1192,6 +1192,19 @@ export interface StepFitOptions {
    * measurement off.
    */
   faceDeviation?: boolean;
+  /** meshio++ 17.13.0: how patches no primitive explains are treated (default "legacy", every output as before). */
+  freeformMode?: "legacy" | "adaptive" | "network" | "auto";
+  freeformParameterization?: "auto" | "projection" | "lscm" | "harmonic";
+  /** A patch network's continuity at an extraordinary vertex (default "g1x"). */
+  extraordinaryVertex?: "g0" | "g1" | "g1x" | "g1xx";
+  localRefine?: "knots" | "thb";
+  freeformG1ToleranceDeg?: number;
+  freeformMaxControlPoints?: number;
+  layoutTargetPatchSize?: number;
+  layoutMaxValenceDeviation?: number;
+  resegmentRounds?: number;
+  layoutSnapToFeatures?: boolean;
+  validateBySurfaceSampling?: boolean;
 }
 
 function provenanceModeOf(v: string | undefined): ProvenanceMode {
