@@ -4,6 +4,26 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.21.0] - 2026-10-23
+
+### Added
+
+- meshio++ is now `^17.13.0` (17.12.0 was never published). The binding diff is additive and fully adopted; live format keys are unchanged (lean 81 readers / 82 writers, full 83 / 82) and `transientAudit` passes unedited. `dist/meshio/` grows by about 0.97 MB (lean) and 0.9 MB (full) per variant pair.
+
+- **Octree volume mesh** (Advanced menu, `kratos.mesh.exportOctree`, `mesh_derive` kind `octreeMesh`): tetrahedra, hexahedra or castellated hexahedra inside a closed surface on a balanced octree, with the quality report in the summary, `inside`/`boundary` SubModelParts, boundary faces as Conditions and `SDF_DISTANCE`. The 17.8.0 adaptive `octree` is available as kind `octree`.
+
+- **Mesh CAD faces** (`kratos.mesh.exportCadSurface`, `mesh_derive` kind `cadSurface`): `meshCadSurface` triangulates the B-rep of a `.cad.json` or STEP/IGES read into one conforming surface, one SubModelPart per face, failed faces reported with their status.
+
+- **Generate mesh** (`kratos.mesh.generate`, `mesh_derive` kind `generate`): the thirteen procedural generators (rectangle, box, disk, uvSphere, icosaSphere, cylinder, referenceTriangle, ngon, annulus, lshape, plateWithHole, honeycomb, referenceCells), validated and size-checked before the kernel runs.
+
+- **Segment surface patches** and **Refine patches** operations (`segment`, `refinePatches`; sidebar forms, command line, `mesh_transform`): meshio++'s patch segmentation (angle and primitive methods) and variational refinement as oracle ops over a `SEGMENT_PATCH` field, optionally with a `Patch_<k>` SubModelPart per patch.
+
+- The `.step` export accepts the 17.13.0 `fitCad` freeform options (`freeformMode`, `freeformParameterization`, `extraordinaryVertex`, `localRefine`, …); the export report names the freeform mode, network patches, extraordinary vertices, G1 jump, faceted area share and demotion reasons.
+
+### Changed
+
+- `mesh_capabilities`: `octree`, `segment`, `refinePatches`, `octreeMesh`, `meshCadSurface` and the generators move from `operations.unavailable` to `available`; `fitPrimitives` is added to the unavailable list with its reason.
+
 ## [5.20.0] - 2026-10-23
 
 ### Added
