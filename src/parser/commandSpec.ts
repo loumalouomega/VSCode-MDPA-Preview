@@ -355,6 +355,9 @@ const FILES: CommandSpec[] = [
   post("splitMesh", "file", "Split into components/types/fields", "menuSplitMesh"),
   post("simplify", "file", "Export a simplified surface copy", "menuExportSimplified"),
   post("sampleGrid", "file", "Sample to a grid / voxelization / SDF volume", "menuExportGrid"),
+  post("octreeMesh", "file", "Write an octree tetrahedral/hexahedral volume mesh of the surface", "menuExportOctree"),
+  post("cadSurface", "file", "Triangulate the faces of the open CAD B-rep", "menuExportCadSurface"),
+  post("generateMesh", "file", "Write a procedural mesh (rectangle, box, sphere, …)", "menuGenerateMesh"),
   {
     ...post("exportTable", "file", "Export the data table as CSV/XLSX", "menuExportTable", "format(.csv|.xlsx)! kind(Nodes|Elements|Conditions|Geometries)! membership:bool submodelpart:part nodeColumns:bool", "exportTable .csv Nodes", { positional: ["format", "kind"] }),
     exec: {

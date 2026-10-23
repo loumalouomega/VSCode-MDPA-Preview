@@ -494,6 +494,21 @@
         "category": "%category.KratosMesh%"
       },
       {
+        "command": "kratos.mesh.exportOctree",
+        "title": "%command.kratos.mesh.exportOctree.title%",
+        "category": "%category.KratosMesh%"
+      },
+      {
+        "command": "kratos.mesh.exportCadSurface",
+        "title": "%command.kratos.mesh.exportCadSurface.title%",
+        "category": "%category.KratosMesh%"
+      },
+      {
+        "command": "kratos.mesh.generate",
+        "title": "%command.kratos.mesh.generate.title%",
+        "category": "%category.KratosMesh%"
+      },
+      {
         "command": "kratos.mesh.packSeries",
         "title": "%command.kratos.mesh.packSeries.title%",
         "category": "%category.KratosMdpa%"

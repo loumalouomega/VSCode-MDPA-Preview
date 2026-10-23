@@ -281,12 +281,9 @@ export async function getMeshCapabilities(): Promise<MeshCapabilities> {
     unroutedReaders,
     writers: { ...MESHIO_WRITE_FORMAT },
     namedWriters: [...MESHIO_WRITER_KEYS],
-    operations: { available: ["featureEdges", "hausdorff", "qualityGate", "periodicNodes", "regionAlgebra", "resampleSequence"], unavailable: [
+    operations: { available: ["featureEdges", "hausdorff", "qualityGate", "periodicNodes", "regionAlgebra", "resampleSequence", "segment", "refinePatches", "octree", "octreeMesh", "meshCadSurface", "generators (rectangle, box, disk, uvSphere, icosaSphere, cylinder, referenceCells, referenceTriangle, ngon, annulus, lshape, plateWithHole, honeycomb)"], unavailable: [
       { name: "agglomerate", reason: "Polyhedral output cannot be preserved by the editable model." },
-      { name: "segment (method: primitive)", reason: "Primitive-aware patch segmentation (17.9.0): segment itself is an interactive op with no adopting adapter here yet; fitCad self-segments." },
-      { name: "generators (rectangle, box, disk, uvSphere, icosaSphere, cylinder, referenceCells, referenceTriangle, ngon, annulus, lshape, plateWithHole, honeycomb)", reason: "Procedural mesh generators (17.9.0, six planar-domain ones in 17.11.0): a new-mesh feature, not an edit of the open one; no entry point or Kratos naming decision yet." },
-      { name: "octree", reason: "Adaptive octree/hex mesh generation around a skin (17.8.0): no fidelity-checked adapter, field transfer or Kratos-semantics review yet." },
-      { name: "refinePatches", reason: "Variational refinement of a segmentation (17.11.0): it rewrites `segment:patch` labels, and this extension's models carry none — `segment` itself is an interactive op with no adapter here. The CAD path reaches the same refinement through fitCad's `refineSegmentation`." },
+      { name: "fitPrimitives", reason: "Fits a primitive to each patch of a segmented surface and only labels it (fit:* data); the .step export's fitCad does the fitting itself, and no Kratos entity carries a fitted primitive." },
       { name: "retagRegions", reason: "SubModelParts do not retain native region tags or side selectors." }
     ] },
     extensions: {

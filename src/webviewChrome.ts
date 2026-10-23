@@ -189,6 +189,9 @@ export const MENU_ACTION_COMMANDS: Readonly<Record<string, string>> = {
   splitMesh: "kratos.mesh.splitMesh",
   simplify: "kratos.mesh.exportSimplified",
   sampleGrid: "kratos.mesh.exportGrid",
+  octreeMesh: "kratos.mesh.exportOctree",
+  cadSurface: "kratos.mesh.exportCadSurface",
+  generateMesh: "kratos.mesh.generate",
   nodeIds: "kratos.mdpa.toggleNodeIds",
   screenshot: "kratos.mdpa.screenshot",
   commandLine: "kratos.mdpa.commandLine",
@@ -215,6 +218,9 @@ export const ADVANCED_MENU_HTML = `<div id="advanced-popup" class="hidden" role=
         <button type="button" class="file-menu-item" data-action="splitMesh" role="menuitem" title="Write one file per connected body, element type or field value">${ic("crop")}<span>Split mesh…</span></button>
         <button type="button" class="file-menu-item" data-action="simplify" role="menuitem" title="Write a simplified COPY of a triangle surface (quadric-error edge collapse): survivors keep their ids and boundary/creases are pinned">${ic("remesh")}<span>Simplify surface…</span></button>
         <button type="button" class="file-menu-item" data-action="sampleGrid" role="menuitem" title="Write a voxel occupancy or a signed-distance volume of the surface on a regular lattice (.vti keeps the sdf header)">${ic("grid")}<span>Sample to grid…</span></button>
+        <button type="button" class="file-menu-item" data-action="octreeMesh" role="menuitem" title="Write a tetrahedral or hexahedral volume mesh of the inside of the surface, graded on an octree (meshio++ octreeMesh)">${ic("remesh")}<span>Octree volume mesh…</span></button>
+        <button type="button" class="file-menu-item" data-action="cadSurface" role="menuitem" title="Triangulate the faces of the open CAD B-rep (.cad.json, STEP/IGES) into one conforming surface mesh, one SubModelPart per CAD face">${ic("remesh")}<span>Mesh CAD faces…</span></button>
+        <button type="button" class="file-menu-item" data-action="generateMesh" role="menuitem" title="Write a procedural mesh from nothing: rectangle, box, disk, sphere, cylinder, annulus, L-shape, plate with a hole, honeycomb or reference cells">${ic("grid")}<span>Generate mesh…</span></button>
         <div class="file-menu-sep"></div>
         <button type="button" class="file-menu-item" data-action="propertiesEditor" role="menuitem" title="Browse and edit the Begin Properties sets: values, assign to a SubModelPart, clone or delete — beams' CROSS_AREA is one of these">${ic("edit")}<span>Properties editor…</span></button>
         <button type="button" class="file-menu-item" data-action="lighting" role="menuitem" title="Specular / ambient / diffuse + backface culling">${ic("lighting")}<span>Lighting…</span></button>

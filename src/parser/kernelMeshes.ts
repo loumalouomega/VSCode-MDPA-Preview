@@ -97,6 +97,23 @@ export const GENERATORS = {
 export type GeneratorShape = keyof typeof GENERATORS;
 export const GENERATOR_SHAPES = Object.keys(GENERATORS) as GeneratorShape[];
 
+/** A starting point for the "Generate mesh…" prompt: what each shape takes, with sizes that make a useful mesh. */
+export const GENERATOR_EXAMPLES: Record<GeneratorShape, { description: string; params: Record<string, unknown> }> = {
+  rectangle: { description: "regular quad or triangle grid, side regions xmin…ymax", params: { dims: [20, 10], size: [2, 1], cellType: "quad" } },
+  box: { description: "regular hexahedron, tetra or wedge grid, six side regions", params: { dims: [10, 10, 10], size: [1, 1, 1], cellType: "hexahedron" } },
+  disk: { description: "disk of quads (or triangles), region rim", params: { radius: 1, n: 12 } },
+  uvSphere: { description: "latitude/longitude sphere surface", params: { radius: 1, nu: 32, nv: 16 } },
+  icosaSphere: { description: "icosahedral sphere surface, 20·4^n triangles", params: { radius: 1, subdivisions: 3 } },
+  cylinder: { description: "solid cylinder along z, regions side/top/bottom", params: { radius: 0.5, height: 2, nxy: 8, nz: 20 } },
+  referenceTriangle: { description: "reference triangle refined into n·n triangles", params: { n: 8 } },
+  ngon: { description: "regular polygon fanned or ringed with triangles", params: { sides: 6, radius: 1, rings: 4 } },
+  annulus: { description: "annulus or sector, regions inner/outer (start/end)", params: { innerRadius: 0.5, outerRadius: 1, ntheta: 48, nr: 8 } },
+  lshape: { description: "L-shaped domain with a re-entrant corner", params: { n: 8, size: 2 } },
+  plateWithHole: { description: "square plate around a circular hole", params: { radius: 0.25, size: 1, nt: 8, nr: 8 } },
+  honeycomb: { description: "pointy-top hexagon tiling (one polygon block)", params: { dims: [6, 6], edge: 1 } },
+  referenceCells: { description: "one cell of every meshio type in reference coordinates", params: {} },
+};
+
 export interface GenerateSpec {
   kind: "generate";
   shape: GeneratorShape;
