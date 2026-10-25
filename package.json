@@ -1324,6 +1324,7 @@
     "keytar@7.9.0": true
   },
   "overrides": {
+    "@azure/msal-node": "^7.1.1",
     "@modelcontextprotocol/sdk": {
       "@hono/node-server": "^2.0.5"
     },
