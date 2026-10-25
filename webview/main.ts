@@ -1393,6 +1393,20 @@ function maybeAutoLod(fieldsPending: unknown): void {
   messageEl.textContent = t("Large mesh: level of detail on while fields load (View ▸ Level of detail to turn off). Picking is off while it shows.");
 }
 
+/** Display-only subdivision of quadratic cells (0 = off); see curvedDisplay.ts. */
+let curvedLevel = 0;
+const CURVED_LEVEL_ON = 2;
+function curvedOption(): { curved: { level: number } } | undefined {
+  return curvedLevel ? { curved: { level: curvedLevel } } : undefined;
+}
+function setCurved(on: boolean): void {
+  curvedLevel = on ? CURVED_LEVEL_ON : 0;
+  document.querySelector('[data-action="curved"]')?.classList.toggle("active", on);
+  if (!model) return;
+  snapshotVisibility();
+  buildScene(false);
+}
+
 function setLod(on: boolean): void {
   lodAutoDecided = true;
   lodEnabled = on;
@@ -2747,6 +2761,7 @@ function buildLayerGeometry(layer: Layer): boolean {
   if (layer.built || !prep || !layer.pendingCells) return layer.built;
   const built = buildDisplayGeometry(prep, layer.pendingCells, undefined, {
     wantPickMaps: layer.pickKind !== undefined,
+    ...curvedOption(),
   });
   if (!built) return false;
   // The expensive part happens once; each pane only binds its own mapper to it.
@@ -3894,6 +3909,7 @@ function dispatchToolbarAction(action: string | undefined, _target?: HTMLElement
   else if (action === "edges") setShowEdges(!showEdges);
   else if (action === "nodeIds") setNodeIds(!showNodeIds);
   else if (action === "lod") setLod(!lodEnabled);
+  else if (action === "curved") setCurved(curvedLevel === 0);
   else if (action === "flatParts") {
     setOutlineView({ ...outlineView, flattenSubModelParts: !outlineView.flattenSubModelParts }, true);
   }
@@ -4319,7 +4335,7 @@ function applyMeshSizeColor(): void {
     const field = meshSizeState.color === "nodal" ? meshSizeReport.nodalH : meshSizeReport.elementSize;
     const info = buildFieldInfo(field);
     const kinds: EntityKind[] | "all" = meshSizeState.color === "element" ? ["Elements"] : "all";
-    const built = buildDisplayGeometry(prepared, collectCells(kinds), contourAttach(info));
+    const built = buildDisplayGeometry(prepared, collectCells(kinds), contourAttach(info), curvedOption());
     if (built) {
       // The geometry is built once; each pane gets its own mapper over it.
       const geometry = backend.createGeometry(built.geometry);
