@@ -10,51 +10,19 @@
  * `data-*`, `value`, class names, script and SVG content) are never touched.
  */
 
+import { es } from "./locales/es";
+import { fr } from "./locales/fr";
+import { de } from "./locales/de";
+import { pt } from "./locales/pt";
+
 /** A locale table: English source text → translation. */
 export type Catalogue = Readonly<Record<string, string>>;
 
 /** The pseudo-locale tag (Windows' "qps-ploc"): lengthened, bracketed text. */
 export const PSEUDO_LOCALE = "qps-ploc";
 
-/** Locale tables, by language prefix. Add `xx.ts` and list it here. */
-const CATALOGUES: Record<string, Catalogue> = {
-  es: {
-    Reset: "Restablecer",
-    Quality: "Calidad",
-    Field: "Campo",
-    Find: "Buscar",
-    Inspect: "Inspeccionar",
-    File: "Archivo",
-    "Mesh Quality": "Calidad de malla",
-    Close: "Cerrar",
-    "Export CSV": "Exportar CSV",
-    Frame: "Encuadrar",
-    "Zoom to bad elements": "Acercar a los elementos defectuosos",
-    "Member of: {parts}": "Miembro de: {parts}",
-    "Not part of any SubModelPart.": "No pertenece a ningún SubModelPart.",
-    "Click a {n} node.": "Haga clic en el nodo {n}.",
-    "Plot {v} over time": "Graficar {v} en el tiempo",
-    Cancel: "Cancelar",
-    Remove: "Quitar",
-    "Loading…": "Cargando…",
-    "Previous frame": "Fotograma anterior",
-    "Next frame": "Fotograma siguiente",
-    "Play / Pause": "Reproducir / Pausa",
-    "More view controls": "Más controles de vista",
-    "no SubModelParts": "sin SubModelParts",
-    "no nodal fields": "sin campos nodales",
-    "no fields": "sin campos",
-    "no per-cell fields": "sin campos por celda",
-    "whole mesh": "malla completa",
-    "typed by hand": "escrito a mano",
-    "save as preset": "guardar como preajuste",
-    "re-apply": "volver a aplicar",
-    "— none —": "— ninguno —",
-    "Copy to all panes": "Copiar a todos los paneles",
-    Range: "Rango",
-    Count: "Cantidad",
-  },
-};
+/** Locale tables, by language prefix. Add `locales/xx.ts` and list it here. */
+const CATALOGUES: Record<string, Catalogue> = { es, fr, de, pt };
 
 export interface LocaleChoice {
   catalogue: Catalogue;

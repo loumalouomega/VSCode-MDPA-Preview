@@ -160,7 +160,7 @@ export function renderBeamPanel(
 
   const hint = document.createElement("div");
   hint.className = "meshsize-summary";
-  hint.textContent = `Suggested ${fmt(info.suggested)} — a twentieth of the median element length.`;
+  hint.textContent = t("Suggested {v} — a twentieth of the median element length.", { v: fmt(info.suggested) });
   container.appendChild(hint);
 
   // --- what to draw ---

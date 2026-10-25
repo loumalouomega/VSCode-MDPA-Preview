@@ -98,7 +98,7 @@ export function renderSeriesPanel(
   header.className = "meshsize-header";
   const title = document.createElement("div");
   title.className = "meshsize-title";
-  title.textContent = `Over time — ${state.entity.label}`;
+  title.textContent = t("Over time — {label}", { label: state.entity.label });
   header.appendChild(title);
   const closeBtn = document.createElement("button");
   closeBtn.className = "meshsize-close";

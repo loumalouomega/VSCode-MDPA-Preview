@@ -62,7 +62,7 @@ export function renderMeshSizePanel(
   const summary = document.createElement("div");
   summary.className = "meshsize-summary";
   const typeStr = result.elementTypes.join(", ") || "—";
-  summary.textContent = `${result.analyzedCount.toLocaleString()} / ${result.elementCount.toLocaleString()} elements · ${typeStr}`;
+  summary.textContent = t("{a} / {b} elements · {types}", { a: result.analyzedCount.toLocaleString(), b: result.elementCount.toLocaleString(), types: typeStr });
   container.appendChild(summary);
 
   if (result.analyzedCount === 0) {
@@ -119,7 +119,7 @@ export function renderMeshSizePanel(
 
   const small = document.createElement("button");
   small.className = "meshsize-highlight-btn small";
-  small.textContent = `Smallest (${result.smallElementIds.length})`;
+  small.textContent = t("Smallest ({n})", { n: result.smallElementIds.length });
   small.disabled = result.smallElementIds.length === 0;
   small.classList.toggle("active", state.showSmall);
   small.addEventListener("click", () => handlers.onToggleSmall());
@@ -127,7 +127,7 @@ export function renderMeshSizePanel(
 
   const big = document.createElement("button");
   big.className = "meshsize-highlight-btn big";
-  big.textContent = `Largest (${result.bigElementIds.length})`;
+  big.textContent = t("Largest ({n})", { n: result.bigElementIds.length });
   big.disabled = result.bigElementIds.length === 0;
   big.classList.toggle("active", state.showBig);
   big.addEventListener("click", () => handlers.onToggleBig());
@@ -176,7 +176,7 @@ export function renderMeshSizePanel(
   const save = document.createElement("button");
   save.className = "panel-btn";
   save.textContent = t("Export CSV");
-  save.title = `Box-whisker stats plus the first ${ANALYSIS_EXPORT_ID_LIMIT} outlier ids per list`;
+  save.title = t("Box-whisker stats plus the first {n} outlier ids per list", { n: ANALYSIS_EXPORT_ID_LIMIT });
   save.addEventListener("click", () => handlers.onExport());
   exportRow.appendChild(save);
   container.appendChild(exportRow);

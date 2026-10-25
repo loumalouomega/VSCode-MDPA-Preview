@@ -455,7 +455,7 @@ export function setProblemtypeCapability(status: { allowed?: boolean; checking?:
       box.textContent = t("Checking the configured simulation environment…");
       box.classList.remove("error");
     } else if (!runCapability.allowed && runCapability.reason) {
-      box.textContent = `Run unavailable: ${runCapability.reason}`;
+      box.textContent = t("Run unavailable: {reason}", { reason: runCapability.reason });
       box.classList.add("error");
     } else {
       box.textContent = "";
@@ -755,7 +755,7 @@ function smpChips(paths: string[], onChange: (v: string[]) => void): HTMLElement
     chip.className = "pt-chip";
     if (smpPaths.length > 0 && !smpPaths.includes(p)) {
       chip.classList.add("missing");
-      chip.title = `${p} — not in the current mesh`;
+      chip.title = t("{p} — not in the current mesh", { p });
     } else chip.title = p;
     const text = document.createElement("span");
     text.textContent = p;
@@ -763,7 +763,7 @@ function smpChips(paths: string[], onChange: (v: string[]) => void): HTMLElement
     del.type = "button";
     del.className = "pt-chip-del";
     del.textContent = "×";
-    del.title = `Remove ${p}`;
+    del.title = t("Remove {p}", { p });
     del.addEventListener("click", () => {
       onChange(current.filter((x) => x !== p));
       render();
@@ -1121,7 +1121,7 @@ function appliedRow(
   path.title = smpPath;
   if (smpPaths.length > 0 && !smpPaths.includes(smpPath)) {
     path.classList.add("missing");
-    path.title = `${smpPath} — not in the current mesh`;
+    path.title = t("{p} — not in the current mesh", { p: smpPath });
   }
   const del = document.createElement("button");
   del.type = "button";

@@ -136,7 +136,7 @@ export function renderLightingPanel(
     row.className = "field-row";
     const l = document.createElement("label");
     l.className = "field-label";
-    l.textContent = t("Light");
+    l.textContent = t("Light source");
     row.appendChild(l);
     const sel = document.createElement("select");
     sel.className = "field-select";

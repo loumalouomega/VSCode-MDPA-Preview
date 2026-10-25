@@ -92,7 +92,7 @@ export function renderQualityPanel(
   const summary = document.createElement("div");
   summary.className = "quality-summary";
   const typeStr = report.elementTypes.join(", ") || "—";
-  summary.textContent = `${report.analyzedCount.toLocaleString()} / ${report.elementCount.toLocaleString()} elements analysed · ${typeStr}`;
+  summary.textContent = t("{a} / {b} elements analysed · {types}", { a: report.analyzedCount.toLocaleString(), b: report.elementCount.toLocaleString(), types: typeStr });
   container.appendChild(summary);
 
   if (report.analyzedCount === 0) {
@@ -114,7 +114,7 @@ export function renderQualityPanel(
   actions.className = "quality-actions";
   const save = document.createElement("button");
   save.textContent = t("Export CSV");
-  save.title = `Aggregates plus the first ${ANALYSIS_EXPORT_ID_LIMIT} bad-element ids per metric`;
+  save.title = t("Aggregates plus the first {n} bad-element ids per metric", { n: ANALYSIS_EXPORT_ID_LIMIT });
   save.addEventListener("click", () => handlers.onExport());
   actions.appendChild(save);
   container.appendChild(actions);
@@ -187,7 +187,7 @@ function buildCard(
 
     const hl = document.createElement("button");
     hl.className = "quality-highlight-btn";
-    hl.textContent = `Highlight bad (${m.badEntityIds.length})`;
+    hl.textContent = t("Highlight bad ({n})", { n: m.badEntityIds.length });
     hl.classList.toggle("active", getActive() === m.key);
     hl.addEventListener("click", () => {
       if (getActive() === m.key) {

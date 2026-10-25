@@ -528,7 +528,7 @@ function buildNode(
   label.className = "outline-label";
   label.textContent = node.label;
   if (node.layerId) {
-    label.title = `${node.label} — click to frame in view`;
+    label.title = t("{label} — click to frame in view", { label: node.label });
     label.addEventListener("click", () => {
       selectOutlineRow(row, node.layerId!);
       handlers.onFocus(node.layerId!);

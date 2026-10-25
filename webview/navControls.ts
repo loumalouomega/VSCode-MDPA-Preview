@@ -323,7 +323,7 @@ export class NavControls {
       btn.type = "button";
       btn.className = "nav-seg nav-step-btn" + (step === this.rotateStep ? " active" : "");
       btn.textContent = `${step}°`;
-      btn.title = `Rotate by ${step}°`;
+      btn.title = t("Rotate by {n}°", { n: step });
       btn.setAttribute("aria-label", `Rotate step ${step} degrees`);
       btn.setAttribute("aria-pressed", String(step === this.rotateStep));
       btn.addEventListener("click", () => this.setRotateStep(step));

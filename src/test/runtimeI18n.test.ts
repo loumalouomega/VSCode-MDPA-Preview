@@ -32,8 +32,8 @@ test("the pseudo-locale brackets runtime strings", () => {
 
 test("every catalogue key is used by the chrome or a t() literal, with matching placeholders", () => {
   const dir = path.join(__dirname, "..", "..", "webview");
-  const src = fs.readdirSync(dir).filter((f) => f.endsWith(".ts")).map((f) => fs.readFileSync(path.join(dir, f), "utf8")).join("\n");
-  const literals = new Set([...src.matchAll(/\bt\("((?:[^"\\\n]|\\.)*)"/g)].map((m) => m[1]));
+  const src = [dir, path.join(dir, "plots")].flatMap((d) => fs.readdirSync(d).filter((f) => f.endsWith(".ts")).map((f) => fs.readFileSync(path.join(d, f), "utf8"))).join("\n");
+  const literals = new Set([...src.matchAll(/\btr?\("((?:[^"\\\n]|\\.)*)"/g)].map((m) => JSON.parse(`"${m[1]}"`)));
   const chrome = buildPreviewHtml({ scriptUri: "s", designSystemUri: "d", styleUri: "c", cspSource: "x", nonce: "n", title: "T", theme: "dark" });
   for (const loc of shippedLocales()) {
     for (const [key, val] of Object.entries(catalogueFor(loc)!)) {
@@ -64,4 +64,11 @@ test("exported CSV text is identical under the pseudo-locale", async () => {
   try { after = sample({ regions: [], total: [] }); } catch { after = undefined; }
   setRuntimeLocale(undefined);
   assert.equal(after, before);
+});
+
+test("every shipped language translates exactly the same set of strings", () => {
+  const locales = shippedLocales();
+  assert.deepEqual([...locales].sort(), ["de", "es", "fr", "pt"]);
+  const base = Object.keys(catalogueFor("es")!).sort();
+  for (const l of locales) assert.deepEqual(Object.keys(catalogueFor(l)!).sort(), base, l);
 });

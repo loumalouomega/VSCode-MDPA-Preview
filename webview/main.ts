@@ -1784,7 +1784,7 @@ function handleHostMessage(event: MessageEvent): void {
       }
       } catch (error) {
         if (pendingFrame) { const p = pendingFrame; pendingFrame = undefined; clearTimeout(p.timer); p.reject(error instanceof Error ? error : new Error(String(error))); }
-        else { messageEl.textContent = `Could not render step: ${String(error)}`; messageEl.classList.add("error"); }
+        else { messageEl.textContent = t("Could not render step: {err}", { err: String(error) }); messageEl.classList.add("error"); }
       }
       break;
     }
@@ -2046,7 +2046,7 @@ function handleHostMessage(event: MessageEvent): void {
       if (origin.frameIndex !== undefined && origin.frameIndex !== currentFrameIndex) {
         void goToFrameAwaited(origin.frameIndex).then(() => {
           if (sequence === plotPickSequence && origin.frameIndex === currentFrameIndex) {if(origin.entityKind && origin.entityId !== undefined){selectTableRow(origin.entityKind, origin.entityId);frameTableSelection();}else if(origin.submodelpart)highlightPlotRegion(origin.submodelpart);}
-        }).catch(error => { if(sequence===plotPickSequence)messageEl.textContent = `Could not locate plot sample: ${String(error)}`; });
+        }).catch(error => { if(sequence===plotPickSequence)messageEl.textContent = t("Could not locate plot sample: {err}", { err: String(error) }); });
       } else if (origin.entityKind && origin.entityId !== undefined) {
         selectTableRow(origin.entityKind, origin.entityId);
         frameTableSelection();
@@ -2074,7 +2074,7 @@ function handleHostMessage(event: MessageEvent): void {
     }
     case "error":
       hideLoading();
-      messageEl.textContent = `Parse error: ${msg.message}`;
+      messageEl.textContent = t("Parse error: {msg}", { msg: msg.message });
       messageEl.classList.add("error");
       break;
   }
@@ -3559,7 +3559,7 @@ function setNodeIds(on: boolean): void {
     return;
   }
   if (model.nodeCount > NODE_LABEL_LIMIT) {
-    messageEl.textContent = `Node IDs hidden: ${model.nodeCount} nodes exceed the ${NODE_LABEL_LIMIT} label limit.`;
+    messageEl.textContent = t("Node IDs hidden: {n} nodes exceed the {limit} label limit.", { n: model.nodeCount, limit: NODE_LABEL_LIMIT });
     showNodeIds = false;
     btn?.classList.remove("active");
     return;

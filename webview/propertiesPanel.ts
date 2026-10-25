@@ -52,7 +52,7 @@ function setRow(model: PropertySet, handlers: PropertyPanelHandlers, partPaths: 
   head.className = "prop-set-head";
   const label = document.createElement("span");
   label.className = "prop-set-name";
-  label.textContent = `Properties ${model.id}`;
+  label.textContent = t("Properties {id}", { id: model.id });
   head.appendChild(label);
   const cloneBtn = document.createElement("button");
   cloneBtn.className = "panel-icon-btn";

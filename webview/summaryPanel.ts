@@ -186,7 +186,7 @@ export function renderSummaryOverlay(
     if (names.length > NAME_LIMIT) {
       const more = document.createElement("div");
       more.className = "meshsize-summary summary-unknown";
-      more.textContent = `+${names.length - NAME_LIMIT} more not listed — use "Open full mesh anyway" to load every array.`;
+      more.textContent = t("+{n} more not listed — use \"Open full mesh anyway\" to load every array.", { n: names.length - NAME_LIMIT });
       el.appendChild(more);
     }
     return el;
@@ -225,7 +225,7 @@ export function renderSummaryOverlay(
     p.className = "meshsize-summary summary-unknown";
     // Not "none": an absent value here is a fact about the FORMAT, and saying
     // so is what stops a blank reading as a zero.
-    p.textContent = `Not reported by this format: ${s.unknown.join(", ")}.`;
+    p.textContent = t("Not reported by this format: {list}.", { list: s.unknown.join(", ") });
     cardEl.appendChild(p);
   }
   for (const n of s.notes) {

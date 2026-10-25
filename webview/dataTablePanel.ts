@@ -347,7 +347,7 @@ function buildPager(
 
   const label = document.createElement("span");
   label.className = "dt-page-label";
-  label.textContent = `page ${page + 1} / ${pages}`;
+  label.textContent = t("page {a} / {b}", { a: page + 1, b: pages });
   pager.appendChild(label);
 
   step(">", page + 1, page < pages - 1);

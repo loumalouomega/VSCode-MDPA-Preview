@@ -131,7 +131,7 @@ export function renderSpherePanel(
 
   const hint = document.createElement("div");
   hint.className = "meshsize-summary";
-  hint.textContent = `Suggested ${fmt(info.suggested)} — half the nearest-neighbour spacing.`;
+  hint.textContent = t("Suggested {v} — half the nearest-neighbour spacing.", { v: fmt(info.suggested) });
   container.appendChild(hint);
 
   if (state.showDetail) {
@@ -188,7 +188,7 @@ export function renderSpherePanel(
   writeRow.className = "meshsize-actions";
   const write = document.createElement("button");
   write.className = "panel-btn";
-  write.textContent = `Write RADIUS = ${fmt(state.constant)}`;
+  write.textContent = t("Write RADIUS = {v}", { v: fmt(state.constant) });
   write.addEventListener("click", () => handlers.onWrite());
   writeRow.appendChild(write);
   container.appendChild(writeRow);

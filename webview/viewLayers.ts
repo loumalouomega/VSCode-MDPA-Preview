@@ -61,7 +61,7 @@ export function renderViewLayers(container: HTMLElement, state: ViewLayersState,
     swatch.type = "color";
     swatch.className = "vl-swatch";
     swatch.value = layerColorToHex(l.color);
-    swatch.title = `Recolour view layer "${l.name}" (view-only)`;
+    swatch.title = t("Recolour view layer \"{name}\" (view-only)", { name: l.name });
     swatch.addEventListener("change", () => handlers.onRecolour(l.id, swatch.value));
     row.appendChild(swatch);
 
@@ -83,7 +83,7 @@ export function renderViewLayers(container: HTMLElement, state: ViewLayersState,
     const up = document.createElement("button");
     up.type = "button";
     up.className = "panel-icon-btn";
-    up.title = `Move "${l.name}" up`;
+    up.title = t("Move \"{name}\" up", { name: l.name });
     up.innerHTML = glyph("chevronUp");
     up.disabled = l.locked || i === 0;
     up.addEventListener("click", () => handlers.onMove(l.id, -1));
@@ -92,7 +92,7 @@ export function renderViewLayers(container: HTMLElement, state: ViewLayersState,
     const down = document.createElement("button");
     down.type = "button";
     down.className = "panel-icon-btn";
-    down.title = `Move "${l.name}" down`;
+    down.title = t("Move \"{name}\" down", { name: l.name });
     down.innerHTML = glyph("chevronDown");
     down.disabled = l.locked || i === state.layers.length - 1;
     down.addEventListener("click", () => handlers.onMove(l.id, 1));
@@ -102,7 +102,7 @@ export function renderViewLayers(container: HTMLElement, state: ViewLayersState,
     promote.type = "button";
     promote.className = "panel-btn";
     promote.textContent = t("Promote");
-    promote.title = `Create a real SubModelPart from "${l.name}" (undoable edit — the only way a view layer reaches the solver)`;
+    promote.title = t("Create a real SubModelPart from \"{name}\" (undoable edit — the only way a view layer reaches the solver)", { name: l.name });
     promote.disabled = l.locked;
     promote.addEventListener("click", () => handlers.onPromote(l.id));
     row.appendChild(promote);
