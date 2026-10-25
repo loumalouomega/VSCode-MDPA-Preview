@@ -1714,6 +1714,8 @@ function handleHostMessage(event: MessageEvent): void {
       delete document.body.dataset.meshSummary;
       hideSummaryOverlay(summaryOverlayEl);
       model = msg.model as MdpaModel;
+      // Staged frame (initial load / edit re-render): rows follow on demand.
+      stagedFields = msg.fieldsPending ? { stageId: msg.stageId as number, requested: new Set() } : undefined;
       midNodeIds = (msg.midNodes as number[] | undefined) ?? [];
       buildScene(false); // preserve camera position between frames
       showRendererNote();

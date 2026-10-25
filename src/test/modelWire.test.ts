@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert";
-import { toWireModel, fieldRowCount, shouldStageFields, stagedHead, toWireField, wireFieldKey } from "../parser/modelWire";
+import { createFieldStager, toWireModel, fieldRowCount, shouldStageFields, stagedHead, toWireField, wireFieldKey } from "../parser/modelWire";
 import { MdpaModel } from "../parser/types";
 
 function minimalModel(): MdpaModel {
@@ -88,4 +88,38 @@ test("stagedHead keeps geometry and field metadata without rows, without mutatin
   assert.strictEqual(head.coords, model.coords);
   assert.strictEqual(model.fields.length, 1);
   assert.deepStrictEqual(Array.from(toWireField(model.fields[0]).values as unknown as number[]), [0.1, 0.2, 0.3]);
+});
+
+test("field stager stages only when allowed and above the threshold", () => {
+  const model = minimalModel();
+  const stager = createFieldStager(2);
+  const whole = stager.wire(model, false);
+  assert.strictEqual(whole.fieldsPending, undefined);
+  assert.strictEqual(whole.stageId, undefined);
+  assert.strictEqual(whole.model.fields[0].ids.length, 3);
+  const staged = stager.wire(model, true);
+  assert.strictEqual(staged.fieldsPending, 1);
+  assert.strictEqual(typeof staged.stageId, "number");
+  assert.strictEqual(staged.model.fields[0].ids.length, 0);
+  assert.strictEqual(createFieldStager().wire(model, true).fieldsPending, undefined, "below the default threshold");
+  assert.strictEqual(model.fields[0].ids.length, 3, "model not mutated");
+});
+
+test("field stager answers only the newest stage", () => {
+  const model = minimalModel();
+  const stager = createFieldStager(2);
+  const first = stager.wire(model, true);
+  const reply = stager.answer(first.stageId, "Nodal:DISTANCE");
+  assert.strictEqual(reply?.type, "modelField");
+  assert.deepStrictEqual(Array.from(reply!.field.values as unknown as number[]), [0.1, 0.2, 0.3]);
+  assert.strictEqual(stager.answer(first.stageId, "Nodal:MISSING"), undefined);
+  assert.strictEqual(stager.answer(first.stageId, 7), undefined);
+  const second = stager.wire(model, true);
+  assert.strictEqual(stager.answer(first.stageId, "Nodal:DISTANCE"), undefined, "superseded");
+  assert.ok(stager.answer(second.stageId, "Nodal:DISTANCE"));
+  stager.wire(model, false);
+  assert.strictEqual(stager.answer(second.stageId, "Nodal:DISTANCE"), undefined, "a whole post retires the stage");
+  stager.wire(model, true);
+  stager.clear();
+  assert.strictEqual(stager.answer(3, "Nodal:DISTANCE"), undefined);
 });
