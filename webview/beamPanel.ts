@@ -15,6 +15,7 @@
 // Elemental field, creating a second source of truth that Kratos itself would
 // not read. The constant stays a viewing aid.
 
+import { t } from "../src/parser/i18n/runtime";
 import { BeamStats } from "../src/parser/beamElements";
 import { glyph } from "../src/uiGlyphs";
 import { colormapRow, fmt, legend, sectionLabel } from "./panelWidgets";
@@ -76,11 +77,11 @@ export function renderBeamPanel(
   header.className = "meshsize-header";
   const title = document.createElement("div");
   title.className = "meshsize-title";
-  title.textContent = "Beams";
+  title.textContent = t("Beams");
   header.appendChild(title);
   const closeBtn = document.createElement("button");
   closeBtn.className = "meshsize-close";
-  closeBtn.title = "Close";
+  closeBtn.title = t("Close");
   closeBtn.innerHTML = glyph("x");
   closeBtn.addEventListener("click", () => handlers.onClose());
   header.appendChild(closeBtn);
@@ -89,7 +90,7 @@ export function renderBeamPanel(
   if (info.cells === 0) {
     const empty = document.createElement("div");
     empty.className = "meshsize-summary";
-    empty.textContent = "No line (1D) cells in this mesh.";
+    empty.textContent = t("No line (1D) cells in this mesh.");
     container.appendChild(empty);
     return;
   }
@@ -121,13 +122,13 @@ export function renderBeamPanel(
   toggleRow.className = "meshsize-actions";
   const toggle = document.createElement("button");
   toggle.className = "panel-btn";
-  toggle.textContent = "Show beams";
+  toggle.textContent = t("Show beams");
   toggle.classList.toggle("active", state.enabled);
   toggle.addEventListener("click", () => handlers.onToggle());
   toggleRow.appendChild(toggle);
   const frame = document.createElement("button");
   frame.className = "panel-btn";
-  frame.textContent = "Frame";
+  frame.textContent = t("Frame");
   frame.addEventListener("click", () => handlers.onFrame());
   toggleRow.appendChild(frame);
   container.appendChild(toggleRow);
@@ -159,7 +160,7 @@ export function renderBeamPanel(
 
   const hint = document.createElement("div");
   hint.className = "meshsize-summary";
-  hint.textContent = `Suggested ${fmt(info.suggested)} — a twentieth of the median element length.`;
+  hint.textContent = t("Suggested {v} — a twentieth of the median element length.", { v: fmt(info.suggested) });
   container.appendChild(hint);
 
   // --- what to draw ---
@@ -168,7 +169,7 @@ export function renderBeamPanel(
   kindRow.className = "meshsize-actions";
   const conds = document.createElement("button");
   conds.className = "panel-btn";
-  conds.textContent = "Line conditions";
+  conds.textContent = t("Line conditions");
   conds.title =
     "Also draw line Conditions and Geometries. Off by default: a 2D boundary is made " +
     "of the same line cells as a beam, and often shares its Properties.";
@@ -208,7 +209,7 @@ export function renderBeamPanel(
     colorRow.className = "meshsize-actions";
     const bySection = document.createElement("button");
     bySection.className = "panel-btn";
-    bySection.textContent = "By section";
+    bySection.textContent = t("By section");
     bySection.classList.toggle("active", state.colorBySection);
     bySection.addEventListener("click", () => handlers.onColorBySection());
     colorRow.appendChild(bySection);

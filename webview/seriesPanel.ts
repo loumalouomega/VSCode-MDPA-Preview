@@ -19,6 +19,7 @@
  *    skips them when scaling a colormap.
  */
 
+import { t } from "../src/parser/i18n/runtime";
 import { FieldSeries } from "../src/parser/fieldSeries";
 import { glyph } from "../src/uiGlyphs";
 import { CHART_FONT, CHART_INK, fmtPrecise, setupChartCanvas } from "./panelWidgets";
@@ -97,11 +98,11 @@ export function renderSeriesPanel(
   header.className = "meshsize-header";
   const title = document.createElement("div");
   title.className = "meshsize-title";
-  title.textContent = `Over time — ${state.entity.label}`;
+  title.textContent = t("Over time — {label}", { label: state.entity.label });
   header.appendChild(title);
   const closeBtn = document.createElement("button");
   closeBtn.className = "meshsize-close";
-  closeBtn.title = "Close";
+  closeBtn.title = t("Close");
   closeBtn.innerHTML = glyph("x");
   closeBtn.addEventListener("click", () => handlers.onClose());
   header.appendChild(closeBtn);
@@ -221,7 +222,7 @@ function buildToolbar(state: SeriesPanelState, handlers: SeriesPanelHandlers): H
 
   const label = document.createElement("label");
   label.className = "field-label";
-  label.textContent = "Variable";
+  label.textContent = t("Variable");
   bar.appendChild(label);
 
   const select = document.createElement("select");
@@ -237,21 +238,21 @@ function buildToolbar(state: SeriesPanelState, handlers: SeriesPanelHandlers): H
   select.addEventListener("change", () => handlers.onVariable(select.value));
   bar.appendChild(select);
   if (handlers.onBuildPlot) {
-    const build = document.createElement("button"); build.className = "panel-btn"; build.textContent = "Plot builder…";
+    const build = document.createElement("button"); build.className = "panel-btn"; build.textContent = t("Plot builder…");
     build.addEventListener("click", handlers.onBuildPlot); bar.appendChild(build);
   }
 
   if (state.progress) {
     const cancel = document.createElement("button");
     cancel.className = "panel-btn";
-    cancel.textContent = "Cancel";
+    cancel.textContent = t("Cancel");
     cancel.addEventListener("click", () => handlers.onCancel());
     bar.appendChild(cancel);
   } else {
     const csv = document.createElement("button");
     csv.className = "panel-btn";
-    csv.textContent = "CSV";
-    csv.title = "Save this series as CSV";
+    csv.textContent = t("CSV");
+    csv.title = t("Save this series as CSV");
     csv.disabled = !state.series || state.series.present === 0;
     csv.addEventListener("click", () => handlers.onExport());
     bar.appendChild(csv);

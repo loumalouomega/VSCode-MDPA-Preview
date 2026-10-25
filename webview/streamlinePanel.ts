@@ -16,6 +16,7 @@
  * interrupted and a resize or reply cannot eat a draft.
  */
 
+import { t } from "../src/parser/i18n/runtime";
 import { glyph } from "../src/uiGlyphs";
 import type {
   StreamDirection,
@@ -82,11 +83,11 @@ export function renderStreamlinePanel(
   header.className = "meshsize-header";
   const title = document.createElement("div");
   title.className = "meshsize-title";
-  title.textContent = "Streamlines";
+  title.textContent = t("Streamlines");
   header.appendChild(title);
   const closeBtn = document.createElement("button");
   closeBtn.className = "meshsize-close";
-  closeBtn.title = "Close";
+  closeBtn.title = t("Close");
   closeBtn.innerHTML = glyph("x");
   closeBtn.addEventListener("click", () => handlers.onClose());
   header.appendChild(closeBtn);
@@ -173,15 +174,15 @@ export function renderStreamlinePanel(
       area.className = "field-select streamline-points";
       area.rows = 3;
       area.value = form.points;
-      area.placeholder = "x y z — one seed per line";
-      area.title = "One seed point per line, as x y z";
+      area.placeholder = t("x y z — one seed per line");
+      area.title = t("One seed point per line, as x y z");
       area.addEventListener("input", () => { form.points = area.value; });
       area.dataset.streamlineField = "points";
       row("Points", area);
       const pick = document.createElement("button");
       pick.className = "panel-btn";
       pick.textContent = state.picking ? "Stop picking" : "Pick seeds";
-      pick.title = "While on, each click on the mesh adds the nearest node as a seed point";
+      pick.title = t("While on, each click on the mesh adds the nearest node as a seed point");
       if (state.picking) pick.classList.add("active");
       pick.addEventListener("click", () => handlers.onTogglePick());
       const bar = document.createElement("div");
@@ -207,8 +208,8 @@ export function renderStreamlinePanel(
       {
         const use = document.createElement("button");
         use.className = "panel-btn";
-        use.textContent = "Use clip plane";
-        use.title = "Fill Origin/U/V from the focused pane's clip plane position and span";
+        use.textContent = t("Use clip plane");
+        use.title = t("Fill Origin/U/V from the focused pane's clip plane position and span");
         use.addEventListener("click", () => handlers.onUseClipPlane());
         const bar = document.createElement("div");
         bar.className = "meshsize-actions";
@@ -301,27 +302,27 @@ export function renderStreamlinePanel(
       : "Tracing…"
     : "Trace";
   trace.disabled = state.busy;
-  trace.title = "Trace in a worker thread; a newer Trace supersedes the running one";
+  trace.title = t("Trace in a worker thread; a newer Trace supersedes the running one");
   trace.addEventListener("click", () => handlers.onTrace());
   actions.appendChild(trace);
   if (state.busy) {
     const cancel = document.createElement("button");
     cancel.className = "panel-btn";
-    cancel.textContent = "Cancel";
-    cancel.title = "Stop after the current seed; lines traced so far are kept";
+    cancel.textContent = t("Cancel");
+    cancel.title = t("Stop after the current seed; lines traced so far are kept");
     cancel.addEventListener("click", () => handlers.onCancel());
     actions.appendChild(cancel);
   }
   const clear = document.createElement("button");
   clear.className = "panel-btn";
-  clear.textContent = "Clear";
+  clear.textContent = t("Clear");
   clear.disabled = !state.hasResult;
   clear.addEventListener("click", () => handlers.onClear());
   actions.appendChild(clear);
   const exp = document.createElement("button");
   exp.className = "panel-btn";
-  exp.textContent = "Export…";
-  exp.title = "Write the streamlines as line cells (.vtu, .vtp, .vtk …)";
+  exp.textContent = t("Export…");
+  exp.title = t("Write the streamlines as line cells (.vtu, .vtp, .vtk …)");
   exp.disabled = state.busy;
   exp.addEventListener("click", () => handlers.onExport());
   actions.appendChild(exp);

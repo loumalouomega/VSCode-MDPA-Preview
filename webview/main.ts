@@ -288,6 +288,7 @@ import {
   revealVariableRow,
 } from "./variablesPanel";
 import { noteFieldFire, drainPendingFieldFire } from "./fieldRegistry";
+import { setRuntimeLocale, t } from "../src/parser/i18n/runtime";
 import { initOpQueue, stageLoadedOps } from "./opQueue";
 import {
   initProblemtype,
@@ -474,7 +475,7 @@ if (loadingCancelEl) {
   const cancelBtn = loadingCancelEl;
   cancelBtn.addEventListener("click", () => {
     vscode.postMessage({ type: "vtkCancelFrame" });
-    loadingLabelEl.textContent = "Cancelling…";
+    loadingLabelEl.textContent = t("Cancelling…");
     cancelBtn.disabled = true;
   });
 }
@@ -1164,6 +1165,7 @@ let showNodeIds = false;
 let gridVisible = false;
 const NODE_LABEL_LIMIT = 1000;
 
+setRuntimeLocale(document.body.dataset.locale);
 let currentTheme: string = document.body.dataset.theme ?? "auto";
 
 // Entity id -> cell maps, kept at module scope for quality panel and find-entity lookups.
@@ -1388,7 +1390,7 @@ let lodAutoDecided = false;
 function maybeAutoLod(fieldsPending: unknown): void {
   if (!fieldsPending || lodAutoDecided || lodEnabled) return;
   setLod(true);
-  messageEl.textContent = "Large mesh: level of detail on while fields load (View ▸ Level of detail to turn off). Picking is off while it shows.";
+  messageEl.textContent = t("Large mesh: level of detail on while fields load (View ▸ Level of detail to turn off). Picking is off while it shows.");
 }
 
 function setLod(on: boolean): void {
@@ -1407,7 +1409,7 @@ function setLod(on: boolean): void {
 
 function requestLod(): void {
   if (!lodEnabled || !model) return;
-  messageEl.textContent = "Level of detail: decimating…";
+  messageEl.textContent = t("Level of detail: decimating…");
   vscode.postMessage({ type: "meshAnalysis", kind: "lod" });
 }
 
@@ -1782,7 +1784,7 @@ function handleHostMessage(event: MessageEvent): void {
       }
       } catch (error) {
         if (pendingFrame) { const p = pendingFrame; pendingFrame = undefined; clearTimeout(p.timer); p.reject(error instanceof Error ? error : new Error(String(error))); }
-        else { messageEl.textContent = `Could not render step: ${String(error)}`; messageEl.classList.add("error"); }
+        else { messageEl.textContent = t("Could not render step: {err}", { err: String(error) }); messageEl.classList.add("error"); }
       }
       break;
     }
@@ -2044,7 +2046,7 @@ function handleHostMessage(event: MessageEvent): void {
       if (origin.frameIndex !== undefined && origin.frameIndex !== currentFrameIndex) {
         void goToFrameAwaited(origin.frameIndex).then(() => {
           if (sequence === plotPickSequence && origin.frameIndex === currentFrameIndex) {if(origin.entityKind && origin.entityId !== undefined){selectTableRow(origin.entityKind, origin.entityId);frameTableSelection();}else if(origin.submodelpart)highlightPlotRegion(origin.submodelpart);}
-        }).catch(error => { if(sequence===plotPickSequence)messageEl.textContent = `Could not locate plot sample: ${String(error)}`; });
+        }).catch(error => { if(sequence===plotPickSequence)messageEl.textContent = t("Could not locate plot sample: {err}", { err: String(error) }); });
       } else if (origin.entityKind && origin.entityId !== undefined) {
         selectTableRow(origin.entityKind, origin.entityId);
         frameTableSelection();
@@ -2072,7 +2074,7 @@ function handleHostMessage(event: MessageEvent): void {
     }
     case "error":
       hideLoading();
-      messageEl.textContent = `Parse error: ${msg.message}`;
+      messageEl.textContent = t("Parse error: {msg}", { msg: msg.message });
       messageEl.classList.add("error");
       break;
   }
@@ -3464,14 +3466,14 @@ function setGlobalOpacity(v: number): void {
   const opacityRow = document.createElement("label");
   opacityRow.className = "nav-opacity-row";
   const opacityCaption = document.createElement("span");
-  opacityCaption.textContent = "Opacity";
+  opacityCaption.textContent = t("Opacity");
   const opacity = document.createElement("input");
   opacity.type = "range";
   opacity.min = "0";
   opacity.max = "100";
   opacity.value = "100";
   opacity.id = "nav-opacity";
-  opacity.title = "Model opacity (all mesh layers)";
+  opacity.title = t("Model opacity (all mesh layers)");
   opacity.addEventListener("input", () => setGlobalOpacity(Number(opacity.value) / 100));
   opacityRow.appendChild(opacityCaption);
   opacityRow.appendChild(opacity);
@@ -3481,8 +3483,8 @@ function setGlobalOpacity(v: number): void {
   ortho.type = "button";
   ortho.id = "nav-ortho";
   ortho.className = "nav-pill";
-  ortho.title = "Toggle orthographic (parallel) vs. perspective projection";
-  ortho.textContent = "Persp";
+  ortho.title = t("Toggle orthographic (parallel) vs. perspective projection");
+  ortho.textContent = t("Persp");
   ortho.addEventListener("click", () => toggleParallelProjection());
   navControls.addDockItem("projection", ortho);
 }
@@ -3509,8 +3511,8 @@ function setGlobalOpacity(v: number): void {
   edges.type = "button";
   edges.id = "nav-display-edges";
   edges.className = "nav-pill active";
-  edges.title = "Toggle mesh edge lines";
-  edges.textContent = "Edges";
+  edges.title = t("Toggle mesh edge lines");
+  edges.textContent = t("Edges");
   edges.addEventListener("click", () => setShowEdges(!showEdges));
   navControls.addDockItem("moreView", edges);
 }
@@ -3548,7 +3550,7 @@ function setNodeIds(on: boolean): void {
     // Labels are projected through ONE camera into one overlay div, so in a
     // split they would land over the wrong panes. Refuse and say so, the way
     // the node-count limit below already does, rather than draw them wrong.
-    messageEl.textContent = "Node IDs are shown in the single-pane layout only.";
+    messageEl.textContent = t("Node IDs are shown in the single-pane layout only.");
     return;
   }
   if (!on || !model) {
@@ -3557,7 +3559,7 @@ function setNodeIds(on: boolean): void {
     return;
   }
   if (model.nodeCount > NODE_LABEL_LIMIT) {
-    messageEl.textContent = `Node IDs hidden: ${model.nodeCount} nodes exceed the ${NODE_LABEL_LIMIT} label limit.`;
+    messageEl.textContent = t("Node IDs hidden: {n} nodes exceed the {limit} label limit.", { n: model.nodeCount, limit: NODE_LABEL_LIMIT });
     showNodeIds = false;
     btn?.classList.remove("active");
     return;
@@ -4403,7 +4405,7 @@ function applyNormalsLayer(): void {
   if (!normalsReport) normalsReport = computeMeshNormals(model);
   const r = normalsReport;
   if (r.count === 0) {
-    messageEl.textContent = "No surface or volume faces to take normals from.";
+    messageEl.textContent = t("No surface or volume faces to take normals from.");
     render();
     return;
   }
@@ -7089,13 +7091,13 @@ function renderInspectUI(): void {
     onFrame: () => frameLayer(INSPECT_MARKER_ID),
     onPlotOverTime: (target,variable)=>{
       const selection=target==="node"?inspectSelection?.node:inspectSelection?.entity;if(!selection)return;
-      if(target==="entity"&&inspectSelection?.entity?.kind==="Geometry"){messageEl.textContent="Geometries have no supplied field association; select a node, Element or Condition instead.";return;}
+      if(target==="entity"&&inspectSelection?.entity?.kind==="Geometry"){messageEl.textContent=t("Geometries have no supplied field association; select a node, Element or Condition instead.");return;}
       const kind=target==="node"?"Nodal":inspectSelection?.entity?.kind==="Condition"?"Conditional":"Elemental";
       plotPane.plotPoint(kind,selection.id,variable);
     },
     onSaveMonitor: (target,variable)=>{
       const selection=target==="node"?inspectSelection?.node:inspectSelection?.entity;if(!selection)return;
-      if(target==="entity"&&inspectSelection?.entity?.kind==="Geometry"){messageEl.textContent="Geometries have no supplied field association; select a node, Element or Condition instead.";return;}
+      if(target==="entity"&&inspectSelection?.entity?.kind==="Geometry"){messageEl.textContent=t("Geometries have no supplied field association; select a node, Element or Condition instead.");return;}
       const kind=target==="node"?"Nodal":inspectSelection?.entity?.kind==="Condition"?"Conditional":"Elemental";
       vscode.postMessage({type:"saveMonitor",kind,entityId:selection.id,variable});
     },

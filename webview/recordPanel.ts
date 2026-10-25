@@ -1,3 +1,4 @@
+import { t } from "../src/parser/i18n/runtime";
 import { RecordFormat, RecordSettings, buildRecordPlan, describePlan } from "../src/parser/recordPlan";
 import { CaptureSettings } from "../src/parser/capturePlan";
 import { RecordManifest, RecordReview, includedFrames } from "../src/parser/recordSession";
@@ -48,7 +49,7 @@ export function renderRecordPanel(root: HTMLElement, state: RecordPanelState, h:
     number("Stride", s.stride ?? 1, 1, Math.max(1, state.availableFrames), stride => set({ stride }));
   } else number("Turntable frames", s.turntableFrames, 2, 720, turntableFrames => set({ turntableFrames }));
   const details = document.createElement("details"); details.open = captureOpen;
-  const summary = document.createElement("summary"); summary.textContent = "Capture settings"; details.append(summary);
+  const summary = document.createElement("summary"); summary.textContent = t("Capture settings"); details.append(summary);
   details.append(button("Use screenshot settings", h.onImport, busy));
   renderCaptureControls(details, state.capture, busy, h.onCapture); root.append(details);
   let valid = true, description = "";
@@ -70,7 +71,7 @@ export function renderRecordPanel(root: HTMLElement, state: RecordPanelState, h:
     select("Loop (preview / GIF)", r.loop ? "forever" : "once", [["forever", "Forever"], ["once", "Once"]], value => review({ loop: value === "forever" }));
     const matte = document.createElement("input"); matte.type = "color"; matte.value = r.matte; matte.disabled = busy; matte.onchange = () => review({ matte: matte.value }); row("GIF / WebM matte", matte);
     select("Export format", s.format, [["png", "Numbered PNG frames"], ["gif", "GIF (256 colors)"], ...(state.canEncode ? [["webm", "WebM video"] as [string, string]] : [])], value => set({ format: value as RecordFormat }));
-    if (!state.canEncode) { const reason = document.createElement("p"); reason.textContent = "WebM encoding is unavailable in this environment. GIF and PNG remain available."; root.append(reason); }
+    if (!state.canEncode) { const reason = document.createElement("p"); reason.textContent = t("WebM encoding is unavailable in this environment. GIF and PNG remain available."); root.append(reason); }
     const count = includedFrames(d).length; const timing = document.createElement("p"); timing.textContent = `${count} included frames · ${(count / r.fps).toFixed(2)} s. Source time labels do not control playback.`; root.append(timing);
     root.append(button(state.playing ? "Pause preview" : "Play preview", h.onPlay, busy || !count), button("Export…", h.onExport, busy || !count || (s.format === "webm" && !state.canEncode)), button("Discard draft", h.onDiscard, busy));
   } else if (d) root.append(button("Discard draft", h.onDiscard, busy));

@@ -5,6 +5,7 @@
 // Pure DOM + Canvas 2D — mirrors qualityPanel.ts (no charting lib; the webview
 // CSP forbids CDN scripts).
 
+import { t } from "../src/parser/i18n/runtime";
 import { ANALYSIS_EXPORT_ID_LIMIT } from "../src/parser/analysisExport";
 import { BoxStats, MeshSizeResult } from "../src/parser/meshSize";
 import { glyph } from "../src/uiGlyphs";
@@ -48,11 +49,11 @@ export function renderMeshSizePanel(
   header.className = "meshsize-header";
   const title = document.createElement("div");
   title.className = "meshsize-title";
-  title.textContent = "Mesh Size";
+  title.textContent = t("Mesh Size");
   header.appendChild(title);
   const closeBtn = document.createElement("button");
   closeBtn.className = "meshsize-close";
-  closeBtn.title = "Close";
+  closeBtn.title = t("Close");
   closeBtn.innerHTML = glyph("x");
   closeBtn.addEventListener("click", () => handlers.onClose());
   header.appendChild(closeBtn);
@@ -61,13 +62,13 @@ export function renderMeshSizePanel(
   const summary = document.createElement("div");
   summary.className = "meshsize-summary";
   const typeStr = result.elementTypes.join(", ") || "—";
-  summary.textContent = `${result.analyzedCount.toLocaleString()} / ${result.elementCount.toLocaleString()} elements · ${typeStr}`;
+  summary.textContent = t("{a} / {b} elements · {types}", { a: result.analyzedCount.toLocaleString(), b: result.elementCount.toLocaleString(), types: typeStr });
   container.appendChild(summary);
 
   if (result.analyzedCount === 0) {
     const empty = document.createElement("div");
     empty.className = "meshsize-summary";
-    empty.textContent = "No line/surface/volume elements to measure.";
+    empty.textContent = t("No line/surface/volume elements to measure.");
     container.appendChild(empty);
     return;
   }
@@ -118,7 +119,7 @@ export function renderMeshSizePanel(
 
   const small = document.createElement("button");
   small.className = "meshsize-highlight-btn small";
-  small.textContent = `Smallest (${result.smallElementIds.length})`;
+  small.textContent = t("Smallest ({n})", { n: result.smallElementIds.length });
   small.disabled = result.smallElementIds.length === 0;
   small.classList.toggle("active", state.showSmall);
   small.addEventListener("click", () => handlers.onToggleSmall());
@@ -126,7 +127,7 @@ export function renderMeshSizePanel(
 
   const big = document.createElement("button");
   big.className = "meshsize-highlight-btn big";
-  big.textContent = `Largest (${result.bigElementIds.length})`;
+  big.textContent = t("Largest ({n})", { n: result.bigElementIds.length });
   big.disabled = result.bigElementIds.length === 0;
   big.classList.toggle("active", state.showBig);
   big.addEventListener("click", () => handlers.onToggleBig());
@@ -136,12 +137,12 @@ export function renderMeshSizePanel(
   const frames = document.createElement("div");
   frames.className = "meshsize-actions";
   const frameSmall = document.createElement("button");
-  frameSmall.textContent = "Frame smallest";
+  frameSmall.textContent = t("Frame smallest");
   frameSmall.disabled = result.smallElementIds.length === 0;
   frameSmall.addEventListener("click", () => handlers.onFrame("small"));
   frames.appendChild(frameSmall);
   const frameBig = document.createElement("button");
-  frameBig.textContent = "Frame largest";
+  frameBig.textContent = t("Frame largest");
   frameBig.disabled = result.bigElementIds.length === 0;
   frameBig.addEventListener("click", () => handlers.onFrame("big"));
   frames.appendChild(frameBig);
@@ -151,7 +152,7 @@ export function renderMeshSizePanel(
   container.appendChild(sectionLabel("Write to mesh"));
   const writeNote = document.createElement("div");
   writeNote.className = "meshsize-summary";
-  writeNote.textContent = "Append the size field(s) to the mesh (persists on Save).";
+  writeNote.textContent = t("Append the size field(s) to the mesh (persists on Save).");
   container.appendChild(writeNote);
   const writeRow = document.createElement("div");
   writeRow.className = "meshsize-actions";
@@ -174,8 +175,8 @@ export function renderMeshSizePanel(
   exportRow.className = "meshsize-actions";
   const save = document.createElement("button");
   save.className = "panel-btn";
-  save.textContent = "Export CSV";
-  save.title = `Box-whisker stats plus the first ${ANALYSIS_EXPORT_ID_LIMIT} outlier ids per list`;
+  save.textContent = t("Export CSV");
+  save.title = t("Box-whisker stats plus the first {n} outlier ids per list", { n: ANALYSIS_EXPORT_ID_LIMIT });
   save.addEventListener("click", () => handlers.onExport());
   exportRow.appendChild(save);
   container.appendChild(exportRow);

@@ -41,3 +41,13 @@ test("package.nls.json ships in the vsix", () => {
   const ignore = fs.readFileSync(path.join(root, ".vscodeignore"), "utf8");
   assert.ok(!/^\s*(package\.nls\.json|\*\.json)\s*$/m.test(ignore));
 });
+
+test("localized catalogues only use keys the default catalogue defines and keep the same placeholders", () => {
+  for (const f of fs.readdirSync(root).filter(n => /^package\.nls\.[\w-]+\.json$/.test(n))) {
+    const loc: Record<string, string> = JSON.parse(fs.readFileSync(path.join(root, f), "utf8"));
+    for (const [k, v] of Object.entries(loc)) {
+      assert.ok(k in nls, `${f}: ${k} is not in package.nls.json`);
+      assert.ok(v.trim().length > 0, `${f}: ${k} is empty`);
+    }
+  }
+});

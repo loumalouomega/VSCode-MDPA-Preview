@@ -13,6 +13,7 @@
  * problemtypes are untrusted strings and must never reach innerHTML.
  */
 
+import { t } from "../src/parser/i18n/runtime";
 import {
   Assignment,
   CaseState,
@@ -158,7 +159,7 @@ export function setProblemtypeCatalog(entries: CatalogEntry[]): void {
   select.textContent = "";
   const placeholder = document.createElement("option");
   placeholder.value = "";
-  placeholder.textContent = "— select a problemtype —";
+  placeholder.textContent = t("— select a problemtype —");
   select.appendChild(placeholder);
   const optionFor = (e: CatalogEntry): HTMLOptionElement => {
     const opt = document.createElement("option");
@@ -272,7 +273,7 @@ function presetBadge(
   if (!snapshot) {
     const hint = document.createElement("span");
     hint.className = "pt-preset-hint";
-    hint.textContent = "typed by hand";
+    hint.textContent = t("typed by hand");
     line.appendChild(hint);
   } else {
     const label = document.createElement("span");
@@ -290,8 +291,8 @@ function presetBadge(
       const reapply = document.createElement("button");
       reapply.type = "button";
       reapply.className = "pt-preset-link";
-      reapply.textContent = "re-apply";
-      reapply.title = "Take the library's current values for this preset. Nothing else about the material changes.";
+      reapply.textContent = t("re-apply");
+      reapply.title = t("Take the library's current values for this preset. Nothing else about the material changes.");
       reapply.addEventListener("click", onReapply);
       line.appendChild(reapply);
     }
@@ -299,8 +300,8 @@ function presetBadge(
   const save = document.createElement("button");
   save.type = "button";
   save.className = "pt-preset-link";
-  save.textContent = "save as preset";
-  save.title = "Add these values to the workspace material library, with a source to fill in";
+  save.textContent = t("save as preset");
+  save.title = t("Add these values to the workspace material library, with a source to fill in");
   // The same no-native-prompts convention as the outline's inline rename: the
   // name is typed into an input that replaces the link, Enter commits, Escape
   // cancels. window.prompt would block the whole webview behind a native dialog.
@@ -309,8 +310,8 @@ function presetBadge(
     const input = document.createElement("input");
     input.type = "text";
     input.className = "edit-text pt-preset-name";
-    input.placeholder = "preset name…";
-    input.setAttribute("aria-label", "Name for the material preset");
+    input.placeholder = t("preset name…");
+    input.setAttribute("aria-label", t("Name for the material preset"));
     input.value = snapshot?.name ?? defaultPresetName(m);
     const commit = (): void => {
       const name = input.value.trim();
@@ -419,11 +420,11 @@ export function setProblemtypeStatus(status: {
   if (status.kind === "generated") {
     box.textContent = `Generated ${status.files?.join(", ") ?? "case files"}.`;
   } else if (status.kind === "starting") {
-    box.textContent = "Starting…";
+    box.textContent = t("Starting…");
   } else if (status.kind === "running") {
     box.textContent = status.step ? `Running — step ${status.step}…` : "Running…";
   } else if (status.kind === "finished") {
-    box.textContent = "Finished.";
+    box.textContent = t("Finished.");
   } else if (status.kind === "cancelled") {
     box.textContent = status.message ?? "Stopped.";
   } else if (status.kind === "detached") {
@@ -451,10 +452,10 @@ export function setProblemtypeCapability(status: { allowed?: boolean; checking?:
   const box = el("pt-status");
   if (box && (box.textContent.startsWith("Run unavailable:") || !box.textContent)) {
     if (runCapability.checking) {
-      box.textContent = "Checking the configured simulation environment…";
+      box.textContent = t("Checking the configured simulation environment…");
       box.classList.remove("error");
     } else if (!runCapability.allowed && runCapability.reason) {
-      box.textContent = `Run unavailable: ${runCapability.reason}`;
+      box.textContent = t("Run unavailable: {reason}", { reason: runCapability.reason });
       box.classList.add("error");
     } else {
       box.textContent = "";
@@ -754,7 +755,7 @@ function smpChips(paths: string[], onChange: (v: string[]) => void): HTMLElement
     chip.className = "pt-chip";
     if (smpPaths.length > 0 && !smpPaths.includes(p)) {
       chip.classList.add("missing");
-      chip.title = `${p} — not in the current mesh`;
+      chip.title = t("{p} — not in the current mesh", { p });
     } else chip.title = p;
     const text = document.createElement("span");
     text.textContent = p;
@@ -762,7 +763,7 @@ function smpChips(paths: string[], onChange: (v: string[]) => void): HTMLElement
     del.type = "button";
     del.className = "pt-chip-del";
     del.textContent = "×";
-    del.title = `Remove ${p}`;
+    del.title = t("Remove {p}", { p });
     del.addEventListener("click", () => {
       onChange(current.filter((x) => x !== p));
       render();
@@ -888,8 +889,8 @@ function collectionAddRow(spec: CollectionSpec): HTMLElement {
   const name = document.createElement("input");
   name.type = "text";
   name.className = "edit-num pt-add-name";
-  name.placeholder = "name";
-  name.title = "Letters, digits and _ (not starting with a digit)";
+  name.placeholder = t("name");
+  name.title = t("Letters, digits and _ (not starting with a digit)");
   const refreshPlaceholder = (): void => {
     if (state) name.placeholder = uniqueEntryName(state, spec.id, type.value);
   };
@@ -943,7 +944,7 @@ function entryBox(
   const label = document.createElement("span");
   label.className = "pt-assign-label pt-entry-name";
   label.textContent = entry.name;
-  label.title = "Double-click to rename";
+  label.title = t("Double-click to rename");
   const kind = document.createElement("span");
   kind.className = "pt-assign-path";
   kind.textContent = type?.label ?? `${entry.type} (unknown type)`;
@@ -1071,7 +1072,7 @@ function addRow(choices: AddChoice[], buttonTitle: string, onAdd: (choice: strin
   if (smpPaths.length === 0) {
     const opt = document.createElement("option");
     opt.value = "";
-    opt.textContent = "no SubModelParts";
+    opt.textContent = t("no SubModelParts");
     where.appendChild(opt);
     where.disabled = true;
   }
@@ -1120,13 +1121,13 @@ function appliedRow(
   path.title = smpPath;
   if (smpPaths.length > 0 && !smpPaths.includes(smpPath)) {
     path.classList.add("missing");
-    path.title = `${smpPath} — not in the current mesh`;
+    path.title = t("{p} — not in the current mesh", { p: smpPath });
   }
   const del = document.createElement("button");
   del.type = "button";
   del.className = "pt-assign-del";
   del.textContent = "×";
-  del.title = "Remove";
+  del.title = t("Remove");
   del.addEventListener("click", onDelete);
   head.append(label, path, del);
   box.appendChild(head);
@@ -1239,8 +1240,8 @@ function tableFieldEditor(
     const del = document.createElement("button");
     del.type = "button";
     del.className = "pt-assign-del";
-    del.textContent = "\u00d7";
-    del.title = "Remove row";
+    del.textContent = t("\u00d7");
+    del.title = t("Remove row");
     del.addEventListener("click", () => {
       row.remove();
       commit();
@@ -1253,7 +1254,7 @@ function tableFieldEditor(
   const add = document.createElement("button");
   add.type = "button";
   add.className = "panel-btn";
-  add.textContent = "Add row";
+  add.textContent = t("Add row");
   add.addEventListener("click", () => {
     addRow("", "");
     const inputs = grid.querySelectorAll("input");
@@ -1384,7 +1385,7 @@ function renderAssignments(decl: ProblemtypeDeclaration): void {
   if (shown === 0) {
     const hint = document.createElement("div");
     hint.className = "pt-empty";
-    hint.textContent = "No conditions yet — pick one above and a SubModelPart to apply it to.";
+    hint.textContent = t("No conditions yet — pick one above and a SubModelPart to apply it to.");
     body.appendChild(hint);
   }
   host.appendChild(form);
@@ -1411,9 +1412,9 @@ function renderMaterials(decl: ProblemtypeDeclaration): void {
   const filter = document.createElement("input");
   filter.type = "text";
   filter.className = "edit-text pt-preset-filter";
-  filter.placeholder = "Search material presets…";
+  filter.placeholder = t("Search material presets…");
   filter.value = presetFilter;
-  filter.setAttribute("aria-label", "Search material presets by name or source");
+  filter.setAttribute("aria-label", t("Search material presets by name or source"));
   filter.addEventListener("input", () => {
     presetFilter = filter.value;
     const caret = filter.selectionStart ?? filter.value.length;
@@ -1432,8 +1433,8 @@ function renderMaterials(decl: ProblemtypeDeclaration): void {
   const importBtn = document.createElement("button");
   importBtn.type = "button";
   importBtn.className = "pt-preset-link";
-  importBtn.textContent = "import presets…";
-  importBtn.title = "Add a JSON preset file to this workspace's material library";
+  importBtn.textContent = t("import presets…");
+  importBtn.title = t("Add a JSON preset file to this workspace's material library");
   importBtn.addEventListener("click", () => post({ type: "ptPresetImport" }));
   tools.appendChild(importBtn);
   // Only when a material on screen carries a table: the plot opens in the Plots workspace.
@@ -1442,8 +1443,8 @@ function renderMaterials(decl: ProblemtypeDeclaration): void {
     const previewBtn = document.createElement("button");
     previewBtn.type = "button";
     previewBtn.className = "pt-preset-link";
-    previewBtn.textContent = "preview tables";
-    previewBtn.title = "Plot every material table of this case in the Scientific plots workspace";
+    previewBtn.textContent = t("preview tables");
+    previewBtn.title = t("Plot every material table of this case in the Scientific plots workspace");
     previewBtn.addEventListener("click", () => post({ type: "ptPreviewTables" }));
     tools.appendChild(previewBtn);
   }
@@ -1493,7 +1494,7 @@ function renderMaterials(decl: ProblemtypeDeclaration): void {
   if (smpPaths.length === 0) {
     const opt = document.createElement("option");
     opt.value = "";
-    opt.textContent = "no SubModelParts";
+    opt.textContent = t("no SubModelParts");
     whereSelect.appendChild(opt);
     whereSelect.disabled = true;
   }
@@ -1510,7 +1511,7 @@ function renderMaterials(decl: ProblemtypeDeclaration): void {
   add.type = "button";
   add.className = "edit-apply";
   add.textContent = "+";
-  add.title = "Assign the material to the SubModelPart";
+  add.title = t("Assign the material to the SubModelPart");
   add.disabled = smpPaths.length === 0 || laws.length === 0;
   add.addEventListener("click", () => {
     const lawId = lawSelect.value;
@@ -1541,7 +1542,7 @@ function renderMaterials(decl: ProblemtypeDeclaration): void {
   if (laws.length === 0) {
     const note = document.createElement("span");
     note.className = "pt-preset-problem";
-    note.textContent = "No material law matches the current setup.";
+    note.textContent = t("No material law matches the current setup.");
     addHost.appendChild(note);
   }
   addHost.appendChild(addRow);
@@ -1754,7 +1755,7 @@ export function setProblemtypePreflight(msg: {
   head.setAttribute("aria-expanded", String(preflightOpen));
   const title = document.createElement("span");
   title.className = "pt-preflight-title";
-  title.textContent = "Preflight";
+  title.textContent = t("Preflight");
   head.appendChild(title);
   const summary = document.createElement("span");
   summary.className = "pt-preflight-summary";

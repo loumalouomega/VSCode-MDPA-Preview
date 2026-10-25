@@ -1,5 +1,7 @@
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as path from "node:path";
 import { buildPreviewHtml, TOOLBAR_HTML, VIEW_MENU_HTML } from "../webviewChrome";
 import { catalogueFor, localizeHtml, pickCatalogue, pseudoLocalize, shippedLocales } from "../parser/i18n/messages";
 
@@ -16,9 +18,12 @@ test("English output is byte-identical with and without an explicit en/unknown l
 
 test("a shipped catalogue only names strings that exist in the chrome, and falls back per key", () => {
   const english = buildPreviewHtml(base);
+  const dir = path.join(__dirname, "..", "..", "webview");
+  const runtimeSrc = [dir, path.join(dir, "plots")].flatMap((d) => fs.readdirSync(d).filter((f) => f.endsWith(".ts")).map((f) => fs.readFileSync(path.join(d, f), "utf8"))).join("\n");
   for (const loc of shippedLocales()) {
     for (const key of Object.keys(catalogueFor(loc)!)) {
-      assert.ok(localizeHtml(english, { catalogue: { [key]: "\u0001" }, pseudo: false }).includes("\u0001"), `${loc}: "${key}" unused`);
+      const inChrome = localizeHtml(english, { catalogue: { [key]: "\u0001" }, pseudo: false }).includes("\u0001");
+      assert.ok(inChrome || (runtimeSrc.includes(`t(${JSON.stringify(key)}`) || runtimeSrc.includes(`tr(${JSON.stringify(key)}`)), `${loc}: "${key}" unused`);
     }
   }
   const es = buildPreviewHtml({ ...base, locale: "es-ES" });

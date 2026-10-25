@@ -15,6 +15,7 @@
  * editor, the recipe save/load buttons and the host messaging.
  */
 
+import { t } from "../src/parser/i18n/runtime";
 import { OpQueue } from "../src/parser/opQueueCore";
 
 type PostMessage = (msg: unknown) => void;
@@ -133,7 +134,7 @@ function editorRow(index: number, msg: Record<string, unknown>): HTMLElement {
   const apply = document.createElement("button");
   apply.type = "button";
   apply.className = "panel-btn";
-  apply.textContent = "Apply edit";
+  apply.textContent = t("Apply edit");
   apply.addEventListener("click", () => {
     const r = queue.update(index, area.value);
     if (!r.ok) {
@@ -147,7 +148,7 @@ function editorRow(index: number, msg: Record<string, unknown>): HTMLElement {
   const cancel = document.createElement("button");
   cancel.type = "button";
   cancel.className = "panel-btn";
-  cancel.textContent = "Cancel";
+  cancel.textContent = t("Cancel");
   cancel.addEventListener("click", () => {
     editing = -1;
     render();

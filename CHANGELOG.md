@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- Runtime localisation helper (`t()`) wired to the VS Code display language, adopted by the Quality, Inspect and Field panels with a seed Spanish catalogue; every other webview panel now localises its static labels the same way, and the docs gain a Languages page. Spanish, French, German and Brazilian Portuguese translations of the menus, panels and command titles ship (long tooltips and host notifications stay in English). Not verified in a browser or by native speakers.
+
 ### Changed
 
 - Large meshes: geometry-first delivery with on-demand field rows now covers the VTK preview, the empty preview and edit re-renders, not only the first load of an `.mdpa`. Timeline playback, scrubbing and recording still send whole frames.

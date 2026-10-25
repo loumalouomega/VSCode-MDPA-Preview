@@ -7,6 +7,7 @@
 // is nothing to draw; "Write to mesh" then turns the chosen constant into a
 // real RADIUS field that exports and round-trips.
 
+import { t } from "../src/parser/i18n/runtime";
 import { SphereStats } from "../src/parser/sphereElements";
 import { glyph } from "../src/uiGlyphs";
 import { colormapRow, fmt, legend, sectionLabel } from "./panelWidgets";
@@ -66,11 +67,11 @@ export function renderSpherePanel(
   header.className = "meshsize-header";
   const title = document.createElement("div");
   title.className = "meshsize-title";
-  title.textContent = "Spheres";
+  title.textContent = t("Spheres");
   header.appendChild(title);
   const closeBtn = document.createElement("button");
   closeBtn.className = "meshsize-close";
-  closeBtn.title = "Close";
+  closeBtn.title = t("Close");
   closeBtn.innerHTML = glyph("x");
   closeBtn.addEventListener("click", () => handlers.onClose());
   header.appendChild(closeBtn);
@@ -79,7 +80,7 @@ export function renderSpherePanel(
   if (info.cells === 0) {
     const empty = document.createElement("div");
     empty.className = "meshsize-summary";
-    empty.textContent = "No one-node (particle) elements in this mesh.";
+    empty.textContent = t("No one-node (particle) elements in this mesh.");
     container.appendChild(empty);
     return;
   }
@@ -99,13 +100,13 @@ export function renderSpherePanel(
   toggleRow.className = "meshsize-actions";
   const toggle = document.createElement("button");
   toggle.className = "panel-btn";
-  toggle.textContent = "Show spheres";
+  toggle.textContent = t("Show spheres");
   toggle.classList.toggle("active", state.enabled);
   toggle.addEventListener("click", () => handlers.onToggle());
   toggleRow.appendChild(toggle);
   const frame = document.createElement("button");
   frame.className = "panel-btn";
-  frame.textContent = "Frame";
+  frame.textContent = t("Frame");
   frame.addEventListener("click", () => handlers.onFrame());
   toggleRow.appendChild(frame);
   container.appendChild(toggleRow);
@@ -130,7 +131,7 @@ export function renderSpherePanel(
 
   const hint = document.createElement("div");
   hint.className = "meshsize-summary";
-  hint.textContent = `Suggested ${fmt(info.suggested)} — half the nearest-neighbour spacing.`;
+  hint.textContent = t("Suggested {v} — half the nearest-neighbour spacing.", { v: fmt(info.suggested) });
   container.appendChild(hint);
 
   if (state.showDetail) {
@@ -164,7 +165,7 @@ export function renderSpherePanel(
     colorRow.className = "meshsize-actions";
     const byRadius = document.createElement("button");
     byRadius.className = "panel-btn";
-    byRadius.textContent = "By radius";
+    byRadius.textContent = t("By radius");
     byRadius.classList.toggle("active", state.colorByRadius);
     byRadius.addEventListener("click", () => handlers.onColorByRadius());
     colorRow.appendChild(byRadius);
@@ -187,7 +188,7 @@ export function renderSpherePanel(
   writeRow.className = "meshsize-actions";
   const write = document.createElement("button");
   write.className = "panel-btn";
-  write.textContent = `Write RADIUS = ${fmt(state.constant)}`;
+  write.textContent = t("Write RADIUS = {v}", { v: fmt(state.constant) });
   write.addEventListener("click", () => handlers.onWrite());
   writeRow.appendChild(write);
   container.appendChild(writeRow);

@@ -10,23 +10,19 @@
  * `data-*`, `value`, class names, script and SVG content) are never touched.
  */
 
+import { es } from "./locales/es";
+import { fr } from "./locales/fr";
+import { de } from "./locales/de";
+import { pt } from "./locales/pt";
+
 /** A locale table: English source text → translation. */
 export type Catalogue = Readonly<Record<string, string>>;
 
 /** The pseudo-locale tag (Windows' "qps-ploc"): lengthened, bracketed text. */
 export const PSEUDO_LOCALE = "qps-ploc";
 
-/** Locale tables, by language prefix. Add `xx.ts` and list it here. */
-const CATALOGUES: Record<string, Catalogue> = {
-  es: {
-    Reset: "Restablecer",
-    Quality: "Calidad",
-    Field: "Campo",
-    Find: "Buscar",
-    Inspect: "Inspeccionar",
-    File: "Archivo",
-  },
-};
+/** Locale tables, by language prefix. Add `locales/xx.ts` and list it here. */
+const CATALOGUES: Record<string, Catalogue> = { es, fr, de, pt };
 
 export interface LocaleChoice {
   catalogue: Catalogue;

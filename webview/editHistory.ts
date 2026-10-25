@@ -3,6 +3,7 @@
 // clicks to the host (which owns the OperationHistory) and renders the history
 // list from the `opState` messages the host posts back.
 
+import { t } from "../src/parser/i18n/runtime";
 import { isQueueMode, stageOp } from "./opQueue";
 
 type PostMessage = (msg: unknown) => void;
@@ -127,7 +128,7 @@ export function renderOpHistory(state: OpStateMsg): void {
   if (state.ops.length === 0) {
     const empty = document.createElement("p");
     empty.className = "sb-placeholder";
-    empty.textContent = "No operations applied.";
+    empty.textContent = t("No operations applied.");
     list.appendChild(empty);
     return;
   }

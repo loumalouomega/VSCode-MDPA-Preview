@@ -3,6 +3,7 @@
 // CLAUDE.md), plus a JSON textarea for cross-session/sharing via
 // src/parser/cameraState.ts. Pure DOM, mirrors qualityPanel.ts.
 
+import { t } from "../src/parser/i18n/runtime";
 import { glyph } from "../src/uiGlyphs";
 import { CameraState, cameraStateToJson, parseCameraJson } from "../src/parser/cameraState";
 
@@ -37,11 +38,11 @@ export function renderBookmarksPanel(
   header.className = "field-header";
   const title = document.createElement("div");
   title.className = "field-title";
-  title.textContent = "Camera Bookmarks";
+  title.textContent = t("Camera Bookmarks");
   header.appendChild(title);
   const closeBtn = document.createElement("button");
   closeBtn.className = "field-close";
-  closeBtn.title = "Close";
+  closeBtn.title = t("Close");
   closeBtn.innerHTML = glyph("x");
   closeBtn.addEventListener("click", () => handlers.onClose());
   header.appendChild(closeBtn);
@@ -53,11 +54,11 @@ export function renderBookmarksPanel(
   const nameInput = document.createElement("input");
   nameInput.type = "text";
   nameInput.className = "field-range-input";
-  nameInput.placeholder = "View name…";
+  nameInput.placeholder = t("View name…");
   nameInput.style.flex = "1";
   const saveBtn = document.createElement("button");
   saveBtn.className = "field-range-reset";
-  saveBtn.textContent = "Save";
+  saveBtn.textContent = t("Save");
   const commitSave = (): void => {
     const name = nameInput.value.trim();
     if (name) {
@@ -76,7 +77,7 @@ export function renderBookmarksPanel(
   if (state.bookmarks.length === 0) {
     const empty = document.createElement("div");
     empty.className = "inspect-summary";
-    empty.textContent = "No saved views yet — this list resets when the preview reloads.";
+    empty.textContent = t("No saved views yet — this list resets when the preview reloads.");
     container.appendChild(empty);
   } else {
     const list = document.createElement("div");
@@ -87,11 +88,11 @@ export function renderBookmarksPanel(
       const label = document.createElement("span");
       label.className = "inspect-row-label bookmark-label";
       label.textContent = bm.name;
-      label.title = "Click to restore this view";
+      label.title = t("Click to restore this view");
       label.addEventListener("click", () => handlers.onRestore(bm.name));
       const del = document.createElement("button");
       del.className = "outline-delete-btn bookmark-delete-btn";
-      del.title = "Delete this view";
+      del.title = t("Delete this view");
       del.innerHTML = glyph("x");
       del.addEventListener("click", () => handlers.onDelete(bm.name));
       row.append(label, del);
@@ -112,7 +113,7 @@ export function renderBookmarksPanel(
   jsonRow.className = "inspect-actions";
   const copyBtn = document.createElement("button");
   copyBtn.className = "panel-btn";
-  copyBtn.textContent = "Copy";
+  copyBtn.textContent = t("Copy");
   copyBtn.addEventListener("click", async () => {
     textarea.select();
     try {
@@ -123,7 +124,7 @@ export function renderBookmarksPanel(
   });
   const applyBtn = document.createElement("button");
   applyBtn.className = "panel-btn";
-  applyBtn.textContent = "Apply";
+  applyBtn.textContent = t("Apply");
   const errEl = document.createElement("div");
   errEl.className = "inspect-summary bookmark-json-error";
   applyBtn.addEventListener("click", () => {
@@ -132,7 +133,7 @@ export function renderBookmarksPanel(
       errEl.textContent = "";
       handlers.onApplyJson(parsed);
     } else {
-      errEl.textContent = "Not a valid camera JSON.";
+      errEl.textContent = t("Not a valid camera JSON.");
     }
   });
   jsonRow.append(copyBtn, applyBtn);

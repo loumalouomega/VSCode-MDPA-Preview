@@ -5,6 +5,7 @@
 // resolves through these sets (beamElements.ts), so an edit re-renders with
 // no extra wiring. Pure DOM, mirrors selectionPanel.ts.
 
+import { t } from "../src/parser/i18n/runtime";
 import { glyph } from "../src/uiGlyphs";
 import { PropertySet, PropertyValue, formatPropertyValue } from "../src/parser/propertiesParser";
 
@@ -35,7 +36,7 @@ function headerRow(container: HTMLElement, title: string, onClose: () => void): 
   header.appendChild(titleEl);
   const closeBtn = document.createElement("button");
   closeBtn.className = "field-close";
-  closeBtn.title = "Close";
+  closeBtn.title = t("Close");
   closeBtn.innerHTML = glyph("x");
   closeBtn.addEventListener("click", onClose);
   header.appendChild(closeBtn);
@@ -51,17 +52,17 @@ function setRow(model: PropertySet, handlers: PropertyPanelHandlers, partPaths: 
   head.className = "prop-set-head";
   const label = document.createElement("span");
   label.className = "prop-set-name";
-  label.textContent = `Properties ${model.id}`;
+  label.textContent = t("Properties {id}", { id: model.id });
   head.appendChild(label);
   const cloneBtn = document.createElement("button");
   cloneBtn.className = "panel-icon-btn";
-  cloneBtn.title = "Clone this set to a fresh id (leaves blocks alone; assign selectively afterwards)";
-  cloneBtn.textContent = "Clone";
+  cloneBtn.title = t("Clone this set to a fresh id (leaves blocks alone; assign selectively afterwards)");
+  cloneBtn.textContent = t("Clone");
   cloneBtn.addEventListener("click", () => handlers.onCloneSet(model.id));
   head.appendChild(cloneBtn);
   const deleteBtn = document.createElement("button");
   deleteBtn.className = "panel-icon-btn";
-  deleteBtn.title = "Delete this set (refused while any block still references it)";
+  deleteBtn.title = t("Delete this set (refused while any block still references it)");
   deleteBtn.innerHTML = glyph("x");
   deleteBtn.addEventListener("click", () => handlers.onDeleteSet(model.id));
   head.appendChild(deleteBtn);
@@ -79,7 +80,7 @@ function setRow(model: PropertySet, handlers: PropertyPanelHandlers, partPaths: 
     const valueInput = document.createElement("input");
     valueInput.className = "edit-text";
     valueInput.spellcheck = false;
-    valueInput.title = "Set a new value (a number, True/False, or text as-is)";
+    valueInput.title = t("Set a new value (a number, True/False, or text as-is)");
     const current =
       v.kind === "number" ? String(v.value)
       : v.kind === "bool" ? (v.value ? "True" : "False")
@@ -101,7 +102,7 @@ function setRow(model: PropertySet, handlers: PropertyPanelHandlers, partPaths: 
   assignRow.className = "prop-assign-row";
   const assignSel = document.createElement("select");
   assignSel.className = "edit-sel";
-  assignSel.title = "Assign this set to a SubModelPart's entities by rewriting their propertyIds rows";
+  assignSel.title = t("Assign this set to a SubModelPart's entities by rewriting their propertyIds rows");
   const a0 = document.createElement("option");
   a0.value = "";
   a0.textContent = hasAnyBlock ? "Assign to SubModelPart…" : "no property-bearing blocks yet";
@@ -157,7 +158,7 @@ export function renderPropertyPanel(
   if (state.sets.length === 0) {
     const empty = document.createElement("div");
     empty.className = "inspect-summary";
-    empty.textContent = "This mesh declares no Properties blocks. Create one to author values (for example a beam CROSS_AREA) and assign it to a SubModelPart.";
+    empty.textContent = t("This mesh declares no Properties blocks. Create one to author values (for example a beam CROSS_AREA) and assign it to a SubModelPart.");
     container.appendChild(empty);
   }
   for (const s of state.sets) {
@@ -167,8 +168,8 @@ export function renderPropertyPanel(
   footer.className = "inspect-actions";
   const createBtn = document.createElement("button");
   createBtn.className = "panel-btn";
-  createBtn.textContent = "New Properties block";
-  createBtn.title = "Append an empty Properties block (its id is one past the largest)";
+  createBtn.textContent = t("New Properties block");
+  createBtn.title = t("Append an empty Properties block (its id is one past the largest)");
   createBtn.addEventListener("click", () => handlers.onCreateSet());
   footer.appendChild(createBtn);
   container.appendChild(footer);
