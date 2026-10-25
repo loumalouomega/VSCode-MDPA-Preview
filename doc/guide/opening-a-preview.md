@@ -62,6 +62,7 @@ The **View ▾** menu:
 | **Grid** | Toggle a labeled bounding-box [grid](./navigation#background-grid) (toggle). |
 | **Edges** | Toggle the mesh edge lines (toggle; on by default). |
 | **Level of detail** | Draw a decimated surface in place of the full layers to keep a huge mesh navigable; the mesh is untouched and picking is off while it shows (toggle; see [Simplify surface](./mesh-editing#simplify-surface)). |
+| **Curved quadratic cells** | Draw quadratic edges, faces and the boundary of quadratic volume cells with their mid-side nodes instead of straight lines (toggle; detail 2/4/8 segments in Advanced ▸ Lighting…, remembered in the view sidecar). Display only: the stored cells and every export are unchanged. |
 | **Layout** | **Single** / **Side by side** / **Stacked** / **Quad** viewports (see [Split View](./split-view)). |
 | **Screenshot…** | Save the current viewport as a PNG (see [Screenshot export](./navigation#screenshot-export)). |
 | **Record…** | Capture, review and export GIF, WebM video or PNG sequences (see [Video recording](./video-recording)). |

@@ -31,6 +31,9 @@ export interface LightingPanelOptions {
   displayFilters: boolean;
   /** The backend honours light modes (caps.lightModes). */
   lightModes?: boolean;
+  /** Curved quadratic-cell detail 0 (off) to 3, with its handler; omitted hides the row. */
+  curvedLevel?: number;
+  onCurvedLevel?(level: number): void;
 }
 
 export interface LightingPanelHandlers {
@@ -129,6 +132,27 @@ export function renderLightingPanel(
     smoothLabel.title =
       "Shade with averaged point normals. Suits curved surfaces (scans, spheres); it rounds the hard edges of a boxy mesh because there is no feature angle";
     container.appendChild(smoothLabel);
+  }
+
+  if (options.onCurvedLevel) {
+    const crow = document.createElement("div");
+    crow.className = "field-row";
+    const cl = document.createElement("label");
+    cl.className = "field-label";
+    cl.textContent = t("Curved cells");
+    crow.appendChild(cl);
+    const csel = document.createElement("select");
+    csel.title = t("Draw quadratic cells with their mid-side nodes. Display only: the stored cells and every export are unchanged");
+    [["0", "Off"], ["1", "2 segments"], ["2", "4 segments"], ["3", "8 segments"]].forEach(([v, text]) => {
+      const o = document.createElement("option");
+      o.value = v;
+      o.textContent = t(text);
+      csel.appendChild(o);
+    });
+    csel.value = String(options.curvedLevel ?? 0);
+    csel.addEventListener("change", () => options.onCurvedLevel!(Number(csel.value)));
+    crow.appendChild(csel);
+    container.appendChild(crow);
   }
 
   if (options.lightModes) {

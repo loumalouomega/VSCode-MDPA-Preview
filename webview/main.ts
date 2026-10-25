@@ -1396,15 +1396,23 @@ function maybeAutoLod(fieldsPending: unknown): void {
 /** Display-only subdivision of quadratic cells (0 = off); see curvedDisplay.ts. */
 let curvedLevel = 0;
 const CURVED_LEVEL_ON = 2;
+const CURVED_MAX = 3;
 function curvedOption(): { curved: { level: number } } | undefined {
   return curvedLevel ? { curved: { level: curvedLevel } } : undefined;
 }
-function setCurved(on: boolean): void {
-  curvedLevel = on ? CURVED_LEVEL_ON : 0;
-  document.querySelector('[data-action="curved"]')?.classList.toggle("active", on);
+function setCurvedLevel(level: number): void {
+  const next = Math.max(0, Math.min(CURVED_MAX, Math.floor(level) || 0));
+  if (next === curvedLevel) return;
+  curvedLevel = next;
+  document.querySelector('[data-action="curved"]')?.classList.toggle("active", next > 0);
+  if (lightingVisible) renderLightingUI();
+  scheduleViewSave();
   if (!model) return;
   snapshotVisibility();
   buildScene(false);
+}
+function setCurved(on: boolean): void {
+  setCurvedLevel(on ? CURVED_LEVEL_ON : 0);
 }
 
 function setLod(on: boolean): void {
@@ -2924,7 +2932,12 @@ function renderLightingUI(): void {
       applyLightingToAllLayers();
       renderLightingUI();
     },
-  }, { displayFilters: backend.caps.displayFilters, lightModes: backend.caps.lightModes });
+  }, {
+    displayFilters: backend.caps.displayFilters,
+    lightModes: backend.caps.lightModes,
+    curvedLevel,
+    onCurvedLevel: (l) => setCurvedLevel(l),
+  });
 }
 
 // --- Camera bookmarks --------------------------------------------------------
@@ -8526,6 +8539,7 @@ function captureViewState(): ViewState {
   const v = emptyViewState();
   v.bookmarks = bookmarks.map((b) => ({ name: b.name, state: b.state }));
   v.paneLayout = paneLayout;
+  if (curvedLevel > 0) v.curvedLevel = curvedLevel;
   v.panes = panes.map((p, i) => ({
     field: fieldToSaved(p.field),
     clip: clonePaneClipState(p.clip),
@@ -8606,6 +8620,7 @@ function applyPendingView(): void {
     });
     if (view.bookmarks.length > 0) bookmarks = view.bookmarks.map((b) => ({ name: b.name, state: b.state }));
     if (view.paneLayout && view.paneLayout !== paneLayout) setPaneLayout(view.paneLayout);
+    if (view.curvedLevel !== undefined && view.curvedLevel !== curvedLevel) setCurvedLevel(view.curvedLevel);
 
     view.panes.forEach((sp, i) => {
       const pane = panes[i];

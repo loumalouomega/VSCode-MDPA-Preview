@@ -268,3 +268,14 @@ test("a pane's compare peer round-trips and reads tolerantly", () => {
   assert.equal(bad.view.panes[0].comparePeer, undefined);
   assert.equal(bad.warnings.filter((w) => /comparePeer/.test(w)).length, 1);
 });
+
+test("curvedLevel round trips, clamps and is omitted when off", () => {
+  const on = serializeViewState({ ...emptyViewState(), curvedLevel: 2 });
+  assert.equal(on.curvedLevel, 2);
+  assert.equal(validateViewState({ curvedLevel: 2 }).view.curvedLevel, 2);
+  assert.equal(validateViewState({ curvedLevel: 9 }).view.curvedLevel, 3);
+  assert.equal(validateViewState({ curvedLevel: 0 }).view.curvedLevel, undefined);
+  assert.ok(validateViewState({ curvedLevel: "x" }).warnings.length > 0);
+  assert.equal("curvedLevel" in serializeViewState(emptyViewState()), false);
+  assert.equal(isEmptyViewState({ ...emptyViewState(), curvedLevel: 1 }), false);
+});
