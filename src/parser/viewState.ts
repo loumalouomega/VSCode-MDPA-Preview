@@ -78,6 +78,8 @@ export interface ViewState {
   paneLayout?: PaneLayoutId;
   /** One entry per pane of `paneLayout` (at most `MAX_PANES`). */
   panes: SavedPane[];
+  /** Curved display of quadratic cells, 1..3 (segments per edge 2^n). Omitted = off. */
+  curvedLevel?: number;
   /** The Field panel was open (so the saved field overlays are drawn on restore). Omitted = closed. */
   fieldPanel?: boolean;
   /**
@@ -159,6 +161,7 @@ export function isEmptyViewState(v: ViewState): boolean {
   return (
     v.bookmarks.length === 0 &&
     v.paneLayout === undefined &&
+    v.curvedLevel === undefined &&
     v.panes.length === 0 &&
     !v.fieldPanel &&
     v.panels.length === 0 &&
@@ -331,6 +334,13 @@ export function validateViewState(raw: unknown, colormapFallback = "Rainbow"): {
     else warnings.push("View sidecar paneLayout is unknown — layout left as opened.");
   }
 
+  if (r.curvedLevel !== undefined) {
+    if (typeof r.curvedLevel === "number" && Number.isFinite(r.curvedLevel)) {
+      const lvl = Math.max(0, Math.min(3, Math.floor(r.curvedLevel)));
+      if (lvl > 0) view.curvedLevel = lvl;
+    } else warnings.push("View sidecar curvedLevel is not a number — ignored.");
+  }
+
   if (r.panes !== undefined) {
     if (!Array.isArray(r.panes)) warnings.push("View sidecar panes are not an array — ignored.");
     else {
@@ -501,6 +511,7 @@ export function serializeViewState(v: ViewState): Record<string, unknown> {
   if (v.selections.length > 0) out.selections = serializeSelectionSets(v.selections);
   if (v.panels.length > 0) out.panels = [...v.panels];
   if (v.paneLayout) out.paneLayout = v.paneLayout;
+  if (v.curvedLevel) out.curvedLevel = v.curvedLevel;
   if (v.fieldPanel) out.fieldPanel = true;
   return out;
 }

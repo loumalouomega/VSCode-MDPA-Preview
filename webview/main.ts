@@ -1393,6 +1393,28 @@ function maybeAutoLod(fieldsPending: unknown): void {
   messageEl.textContent = t("Large mesh: level of detail on while fields load (View ▸ Level of detail to turn off). Picking is off while it shows.");
 }
 
+/** Display-only subdivision of quadratic cells (0 = off); see curvedDisplay.ts. */
+let curvedLevel = 0;
+const CURVED_LEVEL_ON = 2;
+const CURVED_MAX = 3;
+function curvedOption(): { curved: { level: number } } | undefined {
+  return curvedLevel ? { curved: { level: curvedLevel } } : undefined;
+}
+function setCurvedLevel(level: number): void {
+  const next = Math.max(0, Math.min(CURVED_MAX, Math.floor(level) || 0));
+  if (next === curvedLevel) return;
+  curvedLevel = next;
+  document.querySelector('[data-action="curved"]')?.classList.toggle("active", next > 0);
+  if (lightingVisible) renderLightingUI();
+  scheduleViewSave();
+  if (!model) return;
+  snapshotVisibility();
+  buildScene(false);
+}
+function setCurved(on: boolean): void {
+  setCurvedLevel(on ? CURVED_LEVEL_ON : 0);
+}
+
 function setLod(on: boolean): void {
   lodAutoDecided = true;
   lodEnabled = on;
@@ -2747,6 +2769,7 @@ function buildLayerGeometry(layer: Layer): boolean {
   if (layer.built || !prep || !layer.pendingCells) return layer.built;
   const built = buildDisplayGeometry(prep, layer.pendingCells, undefined, {
     wantPickMaps: layer.pickKind !== undefined,
+    ...curvedOption(),
   });
   if (!built) return false;
   // The expensive part happens once; each pane only binds its own mapper to it.
@@ -2909,7 +2932,12 @@ function renderLightingUI(): void {
       applyLightingToAllLayers();
       renderLightingUI();
     },
-  }, { displayFilters: backend.caps.displayFilters, lightModes: backend.caps.lightModes });
+  }, {
+    displayFilters: backend.caps.displayFilters,
+    lightModes: backend.caps.lightModes,
+    curvedLevel,
+    onCurvedLevel: (l) => setCurvedLevel(l),
+  });
 }
 
 // --- Camera bookmarks --------------------------------------------------------
@@ -3894,6 +3922,7 @@ function dispatchToolbarAction(action: string | undefined, _target?: HTMLElement
   else if (action === "edges") setShowEdges(!showEdges);
   else if (action === "nodeIds") setNodeIds(!showNodeIds);
   else if (action === "lod") setLod(!lodEnabled);
+  else if (action === "curved") setCurved(curvedLevel === 0);
   else if (action === "flatParts") {
     setOutlineView({ ...outlineView, flattenSubModelParts: !outlineView.flattenSubModelParts }, true);
   }
@@ -4319,7 +4348,7 @@ function applyMeshSizeColor(): void {
     const field = meshSizeState.color === "nodal" ? meshSizeReport.nodalH : meshSizeReport.elementSize;
     const info = buildFieldInfo(field);
     const kinds: EntityKind[] | "all" = meshSizeState.color === "element" ? ["Elements"] : "all";
-    const built = buildDisplayGeometry(prepared, collectCells(kinds), contourAttach(info));
+    const built = buildDisplayGeometry(prepared, collectCells(kinds), contourAttach(info), curvedOption());
     if (built) {
       // The geometry is built once; each pane gets its own mapper over it.
       const geometry = backend.createGeometry(built.geometry);
@@ -8510,6 +8539,7 @@ function captureViewState(): ViewState {
   const v = emptyViewState();
   v.bookmarks = bookmarks.map((b) => ({ name: b.name, state: b.state }));
   v.paneLayout = paneLayout;
+  if (curvedLevel > 0) v.curvedLevel = curvedLevel;
   v.panes = panes.map((p, i) => ({
     field: fieldToSaved(p.field),
     clip: clonePaneClipState(p.clip),
@@ -8590,6 +8620,7 @@ function applyPendingView(): void {
     });
     if (view.bookmarks.length > 0) bookmarks = view.bookmarks.map((b) => ({ name: b.name, state: b.state }));
     if (view.paneLayout && view.paneLayout !== paneLayout) setPaneLayout(view.paneLayout);
+    if (view.curvedLevel !== undefined && view.curvedLevel !== curvedLevel) setCurvedLevel(view.curvedLevel);
 
     view.panes.forEach((sp, i) => {
       const pane = panes[i];
