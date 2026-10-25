@@ -8,6 +8,7 @@ import { MetricResult, QualityBand, QualityReport } from "../src/parser/meshQual
 import { TOOLBAR_ICONS } from "../src/toolbarIcons";
 import { glyph } from "../src/uiGlyphs";
 import { setupChartCanvas } from "./panelWidgets";
+import { t } from "../src/parser/i18n/runtime";
 
 export interface QualityPanelHandlers {
   onClose(): void;
@@ -57,12 +58,12 @@ export function renderQualityPanel(
 
   const title = document.createElement("div");
   title.className = "quality-title";
-  title.textContent = "Mesh Quality";
+  title.textContent = t("Mesh Quality");
   header.appendChild(title);
 
   const closeBtn = document.createElement("button");
   closeBtn.className = "quality-close";
-  closeBtn.title = "Close";
+  closeBtn.title = t("Close");
   closeBtn.innerHTML = glyph("x");
   closeBtn.addEventListener("click", () => handlers.onClose());
   header.appendChild(closeBtn);
@@ -71,10 +72,10 @@ export function renderQualityPanel(
 
   if (handlers.onGate) {
     const form=document.createElement("div");
-    const threshold=document.createElement("input");threshold.placeholder="scaled_jacobian >= 0.2";threshold.setAttribute("aria-label","Quality thresholds");
+    const threshold=document.createElement("input");threshold.placeholder="scaled_jacobian >= 0.2";threshold.setAttribute("aria-label",t("Quality thresholds"));
     const inverted=document.createElement("input"),degenerate=document.createElement("input");
     for(const [input,label] of [[inverted,"Allowed inverted cells"],[degenerate,"Allowed degenerate cells"]] as const) { input.type="number";input.value="0";input.setAttribute("aria-label",label);input.title=label; }
-    const button=document.createElement("button");button.textContent="Check quality gate";button.onclick=()=>handlers.onGate?.(threshold.value,Number(inverted.value),Number(degenerate.value));
+    const button=document.createElement("button");button.textContent=t("Check quality gate");button.onclick=()=>handlers.onGate?.(threshold.value,Number(inverted.value),Number(degenerate.value));
     const result=document.createElement("pre");result.id="quality-gate-result";result.style.whiteSpace="pre-wrap";
     form.append(threshold,inverted,degenerate,button,result);container.append(form);
   }
@@ -112,7 +113,7 @@ export function renderQualityPanel(
   const actions = document.createElement("div");
   actions.className = "quality-actions";
   const save = document.createElement("button");
-  save.textContent = "Export CSV";
+  save.textContent = t("Export CSV");
   save.title = `Aggregates plus the first ${ANALYSIS_EXPORT_ID_LIMIT} bad-element ids per metric`;
   save.addEventListener("click", () => handlers.onExport());
   actions.appendChild(save);
@@ -201,8 +202,8 @@ function buildCard(
     actions.appendChild(hl);
 
     const frame = document.createElement("button");
-    frame.textContent = "Frame";
-    frame.title = "Zoom to bad elements";
+    frame.textContent = t("Frame");
+    frame.title = t("Zoom to bad elements");
     frame.addEventListener("click", () => {
       handlers.onHighlight(m.key);
       setActive(m.key);

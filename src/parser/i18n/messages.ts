@@ -25,6 +25,18 @@ const CATALOGUES: Record<string, Catalogue> = {
     Find: "Buscar",
     Inspect: "Inspeccionar",
     File: "Archivo",
+    "Mesh Quality": "Calidad de malla",
+    Close: "Cerrar",
+    "Export CSV": "Exportar CSV",
+    Frame: "Encuadrar",
+    "Zoom to bad elements": "Acercar a los elementos defectuosos",
+    "Member of: {parts}": "Miembro de: {parts}",
+    "Not part of any SubModelPart.": "No pertenece a ningún SubModelPart.",
+    "Click a {n} node.": "Haga clic en el nodo {n}.",
+    "Plot {v} over time": "Graficar {v} en el tiempo",
+    "Copy to all panes": "Copiar a todos los paneles",
+    Range: "Rango",
+    Count: "Cantidad",
   },
 };
 

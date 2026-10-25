@@ -13,6 +13,7 @@ import { COLORMAPS, getColormap } from "./colormaps";
 import { colormapSelectControl, legendFromStops } from "./panelWidgets";
 import { TOOLBAR_ICONS } from "../src/toolbarIcons";
 import { glyph } from "../src/uiGlyphs";
+import { t } from "../src/parser/i18n/runtime";
 import {
   FieldComponent,
   canLogScale,
@@ -153,7 +154,7 @@ export function renderFieldPanel(
   header.className = "field-header";
   const title = document.createElement("div");
   title.className = "field-title";
-  title.textContent = "Field";
+  title.textContent = t("Field");
   header.appendChild(title);
   const headerBtns = document.createElement("div");
   headerBtns.className = "field-header-btns";
@@ -166,7 +167,7 @@ export function renderFieldPanel(
   headerBtns.appendChild(collapseBtn);
   const closeBtn = document.createElement("button");
   closeBtn.className = "field-close";
-  closeBtn.title = "Close";
+  closeBtn.title = t("Close");
   closeBtn.innerHTML = glyph("x");
   closeBtn.addEventListener("click", () => handlers.onClose());
   headerBtns.appendChild(closeBtn);
@@ -188,8 +189,8 @@ export function renderFieldPanel(
     if (state.infos.length > 0) {
       const copy = document.createElement("button");
       copy.className = "field-range-reset";
-      copy.textContent = "Copy to all panes";
-      copy.title = "Give every other pane this pane's field settings";
+      copy.textContent = t("Copy to all panes");
+      copy.title = t("Give every other pane this pane's field settings");
       copy.addEventListener("click", () => handlers.onCopyToAllPanes());
       row.appendChild(copy);
     }
@@ -212,8 +213,8 @@ export function renderFieldPanel(
   if (info?.hasVariableRow) {
     const reveal = document.createElement("button");
     reveal.className = "field-range-reset";
-    reveal.textContent = "Reveal in Variables";
-    reveal.title = "Scroll the Variables sidebar section to this field's row";
+    reveal.textContent = t("Reveal in Variables");
+    reveal.title = t("Scroll the Variables sidebar section to this field's row");
     reveal.addEventListener("click", () => handlers.onRevealVariable(state.selectedKey));
     const row = document.createElement("div");
     row.className = "field-row";
@@ -224,8 +225,8 @@ export function renderFieldPanel(
   if (info) {
     const plot = document.createElement("button");
     plot.className = "field-range-reset field-plot-field";
-    plot.textContent = "Plot distribution";
-    plot.title = "Open the Plots pane on a histogram of this field (and component) over the mesh";
+    plot.textContent = t("Plot distribution");
+    plot.title = t("Open the Plots pane on a histogram of this field (and component) over the mesh");
     plot.addEventListener("click", () => handlers.onPlotField());
     const row = document.createElement("div");
     row.className = "field-row";
@@ -237,7 +238,7 @@ export function renderFieldPanel(
   container.appendChild(labeledRow("Modes", buildModeSelect(state, info, handlers)));
   const hint = document.createElement("div");
   hint.className = "field-summary field-modes-hint";
-  hint.textContent = "Toggle any combination.";
+  hint.textContent = t("Toggle any combination.");
   container.appendChild(hint);
 
   const wantsColor = info && (state.modes.has("contour") || state.modes.has("quiver"));
@@ -261,7 +262,7 @@ export function renderFieldPanel(
     if (!state.hasVolume) {
       const note = document.createElement("div");
       note.className = "field-summary";
-      note.textContent = "2D / surface mesh: showing iso-lines.";
+      note.textContent = t("2D / surface mesh: showing iso-lines.");
       container.appendChild(note);
     }
     container.appendChild(buildIsoControls(state, info, handlers));
@@ -401,7 +402,7 @@ function buildUnitSelect(state: FieldPanelState, info: FieldInfo, handlers: Fiel
     if (a.unit === current) opt.selected = true;
     sel.appendChild(opt);
   }
-  sel.title = "Display unit (view-only; samples are unchanged)";
+  sel.title = t("Display unit (view-only; samples are unchanged)");
   sel.addEventListener("change", () => {
     handlers.onSelectDisplayUnit(sel.value === alts[0].unit ? undefined : sel.value);
   });
@@ -433,7 +434,7 @@ function buildRangeControls(
   row.className = "field-row field-range-row";
   const l = document.createElement("label");
   l.className = "field-label";
-  l.textContent = "Range";
+  l.textContent = t("Range");
   row.appendChild(l);
 
   const minInput = document.createElement("input");
@@ -457,7 +458,7 @@ function buildRangeControls(
 
   const resetBtn = document.createElement("button");
   resetBtn.className = "field-range-reset";
-  resetBtn.title = "Reset to data range";
+  resetBtn.title = t("Reset to data range");
   resetBtn.textContent = "⟲";
   resetBtn.disabled = !state.rangeOverride;
   resetBtn.addEventListener("click", () => {
@@ -481,7 +482,7 @@ function buildRangeControls(
   logCk.addEventListener("change", () => handlers.onLog(logCk.checked));
   logLabel.appendChild(logCk);
   logLabel.appendChild(document.createTextNode("Log scale"));
-  if (logCk.disabled) logLabel.title = "Requires a strictly positive range";
+  if (logCk.disabled) logLabel.title = t("Requires a strictly positive range");
   optsRow.appendChild(logLabel);
 
   const bandsLabel = document.createElement("label");
@@ -566,7 +567,7 @@ function buildIsoControls(
   countRow.className = "field-row";
   const cl = document.createElement("label");
   cl.className = "field-label";
-  cl.textContent = "Count";
+  cl.textContent = t("Count");
   countRow.appendChild(cl);
   const countInput = document.createElement("input");
   countInput.type = "number";
@@ -643,7 +644,7 @@ function buildScaleSlider(state: FieldPanelState, handlers: FieldPanelHandlers):
   wrap.className = "field-row";
   const l = document.createElement("label");
   l.className = "field-label";
-  l.textContent = "Arrow scale";
+  l.textContent = t("Arrow scale");
   wrap.appendChild(l);
 
   const slider = document.createElement("input");
@@ -676,7 +677,7 @@ function buildDeformControls(state: FieldPanelState, handlers: FieldPanelHandler
   if (vecs.length === 0) {
     const note = document.createElement("div");
     note.className = "field-summary";
-    note.textContent = "No vector or nodal scalar field to deform by.";
+    note.textContent = t("No vector or nodal scalar field to deform by.");
     wrap.appendChild(note);
     return wrap;
   }
@@ -697,7 +698,7 @@ function buildDeformControls(state: FieldPanelState, handlers: FieldPanelHandler
   row.className = "field-row";
   const l = document.createElement("label");
   l.className = "field-label";
-  l.textContent = "Warp scale";
+  l.textContent = t("Warp scale");
   row.appendChild(l);
   const slider = document.createElement("input");
   slider.type = "range";
@@ -708,7 +709,7 @@ function buildDeformControls(state: FieldPanelState, handlers: FieldPanelHandler
   // viewer-only geometry warp to be exaggerated enough to inspect.
   slider.max = "1000";
   slider.step = "0.1";
-  slider.title = "Display-only multiplier for the displacement field (0–1000×)";
+  slider.title = t("Display-only multiplier for the displacement field (0–1000×)");
   slider.value = String(state.deformScale);
   const valEl = document.createElement("span");
   valEl.className = "field-slider-value";
@@ -745,7 +746,7 @@ function buildThresholdControls(
   row.className = "field-row field-range-row";
   const l = document.createElement("label");
   l.className = "field-label";
-  l.textContent = "Show only";
+  l.textContent = t("Show only");
   row.appendChild(l);
 
   const minInput = document.createElement("input");
@@ -769,7 +770,7 @@ function buildThresholdControls(
 
   const resetBtn = document.createElement("button");
   resetBtn.className = "field-range-reset";
-  resetBtn.title = "Reset to the full range";
+  resetBtn.title = t("Reset to the full range");
   resetBtn.textContent = "⟲";
   resetBtn.disabled = !state.thresholdRange;
   resetBtn.addEventListener("click", () => {

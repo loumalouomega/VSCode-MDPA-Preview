@@ -288,6 +288,7 @@ import {
   revealVariableRow,
 } from "./variablesPanel";
 import { noteFieldFire, drainPendingFieldFire } from "./fieldRegistry";
+import { setRuntimeLocale } from "../src/parser/i18n/runtime";
 import { initOpQueue, stageLoadedOps } from "./opQueue";
 import {
   initProblemtype,
@@ -1164,6 +1165,7 @@ let showNodeIds = false;
 let gridVisible = false;
 const NODE_LABEL_LIMIT = 1000;
 
+setRuntimeLocale(document.body.dataset.locale);
 let currentTheme: string = document.body.dataset.theme ?? "auto";
 
 // Entity id -> cell maps, kept at module scope for quality panel and find-entity lookups.
