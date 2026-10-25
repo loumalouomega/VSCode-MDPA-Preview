@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Changed
 
 - Large meshes: geometry-first delivery with on-demand field rows now covers the VTK preview, the empty preview and edit re-renders, not only the first load of an `.mdpa`. Timeline playback, scrubbing and recording still send whole frames.
+- Very large meshes (those delivered geometry-first) start with the Level of detail surface switched on; turn it off from View ▸ Level of detail. Picking is off while it shows.
 
 ## [5.21.0] - 2026-10-23
 

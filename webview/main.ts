@@ -1381,8 +1381,18 @@ function beamConstant(): number {
 const LOD_LAYER_ID = "lod:surface";
 const LOD_COLOR: RGB = [0.62, 0.72, 0.85];
 let lodEnabled = false;
+/** Set once the level of detail has been chosen, by the user or by the large-mesh default. */
+let lodAutoDecided = false;
+
+/** A staged post only exists above STAGED_FIELD_ROWS, i.e. a very large mesh: start with the decimated surface (once; any later choice is the user's). */
+function maybeAutoLod(fieldsPending: unknown): void {
+  if (!fieldsPending || lodAutoDecided || lodEnabled) return;
+  setLod(true);
+  messageEl.textContent = "Large mesh: level of detail on while fields load (View ▸ Level of detail to turn off). Picking is off while it shows.";
+}
 
 function setLod(on: boolean): void {
+  lodAutoDecided = true;
   lodEnabled = on;
   document.querySelector('[data-action="lod"]')?.classList.toggle("active", on);
   if (!on) {
@@ -1633,6 +1643,7 @@ function handleHostMessage(event: MessageEvent): void {
       stagedFields = msg.fieldsPending ? { stageId: msg.stageId as number, requested: new Set() } : undefined;
       midNodeIds = (msg.midNodes as number[] | undefined) ?? [];
       buildScene(!msg.keepCamera);
+      maybeAutoLod(msg.fieldsPending);
       showRendererNote();
       setMeshModFields(model.fields, model.globals);
       setMeshModParts(model.subModelParts);
@@ -1718,6 +1729,7 @@ function handleHostMessage(event: MessageEvent): void {
       stagedFields = msg.fieldsPending ? { stageId: msg.stageId as number, requested: new Set() } : undefined;
       midNodeIds = (msg.midNodes as number[] | undefined) ?? [];
       buildScene(false); // preserve camera position between frames
+      maybeAutoLod(msg.fieldsPending);
       showRendererNote();
       setMeshModFields(model.fields, model.globals);
       setMeshModParts(model.subModelParts);
