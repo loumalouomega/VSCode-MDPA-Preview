@@ -98,6 +98,8 @@ export class PreviewSession {
   public fsPath: string | undefined;
   public fileName: string | undefined;
   public userForcedFull = false;
+  /** Arrays chosen on the summary card (selective read); undefined = all. */
+  public selectedFields: string[] | undefined;
   public summaryShown = false;
   public docInfo: DocumentInfoReporter | undefined;
   public ptController: PtController | undefined;
@@ -307,6 +309,7 @@ export class PreviewSession {
       { userForcedFull: this.userForcedFull, summaryShown: this.summaryShown }
     );
     this.userForcedFull = flags.userForcedFull;
+    if (!flags.userForcedFull) this.selectedFields = undefined;
     this.summaryShown = flags.summaryShown;
     if (historyReset) {
       this.history = new OperationHistory();

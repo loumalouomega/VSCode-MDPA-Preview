@@ -20,6 +20,8 @@ import {
   summaryCostFor,
   SUMMARIZABLE_EXTENSIONS,
   SUMMARY_THRESHOLD_MB_DEFAULT,
+  sanitizeFieldSelection,
+  summarySupportsFieldSelection,
 } from "../parser/meshSummary";
 import { parseMeshFile } from "../parser/meshFileParser";
 import { parseMdpaFile } from "../parser/mdpaParser";
@@ -355,4 +357,18 @@ test("an OpenFOAM case is sized by its polyMesh, not its 0-byte marker", async (
 test("the default threshold is a number the manifest can agree with", () => {
   assert.equal(typeof SUMMARY_THRESHOLD_MB_DEFAULT, "number");
   assert.ok(SUMMARY_THRESHOLD_MB_DEFAULT > 0);
+});
+
+test("sanitizeFieldSelection keeps only distinct non-empty short strings", () => {
+  assert.equal(sanitizeFieldSelection(undefined), undefined);
+  assert.equal(sanitizeFieldSelection("T"), undefined);
+  assert.equal(sanitizeFieldSelection([]), undefined);
+  assert.deepEqual(sanitizeFieldSelection(["T", "", 3, "T", "p", "x".repeat(300)]), ["T", "p"]);
+});
+
+test("summarySupportsFieldSelection only for readers that honour arrays", () => {
+  assert.equal(summarySupportsFieldSelection("a/b.xdmf"), true);
+  assert.equal(summarySupportsFieldSelection("a/b.MSH"), true);
+  assert.equal(summarySupportsFieldSelection("a/b.med"), false);
+  assert.equal(summarySupportsFieldSelection("a/b.e"), false);
 });

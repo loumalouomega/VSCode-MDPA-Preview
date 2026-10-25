@@ -102,7 +102,7 @@ function nameList(title: string, names: string[]): HTMLElement | undefined {
 export function renderSummaryOverlay(
   container: HTMLElement,
   s: MeshSummary,
-  handlers: { onOpenFull: () => void }
+  handlers: { onOpenFull: (fields?: string[]) => void }
 ): void {
   container.textContent = "";
   container.hidden = false;
@@ -159,11 +159,48 @@ export function renderSummaryOverlay(
     cardEl.appendChild(blocks);
   }
 
-  for (const el of [
-    nameList("Nodal data", s.pointDataNames),
-    nameList("Cell data", s.cellDataNames),
-    nameList("Field data", s.fieldDataNames),
-  ]) {
+  // Selective read: only for readers that honour `arrays` (XDMF, Gmsh); MED and
+  // Exodus ignore it, so offering it there would promise what the reader skips.
+  const selectable = /^\.(xdmf|xmf|msh)$/i.test(s.ext);
+  const chosen = new Set<string>();
+  const NAME_LIMIT = 40;
+  const picker = (title: string, names: string[]): HTMLElement | undefined => {
+    if (names.length === 0) return undefined;
+    const el = card(`${title} (${names.length})`);
+    for (const name of names.slice(0, NAME_LIMIT)) {
+      const label = document.createElement("label");
+      label.className = "edit-check";
+      const box = document.createElement("input");
+      box.type = "checkbox";
+      box.addEventListener("change", () => {
+        if (box.checked) chosen.add(name);
+        else chosen.delete(name);
+      });
+      const text = document.createElement("span");
+      text.textContent = name;
+      text.title = name;
+      label.append(box, text);
+      el.appendChild(label);
+    }
+    if (names.length > NAME_LIMIT) {
+      const more = document.createElement("div");
+      more.className = "meshsize-summary summary-unknown";
+      more.textContent = `+${names.length - NAME_LIMIT} more not listed — use "Open full mesh anyway" to load every array.`;
+      el.appendChild(more);
+    }
+    return el;
+  };
+  for (const el of selectable
+    ? [
+        picker("Nodal data", s.pointDataNames),
+        picker("Cell data", s.cellDataNames),
+        nameList("Field data", s.fieldDataNames),
+      ]
+    : [
+        nameList("Nodal data", s.pointDataNames),
+        nameList("Cell data", s.cellDataNames),
+        nameList("Field data", s.fieldDataNames),
+      ]) {
     if (el) cardEl.appendChild(el);
   }
 
@@ -209,6 +246,20 @@ export function renderSummaryOverlay(
     handlers.onOpenFull();
   });
   actions.appendChild(btn);
+  if (selectable && s.pointDataNames.length + s.cellDataNames.length > 0) {
+    const sel = document.createElement("button");
+    sel.id = "summary-open-selected";
+    sel.type = "button";
+    sel.textContent = "Open with selected fields";
+    sel.title = "Load the mesh reading only the ticked arrays (none ticked = all).";
+    sel.addEventListener("click", () => {
+      sel.disabled = true;
+      btn.disabled = true;
+      sel.textContent = "Loading…";
+      handlers.onOpenFull([...chosen]);
+    });
+    actions.appendChild(sel);
+  }
   cardEl.appendChild(actions);
 
   container.appendChild(cardEl);

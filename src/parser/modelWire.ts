@@ -96,6 +96,55 @@ export function wireFieldKey(field: Pick<FieldData, "kind" | "variable">): strin
   return `${field.kind}:${field.variable}`;
 }
 
+/** What a provider spreads into its `model`/`vtkFrame` post. */
+export interface WiredModel {
+  model: MdpaModel;
+  /** Present only for a staged post: how many fields still owe their rows. */
+  fieldsPending?: number;
+  stageId?: number;
+}
+
+export interface FieldStager {
+  /**
+   * The wire form of `model` for one post. Stages (geometry + field metadata)
+   * only when `allowStage` and the field volume is above the threshold; any
+   * other post is whole and drops the retained model, so a late `requestField`
+   * for an older stage is never answered from stale data.
+   */
+  wire(model: MdpaModel, allowStage: boolean): WiredModel;
+  /** The `modelField` reply for a request, or `undefined` when superseded or unknown. */
+  answer(stageId: unknown, key: unknown): { type: "modelField"; stageId: number; key: string; field: FieldData } | undefined;
+  clear(): void;
+}
+
+/**
+ * One per panel. Replaces the inline `stageId`/`stagedModel` pair the MDPA
+ * provider carried, so every post path (initial load, edit re-render, VTK
+ * frame) shares the same supersession rule: only the newest post is served.
+ */
+export function createFieldStager(threshold: number = STAGED_FIELD_ROWS): FieldStager {
+  let seq = 0;
+  let retained: MdpaModel | undefined;
+  return {
+    wire(model, allowStage) {
+      if (allowStage && shouldStageFields(model, threshold)) {
+        retained = model;
+        return { model: stagedHead(model), fieldsPending: model.fields.length, stageId: ++seq };
+      }
+      retained = undefined;
+      return { model: toWireModel(model) };
+    },
+    answer(stageId, key) {
+      if (!retained || stageId !== seq || typeof key !== "string") return undefined;
+      const f = retained.fields.find((x) => wireFieldKey(x) === key);
+      return f ? { type: "modelField", stageId: seq, key, field: toWireField(f) } : undefined;
+    },
+    clear() {
+      retained = undefined;
+    },
+  };
+}
+
 /** True when a model's fields are big enough to be delivered after its geometry. */
 export function shouldStageFields(model: MdpaModel, threshold: number = STAGED_FIELD_ROWS): boolean {
   return model.fields.length > 0 && fieldRowCount(model) > threshold;
