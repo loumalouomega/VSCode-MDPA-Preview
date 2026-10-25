@@ -4,6 +4,14 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- Large meshes: geometry-first delivery with on-demand field rows now covers the VTK preview, the empty preview and edit re-renders, not only the first load of an `.mdpa`. Timeline playback, scrubbing and recording still send whole frames.
+- Very large meshes (those delivered geometry-first) start with the Level of detail surface switched on; turn it off from View ▸ Level of detail. Picking is off while it shows.
+- The header-summary card for XDMF and Gmsh files lists the data arrays as checkboxes, and **Open with selected fields** loads the mesh reading only those arrays.
+
 ## [5.21.0] - 2026-10-23
 
 ### Added

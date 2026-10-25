@@ -26,11 +26,12 @@ import {
   shouldSummarize,
   summarizeMeshFile,
   SUMMARY_THRESHOLD_MB_DEFAULT,
+  sanitizeFieldSelection,
 } from "./parser/meshSummary";
 import { groupVtkFiles, fileFor, findGroupForFile, VtkFileGroup } from "./parser/vtkFileGroup";
 import { MdpaModel } from "./parser/types";
 import { expandCompactReport, type ProvenanceMode } from "./parser/exportReport";
-import { toWireModel } from "./parser/modelWire";
+import { toWireModel, createFieldStager } from "./parser/modelWire";
 import { renderPreviewHtml } from "./previewHtml";
 import {
   ExportContext,
@@ -295,6 +296,10 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
     };
 
 
+    // Large field volumes go geometry-first on initial loads and edit re-renders
+    // (`requestField` fetches rows); a newer post supersedes the stage.
+    const stager = createFieldStager();
+
     // Re-render the current frame from the history state (camera preserved).
     const rerenderFromHistory = async (opts?: MmgRunOptions): Promise<void> => {
       if (session.disposed || !session.history.hasBase()) return;
@@ -303,7 +308,7 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
       session.lastModel = cur.model;
       webviewPanel.webview.postMessage({
         type: "vtkFrame",
-        model: toWireModel(cur.model),
+        ...stager.wire(cur.model, true),
         frameIndex: session.lastFrame.frameIndex,
         stepLabel: session.lastFrame.stepLabel,
         stepLabelKind: session.lastFrame.stepLabelKind,
@@ -374,7 +379,7 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
         session.lastModel = r.model;
         webviewPanel.webview.postMessage({
           type: "vtkFrame",
-          model: toWireModel(r.model),
+          ...stager.wire(r.model, true),
           frameIndex: session.lastFrame.frameIndex,
           stepLabel: session.lastFrame.stepLabel,
         stepLabelKind: session.lastFrame.stepLabelKind,
@@ -517,7 +522,9 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
         if (!session.disposed) {
           webviewPanel.webview.postMessage({
             type: "vtkFrame", requestId,
-            model: toWireModel(adopted.model),
+            // Timeline-requested frames stay whole: the recorder resolves a frame
+            // when it is on screen, and a late field would capture it uncoloured.
+            ...stager.wire(adopted.model, requestId === undefined),
             frameIndex,
             stepLabel: step,
             totalFrames: group.steps.length,
@@ -585,7 +592,7 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
         if (!session.disposed) {
           webviewPanel.webview.postMessage({
             type: "vtkFrame", requestId,
-            model: toWireModel(adopted.model),
+            ...stager.wire(adopted.model, requestId === undefined),
             frameIndex: clamped,
             stepLabel: session.lastFrame.stepLabel,
         stepLabelKind: session.lastFrame.stepLabelKind,
@@ -737,7 +744,7 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
                   webviewPanel.webview.postMessage({ type: "progress", phase, bytesRead, totalBytes });
                 }
               },
-              { signal }
+              { signal, fields: session.selectedFields }
             )
           );
           if (solo === undefined) return;
@@ -749,7 +756,7 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
           if (!session.disposed) {
             webviewPanel.webview.postMessage({
               type: "vtkFrame",
-              model: toWireModel(adopted.model),
+              ...stager.wire(adopted.model, true),
               frameIndex: 0,
               stepLabel: "",
             totalFrames: 1,
@@ -1016,6 +1023,9 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
         session.docInfo?.sync(true);
         session.postEngineStatus();
         void discover().finally(plotPreviewReady);
+      } else if (msg?.type === "requestField") {
+        const reply = session.disposed ? undefined : stager.answer(msg.stageId, msg.key);
+        if (reply) void webviewPanel.webview.postMessage(reply);
       } else if (plots?.receive(msg)) {
         // Plot execution and dialogs are shared with the standalone workspace.
       } else if (msg?.type === "plotOpen") {
@@ -1030,6 +1040,7 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
         plots.sendContext();void webviewPanel.webview.postMessage({type:"plotReveal",preset:msg.preset});
       } else if (msg?.type === "meshSummaryOpenFull") {
         session.userForcedFull = true;
+        session.selectedFields = sanitizeFieldSelection(msg.fields);
         // "initial" on purpose: the base, the history and the pending ops were
         // never set up, and it is this run that must pick the recipe up.
         void discover("initial");
