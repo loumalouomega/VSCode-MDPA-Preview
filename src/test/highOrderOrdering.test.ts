@@ -39,17 +39,24 @@ const SHAPES: Shape[] = [
   { name: "quad8", element: "Element2D4N", edges: QUAD, nodes: [[0, 0, 0], [2, 0, 0], [2.2, 1.5, 0], [0, 1.4, 0]] },
 ];
 
-function quadraticModel(s: Shape): MdpaModel {
-  const nodes = s.nodes.map((p, i) => `  ${i + 1} ${p.join(" ")}`).join("\n");
-  const text = [
-    "Begin Properties 0", "End Properties", "",
-    "Begin Nodes", nodes, "End Nodes", "",
-    "Begin Elements " + s.element, `  1 0 ${s.nodes.map((_, i) => i + 1).join(" ")}`, "End Elements", "",
-  ].join("\n");
+/** One mesh holding one quadratic cell of each given shape (disjoint nodes), so a format costs one write and one read. */
+function quadraticModel(shapes: Shape[]): MdpaModel {
+  let nodeBase = 0;
+  const nodeLines: string[] = [];
+  const blocks: string[] = [];
+  shapes.forEach((s, k) => {
+    s.nodes.forEach((p, i) => nodeLines.push(`  ${nodeBase + i + 1} ${p.join(" ")}`));
+    const ids = s.nodes.map((_, i) => nodeBase + i + 1).join(" ");
+    blocks.push(`Begin Elements ${s.element}\n  ${k + 1} 0 ${ids}\nEnd Elements\n`);
+    nodeBase += s.nodes.length;
+  });
+  const text = ["Begin Properties 0", "End Properties", "", "Begin Nodes", ...nodeLines, "End Nodes", "", ...blocks].join("\n");
   const r = linearToQuadratic(parseMdpa(text));
-  assert.equal(r.convertedCells, 1, s.name);
+  assert.equal(r.convertedCells, shapes.length);
   return r.model;
 }
+
+const cornerCount = (edges: Edges): number => new Set(edges.flat()).size;
 
 /** Largest distance of a mid node from the midpoint of the edge the VTK numbering assigns it. */
 function worstMidOffset(model: MdpaModel, edges: Edges): number {
@@ -59,14 +66,14 @@ function worstMidOffset(model: MdpaModel, edges: Edges): number {
     const i = index.get(id)!;
     return [model.coords[i * 3], model.coords[i * 3 + 1], model.coords[i * 3 + 2]];
   };
-  const cells = model.blocks.filter((b) => b.stride === edges.length + cornerCount(edges));
-  assert.equal(cells.length, 1, "exactly one quadratic block expected");
-  const b = cells[0];
-  const n = b.stride;
   const corners = cornerCount(edges);
+  const stride = corners + edges.length;
+  const found = model.blocks.filter((b) => b.stride === stride);
+  assert.equal(found.length, 1, `exactly one block of stride ${stride} expected`);
+  const b = found[0];
   let worst = 0;
-  for (let c = 0; c < b.connectivity.length / n; c++) {
-    const ids = Array.from(b.connectivity.subarray(c * n, c * n + n));
+  for (let c = 0; c < b.connectivity.length / stride; c++) {
+    const ids = Array.from(b.connectivity.subarray(c * stride, c * stride + stride));
     edges.forEach(([a, z], k) => {
       const pa = at(ids[a]);
       const pz = at(ids[z]);
@@ -76,9 +83,8 @@ function worstMidOffset(model: MdpaModel, edges: Edges): number {
   }
   return worst;
 }
-const cornerCount = (edges: Edges): number => new Set(edges.flat()).size;
 
-/** extension, optional reader format; `.vtu` is our native writer and acts as the control. */
+/** extension and label; `.vtu` is our native writer and acts as the control. */
 const FORMATS: { ext: string; label: string }[] = [
   { ext: ".vtu", label: "vtu (native control)" },
   { ext: ".msh", label: "gmsh" },
@@ -95,32 +101,35 @@ const UNSUPPORTED: Record<string, Record<string, string>> = {
   abaqus: { pyramid13: "the Abaqus writer rejects pyramid13 (\"unsupported cell type\")" },
 };
 
+// One wasm write plus one read per format and mesh: a fresh kernel instance per
+// operation made the per-shape version hold ~4 GB, enough to stall CI runners.
 for (const f of FORMATS) {
-  for (const s of SHAPES) {
-    test(`${f.label}: ${s.name} mid nodes keep VTK order`, async (t) => {
-      const dir = fs.mkdtempSync(path.join(os.tmpdir(), "hoo-"));
-      try {
-        const model = quadraticModel(s);
-        const file = path.join(dir, "cell" + f.ext);
-        try {
-          const w = await writeMeshFileAsync(model, f.ext, { stem: "cell" } as never);
-          fs.writeFileSync(file, w.data as Uint8Array);
-          for (const c of w.companions ?? []) {
-            const p = path.join(dir, c.name);
-            fs.mkdirSync(path.dirname(p), { recursive: true });
-            fs.writeFileSync(p, c.data as Uint8Array);
-          }
-          const back = await parseMeshFile(file);
-          const reason = UNSUPPORTED[f.label]?.[s.name];
-          if (reason) return t.skip(reason);
-          assert.ok(worstMidOffset(back, s.edges) < 1e-5, `${f.label} ${s.name}: mid node off its edge`);
-        } catch (e) {
-          if (UNSUPPORTED[f.label]?.[s.name]) return t.skip(UNSUPPORTED[f.label][s.name]);
-          throw e;
+  test(`${f.label}: quadratic mid nodes keep VTK order`, async () => {
+    const skip = UNSUPPORTED[f.label] ?? {};
+    const shapes = SHAPES.filter((s) => !skip[s.name]);
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "hoo-"));
+    try {
+      // 3D and 2D cells go in separate meshes: several writers take one dimension.
+      const flat = (s: Shape) => s.name === "tri6" || s.name === "quad8";
+      for (const [dim, set] of [["3d", shapes.filter((s) => !flat(s))], ["2d", shapes.filter(flat)]] as const) {
+        const file = path.join(dir, `cell${dim}${f.ext}`);
+        const w = await writeMeshFileAsync(quadraticModel(set), f.ext, { stem: path.basename(file, f.ext) } as never);
+        fs.writeFileSync(file, w.data as Uint8Array);
+        for (const c of w.companions ?? []) {
+          const p = path.join(dir, c.name);
+          fs.mkdirSync(path.dirname(p), { recursive: true });
+          fs.writeFileSync(p, c.data as Uint8Array);
         }
-      } finally {
-        fs.rmSync(dir, { recursive: true, force: true });
+        const back = await parseMeshFile(file);
+        for (const s of set) assert.ok(worstMidOffset(back, s.edges) < 1e-5, `${f.label} ${s.name}: mid node off its edge`);
       }
-    });
-  }
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
 }
+
+test("abaqus: pyramid13 is rejected by the writer (recorded gap)", async () => {
+  const pyr = SHAPES.find((s) => s.name === "pyramid13")!;
+  await assert.rejects(writeMeshFileAsync(quadraticModel([pyr]), ".inp", { stem: "p" } as never), /unsupported cell type/);
+});
