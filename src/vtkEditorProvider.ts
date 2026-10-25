@@ -26,6 +26,7 @@ import {
   shouldSummarize,
   summarizeMeshFile,
   SUMMARY_THRESHOLD_MB_DEFAULT,
+  sanitizeFieldSelection,
 } from "./parser/meshSummary";
 import { groupVtkFiles, fileFor, findGroupForFile, VtkFileGroup } from "./parser/vtkFileGroup";
 import { MdpaModel } from "./parser/types";
@@ -743,7 +744,7 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
                   webviewPanel.webview.postMessage({ type: "progress", phase, bytesRead, totalBytes });
                 }
               },
-              { signal }
+              { signal, fields: session.selectedFields }
             )
           );
           if (solo === undefined) return;
@@ -1039,6 +1040,7 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
         plots.sendContext();void webviewPanel.webview.postMessage({type:"plotReveal",preset:msg.preset});
       } else if (msg?.type === "meshSummaryOpenFull") {
         session.userForcedFull = true;
+        session.selectedFields = sanitizeFieldSelection(msg.fields);
         // "initial" on purpose: the base, the history and the pending ops were
         // never set up, and it is this run that must pick the recipe up.
         void discover("initial");

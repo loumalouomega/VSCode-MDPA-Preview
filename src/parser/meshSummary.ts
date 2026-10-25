@@ -106,6 +106,26 @@ export interface MeshSummary {
 /** Default for `kratos.preview.summaryThresholdMb`; the manifest must agree. */
 export const SUMMARY_THRESHOLD_MB_DEFAULT = 250;
 
+/** Formats whose reader honours a selective `arrays` read (XDMF and Gmsh; MED and Exodus ignore it, so the card must not offer it). */
+export function summarySupportsFieldSelection(fsPath: string): boolean {
+  return /\.(xdmf|xmf|msh)$/i.test(fsPath);
+}
+
+/** Maximum selected arrays / length of one name accepted from the webview. */
+export const MAX_FIELD_SELECTION = 256;
+
+/** Validates the `fields` of a `meshSummaryOpenFull` message (untrusted webview input); undefined means "all fields". */
+export function sanitizeFieldSelection(raw: unknown): string[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const out: string[] = [];
+  for (const v of raw) {
+    if (typeof v !== "string" || v.length === 0 || v.length > MAX_FIELD_SELECTION) continue;
+    if (!out.includes(v)) out.push(v);
+    if (out.length >= MAX_FIELD_SELECTION) break;
+  }
+  return out.length > 0 ? out : undefined;
+}
+
 export interface SummaryGate {
   /** Bytes on disk, of the OPENED file only. */
   fileSize: number;

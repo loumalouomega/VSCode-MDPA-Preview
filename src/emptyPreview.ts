@@ -64,6 +64,7 @@ import {
   shouldSummarize,
   summarizeMeshFile,
   SUMMARY_THRESHOLD_MB_DEFAULT,
+  sanitizeFieldSelection,
 } from "./parser/meshSummary";
 import { MdpaModel } from "./parser/types";
 import { createFieldStager } from "./parser/modelWire";
@@ -567,7 +568,7 @@ function attachEmptyPanel(
           (phase, bytesRead, totalBytes) => {
             if (!session.disposed) panel.webview.postMessage({ type: "progress", phase, bytesRead, totalBytes });
           },
-          { signal }
+          { signal, fields: session.selectedFields }
         )
       );
       if (solo === undefined) return;
@@ -769,6 +770,7 @@ function attachEmptyPanel(
     if (!session.isBound) {
       if (msg?.type === "meshSummaryOpenFull") {
         session.userForcedFull = true;
+        session.selectedFields = sanitizeFieldSelection(msg.fields);
         await loadBound("initial");
         return;
       }
@@ -777,6 +779,7 @@ function attachEmptyPanel(
     }
     if (msg?.type === "meshSummaryOpenFull") {
       session.userForcedFull = true;
+      session.selectedFields = sanitizeFieldSelection(msg.fields);
       await loadBound("initial");
     } else if (msg?.type === "vtkRequestFrame") {
       const fi = typeof msg.frameIndex === "number" ? msg.frameIndex : 0;

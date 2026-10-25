@@ -1694,7 +1694,7 @@ function handleHostMessage(event: MessageEvent): void {
       clearFrameStatus();
       setPickStatus(undefined);
       renderSummaryOverlay(summaryOverlayEl, summary, {
-        onOpenFull: () => vscode.postMessage({ type: "meshSummaryOpenFull" }),
+        onOpenFull: (fields) => vscode.postMessage({ type: "meshSummaryOpenFull", fields }),
       });
       // Mandatory: showLoading sets #app { display: none }, so without this the
       // panel sits behind the spinner forever.

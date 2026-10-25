@@ -40,6 +40,7 @@ import {
   shouldSummarize,
   summarizeMeshFile,
   SUMMARY_THRESHOLD_MB_DEFAULT,
+  sanitizeFieldSelection,
 } from "./parser/meshSummary";
 import { MmgRunOptions, OP_LABELS } from "./parser/operations";
 import { createOpRunner } from "./opApply";
@@ -825,6 +826,7 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
           });
       } else if (msg?.type === "meshSummaryOpenFull") {
         session.userForcedFull = true;
+        session.selectedFields = sanitizeFieldSelection(msg.fields);
         // "initial" on purpose: the base, the history and the pending ops were
         // never set up, and it is this run that must pick the recipe up.
         void postModel("initial");
