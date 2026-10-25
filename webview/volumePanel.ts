@@ -2,6 +2,7 @@
 // regular lattice as a volume with an editable opacity curve, three orthogonal
 // slices, or iso surfaces. Pure DOM; mirrors beamPanel.ts / spherePanel.ts.
 
+import { t } from "../src/parser/i18n/runtime";
 import {
   insertOpacityPoint,
   normalizeOpacityPoints,
@@ -64,11 +65,11 @@ export function renderVolumePanel(
   header.className = "meshsize-header";
   const title = document.createElement("div");
   title.className = "meshsize-title";
-  title.textContent = "Volume view";
+  title.textContent = t("Volume view");
   header.appendChild(title);
   const closeBtn = document.createElement("button");
   closeBtn.className = "meshsize-close";
-  closeBtn.title = "Close";
+  closeBtn.title = t("Close");
   closeBtn.innerHTML = glyph("x");
   closeBtn.addEventListener("click", () => handlers.onClose());
   header.appendChild(closeBtn);
@@ -94,7 +95,7 @@ export function renderVolumePanel(
   sRow.className = "field-row";
   const sl = document.createElement("label");
   sl.className = "field-label";
-  sl.textContent = "Scalar";
+  sl.textContent = t("Scalar");
   sRow.appendChild(sl);
   const sel = document.createElement("select");
   sel.className = "field-select";
@@ -142,7 +143,7 @@ function renderOpacityEditor(
   const presets = document.createElement("select");
   presets.className = "field-select";
   const custom = document.createElement("option");
-  custom.textContent = "Preset…";
+  custom.textContent = t("Preset…");
   custom.value = "";
   presets.appendChild(custom);
   for (const p of OPACITY_PRESETS) {
@@ -160,7 +161,7 @@ function renderOpacityEditor(
   const canvas = document.createElement("canvas");
   canvas.className = "volume-curve";
   canvas.style.width = `${CURVE_W}px`;
-  canvas.title = "Click to add a point, drag to move it, double-click a point to remove it";
+  canvas.title = t("Click to add a point, drag to move it, double-click a point to remove it");
   container.appendChild(canvas);
   const pts = normalizeOpacityPoints(state.opacity);
   const toPx = (p: OpacityPoint): [number, number] => [p.x * (CURVE_W - 12) + 6, (1 - p.a) * (CURVE_H - 12) + 6];
@@ -325,7 +326,7 @@ function renderIsoRows(
     if (state.isoValues.length > 1) {
       const rm = document.createElement("button");
       rm.className = "panel-icon-btn";
-      rm.title = "Remove";
+      rm.title = t("Remove");
       rm.innerHTML = glyph("x");
       rm.addEventListener("click", () => handlers.onIsoValues(state.isoValues.filter((_, j) => j !== i)));
       row.appendChild(rm);
@@ -335,7 +336,7 @@ function renderIsoRows(
   if (state.isoValues.length < 4) {
     const add = document.createElement("button");
     add.className = "panel-btn";
-    add.textContent = "Add iso value";
+    add.textContent = t("Add iso value");
     add.addEventListener("click", () => handlers.onIsoValues([...state.isoValues, (range[0] + range[1]) / 2]));
     container.appendChild(add);
   }

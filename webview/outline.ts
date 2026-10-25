@@ -4,6 +4,7 @@
 // frames that layer in the 3D view. SubModelPart rows additionally carry an
 // export button (`exportPath`) that deploys a per-part format dropdown.
 
+import { t } from "../src/parser/i18n/runtime";
 import { SmpEntityKind, SMP_ENTITY_KINDS } from "../src/parser/subModelPartTree";
 import { describePaneScope, isPartlyHidden, paneDraws } from "../src/parser/paneVisibility";
 
@@ -264,7 +265,7 @@ function openPaneMenu(
   menu.setAttribute("role", "menu");
   const head = document.createElement("div");
   head.className = "outline-export-group";
-  head.textContent = "Show in panes";
+  head.textContent = t("Show in panes");
   menu.appendChild(head);
   let current = hidden;
   for (let i = 0; i < count; i++) {
@@ -330,7 +331,7 @@ function openOrganizeMenu(
     const input = document.createElement("input");
     input.type = "text";
     input.className = "outline-label-input";
-    input.placeholder = "name…";
+    input.placeholder = t("name…");
     // The same no-native-prompts convention as the inline rename input.
     const commit = (): void => {
       const name = input.value.trim();
@@ -393,7 +394,7 @@ function openOrganizeMenu(
     const idsInput = document.createElement("input");
     idsInput.type = "text";
     idsInput.className = "outline-label-input";
-    idsInput.placeholder = "ids, e.g. 1,2,5-10";
+    idsInput.placeholder = t("ids, e.g. 1,2,5-10");
     idsInput.addEventListener("click", (e) => e.stopPropagation());
     idsInput.addEventListener("keydown", (e) => e.stopPropagation());
 
@@ -408,7 +409,7 @@ function openOrganizeMenu(
     const addBtn = document.createElement("button");
     addBtn.type = "button";
     addBtn.className = "outline-export-item outline-membership-btn";
-    addBtn.textContent = "Add";
+    addBtn.textContent = t("Add");
     addBtn.addEventListener("click", (e) => {
       e.stopPropagation();
       runWith(handlers.onAddEntities);
@@ -416,7 +417,7 @@ function openOrganizeMenu(
     const removeBtn = document.createElement("button");
     removeBtn.type = "button";
     removeBtn.className = "outline-export-item outline-membership-btn";
-    removeBtn.textContent = "Remove";
+    removeBtn.textContent = t("Remove");
     removeBtn.addEventListener("click", (e) => {
       e.stopPropagation();
       runWith(handlers.onRemoveEntities);
@@ -508,7 +509,7 @@ function buildNode(
     const checkbox = document.createElement("input");
     checkbox.type = "checkbox";
     checkbox.checked = node.visible ?? true;
-    checkbox.title = "Show / hide layer";
+    checkbox.title = t("Show / hide layer");
     checkbox.addEventListener("change", () =>
       handlers.onToggle(node.layerId!, checkbox.checked)
     );
@@ -555,7 +556,7 @@ function buildNode(
     const op = document.createElement("button");
     op.type = "button";
     op.className = "outline-opacity-btn";
-    op.title = "Layer opacity…";
+    op.title = t("Layer opacity…");
     op.setAttribute("aria-haspopup", "true");
     op.innerHTML = `<span class="toolbar-icon">${exportUI.opacityIcon}</span>`;
     op.addEventListener("click", (e) => {
@@ -603,13 +604,13 @@ function buildNode(
     refresh(node.paneHidden);
   }
 
-  if(node.exportPath&&handlers.onAnalyze){const btn=document.createElement("button");btn.type="button";btn.className="outline-export-btn";btn.textContent="∿";btn.title="Analyze / plot this SubModelPart";btn.setAttribute("aria-label",`Analyze ${node.exportPath}`);btn.addEventListener("click",e=>{e.stopPropagation();handlers.onAnalyze?.(node.exportPath!);});actions.appendChild(btn);}
+  if(node.exportPath&&handlers.onAnalyze){const btn=document.createElement("button");btn.type="button";btn.className="outline-export-btn";btn.textContent="∿";btn.title=t("Analyze / plot this SubModelPart");btn.setAttribute("aria-label",`Analyze ${node.exportPath}`);btn.addEventListener("click",e=>{e.stopPropagation();handlers.onAnalyze?.(node.exportPath!);});actions.appendChild(btn);}
   if (node.exportPath && exportUI && handlers.onExport) {
     const path = node.exportPath;
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "outline-export-btn";
-    btn.title = "Export this SubModelPart…";
+    btn.title = t("Export this SubModelPart…");
     btn.setAttribute("aria-haspopup", "true");
     btn.innerHTML = `<span class="toolbar-icon">${exportUI.icon}</span>`;
     btn.addEventListener("click", (e) => {
@@ -666,7 +667,7 @@ function buildNode(
     const pen = document.createElement("button");
     pen.type = "button";
     pen.className = "outline-rename-btn";
-    pen.title = "Rename this SubModelPart";
+    pen.title = t("Rename this SubModelPart");
     pen.innerHTML = `<span class="toolbar-icon">${exportUI.renameIcon}</span>`;
     pen.addEventListener("click", (e) => {
       e.stopPropagation();
@@ -681,7 +682,7 @@ function buildNode(
     const info = document.createElement("button");
     info.type = "button";
     info.className = "outline-info-btn";
-    info.title = "SubModelPart counts…";
+    info.title = t("SubModelPart counts…");
     info.setAttribute("aria-haspopup", "true");
     info.innerHTML = `<span class="toolbar-icon">${exportUI.infoIcon}</span>`;
     info.addEventListener("click", (e) => {
@@ -702,7 +703,7 @@ function buildNode(
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "outline-organize-btn";
-    btn.title = "Create a child, move or merge this SubModelPart";
+    btn.title = t("Create a child, move or merge this SubModelPart");
     btn.innerHTML = `<span class="toolbar-icon">${exportUI.organizeIcon}</span>`;
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
@@ -718,7 +719,7 @@ function buildNode(
     const del = document.createElement("button");
     del.type = "button";
     del.className = "outline-delete-btn";
-    del.title = "Delete this SubModelPart";
+    del.title = t("Delete this SubModelPart");
     del.innerHTML = `<span class="toolbar-icon">${exportUI.deleteIcon}</span>`;
     del.addEventListener("click", (e) => {
       e.stopPropagation();

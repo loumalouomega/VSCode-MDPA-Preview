@@ -8,7 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
-- Runtime localisation helper (`t()`) wired to the VS Code display language, adopted by the Quality, Inspect and Field panels with a seed Spanish catalogue. Not verified in a browser.
+- Runtime localisation helper (`t()`) wired to the VS Code display language, adopted by the Quality, Inspect and Field panels with a seed Spanish catalogue; every other webview panel now localises its static labels the same way, and the docs gain a Languages page. Not verified in a browser.
 
 ### Changed
 

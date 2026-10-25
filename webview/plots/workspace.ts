@@ -1,3 +1,4 @@
+import { t as tr } from "../../src/parser/i18n/runtime";
 import { emptyPlotRecipe, validatePlotRecipe } from "../../src/parser/plot/recipe";
 import { type PlotFamily, type PlotColumn, type PlotDataset, type PlotOrigin, type PlotRecipe, type PlotSeriesSpec, type PlotSource, type PlotTable, type PlotTransform } from "../../src/parser/plot/types";
 import { Plotly, renderPlotChart, type PlotElement } from "./chart";
@@ -41,10 +42,10 @@ function applyRecipe(next:PlotRecipe){try{recipe=validatePlotRecipe(next);render
 function appendCurve(source:PlotSource,chosen:number|"magnitude",width:number,name:string){try{const next=appendFemCurve(recipe,source,chosen,width,name);if(chartChosen&&!recipe.series.length)next.presentation.family=recipe.presentation.family;applyRecipe(next);}catch(e){status.textContent=e instanceof Error?e.message:String(e);}}
 function addPoint(kind:"Nodal"|"Elemental"|"Conditional",id:number,variable?:string){
   const field=context?.fields.find(f=>f.kind===kind&&f.variable===(variable??selectedField()?.variable))??context?.fields.find(f=>f.kind===kind);
-  if(!field||!context?.hasTimeline){status.textContent="Point histories require a result timeline and a supplied field.";return;}
+  if(!field||!context?.hasTimeline){status.textContent=tr("Point histories require a result timeline and a supplied field.");return;}
   fieldKey=`${field.kind}:${field.variable}`;
   const chosen=typeof component==="number"&&component<field.components?component:field.components>1?"magnitude":0;
-  if(recipe.sources.some(s=>s.type==="history"&&s.kind===kind&&s.entityId===id&&s.variable===field.variable&&recipe.series.some(curve=>curve.source===s.id&&curve.y===`v${chosen=== "magnitude"?0:chosen}`&&!!curve.component===(chosen==="magnitude")))) {status.textContent="That point/quantity/component is already plotted.";return;}
+  if(recipe.sources.some(s=>s.type==="history"&&s.kind===kind&&s.entityId===id&&s.variable===field.variable&&recipe.series.some(curve=>curve.source===s.id&&curve.y===`v${chosen=== "magnitude"?0:chosen}`&&!!curve.component===(chosen==="magnitude")))) {status.textContent=tr("That point/quantity/component is already plotted.");return;}
   const source:PlotSource={id:`point:${Date.now()}:${recipe.sources.length}`,type:"history",path:context.path,kind,entityId:id,variable:field.variable};
   appendCurve(source,chosen,field.components,`${kind==="Nodal"?"Node":kind==="Elemental"?"Element":"Condition"} ${id} · ${field.variable} · ${chosen==="magnitude"?"magnitude":field.components>1?"XYZ"[chosen]??chosen:"scalar"}`);
 }
@@ -55,7 +56,7 @@ function followControl(parent:HTMLElement,source:Extract<PlotSource,{type:"probe
   const control=button(parent,active?"Fix frame":source.followTimeline?"Resume following":"Follow timeline",()=>{
     if(active){source.followTimeline=false;followBindings.delete(source.id);}
     else {
-      if(!options.embedded||!context?.hasTimeline||!context.timelineId||source.path!==context.path){status.textContent="Following requires a profile from this mesh preview and its result timeline.";return;}
+      if(!options.embedded||!context?.hasTimeline||!context.timelineId||source.path!==context.path){status.textContent=tr("Following requires a profile from this mesh preview and its result timeline.");return;}
       source.followTimeline=true;source.timeStep=context.frameIndex;followBindings.set(source.id,context.timelineId);
     }
     renderConfig();renderQuick();schedule();
@@ -66,7 +67,7 @@ function syncFollowing(){
   if(!context)return;
   let paused=false;
   for(const source of recipe.sources)if(source.type==="probe"&&followBindings.has(source.id)&&(!context.hasTimeline||source.path!==context.path||followBindings.get(source.id)!==context.timelineId)){followBindings.delete(source.id);paused=true;}
-  if(paused){renderConfig();renderQuick();status.textContent="Timeline/rank changed — profile following paused. Resume explicitly to bind to the new timeline; fixed curves are retained.";}
+  if(paused){renderConfig();renderQuick();status.textContent=tr("Timeline/rank changed — profile following paused. Resume explicitly to bind to the new timeline; fixed curves are retained.");}
   if(collectionActive)return;
   let changed=false;
   for(const source of recipe.sources)if(source.type==="probe"&&following(source)&&source.timeStep!==context.frameIndex){source.timeStep=context.frameIndex;changed=true;}
@@ -118,30 +119,30 @@ function renderPresets(quick:HTMLElement){
 function renderQuick(){
   renderCurves();
   const quick=root.querySelector<HTMLElement>("#plot-quick");if(!quick)return;quick.textContent="";
-  if(!context){quick.textContent="Pick entities in Inspect, or select a SubModelPart to analyze.";return;}
+  if(!context){quick.textContent=tr("Pick entities in Inspect, or select a SubModelPart to analyze.");return;}
   renderPresets(quick);
   select(quick,"Target",target,[{value:"point",label:"Picked points"},{value:"region",label:"SubModelPart / whole mesh"}],v=>{target=v;renderQuick();});
   const fields=context.fields;
   if(!fields.some(f=>`${f.kind}:${f.variable}`===fieldKey)){fieldKey=defaultPlotFieldKey(fields,context.displayedKey);}
   select(quick,"Quantity",fieldKey,fields.map(f=>({value:`${f.kind}:${f.variable}`,label:`${f.variable} · ${f.kind} [${f.unit??"unknown"}]`})),v=>{fieldKey=v;if(picked&&selectedField()?.kind!==picked.kind)picked=undefined;renderQuick();});
-  const field=selectedField();if(!field){status.textContent="This mesh has no supplied field to plot.";return;}
+  const field=selectedField();if(!field){status.textContent=tr("This mesh has no supplied field to plot.");return;}
   const vectorOperation=target==="region"&&["pressureForce","pressureMoment","reactionMoment"].includes(operation);
   const width=vectorOperation?3:target==="region"&&!["min","max","mean","sum"].includes(operation)?1:field.components;
   if(typeof component==="number"&&component>=width)component="magnitude";
   select(quick,"Component",String(width===1?0:component),[...(width>1?[{value:"magnitude",label:"Magnitude"}]:[]),...Array.from({length:width},(_,i)=>({value:String(i),label:width===1?"Scalar":"XYZ"[i]??`Component ${i+1}`}))],v=>{component=v==="magnitude"?v:Number(v);});
-  if(options.onShowField){const show=button(quick,"Show on mesh",()=>options.onShowField!(fieldKey,width>1?component:0));show.title="Colour the mesh by this Quantity and Component in the Field panel";}
+  if(options.onShowField){const show=button(quick,"Show on mesh",()=>options.onShowField!(fieldKey,width>1?component:0));show.title=tr("Colour the mesh by this Quantity and Component in the Field panel");}
   if(target==="point") {
     const entityInput=input(quick,"Entity ID",picked?String(picked.id):"",v=>{const id=Number(v);if(v.trim()&&Number.isSafeInteger(id)){picked={kind:field.kind,id};renderQuick();}},"number");
     entityInput.addEventListener("input",()=>{const id=Number(entityInput.value);if(entityInput.value.trim()&&Number.isSafeInteger(id))picked={kind:field.kind,id};});
     const row=document.createElement("div");row.className="plot-quick-actions";quick.appendChild(row);
-    button(row,picked?`Plot ${picked.kind==="Nodal"?"node":"entity"} ${picked.id}`:"Plot picked point",()=>{if(picked)addPoint(picked.kind,picked.id);else status.textContent="Use Inspect to pick a node or entity first.";});
+    button(row,picked?`Plot ${picked.kind==="Nodal"?"node":"entity"} ${picked.id}`:"Plot picked point",()=>{if(picked)addPoint(picked.kind,picked.id);else status.textContent=tr("Use Inspect to pick a node or entity first.");});
     const pick=button(row,pickMode?"Done picking":"Add points from mesh",()=>{pickMode=!pickMode;options.onPickPoints?.(pickMode);renderQuick();});pick.setAttribute("aria-pressed",String(pickMode));
     const note=document.createElement("p");note.className="plot-muted";note.textContent=pickMode?"Click mesh points to append histories. Esc finishes picking; existing curves are kept.":"Pick in Inspect, choose a quantity, then add it. Additional points share this chart.";quick.appendChild(note);
   } else {
     select(quick,"Region",region,[{value:"",label:"Whole mesh (entity reductions)"},...context.parts.map(p=>({value:p.path,label:p.path}))],v=>{region=v;options.onRegion?.(v);});
     select(quick,"Operation",operation,REGION_OPERATIONS.map(v=>({value:v,label:operationLabels[v]})),v=>{operation=v as typeof operation;renderQuick();});
     select(quick,"Scope",context.hasTimeline?scope:"current",[{value:"current",label:"Current frame"},...(context.hasTimeline?[{value:"history",label:"Over time"}]:[])],v=>{scope=v as typeof scope;});
-    if(["pressureMoment","reactionMoment"].includes(operation))input(quick,"Moment origin XYZ",referencePoint?.join(", ")??"",v=>{const parts=v.split(",");const p=parts.map(Number);referencePoint=parts.length===3&&parts.every(v=>v.trim())&&p.every(Number.isFinite)?p as [number,number,number]:undefined;if(!referencePoint)status.textContent="Supply three finite reference coordinates explicitly.";});
+    if(["pressureMoment","reactionMoment"].includes(operation))input(quick,"Moment origin XYZ",referencePoint?.join(", ")??"",v=>{const parts=v.split(",");const p=parts.map(Number);referencePoint=parts.length===3&&parts.every(v=>v.trim())&&p.every(Number.isFinite)?p as [number,number,number]:undefined;if(!referencePoint)status.textContent=tr("Supply three finite reference coordinates explicitly.");});
     const boundaryOperation=["boundaryMean","boundaryIntegral","pressureForce","pressureMoment","flux"].includes(operation);
     if(boundaryOperation&&field.kind!=="Nodal")boundarySource="conditions";
     if(boundaryOperation&&field.kind==="Nodal")select(quick,"Boundary",boundarySource,[{value:"conditions",label:"Boundary Conditions of the region"},{value:"exterior",label:"Exterior faces of the region's Elements"}],v=>{boundarySource=v as typeof boundarySource;if(boundarySource==="exterior")orientation="outward";renderQuick();});
@@ -154,7 +155,7 @@ function renderQuick(){
       const source:PlotRegionSource={id:`region:${Date.now()}:${recipe.sources.length}`,type:"region",path:context!.path,kind:field.kind,variable:field.variable,scope:context!.hasTimeline?scope:"current",operation,component:width===1?0:component,...(region?{submodelpart:region}:{}),...(scope==="current"||!context!.hasTimeline?{timeStep:context!.frameIndex}:{}),...(["pressureMoment","reactionMoment"].includes(operation)?{referencePoint}:{}),...(["pressureForce","pressureMoment","flux"].includes(operation)?{orientation:exteriorBoundary?"outward" as const:orientation}:{}),...(exteriorBoundary?{boundary:"exterior" as const}:{}),...(["pressureForce","pressureMoment"].includes(operation)?{pressureOffset,...(pressureDensity!==undefined?{pressureDensity}:{})}:{}),...(thickness!==undefined&&["boundaryIntegral","pressureForce","pressureMoment","flux"].includes(operation)?{thickness}:{})};
       const resultWidth=regionResultWidth(source,field.components);appendCurve(source,resultWidth>1?component:0,resultWidth,`${region||"Whole mesh"} · ${operationLabels[operation]} · ${field.variable}`);
     });
-    const note=document.createElement("p");note.className="plot-muted";note.textContent="Integrals use the region's boundary Conditions, or the exterior faces of its Elements (faces shared with Elements outside the region are excluded and reported). Pressure force is −p n; 2D loads are per unit depth unless thickness is supplied. Entity mean is unweighted.";quick.appendChild(note);
+    const note=document.createElement("p");note.className="plot-muted";note.textContent=tr("Integrals use the region's boundary Conditions, or the exterior faces of its Elements (faces shared with Elements outside the region are excluded and reported). Pressure force is −p n; 2D loads are per unit depth unless thickness is supplied. Entity mean is unweighted.");quick.appendChild(note);
   }
 }
 function renderCurves(){
@@ -189,7 +190,7 @@ function schedule(follow=false){clearTimeout(timer);++requestId;dataset=undefine
 function evaluate(follow=false){
   let next: PlotRecipe;
   try{next=validatePlotRecipe(recipe);}catch(e){collectionActive=false;status.textContent=String(e instanceof Error?e.message:e);return;}
-  clearTimeout(timer);const id=++requestId;dataset=undefined;collectionActive=true;followRequest=follow;status.textContent="Collecting full-resolution data…";post({type:"plotEvaluate",requestId:id,recipe:next,followTimeline:follow});
+  clearTimeout(timer);const id=++requestId;dataset=undefined;collectionActive=true;followRequest=follow;status.textContent=tr("Collecting full-resolution data…");post({type:"plotEvaluate",requestId:id,recipe:next,followTimeline:follow});
 }
 function preview(source:PlotSource){clearTimeout(timer);dataset=undefined;followRequest=false;const id=++requestId;status.textContent=`Inspecting ${source.id}…`;post({type:"plotPreview",source,requestId:id});}
 function addSource(){const id=`source${Date.now()}`;recipe.sources.push({id,type:"table",path:""});renderConfig();schedule();}
@@ -209,21 +210,21 @@ function renderActions(){
   const view=group("Chart view");
   for (const [label,factor,icon] of [["Zoom in",.8,"zoomIn"],["Zoom out",1.25,"zoomOut"],["Reset axes",0,"maximize"]] as const) button(view,label,()=>{
     if (!dataset) return;
-    if(["pie","doughnut"].includes(recipe.presentation.family)){status.textContent="Category shares have no axes to zoom. Use the pane resize control to enlarge the chart.";return;}
+    if(["pie","doughnut"].includes(recipe.presentation.family)){status.textContent=tr("Category shares have no axes to zoom. Use the pane resize control to enlarge the chart.");return;}
     const update: Record<string,unknown> = {},layout=(chart as any)._fullLayout;
     for(let i=0;i<(recipe.presentation.panels??1);i++)for(const axis of ["x","y"]){const key=`${axis}axis${i?i+1:""}`,range=layout?.[key]?.range;if(!factor)update[`${key}.autorange`]=true;else if(range?.every((v:unknown)=>typeof v==="number")){const center=(range[0]+range[1])/2,half=(range[1]-range[0])*factor/2;update[`${key}.range`]=[center-half,center+half];}}
     void rendering.then(()=>Plotly.relayout(chart,update)).catch(e=>{status.textContent=String(e);});
   },icon,true);
-  const images=group("Image export");for(const format of ["png","svg"])button(images,format.toUpperCase(),()=>{if(!dataset){status.textContent="Compute the current plot first.";return;}const id=requestId;void rendering.then(()=>Plotly.toImage(chart,{format,width:Math.max(800,chart.clientWidth),height:Math.max(500,chart.clientHeight)})).then(data=>{if(id===requestId)post({type:"plotExportImage",format,data,requestId:id,view:(chart as any).layout});}).catch(e=>{status.textContent=String(e);});},"download");
+  const images=group("Image export");for(const format of ["png","svg"])button(images,format.toUpperCase(),()=>{if(!dataset){status.textContent=tr("Compute the current plot first.");return;}const id=requestId;void rendering.then(()=>Plotly.toImage(chart,{format,width:Math.max(800,chart.clientWidth),height:Math.max(500,chart.clientHeight)})).then(data=>{if(id===requestId)post({type:"plotExportImage",format,data,requestId:id,view:(chart as any).layout});}).catch(e=>{status.textContent=String(e);});},"download");
 }
 function chooseChart(family:PlotFamily){recipe.presentation.family=family;chartChosen=true;pickerOpen=false;renderConfig();schedule();root.querySelector<HTMLElement>("#plot-type-toggle")?.focus();}
 function renderChartTools(){
   const tools=root.querySelector<HTMLElement>("#plot-chart-tools");if(!tools)return;tools.textContent="";
   const p=recipe.presentation,choice=CHART_CHOICES.find(c=>c.family===p.family)!;
   const bar=document.createElement("div");bar.className="plot-chart-heading";tools.appendChild(bar);
-  const trigger=button(bar,choice.label,()=>{pickerOpen=!pickerOpen;renderChartTools();root.querySelector<HTMLElement>(pickerOpen?`#plot-type-picker [data-family="${p.family}"]`:"#plot-type-toggle")?.focus();},choice.icon);trigger.id="plot-type-toggle";trigger.setAttribute("aria-label","Chart type");trigger.title=`Chart type: ${choice.label}. ${choice.hint}`;trigger.setAttribute("aria-expanded",String(pickerOpen));trigger.setAttribute("aria-controls","plot-type-picker");trigger.insertAdjacentHTML("beforeend",glyph("chevronDown"));
+  const trigger=button(bar,choice.label,()=>{pickerOpen=!pickerOpen;renderChartTools();root.querySelector<HTMLElement>(pickerOpen?`#plot-type-picker [data-family="${p.family}"]`:"#plot-type-toggle")?.focus();},choice.icon);trigger.id="plot-type-toggle";trigger.setAttribute("aria-label",tr("Chart type"));trigger.title=`Chart type: ${choice.label}. ${choice.hint}`;trigger.setAttribute("aria-expanded",String(pickerOpen));trigger.setAttribute("aria-controls","plot-type-picker");trigger.insertAdjacentHTML("beforeend",glyph("chevronDown"));
   const title=document.createElement("span");title.className="plot-heading-title";title.textContent=p.title;title.title=p.title;bar.appendChild(title);
-  const picker=document.createElement("div");picker.id="plot-type-picker";picker.hidden=!pickerOpen;picker.setAttribute("role","group");picker.setAttribute("aria-label","Chart types");tools.appendChild(picker);
+  const picker=document.createElement("div");picker.id="plot-type-picker";picker.hidden=!pickerOpen;picker.setAttribute("role","group");picker.setAttribute("aria-label",tr("Chart types"));tools.appendChild(picker);
   for(const [i,c] of CHART_CHOICES.entries()){
     const b=button(picker,c.label,()=>chooseChart(c.family),c.icon);b.dataset.family=c.family;b.title=c.hint;b.setAttribute("aria-pressed",String(c.family===p.family));b.tabIndex=c.family===p.family?0:-1;
     b.addEventListener("keydown",e=>{if(e.key==="Escape"){pickerOpen=false;renderChartTools();root.querySelector<HTMLElement>("#plot-type-toggle")?.focus();e.stopPropagation();}else if(["ArrowLeft","ArrowRight","ArrowUp","ArrowDown","Home","End"].includes(e.key)){e.preventDefault();const columns=getComputedStyle(picker).gridTemplateColumns.split(" ").length;const next=e.key==="Home"?0:e.key==="End"?CHART_CHOICES.length-1:(i+(e.key==="ArrowLeft"?-1:e.key==="ArrowRight"?1:e.key==="ArrowUp"?-columns:columns)+CHART_CHOICES.length)%CHART_CHOICES.length;picker.querySelectorAll<HTMLButtonElement>("button").forEach(item=>item.tabIndex=-1);const target=picker.querySelectorAll<HTMLButtonElement>("button")[next];target.tabIndex=0;target.focus();}});
@@ -310,7 +311,7 @@ function renderSeries(s:PlotSeriesSpec){
   for(const [i,t]of(s.transforms??[]).entries()) {
     const row=document.createElement("div");row.className="plot-transform";transformBox.appendChild(row);const label=document.createElement("span");label.textContent=`${i+1}. ${t.op}`;row.appendChild(label);
     if(t.op==="smooth")input(row,"Window",String(t.window),v=>{t.window=Number(v);schedule();},"number");if(t.op==="normalize")input(row,"Divisor",String(t.divisor),v=>{t.divisor=Number(v);schedule();},"number");if(t.op==="convert"){input(row,"Factor",String(t.factor),v=>{t.factor=Number(v);schedule();},"number");input(row,"Target unit",t.unit,v=>{t.unit=v;schedule();});}
-    button(row,"↑",()=>{if(i>0){[s.transforms![i-1],s.transforms![i]]=[t,s.transforms![i-1]];renderConfig();schedule();}}).setAttribute("aria-label","Move transformation earlier");button(row,"Remove",()=>{s.transforms!.splice(i,1);renderConfig();schedule();});
+    button(row,"↑",()=>{if(i>0){[s.transforms![i-1],s.transforms![i]]=[t,s.transforms![i-1]];renderConfig();schedule();}}).setAttribute("aria-label",tr("Move transformation earlier"));button(row,"Remove",()=>{s.transforms!.splice(i,1);renderConfig();schedule();});
   }
   select(box,"Add analysis","",[{value:"",label:"Choose transformation…"},...choices(["smooth","regression","derivative","integral","normalize","convert"])],v=>{if(!v)return;const t:PlotTransform=v==="smooth"?{op:"smooth",window:5}:v==="normalize"?{op:"normalize",divisor:1}:v==="convert"?{op:"convert",factor:1,unit:"supplied"}:{op:v as "regression"|"derivative"|"integral"};(s.transforms??=[]).push(t);renderConfig();schedule();});
   select(box,"Reference",s.alignment?.reference??"",[{value:"",label:"No alignment"},...recipe.series.filter(r=>r!==s).map(r=>({value:r.id,label:r.name}))],v=>{s.alignment=v?{reference:v,method:"exact",tolerance:0}:undefined;renderConfig();schedule();});
@@ -334,7 +335,7 @@ function describe(data:PlotDataset){
    const bubble=data.recipe.presentation.family==="bubble",circular=["pie","doughnut"].includes(data.recipe.presentation.family);
    const table=document.createElement("table"),head=document.createElement("tr");for(const v of ["Series","X","Y",...(bubble?["Size (supplied)"]:[]),...(circular?["Covered share (%)"]:[]),"Find sample"]){const c=document.createElement("th");c.scope="col";c.textContent=v;head.appendChild(c);}table.appendChild(head);
    for(const s of data.series)for(const p of s.points.slice(0,100)){const row=document.createElement("tr");for(const v of [s.name,p.x??"—",p.y??"—",...(bubble?[`${p.size??"—"} [${s.sizeColumn?.unit??"unknown"}]`]:[]),...(circular?[p.share===null||p.share===undefined?"—":(p.share*100).toPrecision(4)]:[])]){const c=document.createElement("td");c.textContent=String(v);row.appendChild(c);}const c=document.createElement("td");if(canLocate(p.origin))button(c,"Show in mesh",()=>post({type:"plotPick",origin:p.origin}));row.appendChild(c);table.appendChild(row);}
-   const samples=element("plot-samples");samples.textContent="";const note=document.createElement("p");note.textContent="First 100 delivered samples per series, including gaps and weights not drawn. CSV includes every full-resolution derived and original sample.";samples.append(note,table);
+   const samples=element("plot-samples");samples.textContent="";const note=document.createElement("p");note.textContent=tr("First 100 delivered samples per series, including gaps and weights not drawn. CSV includes every full-resolution derived and original sample.");samples.append(note,table);
   const coverage=root.querySelector<HTMLElement>("#plot-coverage");if(coverage){coverage.textContent="";for(const s of data.series){const p=document.createElement("p");p.className="plot-muted";const reports=s.diagnostics.filter(v=>/covered|unknown|per unit depth|linear corner|piecewise.linear|excluded/.test(v));p.textContent=`${s.name}: ${s.statistics.count} values, ${s.statistics.missing} gaps · [${s.yColumn.unit??"unknown unit"}]${reports.length?` · ${reports.slice(0,4).join(" · ")}`:""}`;coverage.appendChild(p);}for(const d of data.diagnostics){const p=document.createElement("p");p.className="plot-muted";p.textContent=d;coverage.appendChild(p);}}
   const peaks=root.querySelector<HTMLElement>("#plot-peaks");if(peaks){peaks.textContent="";for(const s of data.series)if(s.peak){const row=document.createElement("div");row.className="plot-muted";row.textContent=`${s.name}: peak ${s.peak.y} [${s.yColumn.unit??"unknown"}] at ${s.peak.x}`;if(canLocate(s.peak.origin))button(row,"Locate peak",()=>post({type:"plotPick",origin:s.peak!.origin}));peaks.appendChild(row);}}
 }
@@ -346,7 +347,7 @@ function receive(msg:any){
   }else if(msg.type==="plotPicked"){const s=recipe.sources.find(s=>s.id===msg.target);if(s&&s.type!=="inline"){s.path=msg.path;renderConfig();preview(s);}}
   else if(msg.type==="plotRunSelected") {
     let source=recipe.sources.find(s=>s.id===msg.target);
-    if(msg.target&&(!source||JSON.stringify(source)!==msg.signature)){status.textContent="Source settings changed while choosing a run; selection was not applied. Bind again explicitly.";return;}
+    if(msg.target&&(!source||JSON.stringify(source)!==msg.signature)){status.textContent=tr("Source settings changed while choosing a run; selection was not applied. Bind again explicitly.");return;}
     if(!source){source={id:`run:${Date.now()}`,type:"mesh",path:msg.path,kind:"Nodes",run:msg.run};recipe.sources.push(source);}
     else if(source.type!=="inline"&&source.type!=="table"){source.path=msg.path;source.run=msg.run;if(source.type==="history"||source.type==="region")source.runId=undefined;}
     inventories.delete(source.id);followBindings.delete(source.id);if(source.type==="probe")source.followTimeline=false;

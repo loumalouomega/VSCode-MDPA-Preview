@@ -21,6 +21,7 @@
  * open, so D-pad repeats, the opacity slider and the normal inputs are usable.
  */
 
+import { t } from "../src/parser/i18n/runtime";
 import { glyph } from "../src/uiGlyphs";
 import {
   DEFAULT_ROTATE_STEP,
@@ -135,7 +136,7 @@ export class NavControls {
     const el = document.createElement("div");
     el.id = "nav-controls";
     el.setAttribute("role", "group");
-    el.setAttribute("aria-label", "View controls");
+    el.setAttribute("aria-label", t("View controls"));
     el.style.bottom = `${this.bottomPx}px`;
     el.style.display = "none";
 
@@ -240,7 +241,7 @@ export class NavControls {
     const g = document.createElement("div");
     g.className = "nav-icons";
     g.setAttribute("role", "group");
-    g.setAttribute("aria-label", "Navigate");
+    g.setAttribute("aria-label", t("Navigate"));
     g.appendChild(this.iconBtn("nav-reset",    "rotateCcw", "Reset view",       () => this.resetView()));
     g.appendChild(this.iconBtn("nav-fit",      "maximize",  "Fit all",          () => this.fit()));
     g.appendChild(this.iconBtn("nav-zoom-out", "zoomOut",   "Zoom out",         () => this.zoomOut(), true));
@@ -264,8 +265,8 @@ export class NavControls {
     const trigger = document.createElement("button");
     trigger.type = "button";
     trigger.id = "nav-more";
-    trigger.title = "More view controls";
-    trigger.setAttribute("aria-label", "More view controls");
+    trigger.title = t("More view controls");
+    trigger.setAttribute("aria-label", t("More view controls"));
     trigger.setAttribute("aria-haspopup", "true");
     trigger.setAttribute("aria-expanded", "false");
     trigger.innerHTML = glyph("more");
@@ -275,7 +276,7 @@ export class NavControls {
     pop.id = "nav-more-popup";
     pop.className = "hidden";
     pop.setAttribute("role", "group");
-    pop.setAttribute("aria-label", "More view controls");
+    pop.setAttribute("aria-label", t("More view controls"));
 
     // Rotate and Pan side by side — two 3x3 crosses stacked would double the height.
     const pair = document.createElement("div");
@@ -315,7 +316,7 @@ export class NavControls {
     const stepRow = document.createElement("div");
     stepRow.className = "nav-segments nav-step-picker";
     stepRow.setAttribute("role", "group");
-    stepRow.setAttribute("aria-label", "Rotate step");
+    stepRow.setAttribute("aria-label", t("Rotate step"));
 
     for (const step of ROTATE_STEPS) {
       const btn = document.createElement("button");

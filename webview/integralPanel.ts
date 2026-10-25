@@ -12,6 +12,7 @@
  * are synchronous and have no such moment.
  */
 
+import { t } from "../src/parser/i18n/runtime";
 import { glyph } from "../src/uiGlyphs";
 import { fmtPrecise as fmt } from "./panelWidgets";
 
@@ -59,11 +60,11 @@ export function renderIntegralPanel(
   header.className = "meshsize-header";
   const title = document.createElement("div");
   title.className = "meshsize-title";
-  title.textContent = "Field integrals";
+  title.textContent = t("Field integrals");
   header.appendChild(title);
   const closeBtn = document.createElement("button");
   closeBtn.className = "meshsize-close";
-  closeBtn.title = "Close";
+  closeBtn.title = t("Close");
   closeBtn.innerHTML = glyph("x");
   closeBtn.addEventListener("click", () => handlers.onClose());
   header.appendChild(closeBtn);
@@ -78,7 +79,7 @@ export function renderIntegralPanel(
     return;
   }
   if (!state.integrals) {
-    summary.textContent = "Integrating…";
+    summary.textContent = t("Integrating…");
     container.appendChild(summary);
     return;
   }
@@ -148,12 +149,12 @@ export function renderIntegralPanel(
   actions.className = "meshsize-actions";
   const refresh = document.createElement("button");
   refresh.className = "panel-btn";
-  refresh.textContent = "Recompute";
+  refresh.textContent = t("Recompute");
   refresh.addEventListener("click", () => handlers.onRefresh());
   actions.appendChild(refresh);
   const save = document.createElement("button");
   save.className = "panel-btn";
-  save.textContent = "Export CSV";
+  save.textContent = t("Export CSV");
   save.disabled = (state.integrals?.length ?? 0) === 0;
   save.addEventListener("click", () => handlers.onExport());
   actions.appendChild(save);

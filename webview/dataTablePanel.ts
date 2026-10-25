@@ -22,6 +22,7 @@
  * Export always writes the WHOLE table, never the visible page.
  */
 
+import { t } from "../src/parser/i18n/runtime";
 import {
   CellValue,
   ColumnType,
@@ -111,11 +112,11 @@ export function renderDataTablePanel(
   header.className = "meshsize-header";
   const title = document.createElement("div");
   title.className = "meshsize-title";
-  title.textContent = "Data table";
+  title.textContent = t("Data table");
   header.appendChild(title);
   const closeBtn = document.createElement("button");
   closeBtn.className = "meshsize-close";
-  closeBtn.title = "Close";
+  closeBtn.title = t("Close");
   closeBtn.innerHTML = glyph("x");
   closeBtn.addEventListener("click", () => handlers.onClose());
   header.appendChild(closeBtn);
@@ -285,7 +286,7 @@ function buildToolbar(
   );
   split.appendChild(cb2);
   split.appendChild(document.createTextNode("Split nodes"));
-  split.title = "One column per connectivity slot instead of one joined cell";
+  split.title = t("One column per connectivity slot instead of one joined cell");
   row.appendChild(split);
 
   const spacer = document.createElement("div");
@@ -298,8 +299,8 @@ function buildToolbar(
   // useful. The highlight alone is enough to say "this one".
   const frame = document.createElement("button");
   frame.className = "panel-btn";
-  frame.textContent = "Frame";
-  frame.title = "Zoom the 3D view to the selected row";
+  frame.textContent = t("Frame");
+  frame.title = t("Zoom the 3D view to the selected row");
   frame.disabled = state.selectedId === undefined;
   frame.addEventListener("click", () => handlers.onFrameSelection());
   row.appendChild(frame);
@@ -318,7 +319,7 @@ function buildToolbar(
   }
   bar.appendChild(row);
   if (handlers.onBuildPlot) {
-    const build = document.createElement("button"); build.className = "panel-btn"; build.textContent = "Plot builder…";
+    const build = document.createElement("button"); build.className = "panel-btn"; build.textContent = t("Plot builder…");
     build.addEventListener("click", handlers.onBuildPlot); bar.appendChild(build);
   }
   return bar;
@@ -357,8 +358,8 @@ function buildPager(
   goto.className = "dt-goto";
   goto.min = "1";
   goto.max = String(rowCount);
-  goto.placeholder = "row #";
-  goto.title = "Jump to a row number (1-based)";
+  goto.placeholder = t("row #");
+  goto.title = t("Jump to a row number (1-based)");
   goto.addEventListener("keydown", (ev) => {
     if (ev.key !== "Enter") return;
     const n = Number(goto.value);

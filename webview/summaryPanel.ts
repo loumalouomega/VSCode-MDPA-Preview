@@ -14,6 +14,7 @@
  * untrusted file, and this module is the one that renders the most of them.
  */
 
+import { t } from "../src/parser/i18n/runtime";
 import type { MeshSummary } from "../src/parser/meshSummary";
 
 /** Bytes as a short human string — a summary is about orders of magnitude. */
@@ -114,7 +115,7 @@ export function renderSummaryOverlay(
   header.className = "meshsize-header";
   const title = document.createElement("div");
   title.className = "meshsize-title";
-  title.textContent = "Header summary";
+  title.textContent = t("Header summary");
   header.appendChild(title);
   cardEl.appendChild(header);
 
@@ -239,10 +240,10 @@ export function renderSummaryOverlay(
   const btn = document.createElement("button");
   btn.id = "summary-open-full";
   btn.type = "button";
-  btn.textContent = "Open full mesh anyway";
+  btn.textContent = t("Open full mesh anyway");
   btn.addEventListener("click", () => {
     btn.disabled = true;
-    btn.textContent = "Loading…";
+    btn.textContent = t("Loading…");
     handlers.onOpenFull();
   });
   actions.appendChild(btn);
@@ -250,12 +251,12 @@ export function renderSummaryOverlay(
     const sel = document.createElement("button");
     sel.id = "summary-open-selected";
     sel.type = "button";
-    sel.textContent = "Open with selected fields";
-    sel.title = "Load the mesh reading only the ticked arrays (none ticked = all).";
+    sel.textContent = t("Open with selected fields");
+    sel.title = t("Load the mesh reading only the ticked arrays (none ticked = all).");
     sel.addEventListener("click", () => {
       sel.disabled = true;
       btn.disabled = true;
-      sel.textContent = "Loading…";
+      sel.textContent = t("Loading…");
       handlers.onOpenFull([...chosen]);
     });
     actions.appendChild(sel);

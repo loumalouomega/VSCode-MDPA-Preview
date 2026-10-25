@@ -14,6 +14,7 @@
  * re-renders.
  */
 
+import { t } from "../src/parser/i18n/runtime";
 import { glyph } from "../src/uiGlyphs";
 import { WIZARD_STEPS } from "../src/problemtype/windTunnel/form";
 import type { WindTunnelForm } from "../src/problemtype/windTunnel/form";
@@ -102,11 +103,11 @@ export function renderWindTunnelPanel(container: HTMLElement, state: WindTunnelP
   header.className = "meshsize-header";
   const title = document.createElement("div");
   title.className = "meshsize-title";
-  title.textContent = "Virtual wind tunnel";
+  title.textContent = t("Virtual wind tunnel");
   header.appendChild(title);
   const close = document.createElement("button");
   close.className = "meshsize-close";
-  close.title = "Close";
+  close.title = t("Close");
   close.innerHTML = glyph("x");
   close.addEventListener("click", () => h.onClose());
   header.appendChild(close);

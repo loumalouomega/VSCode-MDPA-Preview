@@ -32,6 +32,7 @@ export default defineConfig({
 
     nav: [
       { text: 'Getting Started', link: '/guide/getting-started' },
+      { text: 'Languages', link: '/guide/languages' },
       {
         text: 'Features',
         items: [

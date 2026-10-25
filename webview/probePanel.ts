@@ -14,6 +14,7 @@
  *  - a non-finite value is a gap too.
  */
 
+import { t } from "../src/parser/i18n/runtime";
 import type { ProbeResult } from "../src/parser/pathProbe";
 import { glyph } from "../src/uiGlyphs";
 import { CHART_FONT, CHART_INK, fmtPrecise, setupChartCanvas } from "./panelWidgets";
@@ -85,7 +86,7 @@ export function renderProbePanel(
   header.appendChild(title);
   const closeBtn = document.createElement("button");
   closeBtn.className = "meshsize-close";
-  closeBtn.title = "Close";
+  closeBtn.title = t("Close");
   closeBtn.innerHTML = glyph("x");
   closeBtn.addEventListener("click", () => handlers.onClose());
   header.appendChild(closeBtn);
@@ -95,7 +96,7 @@ export function renderProbePanel(
   bar.className = "series-toolbar";
   const label = document.createElement("label");
   label.className = "field-label";
-  label.textContent = "Field";
+  label.textContent = t("Field");
   bar.appendChild(label);
   const select = document.createElement("select");
   select.className = "field-select";
@@ -118,7 +119,7 @@ export function renderProbePanel(
 
   const sLabel = document.createElement("label");
   sLabel.className = "field-label";
-  sLabel.textContent = "Samples";
+  sLabel.textContent = t("Samples");
   bar.appendChild(sLabel);
   const samples = document.createElement("input");
   samples.type = "number";
@@ -127,7 +128,7 @@ export function renderProbePanel(
   samples.max = "100000";
   samples.step = "1";
   samples.value = String(state.samples);
-  samples.title = "Equidistant samples along the line (2 to 100000)";
+  samples.title = t("Equidistant samples along the line (2 to 100000)");
   samples.addEventListener("change", () => {
     const v = Math.round(Number(samples.value));
     if (Number.isFinite(v)) handlers.onSamples(Math.min(100000, Math.max(2, v)));
@@ -136,13 +137,13 @@ export function renderProbePanel(
 
   const csv = document.createElement("button");
   csv.className = "panel-btn";
-  csv.textContent = "CSV";
-  csv.title = "Save the current profile as CSV";
+  csv.textContent = t("CSV");
+  csv.title = t("Save the current profile as CSV");
   csv.disabled = !state.probe || state.probe.rows.length === 0;
   csv.addEventListener("click", () => handlers.onExport());
   bar.appendChild(csv);
   if (handlers.onBuildPlot) {
-    const build = document.createElement("button"); build.className = "panel-btn"; build.textContent = "Plot builder…";
+    const build = document.createElement("button"); build.className = "panel-btn"; build.textContent = t("Plot builder…");
     build.addEventListener("click", handlers.onBuildPlot); bar.appendChild(build);
   }
   container.appendChild(bar);

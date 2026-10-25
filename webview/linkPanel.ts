@@ -8,6 +8,7 @@
  * state the host last reported and posts the user's choices back.
  */
 
+import { t } from "../src/parser/i18n/runtime";
 import { glyph } from "../src/uiGlyphs";
 import { LINK_KINDS, LinkKind, LinkSettings, PaneLinkScope, TimeMethod, describeLink } from "../src/parser/previewLink";
 import { sectionLabel } from "./panelWidgets";
@@ -44,11 +45,11 @@ export function renderLinkPanel(container: HTMLElement, state: LinkPanelState, h
   header.className = "meshsize-header";
   const title = document.createElement("div");
   title.className = "meshsize-title";
-  title.textContent = "Link previews";
+  title.textContent = t("Link previews");
   header.appendChild(title);
   const closeBtn = document.createElement("button");
   closeBtn.className = "meshsize-close";
-  closeBtn.title = "Close";
+  closeBtn.title = t("Close");
   closeBtn.innerHTML = glyph("x");
   closeBtn.addEventListener("click", () => handlers.onClose());
   header.appendChild(closeBtn);
@@ -73,7 +74,7 @@ export function renderLinkPanel(container: HTMLElement, state: LinkPanelState, h
   if (state.linked) {
     const unlink = document.createElement("button");
     unlink.className = "panel-btn";
-    unlink.textContent = "Unlink";
+    unlink.textContent = t("Unlink");
     unlink.addEventListener("click", () => handlers.onUnlink());
     actions.appendChild(unlink);
   }
@@ -96,7 +97,7 @@ export function renderLinkPanel(container: HTMLElement, state: LinkPanelState, h
   container.appendChild(sectionLabel("Panes"));
   const scopeRow = document.createElement("div");
   scopeRow.className = "ui-segments";
-  scopeRow.title = "Which panes of a split layout an incoming linked change applies to. Reporting always reads the focused pane.";
+  scopeRow.title = t("Which panes of a split layout an incoming linked change applies to. Reporting always reads the focused pane.");
   for (const [value, label] of [["focused", "Focused pane"], ["all", "All panes"]] as const) {
     const seg = document.createElement("button");
     seg.className = "ui-seg";
@@ -112,7 +113,7 @@ export function renderLinkPanel(container: HTMLElement, state: LinkPanelState, h
   timeRow.className = "link-time";
   const method = document.createElement("select");
   method.className = "edit-sel";
-  method.setAttribute("aria-label", "Time matching");
+  method.setAttribute("aria-label", t("Time matching"));
   for (const [value, label] of [["exact", "Exact time"], ["nearest", "Nearest within tolerance"]] as const) {
     const o = document.createElement("option");
     o.value = value;
@@ -126,16 +127,16 @@ export function renderLinkPanel(container: HTMLElement, state: LinkPanelState, h
   tolerance.min = "0";
   tolerance.step = "any";
   tolerance.className = "edit-num";
-  tolerance.setAttribute("aria-label", "Time tolerance");
-  tolerance.title = "Largest time difference a nearest match may span, in the series' own time unit";
+  tolerance.setAttribute("aria-label", t("Time tolerance"));
+  tolerance.title = t("Largest time difference a nearest match may span, in the series' own time unit");
   tolerance.value = String(state.settings.timeTolerance);
   tolerance.disabled = !state.linked || !state.settings.time || state.settings.timeMethod !== "nearest";
   const offset = document.createElement("input");
   offset.type = "number";
   offset.step = "any";
   offset.className = "edit-num";
-  offset.setAttribute("aria-label", "Time offset");
-  offset.title = "Added to this preview's time after scaling, in the peer's time unit (peer looks up t × scale + offset)";
+  offset.setAttribute("aria-label", t("Time offset"));
+  offset.title = t("Added to this preview's time after scaling, in the peer's time unit (peer looks up t × scale + offset)");
   offset.value = String(state.settings.timeOffset);
   offset.disabled = !state.linked || !state.settings.time;
   const scale = document.createElement("input");
@@ -143,8 +144,8 @@ export function renderLinkPanel(container: HTMLElement, state: LinkPanelState, h
   scale.min = "0";
   scale.step = "any";
   scale.className = "edit-num";
-  scale.setAttribute("aria-label", "Time scale");
-  scale.title = "Multiplied with this preview's time before the offset (seconds vs milliseconds: ×1000)";
+  scale.setAttribute("aria-label", t("Time scale"));
+  scale.title = t("Multiplied with this preview's time before the offset (seconds vs milliseconds: ×1000)");
   scale.value = String(state.settings.timeScale);
   scale.disabled = !state.linked || !state.settings.time;
   const commitTime = (): void => {
@@ -166,7 +167,7 @@ export function renderLinkPanel(container: HTMLElement, state: LinkPanelState, h
   timeRow.append(method, tolerance);
   const mapRow = document.createElement("div");
   mapRow.className = "link-time";
-  mapRow.title = "Compare runs on different time bases: the peer looks up t × scale + offset for this preview's time t. Identity (×1 + 0) is plain physical-time matching.";
+  mapRow.title = t("Compare runs on different time bases: the peer looks up t × scale + offset for this preview's time t. Identity (×1 + 0) is plain physical-time matching.");
   mapRow.append(offset, scale);
   container.appendChild(timeRow);
   container.appendChild(mapRow);

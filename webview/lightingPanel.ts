@@ -2,6 +2,7 @@
 // balance + backface culling, applied to every current and future actor.
 // Pure DOM, mirrors qualityPanel.ts.
 
+import { t } from "../src/parser/i18n/runtime";
 import { glyph } from "../src/uiGlyphs";
 import { DEFAULT_LIGHT_SPEC, type LightMode, type LightSpec } from "../src/parser/render/lightMode";
 
@@ -83,11 +84,11 @@ export function renderLightingPanel(
   header.className = "field-header";
   const title = document.createElement("div");
   title.className = "field-title";
-  title.textContent = "Lighting";
+  title.textContent = t("Lighting");
   header.appendChild(title);
   const closeBtn = document.createElement("button");
   closeBtn.className = "field-close";
-  closeBtn.title = "Close";
+  closeBtn.title = t("Close");
   closeBtn.innerHTML = glyph("x");
   closeBtn.addEventListener("click", () => handlers.onClose());
   header.appendChild(closeBtn);
@@ -113,7 +114,7 @@ export function renderLightingPanel(
   );
   cullLabel.appendChild(cullCk);
   cullLabel.appendChild(document.createTextNode("Cull back faces"));
-  cullLabel.title = "Hide the inside surface of a shell — helps spot an inverted (flipped) element";
+  cullLabel.title = t("Hide the inside surface of a shell — helps spot an inverted (flipped) element");
   container.appendChild(cullLabel);
 
   if (options.displayFilters) {
@@ -135,7 +136,7 @@ export function renderLightingPanel(
     row.className = "field-row";
     const l = document.createElement("label");
     l.className = "field-label";
-    l.textContent = "Light";
+    l.textContent = t("Light");
     row.appendChild(l);
     const sel = document.createElement("select");
     sel.className = "field-select";
@@ -189,7 +190,7 @@ export function renderLightingPanel(
 
   const resetBtn = document.createElement("button");
   resetBtn.className = "inspect-frame-btn";
-  resetBtn.textContent = "Reset to defaults";
+  resetBtn.textContent = t("Reset to defaults");
   resetBtn.addEventListener("click", () => handlers.onReset());
   container.appendChild(resetBtn);
 }

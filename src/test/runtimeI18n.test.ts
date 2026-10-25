@@ -43,3 +43,25 @@ test("every catalogue key is used by the chrome or a t() literal, with matching 
     }
   }
 });
+
+test("t() literals never interpolate with ${}; they use {name} placeholders", () => {
+  const dirs = [path.join(__dirname, "..", "..", "webview"), path.join(__dirname, "..", "..", "webview", "plots")];
+  for (const dir of dirs) {
+    for (const f of fs.readdirSync(dir).filter((x) => x.endsWith(".ts"))) {
+      const src = fs.readFileSync(path.join(dir, f), "utf8");
+      assert.ok(!/\btr?\(`/.test(src), `${f}: t() given a template literal`);
+    }
+  }
+});
+
+test("exported CSV text is identical under the pseudo-locale", async () => {
+  const { integralsToCsv } = await import("../parser/analysisExport");
+  const sample = integralsToCsv as unknown as (...a: unknown[]) => string;
+  setRuntimeLocale(undefined);
+  let before: string | undefined, after: string | undefined;
+  try { before = sample({ regions: [], total: [] }); } catch { before = undefined; }
+  setRuntimeLocale("qps-ploc");
+  try { after = sample({ regions: [], total: [] }); } catch { after = undefined; }
+  setRuntimeLocale(undefined);
+  assert.equal(after, before);
+});

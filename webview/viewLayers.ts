@@ -5,6 +5,7 @@
 // prune-on-model-change rule in parser/userLayers.ts; deleting a layer never
 // deletes entities, parts or fields.
 
+import { t } from "../src/parser/i18n/runtime";
 import { glyph } from "../src/uiGlyphs";
 import { UserLayer, describeUserLayer, layerColorToHex } from "../src/parser/userLayers";
 
@@ -39,7 +40,7 @@ export function renderViewLayers(container: HTMLElement, state: ViewLayersState,
   if (state.layers.length === 0) {
     const hint = document.createElement("div");
     hint.className = "inspect-summary";
-    hint.textContent = "No view layers yet. Create one from blocks, parts or the active selection below.";
+    hint.textContent = t("No view layers yet. Create one from blocks, parts or the active selection below.");
     container.appendChild(hint);
   }
 
@@ -100,7 +101,7 @@ export function renderViewLayers(container: HTMLElement, state: ViewLayersState,
     const promote = document.createElement("button");
     promote.type = "button";
     promote.className = "panel-btn";
-    promote.textContent = "Promote";
+    promote.textContent = t("Promote");
     promote.title = `Create a real SubModelPart from "${l.name}" (undoable edit — the only way a view layer reaches the solver)`;
     promote.disabled = l.locked;
     promote.addEventListener("click", () => handlers.onPromote(l.id));
@@ -164,8 +165,8 @@ export function renderViewLayers(container: HTMLElement, state: ViewLayersState,
   nameInput.type = "text";
   nameInput.id = "vl-name";
   nameInput.className = "edit-text";
-  nameInput.placeholder = "Layer name";
-  nameInput.title = "View layer name (no / — that separator belongs to SubModelParts)";
+  nameInput.placeholder = t("Layer name");
+  nameInput.title = t("View layer name (no / — that separator belongs to SubModelParts)");
   form.appendChild(nameInput);
 
   const blocksDetails = document.createElement("details");
@@ -188,7 +189,7 @@ export function renderViewLayers(container: HTMLElement, state: ViewLayersState,
   if (state.blockIds.length === 0) {
     const empty = document.createElement("div");
     empty.className = "inspect-summary";
-    empty.textContent = "No blocks in the mesh.";
+    empty.textContent = t("No blocks in the mesh.");
     blocksBox.appendChild(empty);
   }
   blocksDetails.appendChild(blocksBox);
@@ -214,7 +215,7 @@ export function renderViewLayers(container: HTMLElement, state: ViewLayersState,
   if (state.partPaths.length === 0) {
     const empty = document.createElement("div");
     empty.className = "inspect-summary";
-    empty.textContent = "No SubModelParts in the mesh.";
+    empty.textContent = t("No SubModelParts in the mesh.");
     partsBox.appendChild(empty);
   }
   partsDetails.appendChild(partsBox);
@@ -225,10 +226,10 @@ export function renderViewLayers(container: HTMLElement, state: ViewLayersState,
   const selSel = document.createElement("select");
   selSel.id = "vl-selection";
   selSel.className = "edit-sel";
-  selSel.title = "Snapshot explicit ids from a selection set (frozen at creation, then pruned like any explicit pick)";
+  selSel.title = t("Snapshot explicit ids from a selection set (frozen at creation, then pruned like any explicit pick)");
   const none = document.createElement("option");
   none.value = "";
-  none.textContent = "No selection snapshot";
+  none.textContent = t("No selection snapshot");
   selSel.appendChild(none);
   for (const n of state.selectionNames) {
     const o = document.createElement("option");
@@ -242,8 +243,8 @@ export function renderViewLayers(container: HTMLElement, state: ViewLayersState,
   const add = document.createElement("button");
   add.type = "button";
   add.className = "panel-btn";
-  add.textContent = "Add view layer";
-  add.title = "Create a view-only layer from the checked blocks/parts and the selection snapshot";
+  add.textContent = t("Add view layer");
+  add.title = t("Create a view-only layer from the checked blocks/parts and the selection snapshot");
   add.addEventListener("click", () => {
     const name = nameInput.value.trim();
     if (!name) {
