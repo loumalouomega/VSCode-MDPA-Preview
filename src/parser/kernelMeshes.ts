@@ -2,7 +2,8 @@
  * New meshes made by meshio++ kernels that need no input beyond a skin or a
  * B-rep: procedural generators (17.9.0 / 17.11.0), the octree (17.8.0) and
  * octree-mesh (17.13.0) volume meshers, and the B-rep surface mesher
- * `meshCadSurface` (17.13.0).
+ * `meshCadSurface` (17.13.0; its angle-bound, curved-element, size-control and
+ * report options arrived with 17.19.0–17.21.0).
  *
  * Every one is a DERIVED mesh (a new file, never an edit of the open mesh), so
  * `deriveMesh.ts` dispatches here and the UI export and MCP `mesh_derive`
@@ -15,7 +16,7 @@
  */
 
 import type { MdpaDiagnostic, MdpaModel } from "./types";
-import { meshioToModel, modelToMeshio } from "./meshioConvert";
+import { meshioToModel, modelToMeshio, sanitizeVariable } from "./meshioConvert";
 import { loadMeshio } from "./meshio";
 import { triangleSurfaceOf } from "./gridSample";
 import { defaultBlockName } from "./cellInheritance";
@@ -177,6 +178,8 @@ export interface KernelMeshResult {
   model: MdpaModel;
   summary: string;
   suffix: string;
+  /** Present for `cadSurface`: the structured report behind the summary. */
+  cadSurface?: CadSurfaceReport;
 }
 
 /** Cells a generator will produce, estimated from the sizes alone, so a runaway request is refused before the wasm runs. */
@@ -310,7 +313,7 @@ export async function octreeModel(model: MdpaModel, spec: OctreeSpec, diagnostic
   };
 }
 
-/** Options of `meshCadSurface` (17.13.0). */
+/** Options of `meshCadSurface` (17.13.0; the angle, order, size and report controls 17.19.0–17.21.0). */
 export interface CadSurfaceSpec {
   kind: "cadSurface";
   /** The target edge length (required, > 0). */
@@ -323,7 +326,149 @@ export interface CadSurfaceSpec {
   matchUnreferencedTrims?: boolean;
   strict?: boolean;
   maxPoints?: number;
+  /** Refine until every surface triangle's smallest angle is at least this (degrees, under 60); 0 keeps the unrefined mesh. */
+  minAngle?: number;
+  /** Passes of guarded smoothing. */
+  smoothIterations?: number;
+  smoothMethod?: "laplacian" | "odt";
+  /** 1 (linear) or 2 (`triangle6` / `line3` on the surfaces); 3 is refused, see `validateCadSurfaceSpec`. */
+  order?: number;
+  /** Largest growth of the size, `|grad h| <= grading - 1` (0 = upstream's 1.5); only with the two size controls below. */
+  grading?: number;
+  /** Size each region so a chord sits at most this far from the surface (0 = off). */
+  curvatureDeviation?: number;
+  /** Size each region so at least this many elements span its local feature size (0 = off). */
+  cellsAcrossGaps?: number;
+  /** Rings of points seeded around each pole (0 to 8). */
+  poleRings?: number;
+  /** Sizes per B-rep face, `{faceIndex: size}` (0-based). */
+  faceSizes?: Record<number, number>;
+  /** The same per B-rep edge. */
+  edgeSizes?: Record<number, number>;
+  /**
+   * A mesh whose Nodal scalar `backgroundArray` is the size at its points,
+   * read at the nearest surface point. A parsed model rather than a path so the
+   * spec stays plain data (it crosses to the derived-mesh worker); the caller
+   * reads the file.
+   */
+  backgroundModel?: MdpaModel;
+  /** Where `backgroundModel` was read from (a label for the recorded recipe and provenance; the kernel never sees it). */
+  backgroundLabel?: string;
+  /** The Nodal scalar of `backgroundModel` that carries the size (default "size"). */
+  backgroundArray?: string;
+  metric?: "mean" | "varying";
+  virtualEdges?: boolean;
+  /** Mesh a face whose metric's condition number passes this in a flattening (0 = off, otherwise above 1; order 1 only). */
+  reparamConditionNumber?: number;
+  modelTolerances?: boolean;
+  virtualFaces?: boolean;
+  /** Lop acute corners in place of concentric shells; effective only with `minAngle` above 0. */
+  lopCorners?: boolean;
 }
+
+const CAD_SURFACE_ORDER_MESSAGE =
+  "order 3 gives triangle10 / line4 elements, which this extension cannot hold or draw (it carries linear and quadratic cells); use order 1 or 2.";
+
+/** The list caps of a `CadSurfaceReport`; every list reports its full length beside the kept entries. */
+const CAD_REPORT_LIST_LIMIT = 50;
+
+const isIndexMap = (v: unknown): v is Record<string, number> => typeof v === "object" && v !== null && !Array.isArray(v);
+
+/**
+ * Refuses by name, before the wasm runs, a `CadSurfaceSpec` the editable model
+ * cannot take or that is plainly malformed. The kernel validates ranges itself
+ * (and its messages are kept); this adds the order-3 refusal, which the kernel
+ * accepts, and the readable errors for the shapes callers get wrong.
+ * Returns `undefined` when fine, otherwise the message.
+ */
+export function validateCadSurfaceSpec(spec: CadSurfaceSpec): string | undefined {
+  if (!isNum(spec.targetSize) || !(spec.targetSize > 0)) return "targetSize must be a positive number.";
+  if (spec.order !== undefined && spec.order !== 1 && spec.order !== 2) {
+    return spec.order === 3 ? CAD_SURFACE_ORDER_MESSAGE : `order must be 1 or 2 (got ${String(spec.order)}).`;
+  }
+  const inRange = (name: string, v: number | undefined, lo: number, hi: number, integer = false): string | undefined =>
+    v === undefined ? undefined : !isNum(v) || v < lo || v >= hi || (integer && !Number.isInteger(v)) ? `${name} must be ${integer ? "an integer" : "a number"} in [${lo}, ${hi}).` : undefined;
+  const bad =
+    inRange("minAngle", spec.minAngle, 0, 60) ??
+    inRange("smoothIterations", spec.smoothIterations, 0, Infinity, true) ??
+    inRange("poleRings", spec.poleRings, 0, 9, true) ??
+    inRange("grading", spec.grading, 0, Infinity) ??
+    inRange("curvatureDeviation", spec.curvatureDeviation, 0, Infinity) ??
+    inRange("cellsAcrossGaps", spec.cellsAcrossGaps, 0, Infinity);
+  if (bad) return bad;
+  if (spec.smoothMethod !== undefined && spec.smoothMethod !== "laplacian" && spec.smoothMethod !== "odt") return 'smoothMethod must be "laplacian" or "odt".';
+  if (spec.metric !== undefined && spec.metric !== "mean" && spec.metric !== "varying") return 'metric must be "mean" or "varying".';
+  if (spec.reparamConditionNumber !== undefined) {
+    const c = spec.reparamConditionNumber;
+    if (!isNum(c) || (c !== 0 && c <= 1)) return "reparamConditionNumber must be 0 (off) or above 1.";
+    if (c !== 0 && (spec.order ?? 1) !== 1) return "reparamConditionNumber is order 1 only.";
+  }
+  for (const [what, map] of [["faceSizes", spec.faceSizes], ["edgeSizes", spec.edgeSizes]] as const) {
+    if (map === undefined) continue;
+    if (!isIndexMap(map)) return `${what} must be an object {index: size}.`;
+    for (const [k, v] of Object.entries(map)) {
+      if (!/^\d+$/.test(k)) return `${what}: "${k}" is not a 0-based index.`;
+      if (!isNum(v) || !(v > 0)) return `${what}: the size of ${k} must be a positive number.`;
+    }
+  }
+  if (spec.backgroundModel === undefined && spec.backgroundArray !== undefined) return "backgroundArray names a field of the background mesh, which was not given.";
+  return undefined;
+}
+
+/** The controls a caller may set beside `targetSize`; `backgroundPath` stands in for `backgroundModel` until the caller reads the file. */
+export type CadSurfaceOptionsInput = Partial<Omit<CadSurfaceSpec, "kind" | "targetSize" | "backgroundModel">> & { backgroundPath?: string };
+
+export const CAD_SURFACE_OPTION_KEYS: readonly string[] = [
+  "maxChordalDeviation", "minPointsPerEdge", "tolerance", "recordFaceIds", "edges", "matchUnreferencedTrims", "strict", "maxPoints",
+  "minAngle", "smoothIterations", "smoothMethod", "order", "grading", "curvatureDeviation", "cellsAcrossGaps", "poleRings",
+  "faceSizes", "edgeSizes", "backgroundPath", "backgroundArray", "metric", "virtualEdges", "reparamConditionNumber",
+  "modelTolerances", "virtualFaces", "lopCorners",
+];
+
+/**
+ * Reads a caller-supplied options object (the JSON of the File-menu prompt, an
+ * MCP `cadOptions`) into the options of a spec, refusing a key it does not know
+ * by name (a typo would otherwise be silently ignored by the kernel's option
+ * reader) and a non-object. Values are validated later by `validateCadSurfaceSpec`.
+ */
+export function cadSurfaceOptionsFrom(raw: unknown): CadSurfaceOptionsInput {
+  if (raw === undefined || raw === null) return {};
+  if (typeof raw !== "object" || Array.isArray(raw)) throw new Error("The CAD meshing options must be an object, e.g. {\"minAngle\": 25, \"order\": 2}.");
+  const unknown = Object.keys(raw).filter((k) => !CAD_SURFACE_OPTION_KEYS.includes(k));
+  if (unknown.length) throw new Error(`Unknown CAD meshing option(s): ${unknown.join(", ")}. Known: ${CAD_SURFACE_OPTION_KEYS.join(", ")}.`);
+  return defined(raw as Record<string, unknown>) as CadSurfaceOptionsInput;
+}
+
+/** The structured report behind a `cadSurface` summary (lists capped at 50; `*Count` is the full length). */
+export interface CadSurfaceReport {
+  faces: number;
+  triangles: number;
+  points: number;
+  failedFaces: { face: number; status: string; reason?: string }[];
+  edges: { total: number; open: number; nonManifold: number; misoriented: number; maxGap: number };
+  edgeLength: { min: number; max: number };
+  angleDeg: { min: number; max: number };
+  /** Every angle of every triangle, in 18 bins of 10 degrees. */
+  angleHistogram: number[];
+  refinementPoints: number;
+  smoothed: number;
+  curvedStraightened: number;
+  /** Whether the angle bound was asked for and what the input allows. */
+  angleBound: { requested: number; minInputAngleDeg: number; belowBound: boolean; boundDeg: number; facesBelowBound: number } | undefined;
+  corners: unknown[];
+  cornersCount: number;
+  limitedByEdges: number[];
+  limitedByEdgesCount: number;
+  virtualEdges: number[][];
+  virtualEdgesCount: number;
+  reparametrised: unknown[];
+  mergedFaces: unknown[];
+  toleranceUses: unknown[];
+  loppedCorners: unknown[];
+  warnings: string[];
+}
+
+const cap = <T>(list: T[] | undefined): T[] => (list ?? []).slice(0, CAD_REPORT_LIST_LIMIT);
 
 /** The faces of the model's B-rep (its NURBS side channel) triangulated into one conforming surface. */
 export async function cadSurfaceModel(model: MdpaModel, spec: CadSurfaceSpec, diagnostics: MdpaDiagnostic[] = []): Promise<KernelMeshResult> {
@@ -334,23 +479,121 @@ export async function cadSurfaceModel(model: MdpaModel, spec: CadSurfaceSpec, di
         "Open a .cad.json (or a .step/.igs read, which runs on the full artifact) — and only while the model is unedited, because any edit invalidates the channel."
     );
   }
-  if (!isNum(spec.targetSize) || !(spec.targetSize > 0)) throw new Error("targetSize must be a positive number.");
+  const problem = validateCadSurfaceSpec(spec);
+  if (problem) throw new Error(problem);
   if (channel.format !== "cad_json") {
     throw new Error(`The side channel is ${channel.format}; a CAD surface mesh needs a B-rep (a .cad.json, or a STEP/IGES read).`);
   }
-  const { kind: _kind, ...options } = spec;
+  const { kind: _kind, backgroundModel, backgroundArray, backgroundLabel: _label, ...options } = spec;
+  const kernelOptions: Record<string, unknown> = { ...options };
+  if (backgroundModel) {
+    const name = backgroundArray ?? "size";
+    const mesh = modelToMeshio(backgroundModel, diagnostics, { dim: 3 });
+    const sizes = (mesh.point_data ?? {})[name] ?? (mesh.point_data ?? {})[sanitizeVariable(name)];
+    const width = (mesh.point_data_components ?? {})[name] ?? 1;
+    if (!sizes || width !== 1) {
+      const scalars = backgroundModel.fields.filter((f) => f.kind === "Nodal" && f.components === 1).map((f) => f.variable);
+      throw new Error(
+        `The background mesh has no one-component Nodal field "${name}"` +
+          (scalars.length ? ` (it has: ${scalars.join(", ")}).` : " (it has no scalar Nodal field).")
+      );
+    }
+    kernelOptions.background = { ...mesh, point_data: { [name]: sizes }, point_data_components: undefined, cell_data: {}, cell_data_components: undefined };
+    kernelOptions.backgroundArray = name;
+  }
   const m = await loadMeshio();
-  const r = m.meshCadSurface(channel.info as Parameters<typeof m.meshCadSurface>[0], defined(options) as unknown as Parameters<typeof m.meshCadSurface>[1]);
+  const r = m.meshCadSurface(channel.info as Parameters<typeof m.meshCadSurface>[0], defined(kernelOptions) as unknown as Parameters<typeof m.meshCadSurface>[1]);
   const read = legalFields(withKratosBlockNames(meshioToModel(r.mesh as Parameters<typeof meshioToModel>[0], diagnostics)), { cad_face: "CAD_FACE", cad_edge: "CAD_EDGE" });
   const failed = r.faces.filter((f) => f.status !== "ok");
+  // The bound, corner and edge-limit facts are per face; the report states them for the whole surface.
+  const recs = r.faces;
+  const corners = recs.flatMap((x) => x.corners ?? []);
+  const limitedByEdges = [...new Set(recs.flatMap((x) => x.limitedByEdges ?? []))].sort((a, b) => a - b);
+  const report: CadSurfaceReport = {
+    faces: r.numFaces,
+    triangles: r.numTriangles,
+    points: r.numPoints,
+    failedFaces: failed.slice(0, CAD_REPORT_LIST_LIMIT).map((x) => ({ face: x.face, status: x.status, reason: x.reason })),
+    edges: { total: r.numEdges, open: r.numOpenEdges, nonManifold: r.numNonManifoldEdges, misoriented: r.numMisorientedEdges, maxGap: r.maxEdgeGap },
+    edgeLength: { min: r.minEdge, max: r.maxEdge },
+    angleDeg: { min: r.minAngleDeg, max: r.maxAngleDeg },
+    angleHistogram: r.angleHistogram ?? [],
+    refinementPoints: r.numRefinementPoints ?? 0,
+    smoothed: r.numSmoothed ?? 0,
+    curvedStraightened: r.numCurvedStraightened ?? 0,
+    angleBound:
+      spec.minAngle !== undefined && spec.minAngle > 0
+        ? {
+            requested: spec.minAngle,
+            minInputAngleDeg: Math.min(180, ...recs.map((x) => x.minInputAngleDeg ?? 180)),
+            belowBound: recs.some((x) => x.belowBound),
+            // The smallest angle of the triangles no corner forces, over every face.
+            boundDeg: Math.min(...recs.map((x) => x.boundDeg ?? 180)),
+            facesBelowBound: r.numFacesBelowBound ?? 0,
+          }
+        : undefined,
+    corners: cap(corners),
+    cornersCount: corners.length,
+    limitedByEdges: limitedByEdges.slice(0, CAD_REPORT_LIST_LIMIT),
+    limitedByEdgesCount: limitedByEdges.length,
+    virtualEdges: cap(r.virtualEdges),
+    virtualEdgesCount: r.virtualEdges?.length ?? 0,
+    reparametrised: cap(r.reparametrised),
+    mergedFaces: cap(r.mergedFaces),
+    toleranceUses: cap(r.toleranceUses),
+    loppedCorners: cap(r.loppedCorners),
+    warnings: r.warnings ?? [],
+  };
+  return { model: read, summary: describeCadSurface(report, spec), suffix: "cad_surface", cadSurface: report };
+}
+
+/** The one or two paragraphs a `cadSurface` run reports: what was meshed, and what each option did. */
+export function describeCadSurface(r: CadSurfaceReport, spec: Pick<CadSurfaceSpec, "minAngle" | "order" | "lopCorners">): string {
   const f = (x: number) => (Number.isFinite(x) ? +x.toPrecision(3) : "n/a");
+  const n = (x: number) => x.toLocaleString("en-US");
   const parts = [
-    `B-rep surface mesh of ${r.numFaces} face(s): ${r.numTriangles.toLocaleString("en-US")} triangle(s), ${r.numPoints.toLocaleString("en-US")} point(s), edge length ${f(r.minEdge)}–${f(r.maxEdge)}, angles ${f(r.minAngleDeg)}°–${f(r.maxAngleDeg)}°.`,
-    `Edges: ${r.numEdges} (${r.numOpenEdges} open, ${r.numNonManifoldEdges} non-manifold, ${r.numMisorientedEdges} misoriented), largest gap between faces ${f(r.maxEdgeGap)}.`,
+    `B-rep surface mesh of ${r.faces} face(s): ${n(r.triangles)} triangle(s), ${n(r.points)} point(s), edge length ${f(r.edgeLength.min)}–${f(r.edgeLength.max)}, angles ${f(r.angleDeg.min)}°–${f(r.angleDeg.max)}°.`,
+    `Edges: ${r.edges.total} (${r.edges.open} open, ${r.edges.nonManifold} non-manifold, ${r.edges.misoriented} misoriented), largest gap between faces ${f(r.edges.maxGap)}.`,
   ];
-  if (failed.length > 0) {
-    parts.push(`${failed.length} face(s) NOT meshed: ${failed.slice(0, 5).map((x) => `#${x.face} ${x.status}${x.reason ? ` (${x.reason})` : ""}`).join("; ")}${failed.length > 5 ? "; …" : ""}.`);
+  if (spec.order === 2) {
+    parts.push(
+      `Quadratic output (triangle6 / line3 on the surfaces)` +
+        (r.curvedStraightened > 0 ? `; ${r.curvedStraightened} element(s) whose Jacobian was not positive everywhere were kept straight-sided.` : ".")
+    );
+  }
+  if (r.angleBound) {
+    const b = r.angleBound;
+    parts.push(
+      `Angle bound ${f(b.requested)}°: ${r.refinementPoints} refinement point(s)` +
+        (r.smoothed > 0 ? `, ${r.smoothed} smoothed` : "") +
+        (b.belowBound
+          ? `; ${r.cornersCount} corner/pole(s) on ${b.facesBelowBound} face(s) force triangles under it` +
+            (b.minInputAngleDeg < 180 ? ` (the sharpest input corner is ${f(b.minInputAngleDeg)}°)` : "") +
+            `, every other triangle is at least ${f(b.boundDeg)}°.`
+          : `; met (smallest angle ${f(b.boundDeg)}°).`)
+    );
+  } else if (r.smoothed > 0 || r.refinementPoints > 0) {
+    parts.push(`${r.refinementPoints} refinement point(s), ${r.smoothed} smoothed.`);
+  }
+  if (spec.lopCorners && !(spec.minAngle && spec.minAngle > 0)) parts.push("lopCorners has no effect without minAngle above 0.");
+  if (r.loppedCorners.length > 0) {
+    const bad = (r.loppedCorners as { guaranteed?: boolean }[]).filter((c) => c.guaranteed === false).length;
+    parts.push(`${r.loppedCorners.length} corner(s) lopped${bad ? `, ${bad} without the guarantee (see the report)` : ", every bound guaranteed"}.`);
+  }
+  if (r.limitedByEdgesCount > 0) parts.push(`Edge sizes limit the mesh at ${r.limitedByEdgesCount} edge(s): ${r.limitedByEdges.slice(0, 8).join(", ")}${r.limitedByEdgesCount > 8 ? ", …" : ""}.`);
+  if (r.virtualEdgesCount > 0) parts.push(`${r.virtualEdgesCount} virtual edge chain(s) sampled as one.`);
+  if (r.reparametrised.length > 0) {
+    const taken = (r.reparametrised as { taken?: boolean }[]).filter((x) => x.taken).length;
+    parts.push(`${r.reparametrised.length} face(s) over the reparametrisation condition number, ${taken} flattened.`);
+  }
+  if (r.mergedFaces.length > 0) {
+    const merged = (r.mergedFaces as { merged?: boolean }[]).filter((x) => x.merged).length;
+    parts.push(`${r.mergedFaces.length} sliver face(s) found, ${merged} meshed with a neighbour.`);
+  }
+  if (r.toleranceUses.length > 0) parts.push(`Declared tolerances accepted ${r.toleranceUses.length} gap(s).`);
+  if (r.failedFaces.length > 0) {
+    parts.push(`${r.failedFaces.length} face(s) NOT meshed: ${r.failedFaces.slice(0, 5).map((x) => `#${x.face} ${x.status}${x.reason ? ` (${x.reason})` : ""}`).join("; ")}${r.failedFaces.length > 5 ? "; …" : ""}.`);
   }
   if (r.warnings.length) parts.push(r.warnings.join(" "));
-  return { model: read, summary: parts.join(" "), suffix: "cad_surface" };
+  return parts.join(" ");
 }
