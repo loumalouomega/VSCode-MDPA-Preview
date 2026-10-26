@@ -7130,6 +7130,14 @@ function renderInspectUI(): void {
       const kind=target==="node"?"Nodal":inspectSelection?.entity?.kind==="Condition"?"Conditional":"Elemental";
       vscode.postMessage({type:"saveMonitor",kind,entityId:selection.id,variable});
     },
+    onSavePointMonitor: (variable)=>{
+      const node=inspectSelection?.node;if(!node)return;
+      vscode.postMessage({type:"saveMonitor",source:"point",variable,coordinates:[node.coords[0],node.coords[1],node.coords[2]]});
+    },
+    onSaveRegionMonitor: (path)=>{
+      const fields=fieldInfos.map(info=>({variable:info.field.variable,kind:info.field.kind,components:info.field.components}));
+      vscode.postMessage({type:"saveMonitor",source:"region",submodelpart:path,fields});
+    },
     onToggleMeasureAngle: () => {
       measureAngle = !measureAngle;
       measurePicked = [];

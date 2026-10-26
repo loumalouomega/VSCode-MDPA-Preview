@@ -11,7 +11,17 @@ import * as vscode from "vscode";
 
 import { findMonitorCases } from "./problemtype/monitorsFile";
 import { readMonitors, writeMonitors } from "./problemtype/monitorsFile";
-import { suggestMonitor, upsertMonitor, validateMonitor } from "./problemtype/monitors";
+import {
+  needsReferencePoint,
+  parseXyz,
+  regionOperationsFor,
+  suggestMonitor,
+  suggestPointMonitor,
+  suggestRegionMonitor,
+  upsertMonitor,
+  validateMonitor,
+} from "./problemtype/monitors";
+import type { RegionOperation } from "./parser/plot/types";
 
 export async function saveMonitorFromViewer(resultPath: string, msg: Record<string, unknown>): Promise<void> {
   const cases = findMonitorCases(resultPath);
@@ -32,15 +42,11 @@ export async function saveMonitorFromViewer(resultPath: string, msg: Record<stri
   }
   const read = readMonitors(chosen.meshPath);
   for (const w of read.parsed.warnings) void vscode.window.showWarningMessage(w);
-  const spec = { kind: msg.kind as "Nodal" | "Elemental" | "Conditional", entityId: Number(msg.entityId), variable: String(msg.variable ?? "") };
-  const suggested = suggestMonitor(spec, read.parsed.monitors);
-  const name = await vscode.window.showInputBox({ title: "Monitor name", value: suggested.name, prompt: "Shown in Kratos Runs and in exports" });
+  const built = await buildSource(msg, read.parsed.monitors);
+  if (!built) return;
+  const name = await vscode.window.showInputBox({ title: "Monitor name", value: built.name, prompt: "Shown in Kratos Runs and in exports" });
   if (name === undefined) return;
-  const { monitor, problem } = validateMonitor({
-    id: suggested.id,
-    name: name || suggested.name,
-    source: { type: "history", kind: spec.kind, entityId: spec.entityId, variable: spec.variable },
-  });
+  const { monitor, problem } = validateMonitor({ id: built.id, name: name || built.name, source: built.source });
   if (!monitor) {
     void vscode.window.showErrorMessage(problem ?? "The monitor is not valid.");
     return;
@@ -51,4 +57,56 @@ export async function saveMonitorFromViewer(resultPath: string, msg: Record<stri
   } catch (err) {
     void vscode.window.showErrorMessage(err instanceof Error ? err.message : String(err));
   }
+}
+
+interface BuiltMonitor {
+  id: string;
+  name: string;
+  source: Record<string, unknown>;
+}
+
+/** Turns the viewer's message into a monitor source, asking only for what the click cannot say. */
+async function buildSource(msg: Record<string, unknown>, existing: readonly { id: string }[]): Promise<BuiltMonitor | undefined> {
+  const variable = String(msg.variable ?? "");
+  if (msg.source === "point") {
+    const coordinates = Array.isArray(msg.coordinates) ? parseXyz(msg.coordinates.join(",")) : undefined;
+    if (!coordinates) {
+      void vscode.window.showErrorMessage("The picked node has no usable coordinates.");
+      return undefined;
+    }
+    return { ...suggestPointMonitor({ variable, coordinates }, existing), source: { type: "point", variable, coordinates } };
+  }
+  if (msg.source === "region") {
+    const fields = (Array.isArray(msg.fields) ? msg.fields : []).filter(
+      (f): f is { variable: string; kind: string; components: number } =>
+        !!f && typeof f === "object" && typeof (f as { variable?: unknown }).variable === "string"
+    );
+    if (fields.length === 0) {
+      void vscode.window.showInformationMessage("This mesh has no fields to monitor.");
+      return undefined;
+    }
+    const field = await vscode.window.showQuickPick(
+      fields.map((f) => ({ label: f.variable, description: `${f.kind}, ${f.components} component${f.components === 1 ? "" : "s"}`, f })),
+      { title: "Monitor which field?" }
+    );
+    if (!field) return undefined;
+    const op = await vscode.window.showQuickPick(
+      regionOperationsFor(Number(field.f.components) || 1).map((label) => ({ label })),
+      { title: `Quantity of ${field.f.variable} over ${msg.submodelpart ? String(msg.submodelpart) : "the whole mesh"}` }
+    );
+    if (!op) return undefined;
+    const operation = op.label as RegionOperation;
+    const submodelpart = typeof msg.submodelpart === "string" && msg.submodelpart ? msg.submodelpart : undefined;
+    const source: Record<string, unknown> = { type: "region", kind: field.f.kind, variable: field.f.variable, operation };
+    if (submodelpart) source.submodelpart = submodelpart;
+    if (needsReferencePoint(operation)) {
+      const text = await vscode.window.showInputBox({ title: "Moment reference point", prompt: "x, y, z (never assumed)", validateInput: (v) => (parseXyz(v) ? undefined : "Enter three numbers: x, y, z") });
+      const point = text === undefined ? undefined : parseXyz(text);
+      if (!point) return undefined;
+      source.referencePoint = point;
+    }
+    return { ...suggestRegionMonitor({ operation, variable: field.f.variable, submodelpart }, existing), source };
+  }
+  const spec = { kind: msg.kind as "Nodal" | "Elemental" | "Conditional", entityId: Number(msg.entityId), variable };
+  return { ...suggestMonitor(spec, existing), source: { type: "history", kind: spec.kind, entityId: spec.entityId, variable } };
 }

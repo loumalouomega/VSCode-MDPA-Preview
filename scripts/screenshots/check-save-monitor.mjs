@@ -45,7 +45,28 @@ const nodeId = await page.evaluate(() => {
   const s = [...document.querySelectorAll("#inspect-panel .inspect-section")].map((e) => e.textContent ?? "").find((t) => t.startsWith("Nearest node"));
   return s ? Number(s.replace(/\D+/g, "")) : undefined;
 });
-if (!nodeId) { fail("the pick did not resolve to a node"); await browser.close(); process.exit(); }
+if (!nodeId) { fail("the pick did not resolve to a node"); // Coordinate monitor: the node section's "At point" button posts the node's coordinates.
+await page.evaluate(() => { window.SENT_MESSAGES.length = 0; });
+const pointLabels = await page.evaluate(() => [...document.querySelectorAll("#inspect-panel .inspect-point-monitor-btn")].map((b) => b.getAttribute("aria-label")));
+const pointIdx = pointLabels.findIndex((l) => /PRESSURE/.test(l ?? ""));
+if (pointIdx < 0) fail(`no At point button for PRESSURE among ${JSON.stringify(pointLabels)}`);
+else {
+  await page.evaluate((i) => document.querySelectorAll("#inspect-panel .inspect-point-monitor-btn")[i]?.click(), pointIdx);
+  await page.waitForTimeout(200);
+  const p = await page.evaluate(() => window.SENT_MESSAGES.filter((m) => m.type === "saveMonitor"));
+  if (p.length !== 1 || p[0].source !== "point" || p[0].variable !== "PRESSURE" || !Array.isArray(p[0].coordinates) || p[0].coordinates.length !== 3 || !p[0].coordinates.every(Number.isFinite)) fail(`wrong point payload ${JSON.stringify(p)}`);
+  else console.log(`OK: point monitor at ${JSON.stringify(p[0].coordinates)}`);
+}
+// Regional monitor: present only when the picked entity belongs to a SubModelPart.
+const regionButtons = await page.evaluate(() => document.querySelectorAll("#inspect-panel .inspect-region-monitor-btn").length);
+if (regionButtons > 0) {
+  await page.evaluate(() => { window.SENT_MESSAGES.length = 0; document.querySelector("#inspect-panel .inspect-region-monitor-btn")?.click(); });
+  await page.waitForTimeout(200);
+  const r = await page.evaluate(() => window.SENT_MESSAGES.filter((m) => m.type === "saveMonitor"));
+  if (r.length !== 1 || r[0].source !== "region" || typeof r[0].submodelpart !== "string" || !Array.isArray(r[0].fields) || r[0].fields.length === 0) fail(`wrong region payload ${JSON.stringify(r)}`);
+  else console.log(`OK: region monitor of ${r[0].submodelpart} offering ${r[0].fields.length} fields`);
+} else console.log("note: the picked entity belongs to no SubModelPart, so the region button was not exercised");
+await browser.close(); process.exit(); }
 await page.evaluate(() => { window.SENT_MESSAGES.length = 0; });
 const labels = await page.evaluate(() => [...document.querySelectorAll("#inspect-panel .inspect-monitor-btn")].map((b) => b.getAttribute("aria-label")));
 const pressure = labels.findIndex((l) => /PRESSURE/.test(l ?? ""));

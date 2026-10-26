@@ -25,7 +25,12 @@ import {
   parseMonitorsJson,
   serializeMonitors,
   strideSteps,
+  needsReferencePoint,
+  parseXyz,
+  regionOperationsFor,
   suggestMonitor,
+  suggestPointMonitor,
+  suggestRegionMonitor,
   summarizeMonitor,
   upsertMonitor,
   validateMonitor,
@@ -109,6 +114,35 @@ test("a monitor saved from the viewer gets a fresh valid id and never replaces a
     const { id, name } = suggestMonitor(spec, []);
     assert.ok(validateMonitor({ id, name, source: { type: "history", kind: spec.kind, entityId: spec.entityId, variable: spec.variable.slice(0, 128) } }).monitor, id);
   }
+});
+
+test("point and region monitors saved from the viewer validate and never collide", () => {
+  const point = suggestPointMonitor({ variable: "TEMP", coordinates: [1, 2.123456789, 0] }, []);
+  assert.deepEqual(point, { id: "TEMP_pt", name: "TEMP at (1, 2.12346, 0)" });
+  assert.equal(suggestPointMonitor({ variable: "TEMP", coordinates: [0, 0, 0] }, [{ id: "TEMP_pt" }]).id, "TEMP_pt_2");
+  assert.ok(validateMonitor({ ...point, source: { type: "point", variable: "TEMP", coordinates: [1, 2, 0] } }).monitor);
+
+  const region = suggestRegionMonitor({ operation: "boundaryMean", variable: "PRESSURE", submodelpart: "Outer/Outlet" }, []);
+  assert.equal(region.id, "boundaryMean_PRESSURE_Outer_Outlet");
+  assert.equal(suggestRegionMonitor({ operation: "mean", variable: "T" }, []).name, "mean T in mesh");
+  assert.equal(suggestRegionMonitor({ operation: "mean", variable: "T" }, [{ id: "mean_T_mesh" }]).id, "mean_T_mesh_2");
+  assert.ok(validateMonitor({ ...region, source: { type: "region", kind: "Nodal", variable: "PRESSURE", operation: "boundaryMean", submodelpart: "Outer/Outlet" } }).monitor);
+  const long = suggestRegionMonitor({ operation: "reactionMoment", variable: "V".repeat(100), submodelpart: "P".repeat(100) }, []);
+  assert.ok(/^[A-Za-z0-9_.-]{1,64}$/.test(long.id));
+});
+
+test("reference points are parsed strictly and moments require one", () => {
+  assert.deepEqual(parseXyz("1, 2 ,3"), [1, 2, 3]);
+  assert.deepEqual(parseXyz("(0.5 -1 2e1)"), [0.5, -1, 20]);
+  for (const bad of ["", "1,2", "1,2,3,4", "a,b,c", "1,2,NaN"]) assert.equal(parseXyz(bad), undefined, bad);
+  assert.ok(needsReferencePoint("reactionMoment") && needsReferencePoint("pressureMoment") && !needsReferencePoint("mean"));
+  assert.equal(validateMonitor({ id: "m", source: { type: "region", kind: "Nodal", variable: "R", operation: "reactionMoment" } }).monitor, undefined);
+});
+
+test("region operations offered follow the field width", () => {
+  assert.ok(regionOperationsFor(1).includes("pressureForce") && !regionOperationsFor(1).includes("flux"));
+  assert.ok(regionOperationsFor(3).includes("flux") && regionOperationsFor(3).includes("reactionMoment") && !regionOperationsFor(3).includes("pressureForce"));
+  assert.deepEqual(regionOperationsFor(9).includes("flux"), false);
 });
 
 // --- stride ----------------------------------------------------------------
