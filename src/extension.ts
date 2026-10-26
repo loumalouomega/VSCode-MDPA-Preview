@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import { setRuntimeLocale } from "./parser/i18n/runtime";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { MdpaEditorProvider } from "./mdpaEditorProvider";
@@ -36,6 +37,7 @@ import { openPlotBuilder } from "./plotController";
 import { previewMaterialTables } from "./materialsPreview";
 
 export function activate(context: vscode.ExtensionContext): void {
+  setRuntimeLocale(vscode.env.language);
   // Linked previews: the hub relays view state between two open previews; the
   // only vscode piece it needs is the choice of which preview to link with.
   previewLinks.pickPeer = async (_requester, candidates) => {

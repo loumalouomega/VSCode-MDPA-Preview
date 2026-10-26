@@ -244,6 +244,59 @@ export function suggestMonitor(
   return { id, name: `${spec.variable} at ${noun} ${spec.entityId}` };
 }
 
+const sanitizeId = (text: string): string => text.replace(/[^A-Za-z0-9_.-]/g, "_");
+
+function uniqueId(base: string, existing: readonly Pick<MonitorDefinition, "id">[]): string {
+  const taken = new Set(existing.map((m) => m.id));
+  let id = base;
+  for (let n = 2; taken.has(id); n++) id = `${base}_${n}`;
+  return id;
+}
+
+/** `x, y, z` (commas and/or spaces) as three finite numbers; anything else is undefined. */
+export function parseXyz(text: string): [number, number, number] | undefined {
+  const parts = text.trim().replace(/^[([]|[)\]]$/g, "").split(/[\s,;]+/).filter(Boolean);
+  if (parts.length !== 3) return undefined;
+  const v = parts.map(Number);
+  return v.every(Number.isFinite) ? [v[0], v[1], v[2]] : undefined;
+}
+
+const fmtCoord = (v: number): string => String(Number(v.toPrecision(6)));
+
+/** Id and name for a coordinate (`point`) monitor saved from the viewer; collision-free like `suggestMonitor`. */
+export function suggestPointMonitor(
+  spec: { variable: string; coordinates: readonly [number, number, number] },
+  existing: readonly Pick<MonitorDefinition, "id">[]
+): { id: string; name: string } {
+  const id = uniqueId(`${sanitizeId(spec.variable)}_pt`.slice(0, 60), existing);
+  return { id, name: `${spec.variable} at (${spec.coordinates.map(fmtCoord).join(", ")})` };
+}
+
+/** Id and name for a `region` monitor; an empty or absent part means the whole mesh. */
+export function suggestRegionMonitor(
+  spec: { operation: RegionOperation; variable: string; submodelpart?: string },
+  existing: readonly Pick<MonitorDefinition, "id">[]
+): { id: string; name: string } {
+  const where = spec.submodelpart ? spec.submodelpart : "mesh";
+  const id = uniqueId(sanitizeId(`${spec.operation}_${spec.variable}_${where}`).slice(0, 60), existing);
+  return { id, name: `${spec.operation} ${spec.variable} in ${where}` };
+}
+
+/** True for the operations whose definition must carry an explicit reference point. */
+export const needsReferencePoint = (op: RegionOperation): boolean => op === "reactionMoment" || op === "pressureMoment";
+
+/**
+ * The region operations that make sense for a field of `components` values:
+ * statistics and integrals for any width, `flux`/`reactionMoment` only for a
+ * vector, `pressureForce`/`pressureMoment` only for a scalar.
+ */
+export function regionOperationsFor(components: number): RegionOperation[] {
+  const any: RegionOperation[] = ["min", "max", "mean", "sum", "boundaryMean", "boundaryIntegral", "measureIntegral"];
+  if (components === 1) return [...any, "pressureForce", "pressureMoment"];
+  if (components >= 2 && components <= 3) return [...any, "flux", "reactionMoment"];
+  return any;
+}
+
 /** Adds or replaces (by id) one definition; the order of existing monitors is kept. */
 export function upsertMonitor(monitors: readonly MonitorDefinition[], monitor: MonitorDefinition): MonitorDefinition[] {
   const at = monitors.findIndex((m) => m.id === monitor.id);

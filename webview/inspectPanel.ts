@@ -80,6 +80,10 @@ export interface InspectPanelHandlers {
   /** Keep this field at this entity as a named monitor of the owning case. Offered
    *  beside Plot, under the same condition: it needs a time series to follow. */
   onSaveMonitor?(target: "entity" | "node", variable: string): void;
+  /** Keep a nodal field at this node's coordinates (survives remeshing) as a monitor. */
+  onSavePointMonitor?(variable: string): void;
+  /** Keep a regional quantity of a SubModelPart ("" = the whole mesh) as a monitor. */
+  onSaveRegionMonitor?(path: string): void;
 }
 
 function fmtValue(v: number | [number, number, number]): string {
@@ -107,7 +111,7 @@ function row(label: string, value: string): HTMLElement {
   return el;
 }
 
-function fieldsTable(fields: InspectFieldValue[],plot?:(variable:string)=>void,monitor?:(variable:string)=>void): HTMLElement {
+function fieldsTable(fields: InspectFieldValue[],plot?:(variable:string)=>void,monitor?:(variable:string)=>void,pointMonitor?:(variable:string)=>void): HTMLElement {
   const wrap = document.createElement("div");
   wrap.className = "inspect-fields";
   if (fields.length === 0) {
@@ -121,15 +125,28 @@ function fieldsTable(fields: InspectFieldValue[],plot?:(variable:string)=>void,m
     const line=row(f.variable,fmtValue(f.value));
     if(plot){const button=document.createElement("button");button.type="button";button.className="panel-btn";button.textContent=t("Plot");button.setAttribute("aria-label",t("Plot {v} over time",{v:f.variable}));button.addEventListener("click",()=>plot(f.variable));line.appendChild(button);}
     if(monitor){const button=document.createElement("button");button.type="button";button.className="panel-btn inspect-monitor-btn";button.textContent=t("Monitor");button.title=t("Save as a monitor of the case");button.setAttribute("aria-label",`Save ${f.variable} at this entity as a monitor`);button.addEventListener("click",()=>monitor(f.variable));line.appendChild(button);}
+    if(pointMonitor){const button=document.createElement("button");button.type="button";button.className="panel-btn inspect-point-monitor-btn";button.textContent=t("At point");button.title=t("Save this field at these coordinates as a monitor");button.setAttribute("aria-label",`Save ${f.variable} at these coordinates as a monitor`);button.addEventListener("click",()=>pointMonitor(f.variable));line.appendChild(button);}
     wrap.appendChild(line);
   }
   return wrap;
 }
 
-function smpList(paths: string[]): HTMLElement {
+function smpList(paths: string[], regionMonitor?: (path: string) => void): HTMLElement {
   const wrap = document.createElement("div");
   wrap.className = "inspect-summary";
   wrap.textContent = paths.length ? t("Member of: {parts}", { parts: paths.join(", ") }) : t("Not part of any SubModelPart.");
+  if (regionMonitor) {
+    for (const path of paths) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "panel-btn inspect-region-monitor-btn";
+      button.textContent = t("Monitor region");
+      button.title = t("Save a quantity over this SubModelPart as a monitor");
+      button.setAttribute("aria-label", `Save a regional monitor of ${path}`);
+      button.addEventListener("click", () => regionMonitor(path));
+      wrap.appendChild(button);
+    }
+  }
   return wrap;
 }
 
@@ -234,7 +251,7 @@ export function renderInspectPanel(
     const e = sel.entity;
     container.appendChild(section(`${e.kind} ${e.id}`));
     if (e.blockName) container.appendChild(row("Block", e.blockName));
-    container.appendChild(smpList(e.smpPaths));
+    container.appendChild(smpList(e.smpPaths,state.canPlotSeries?handlers.onSaveRegionMonitor:undefined));
     container.appendChild(fieldsTable(e.fields,state.canPlotSeries?variable=>handlers.onPlotOverTime?.("entity",variable):undefined,state.canPlotSeries&&handlers.onSaveMonitor?variable=>handlers.onSaveMonitor?.("entity",variable):undefined));
     const btn = plotBtn("entity", e.fields.length);
     if (btn) container.appendChild(btn);
@@ -244,8 +261,8 @@ export function renderInspectPanel(
     const n = sel.node;
     container.appendChild(section(`Nearest node ${n.id}`));
     container.appendChild(row("Coords", fmtValue(n.coords)));
-    container.appendChild(smpList(n.smpPaths));
-    container.appendChild(fieldsTable(n.fields,state.canPlotSeries?variable=>handlers.onPlotOverTime?.("node",variable):undefined,state.canPlotSeries&&handlers.onSaveMonitor?variable=>handlers.onSaveMonitor?.("node",variable):undefined));
+    container.appendChild(smpList(n.smpPaths,state.canPlotSeries?handlers.onSaveRegionMonitor:undefined));
+    container.appendChild(fieldsTable(n.fields,state.canPlotSeries?variable=>handlers.onPlotOverTime?.("node",variable):undefined,state.canPlotSeries&&handlers.onSaveMonitor?variable=>handlers.onSaveMonitor?.("node",variable):undefined,state.canPlotSeries&&handlers.onSavePointMonitor?variable=>handlers.onSavePointMonitor?.(variable):undefined));
     const btn = plotBtn("node", n.fields.length);
     if (btn) container.appendChild(btn);
   }

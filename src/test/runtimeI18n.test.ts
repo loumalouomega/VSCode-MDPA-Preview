@@ -32,7 +32,9 @@ test("the pseudo-locale brackets runtime strings", () => {
 
 test("every catalogue key is used by the chrome or a t() literal, with matching placeholders", () => {
   const dir = path.join(__dirname, "..", "..", "webview");
-  const src = [dir, path.join(dir, "plots")].flatMap((d) => fs.readdirSync(d).filter((f) => f.endsWith(".ts")).map((f) => fs.readFileSync(path.join(d, f), "utf8"))).join("\n");
+  const hostDir = path.join(__dirname, "..", "..", "src");
+  const hostFiles = ["monitorSave.ts"].map((f) => fs.readFileSync(path.join(hostDir, f), "utf8"));
+  const src = [dir, path.join(dir, "plots")].flatMap((d) => fs.readdirSync(d).filter((f) => f.endsWith(".ts")).map((f) => fs.readFileSync(path.join(d, f), "utf8"))).concat(hostFiles).join("\n");
   const literals = new Set([...src.matchAll(/\btr?\("((?:[^"\\\n]|\\.)*)"/g)].map((m) => JSON.parse(`"${m[1]}"`)));
   const chrome = buildPreviewHtml({ scriptUri: "s", designSystemUri: "d", styleUri: "c", cspSource: "x", nonce: "n", title: "T", theme: "dark" });
   for (const loc of shippedLocales()) {
