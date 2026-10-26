@@ -15,7 +15,7 @@ import { groupVtkFiles, fileFor, findGroupForFile, VtkFileGroup } from "./parser
 import { createSeriesScanController } from "./seriesScanHost";
 import { serializeGroup } from "./seriesScanJob";
 import { MdpaModel } from "./parser/types";
-import { toWireModel, toWireField, stagedHead, shouldStageFields, wireFieldKey } from "./parser/modelWire";
+import { toWireModel, createFieldStager } from "./parser/modelWire";
 import { renderPreviewHtml } from "./previewHtml";
 import {
   ExportContext,
@@ -40,6 +40,7 @@ import {
   shouldSummarize,
   summarizeMeshFile,
   SUMMARY_THRESHOLD_MB_DEFAULT,
+  sanitizeFieldSelection,
 } from "./parser/meshSummary";
 import { MmgRunOptions, OP_LABELS } from "./parser/operations";
 import { createOpRunner } from "./opApply";
@@ -245,24 +246,24 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
       viewSidecar.post(fsPath);
     };
 
-    let fieldStageSeq = 0;
-    // The parsed model behind the current staged delivery; field rows are sent
-    // from it on request (`requestField`) and never pushed.
-    let stagedModel: MdpaModel | undefined;
+    // Field rows behind the current staged delivery are sent from it on request
+    // (`requestField`) and never pushed; a newer post supersedes the stage.
+    const stager = createFieldStager();
 
     /** Posts an edited model in place: a `vtkFrame` while a series is shown, else `model`. */
     const postEdited = (model: MdpaModel, midNodes?: number[]): void => {
+      const wired = stager.wire(model, true);
       if (session.currentGroup) {
         webviewPanel.webview.postMessage({
           type: "vtkFrame",
-          model: toWireModel(model),
+          ...wired,
           ...session.lastFrame,
           midNodes: midNodes ?? [],
         });
       } else {
         webviewPanel.webview.postMessage({
           type: "model",
-          model: toWireModel(model),
+          ...wired,
           fileName,
           keepCamera: true,
           midNodes: midNodes ?? [],
@@ -366,7 +367,9 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
         webviewPanel.webview.postMessage({
           type: "vtkFrame",
           requestId,
-          model: toWireModel(adopted.model),
+          // Timeline-requested frames stay whole: the recorder resolves a frame
+          // when it is on screen, and a late field would capture it uncoloured.
+          ...stager.wire(adopted.model, requestId === undefined),
           ...session.lastFrame,
           midNodes: adopted.highlightNodes ?? [],
         });
@@ -520,30 +523,14 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
           // (camera preserved) — posting the raw parse first would reset the
           // camera and flash the un-edited mesh.
           if (!replayNeeded) {
-            if (!hadBase && shouldStageFields(model)) {
-              // Geometry and field metadata first; each field's rows follow only
-              // when the webview asks (`requestField`). A newer model supersedes
-              // via `stageId`.
-              const stageId = ++fieldStageSeq;
-              webviewPanel.webview.postMessage({
-                type: "model",
-                model: stagedHead(model),
-                fileName,
-                keepCamera: false,
-                fieldsPending: model.fields.length,
-                stageId,
-              });
-              webviewPanel.webview.postMessage({ type: "opState", ...session.history.state() });
-              stagedModel = model;
-            } else {
-              webviewPanel.webview.postMessage({
-                type: "model",
-                model: toWireModel(model),
-                fileName,
-                keepCamera: hadBase,
-              });
-              webviewPanel.webview.postMessage({ type: "opState", ...session.history.state() });
-            }
+            // Large field volumes go geometry-first (`requestField` fetches rows).
+            webviewPanel.webview.postMessage({
+              type: "model",
+              ...stager.wire(model, !hadBase),
+              fileName,
+              keepCamera: hadBase,
+            });
+            webviewPanel.webview.postMessage({ type: "opState", ...session.history.state() });
           }
           session.ensurePt();
           ensureViewLayers();
@@ -808,11 +795,8 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
       } else if (msg?.type === "requestField") {
         // Field rows on demand (staged delivery). Answered only for the model
         // the webview is currently showing; any newer post supersedes it.
-        const sm = stagedModel;
-        if (sm && msg.stageId === fieldStageSeq && !session.disposed) {
-          const f = sm.fields.find((x) => wireFieldKey(x) === msg.key);
-          if (f) void webviewPanel.webview.postMessage({ type: "modelField", stageId: msg.stageId, key: msg.key, field: toWireField(f) });
-        }
+        const reply = session.disposed ? undefined : stager.answer(msg.stageId, msg.key);
+        if (reply) void webviewPanel.webview.postMessage(reply);
       } else if (plots?.receive(msg)) {
         // Read-only plot requests belong to this preview, not the active editor.
       } else if (msg?.type === "plotOpen") {
@@ -842,6 +826,7 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
           });
       } else if (msg?.type === "meshSummaryOpenFull") {
         session.userForcedFull = true;
+        session.selectedFields = sanitizeFieldSelection(msg.fields);
         // "initial" on purpose: the base, the history and the pending ops were
         // never set up, and it is this run that must pick the recipe up.
         void postModel("initial");
@@ -874,6 +859,9 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
         msg?.type === "menuSplitMesh" ||
         msg?.type === "menuExportSimplified" ||
         msg?.type === "menuExportGrid" ||
+        msg?.type === "menuExportOctree" ||
+        msg?.type === "menuExportCadSurface" ||
+        msg?.type === "menuGenerateMesh" ||
         msg?.type === "menuExportTable" ||
         msg?.type === "menuExportSeries" ||
         msg?.type === "menuExportAnalysis" ||

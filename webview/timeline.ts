@@ -1,3 +1,4 @@
+import { t } from "../src/parser/i18n/runtime";
 import { resampleControls } from "./resampleControls";
 /** Timeline playback control for mesh time-series previews. */
 
@@ -92,24 +93,24 @@ export class TimelineControl {
     const prev = document.createElement("button");
     prev.id = "tl-prev";
     prev.className = "panel-icon-btn";
-    prev.title = "Previous frame";
-    prev.setAttribute("aria-label", "Previous frame");
+    prev.title = t("Previous frame");
+    prev.setAttribute("aria-label", t("Previous frame"));
     prev.innerHTML = glyph("skipBack");
     prev.addEventListener("click", () => this.step(-1));
 
     const play = document.createElement("button");
     play.id = "tl-play";
     play.className = "panel-icon-btn";
-    play.title = "Play / Pause";
-    play.setAttribute("aria-label", "Play / Pause");
+    play.title = t("Play / Pause");
+    play.setAttribute("aria-label", t("Play / Pause"));
     play.innerHTML = glyph("play");
     play.addEventListener("click", () => this.togglePlay());
 
     const next = document.createElement("button");
     next.id = "tl-next";
     next.className = "panel-icon-btn";
-    next.title = "Next frame";
-    next.setAttribute("aria-label", "Next frame");
+    next.title = t("Next frame");
+    next.setAttribute("aria-label", t("Next frame"));
     next.innerHTML = glyph("skipForward");
     next.addEventListener("click", () => this.step(1));
 

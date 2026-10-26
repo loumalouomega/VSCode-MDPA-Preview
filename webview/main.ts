@@ -288,6 +288,7 @@ import {
   revealVariableRow,
 } from "./variablesPanel";
 import { noteFieldFire, drainPendingFieldFire } from "./fieldRegistry";
+import { setRuntimeLocale, t } from "../src/parser/i18n/runtime";
 import { initOpQueue, stageLoadedOps } from "./opQueue";
 import {
   initProblemtype,
@@ -474,7 +475,7 @@ if (loadingCancelEl) {
   const cancelBtn = loadingCancelEl;
   cancelBtn.addEventListener("click", () => {
     vscode.postMessage({ type: "vtkCancelFrame" });
-    loadingLabelEl.textContent = "Cancelling…";
+    loadingLabelEl.textContent = t("Cancelling…");
     cancelBtn.disabled = true;
   });
 }
@@ -1164,6 +1165,7 @@ let showNodeIds = false;
 let gridVisible = false;
 const NODE_LABEL_LIMIT = 1000;
 
+setRuntimeLocale(document.body.dataset.locale);
 let currentTheme: string = document.body.dataset.theme ?? "auto";
 
 // Entity id -> cell maps, kept at module scope for quality panel and find-entity lookups.
@@ -1381,8 +1383,40 @@ function beamConstant(): number {
 const LOD_LAYER_ID = "lod:surface";
 const LOD_COLOR: RGB = [0.62, 0.72, 0.85];
 let lodEnabled = false;
+/** Set once the level of detail has been chosen, by the user or by the large-mesh default. */
+let lodAutoDecided = false;
+
+/** A staged post only exists above STAGED_FIELD_ROWS, i.e. a very large mesh: start with the decimated surface (once; any later choice is the user's). */
+function maybeAutoLod(fieldsPending: unknown): void {
+  if (!fieldsPending || lodAutoDecided || lodEnabled) return;
+  setLod(true);
+  messageEl.textContent = t("Large mesh: level of detail on while fields load (View ▸ Level of detail to turn off). Picking is off while it shows.");
+}
+
+/** Display-only subdivision of quadratic cells (0 = off); see curvedDisplay.ts. */
+let curvedLevel = 0;
+const CURVED_LEVEL_ON = 2;
+const CURVED_MAX = 3;
+function curvedOption(): { curved: { level: number } } | undefined {
+  return curvedLevel ? { curved: { level: curvedLevel } } : undefined;
+}
+function setCurvedLevel(level: number): void {
+  const next = Math.max(0, Math.min(CURVED_MAX, Math.floor(level) || 0));
+  if (next === curvedLevel) return;
+  curvedLevel = next;
+  document.querySelector('[data-action="curved"]')?.classList.toggle("active", next > 0);
+  if (lightingVisible) renderLightingUI();
+  scheduleViewSave();
+  if (!model) return;
+  snapshotVisibility();
+  buildScene(false);
+}
+function setCurved(on: boolean): void {
+  setCurvedLevel(on ? CURVED_LEVEL_ON : 0);
+}
 
 function setLod(on: boolean): void {
+  lodAutoDecided = true;
   lodEnabled = on;
   document.querySelector('[data-action="lod"]')?.classList.toggle("active", on);
   if (!on) {
@@ -1397,7 +1431,7 @@ function setLod(on: boolean): void {
 
 function requestLod(): void {
   if (!lodEnabled || !model) return;
-  messageEl.textContent = "Level of detail: decimating…";
+  messageEl.textContent = t("Level of detail: decimating…");
   vscode.postMessage({ type: "meshAnalysis", kind: "lod" });
 }
 
@@ -1633,6 +1667,7 @@ function handleHostMessage(event: MessageEvent): void {
       stagedFields = msg.fieldsPending ? { stageId: msg.stageId as number, requested: new Set() } : undefined;
       midNodeIds = (msg.midNodes as number[] | undefined) ?? [];
       buildScene(!msg.keepCamera);
+      maybeAutoLod(msg.fieldsPending);
       showRendererNote();
       setMeshModFields(model.fields, model.globals);
       setMeshModParts(model.subModelParts);
@@ -1683,7 +1718,7 @@ function handleHostMessage(event: MessageEvent): void {
       clearFrameStatus();
       setPickStatus(undefined);
       renderSummaryOverlay(summaryOverlayEl, summary, {
-        onOpenFull: () => vscode.postMessage({ type: "meshSummaryOpenFull" }),
+        onOpenFull: (fields) => vscode.postMessage({ type: "meshSummaryOpenFull", fields }),
       });
       // Mandatory: showLoading sets #app { display: none }, so without this the
       // panel sits behind the spinner forever.
@@ -1714,8 +1749,11 @@ function handleHostMessage(event: MessageEvent): void {
       delete document.body.dataset.meshSummary;
       hideSummaryOverlay(summaryOverlayEl);
       model = msg.model as MdpaModel;
+      // Staged frame (initial load / edit re-render): rows follow on demand.
+      stagedFields = msg.fieldsPending ? { stageId: msg.stageId as number, requested: new Set() } : undefined;
       midNodeIds = (msg.midNodes as number[] | undefined) ?? [];
       buildScene(false); // preserve camera position between frames
+      maybeAutoLod(msg.fieldsPending);
       showRendererNote();
       setMeshModFields(model.fields, model.globals);
       setMeshModParts(model.subModelParts);
@@ -1768,7 +1806,7 @@ function handleHostMessage(event: MessageEvent): void {
       }
       } catch (error) {
         if (pendingFrame) { const p = pendingFrame; pendingFrame = undefined; clearTimeout(p.timer); p.reject(error instanceof Error ? error : new Error(String(error))); }
-        else { messageEl.textContent = `Could not render step: ${String(error)}`; messageEl.classList.add("error"); }
+        else { messageEl.textContent = t("Could not render step: {err}", { err: String(error) }); messageEl.classList.add("error"); }
       }
       break;
     }
@@ -2030,7 +2068,7 @@ function handleHostMessage(event: MessageEvent): void {
       if (origin.frameIndex !== undefined && origin.frameIndex !== currentFrameIndex) {
         void goToFrameAwaited(origin.frameIndex).then(() => {
           if (sequence === plotPickSequence && origin.frameIndex === currentFrameIndex) {if(origin.entityKind && origin.entityId !== undefined){selectTableRow(origin.entityKind, origin.entityId);frameTableSelection();}else if(origin.submodelpart)highlightPlotRegion(origin.submodelpart);}
-        }).catch(error => { if(sequence===plotPickSequence)messageEl.textContent = `Could not locate plot sample: ${String(error)}`; });
+        }).catch(error => { if(sequence===plotPickSequence)messageEl.textContent = t("Could not locate plot sample: {err}", { err: String(error) }); });
       } else if (origin.entityKind && origin.entityId !== undefined) {
         selectTableRow(origin.entityKind, origin.entityId);
         frameTableSelection();
@@ -2058,7 +2096,7 @@ function handleHostMessage(event: MessageEvent): void {
     }
     case "error":
       hideLoading();
-      messageEl.textContent = `Parse error: ${msg.message}`;
+      messageEl.textContent = t("Parse error: {msg}", { msg: msg.message });
       messageEl.classList.add("error");
       break;
   }
@@ -2731,6 +2769,7 @@ function buildLayerGeometry(layer: Layer): boolean {
   if (layer.built || !prep || !layer.pendingCells) return layer.built;
   const built = buildDisplayGeometry(prep, layer.pendingCells, undefined, {
     wantPickMaps: layer.pickKind !== undefined,
+    ...curvedOption(),
   });
   if (!built) return false;
   // The expensive part happens once; each pane only binds its own mapper to it.
@@ -2893,7 +2932,12 @@ function renderLightingUI(): void {
       applyLightingToAllLayers();
       renderLightingUI();
     },
-  }, { displayFilters: backend.caps.displayFilters, lightModes: backend.caps.lightModes });
+  }, {
+    displayFilters: backend.caps.displayFilters,
+    lightModes: backend.caps.lightModes,
+    curvedLevel,
+    onCurvedLevel: (l) => setCurvedLevel(l),
+  });
 }
 
 // --- Camera bookmarks --------------------------------------------------------
@@ -3450,14 +3494,14 @@ function setGlobalOpacity(v: number): void {
   const opacityRow = document.createElement("label");
   opacityRow.className = "nav-opacity-row";
   const opacityCaption = document.createElement("span");
-  opacityCaption.textContent = "Opacity";
+  opacityCaption.textContent = t("Opacity");
   const opacity = document.createElement("input");
   opacity.type = "range";
   opacity.min = "0";
   opacity.max = "100";
   opacity.value = "100";
   opacity.id = "nav-opacity";
-  opacity.title = "Model opacity (all mesh layers)";
+  opacity.title = t("Model opacity (all mesh layers)");
   opacity.addEventListener("input", () => setGlobalOpacity(Number(opacity.value) / 100));
   opacityRow.appendChild(opacityCaption);
   opacityRow.appendChild(opacity);
@@ -3467,8 +3511,8 @@ function setGlobalOpacity(v: number): void {
   ortho.type = "button";
   ortho.id = "nav-ortho";
   ortho.className = "nav-pill";
-  ortho.title = "Toggle orthographic (parallel) vs. perspective projection";
-  ortho.textContent = "Persp";
+  ortho.title = t("Toggle orthographic (parallel) vs. perspective projection");
+  ortho.textContent = t("Persp");
   ortho.addEventListener("click", () => toggleParallelProjection());
   navControls.addDockItem("projection", ortho);
 }
@@ -3495,8 +3539,8 @@ function setGlobalOpacity(v: number): void {
   edges.type = "button";
   edges.id = "nav-display-edges";
   edges.className = "nav-pill active";
-  edges.title = "Toggle mesh edge lines";
-  edges.textContent = "Edges";
+  edges.title = t("Toggle mesh edge lines");
+  edges.textContent = t("Edges");
   edges.addEventListener("click", () => setShowEdges(!showEdges));
   navControls.addDockItem("moreView", edges);
 }
@@ -3534,7 +3578,7 @@ function setNodeIds(on: boolean): void {
     // Labels are projected through ONE camera into one overlay div, so in a
     // split they would land over the wrong panes. Refuse and say so, the way
     // the node-count limit below already does, rather than draw them wrong.
-    messageEl.textContent = "Node IDs are shown in the single-pane layout only.";
+    messageEl.textContent = t("Node IDs are shown in the single-pane layout only.");
     return;
   }
   if (!on || !model) {
@@ -3543,7 +3587,7 @@ function setNodeIds(on: boolean): void {
     return;
   }
   if (model.nodeCount > NODE_LABEL_LIMIT) {
-    messageEl.textContent = `Node IDs hidden: ${model.nodeCount} nodes exceed the ${NODE_LABEL_LIMIT} label limit.`;
+    messageEl.textContent = t("Node IDs hidden: {n} nodes exceed the {limit} label limit.", { n: model.nodeCount, limit: NODE_LABEL_LIMIT });
     showNodeIds = false;
     btn?.classList.remove("active");
     return;
@@ -3878,6 +3922,7 @@ function dispatchToolbarAction(action: string | undefined, _target?: HTMLElement
   else if (action === "edges") setShowEdges(!showEdges);
   else if (action === "nodeIds") setNodeIds(!showNodeIds);
   else if (action === "lod") setLod(!lodEnabled);
+  else if (action === "curved") setCurved(curvedLevel === 0);
   else if (action === "flatParts") {
     setOutlineView({ ...outlineView, flattenSubModelParts: !outlineView.flattenSubModelParts }, true);
   }
@@ -3913,6 +3958,9 @@ function dispatchToolbarAction(action: string | undefined, _target?: HTMLElement
   else if (action === "splitMesh") vscode.postMessage({ type: "menuSplitMesh" });
   else if (action === "simplify") vscode.postMessage({ type: "menuExportSimplified" });
   else if (action === "sampleGrid") vscode.postMessage({ type: "menuExportGrid" });
+  else if (action === "octreeMesh") vscode.postMessage({ type: "menuExportOctree" });
+  else if (action === "cadSurface") vscode.postMessage({ type: "menuExportCadSurface" });
+  else if (action === "generateMesh") vscode.postMessage({ type: "menuGenerateMesh" });
   else if (action === "find") toggleFindBar();
   else if (action === "field") toggleFieldPanel();
   else if (action === "inspect") toggleInspectMode();
@@ -4300,7 +4348,7 @@ function applyMeshSizeColor(): void {
     const field = meshSizeState.color === "nodal" ? meshSizeReport.nodalH : meshSizeReport.elementSize;
     const info = buildFieldInfo(field);
     const kinds: EntityKind[] | "all" = meshSizeState.color === "element" ? ["Elements"] : "all";
-    const built = buildDisplayGeometry(prepared, collectCells(kinds), contourAttach(info));
+    const built = buildDisplayGeometry(prepared, collectCells(kinds), contourAttach(info), curvedOption());
     if (built) {
       // The geometry is built once; each pane gets its own mapper over it.
       const geometry = backend.createGeometry(built.geometry);
@@ -4386,7 +4434,7 @@ function applyNormalsLayer(): void {
   if (!normalsReport) normalsReport = computeMeshNormals(model);
   const r = normalsReport;
   if (r.count === 0) {
-    messageEl.textContent = "No surface or volume faces to take normals from.";
+    messageEl.textContent = t("No surface or volume faces to take normals from.");
     render();
     return;
   }
@@ -7072,15 +7120,23 @@ function renderInspectUI(): void {
     onFrame: () => frameLayer(INSPECT_MARKER_ID),
     onPlotOverTime: (target,variable)=>{
       const selection=target==="node"?inspectSelection?.node:inspectSelection?.entity;if(!selection)return;
-      if(target==="entity"&&inspectSelection?.entity?.kind==="Geometry"){messageEl.textContent="Geometries have no supplied field association; select a node, Element or Condition instead.";return;}
+      if(target==="entity"&&inspectSelection?.entity?.kind==="Geometry"){messageEl.textContent=t("Geometries have no supplied field association; select a node, Element or Condition instead.");return;}
       const kind=target==="node"?"Nodal":inspectSelection?.entity?.kind==="Condition"?"Conditional":"Elemental";
       plotPane.plotPoint(kind,selection.id,variable);
     },
     onSaveMonitor: (target,variable)=>{
       const selection=target==="node"?inspectSelection?.node:inspectSelection?.entity;if(!selection)return;
-      if(target==="entity"&&inspectSelection?.entity?.kind==="Geometry"){messageEl.textContent="Geometries have no supplied field association; select a node, Element or Condition instead.";return;}
+      if(target==="entity"&&inspectSelection?.entity?.kind==="Geometry"){messageEl.textContent=t("Geometries have no supplied field association; select a node, Element or Condition instead.");return;}
       const kind=target==="node"?"Nodal":inspectSelection?.entity?.kind==="Condition"?"Conditional":"Elemental";
       vscode.postMessage({type:"saveMonitor",kind,entityId:selection.id,variable});
+    },
+    onSavePointMonitor: (variable)=>{
+      const node=inspectSelection?.node;if(!node)return;
+      vscode.postMessage({type:"saveMonitor",source:"point",variable,coordinates:[node.coords[0],node.coords[1],node.coords[2]]});
+    },
+    onSaveRegionMonitor: (path)=>{
+      const fields=fieldInfos.map(info=>({variable:info.field.variable,kind:info.field.kind,components:info.field.components}));
+      vscode.postMessage({type:"saveMonitor",source:"region",submodelpart:path,fields});
     },
     onToggleMeasureAngle: () => {
       measureAngle = !measureAngle;
@@ -8491,6 +8547,7 @@ function captureViewState(): ViewState {
   const v = emptyViewState();
   v.bookmarks = bookmarks.map((b) => ({ name: b.name, state: b.state }));
   v.paneLayout = paneLayout;
+  if (curvedLevel > 0) v.curvedLevel = curvedLevel;
   v.panes = panes.map((p, i) => ({
     field: fieldToSaved(p.field),
     clip: clonePaneClipState(p.clip),
@@ -8571,6 +8628,7 @@ function applyPendingView(): void {
     });
     if (view.bookmarks.length > 0) bookmarks = view.bookmarks.map((b) => ({ name: b.name, state: b.state }));
     if (view.paneLayout && view.paneLayout !== paneLayout) setPaneLayout(view.paneLayout);
+    if (view.curvedLevel !== undefined && view.curvedLevel !== curvedLevel) setCurvedLevel(view.curvedLevel);
 
     view.panes.forEach((sp, i) => {
       const pane = panes[i];

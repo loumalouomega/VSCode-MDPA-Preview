@@ -2,6 +2,7 @@
 // balance + backface culling, applied to every current and future actor.
 // Pure DOM, mirrors qualityPanel.ts.
 
+import { t } from "../src/parser/i18n/runtime";
 import { glyph } from "../src/uiGlyphs";
 import { DEFAULT_LIGHT_SPEC, type LightMode, type LightSpec } from "../src/parser/render/lightMode";
 
@@ -30,6 +31,9 @@ export interface LightingPanelOptions {
   displayFilters: boolean;
   /** The backend honours light modes (caps.lightModes). */
   lightModes?: boolean;
+  /** Curved quadratic-cell detail 0 (off) to 3, with its handler; omitted hides the row. */
+  curvedLevel?: number;
+  onCurvedLevel?(level: number): void;
 }
 
 export interface LightingPanelHandlers {
@@ -83,11 +87,11 @@ export function renderLightingPanel(
   header.className = "field-header";
   const title = document.createElement("div");
   title.className = "field-title";
-  title.textContent = "Lighting";
+  title.textContent = t("Lighting");
   header.appendChild(title);
   const closeBtn = document.createElement("button");
   closeBtn.className = "field-close";
-  closeBtn.title = "Close";
+  closeBtn.title = t("Close");
   closeBtn.innerHTML = glyph("x");
   closeBtn.addEventListener("click", () => handlers.onClose());
   header.appendChild(closeBtn);
@@ -113,7 +117,7 @@ export function renderLightingPanel(
   );
   cullLabel.appendChild(cullCk);
   cullLabel.appendChild(document.createTextNode("Cull back faces"));
-  cullLabel.title = "Hide the inside surface of a shell — helps spot an inverted (flipped) element";
+  cullLabel.title = t("Hide the inside surface of a shell — helps spot an inverted (flipped) element");
   container.appendChild(cullLabel);
 
   if (options.displayFilters) {
@@ -130,12 +134,33 @@ export function renderLightingPanel(
     container.appendChild(smoothLabel);
   }
 
+  if (options.onCurvedLevel) {
+    const crow = document.createElement("div");
+    crow.className = "field-row";
+    const cl = document.createElement("label");
+    cl.className = "field-label";
+    cl.textContent = t("Curved cells");
+    crow.appendChild(cl);
+    const csel = document.createElement("select");
+    csel.title = t("Draw quadratic cells with their mid-side nodes. Display only: the stored cells and every export are unchanged");
+    [["0", "Off"], ["1", "2 segments"], ["2", "4 segments"], ["3", "8 segments"]].forEach(([v, text]) => {
+      const o = document.createElement("option");
+      o.value = v;
+      o.textContent = t(text);
+      csel.appendChild(o);
+    });
+    csel.value = String(options.curvedLevel ?? 0);
+    csel.addEventListener("change", () => options.onCurvedLevel!(Number(csel.value)));
+    crow.appendChild(csel);
+    container.appendChild(crow);
+  }
+
   if (options.lightModes) {
     const row = document.createElement("div");
     row.className = "field-row";
     const l = document.createElement("label");
     l.className = "field-label";
-    l.textContent = "Light";
+    l.textContent = t("Light source");
     row.appendChild(l);
     const sel = document.createElement("select");
     sel.className = "field-select";
@@ -189,7 +214,7 @@ export function renderLightingPanel(
 
   const resetBtn = document.createElement("button");
   resetBtn.className = "inspect-frame-btn";
-  resetBtn.textContent = "Reset to defaults";
+  resetBtn.textContent = t("Reset to defaults");
   resetBtn.addEventListener("click", () => handlers.onReset());
   container.appendChild(resetBtn);
 }

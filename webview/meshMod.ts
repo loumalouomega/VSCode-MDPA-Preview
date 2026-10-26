@@ -10,6 +10,7 @@
  * the `.edit-form` blocks comes for free from `initEditHistory`'s generic wiring.
  */
 
+import { t } from "../src/parser/i18n/runtime";
 import { fieldUnitLabel } from "../src/parser/fieldDimensions";
 import { validateSizeExpr, remeshSizeExprVars, describeUnknownRemeshVar } from "../src/parser/sizeExpr";
 import { noteFieldFire, noteFieldFireFromMessage } from "./fieldRegistry";
@@ -307,6 +308,8 @@ const ASYNC_BUILDERS: Record<string, () => Record<string, unknown> | undefined> 
   smooth: buildSmoothMsg,
   reorder: buildReorderMsg,
   partition: buildPartitionMsg,
+  segment: buildSegmentMsg,
+  refinePatches: buildRefinePatchesMsg,
   mergeMesh: buildMergeMeshMsg,
   fieldGradient: buildFieldGradientMsg,
   fieldHessian: buildFieldHessianMsg,
@@ -489,7 +492,7 @@ function renderSizeParts(): void {
     expr.className = "edit-sizepart-expr";
     expr.spellcheck = false;
     expr.value = part.expr;
-    expr.placeholder = "0.25*h";
+    expr.placeholder = t("0.25*h");
     expr.addEventListener("input", () => {
       sizeParts[index].expr = expr.value;
       validateExprInputs();
@@ -499,7 +502,7 @@ function renderSizeParts(): void {
     del.type = "button";
     del.className = "edit-sizepart-del";
     del.textContent = "✕";
-    del.title = "Remove this override";
+    del.title = t("Remove this override");
     del.addEventListener("click", () => {
       sizeParts.splice(index, 1);
       renderSizeParts();
@@ -519,7 +522,7 @@ function renderLocalSizes(): void {
   localSizes.forEach((row_state, index) => {
     const row = document.createElement("div");
     row.className = "edit-sizepart-row";
-    row.title = "Per-block / per-part hmin/hmax/hausd bound (all three required)";
+    row.title = t("Per-block / per-part hmin/hmax/hausd bound (all three required)");
 
     const kind = document.createElement("select");
     kind.className = "edit-sel";
@@ -530,7 +533,7 @@ function renderLocalSizes(): void {
       kind.appendChild(opt);
     }
     kind.value = row_state.kind;
-    kind.title = "part = SubModelPart path (subtree included); block = EntityBlock name";
+    kind.title = t("part = SubModelPart path (subtree included); block = EntityBlock name");
     kind.addEventListener("change", () => {
       localSizes[index].kind = kind.value;
     });
@@ -541,7 +544,7 @@ function renderLocalSizes(): void {
     target.spellcheck = false;
     target.value = row_state.target;
     target.placeholder = row_state.kind === "block" ? "Block name" : "Part/path";
-    target.title = "Block name or SubModelPart path — unknown targets warn and are skipped";
+    target.title = t("Block name or SubModelPart path — unknown targets warn and are skipped");
     target.addEventListener("input", () => {
       localSizes[index].target = target.value;
     });
@@ -570,7 +573,7 @@ function renderLocalSizes(): void {
     del.type = "button";
     del.className = "edit-sizepart-del";
     del.textContent = "✕";
-    del.title = "Remove this bound";
+    del.title = t("Remove this bound");
     del.addEventListener("click", () => {
       localSizes.splice(index, 1);
       renderLocalSizes();
@@ -603,7 +606,7 @@ export function setMeshModParts(parts: { path: string; children: unknown[] }[]):
     target.textContent = "";
     const all = document.createElement("option");
     all.value = "";
-    all.textContent = "whole mesh";
+    all.textContent = t("whole mesh");
     target.appendChild(all);
     for (const p of paths) {
       const opt = document.createElement("option");
@@ -630,7 +633,7 @@ export function setMeshModParts(parts: { path: string; children: unknown[] }[]):
     if (paths.length === 0) {
       const none = document.createElement("option");
       none.value = "";
-      none.textContent = "no SubModelParts";
+      none.textContent = t("no SubModelParts");
       refinePart.appendChild(none);
     } else if (paths.includes(prev)) {
       refinePart.value = prev;
@@ -644,14 +647,14 @@ export function setMeshModParts(parts: { path: string; children: unknown[] }[]):
     sdfPart.textContent = "";
     const noneOpt = document.createElement("option");
     noneOpt.value = "";
-    noneOpt.textContent = "— none —";
+    noneOpt.textContent = t("— none —");
     sdfPart.appendChild(noneOpt);
     // Not a SubModelPart: the mesh's own exterior skin (what Export skin…
     // writes). A sentinel value rather than a checkbox so the file / part /
     // skin exclusivity stays a single control.
     const skinOpt = document.createElement("option");
     skinOpt.value = SDF_SKIN;
-    skinOpt.textContent = "◆ mesh skin (exterior boundary)";
+    skinOpt.textContent = t("◆ mesh skin (exterior boundary)");
     sdfPart.appendChild(skinOpt);
     for (const p of paths) {
       const opt = document.createElement("option");
@@ -671,6 +674,7 @@ export function setMeshModParts(parts: { path: string; children: unknown[] }[]):
   fillPartSelect("scale-part", paths, "— whole mesh —", false);
   fillPartSelect("trans-part", paths, "— whole mesh —", false);
   fillPartSelect("rot-part", paths, "— whole mesh —", false);
+  fillPartSelect("segment-part", paths, "whole surface", false);
   fillPartSelect("sw-target", paths, "— none —", true);
   fillPartSelect("sw-move", paths, "— all nodes —", false);
   fillPartSelect("sw-pin", paths, "— none —", false);
@@ -690,7 +694,7 @@ function fillPartSelect(id: string, paths: string[], noneLabel: string, withSkin
   if (withSkin) {
     const skin = document.createElement("option");
     skin.value = SDF_SKIN;
-    skin.textContent = "◆ mesh skin (exterior boundary)";
+    skin.textContent = t("◆ mesh skin (exterior boundary)");
     select.appendChild(skin);
   }
   for (const p of paths) {
@@ -728,7 +732,7 @@ function fillCellSelect(
   if (cell.length === 0) {
     const opt = document.createElement("option");
     opt.value = "";
-    opt.textContent = "no per-cell fields";
+    opt.textContent = t("no per-cell fields");
     select.appendChild(opt);
     return;
   }
@@ -947,7 +951,7 @@ export function setMeshModFields(
   if (empty) {
     const opt = document.createElement("option");
     opt.value = "";
-    opt.textContent = "no nodal fields";
+    opt.textContent = t("no nodal fields");
     select.appendChild(opt);
   }
   select.disabled = empty;
@@ -991,7 +995,7 @@ function fillNodalSelect(
   if (empty) {
     const opt = document.createElement("option");
     opt.value = "";
-    opt.textContent = "no nodal fields";
+    opt.textContent = t("no nodal fields");
     select.appendChild(opt);
   } else if (nodal.some((f) => f.variable === previous)) {
     select.value = previous;
@@ -1027,7 +1031,7 @@ function fillAnyFieldSelect(id: string, fields: FieldData[]): void {
   if (empty) {
     const opt = document.createElement("option");
     opt.value = "";
-    opt.textContent = "no fields";
+    opt.textContent = t("no fields");
     select.appendChild(opt);
   } else if (fields.some((f) => `${f.kind}:${f.variable}` === previous)) {
     select.value = previous;
@@ -1060,7 +1064,7 @@ function fillDensityFieldSelect(scalars: FieldData[]): void {
   select.textContent = "";
   const constant = document.createElement("option");
   constant.value = "";
-  constant.textContent = "(constant)";
+  constant.textContent = t("(constant)");
   select.appendChild(constant);
   for (const f of scalars) {
     const opt = document.createElement("option");
@@ -1533,6 +1537,44 @@ function buildPartitionMsg(): Record<string, unknown> | undefined {
   const method = (document.getElementById("partition-method") as HTMLSelectElement | null)?.value;
   if (method === "kahip") msg.method = method;
   if (checked("partition-createparts")) msg.createParts = true;
+  return msg;
+}
+
+function buildSegmentMsg(): Record<string, unknown> | undefined {
+  const msg: Record<string, unknown> = { type: "applyOp", op: "segment" };
+  const angle = optNum("segment-angle");
+  if (angle !== undefined) {
+    if (angle < 0 || angle > 180) return undefined;
+    msg.featureAngle = angle;
+  }
+  const method = (document.getElementById("segment-method") as HTMLSelectElement | null)?.value;
+  if (method === "primitive") msg.method = method;
+  const minCells = optNum("segment-mincells");
+  if (minCells !== undefined) {
+    if (!(minCells >= 1)) return undefined;
+    msg.minPatchCells = Math.floor(minCells);
+  }
+  const part = (document.getElementById("segment-part") as HTMLSelectElement | null)?.value;
+  if (part) msg.part = part;
+  if (checked("segment-createparts")) msg.createParts = true;
+  return msg;
+}
+
+function buildRefinePatchesMsg(): Record<string, unknown> | undefined {
+  const msg: Record<string, unknown> = { type: "applyOp", op: "refinePatches" };
+  const tol = optNum("refinepatches-tolerance");
+  if (tol !== undefined) {
+    if (!(tol > 0)) return undefined;
+    msg.tolerance = tol;
+  }
+  const iterations = optNum("refinepatches-iterations");
+  if (iterations !== undefined) {
+    if (!(iterations >= 0)) return undefined;
+    msg.maxIterations = Math.floor(iterations);
+  }
+  if (!checked("refinepatches-split")) msg.allowSplit = false;
+  if (!checked("refinepatches-merge")) msg.allowMerge = false;
+  if (checked("refinepatches-createparts")) msg.createParts = true;
   return msg;
 }
 

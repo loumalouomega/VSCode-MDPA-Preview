@@ -16,6 +16,16 @@ import type { MdpaModel } from "../types";
 import { VtkCellType } from "../geometryMap";
 import { faceKey } from "../faceKey";
 import type { BuiltDisplayGeometry, DisplayGeometry } from "./types";
+import {
+  curvedPointKey,
+  quadraticFaces,
+  QUADRATIC_VOLUME_NODES,
+  tessellateEdge,
+  tessellateFace,
+  type CurvedPatch,
+  type CurvedPoint,
+  type QuadraticVolume,
+} from "./curvedDisplay";
 
 export interface PreparedNodes {
   index: Map<number, number>;
@@ -127,7 +137,26 @@ export interface BuildDisplayGeometryOptions {
    * never be clicked on (overlays, glyph anchors, etc).
    */
   wantPickMaps?: boolean;
+  /**
+   * Draw quadratic cells with their mid-side nodes (display only): edges and
+   * faces are subdivided 2^level times with the cell's shape functions. Off by
+   * default, which keeps the output identical to the linear skeleton.
+   */
+  curved?: { level: number };
 }
+
+const CURVED_VOLUME: Record<number, QuadraticVolume> = {
+  [C.QUADRATIC_TETRA]: "tet10",
+  [C.QUADRATIC_HEXAHEDRON]: "hex20",
+  [C.TRIQUADRATIC_HEXAHEDRON]: "hex27",
+  [C.QUADRATIC_WEDGE]: "wedge15",
+  [C.QUADRATIC_PYRAMID]: "pyramid13",
+};
+const CURVED_SURFACE_NODES: Record<number, number> = {
+  [C.QUADRATIC_TRIANGLE]: 6,
+  [C.QUADRATIC_QUAD]: 8,
+  [C.BIQUADRATIC_QUAD]: 9,
+};
 
 export function buildDisplayGeometry(
   prep: PreparedNodes,
@@ -176,6 +205,64 @@ export function buildDisplayGeometry(
   const lineEntities: number[] | undefined = wantPickMaps ? [] : undefined;
   const polyEntities: number[] | undefined = wantPickMaps ? [] : undefined;
 
+  // Curved display: a point is a weighted mix of a cell's own nodes, cached by
+  // its (id, weight) key so shared edges and faces weld across cells.
+  const curved = opts?.curved;
+  const curvedIndex = new Map<string, number>();
+  const curvedLocal = (p: CurvedPoint): number | undefined => {
+    if (p.ids.length === 1) return localOf(p.ids[0]);
+    const key = curvedPointKey(p);
+    const cached = curvedIndex.get(key);
+    if (cached !== undefined) return cached;
+    let x = 0;
+    let y = 0;
+    let z = 0;
+    let sc = 0;
+    let best = p.ids[0];
+    let bestW = -Infinity;
+    for (let i = 0; i < p.ids.length; i++) {
+      const base = prep.index.get(p.ids[i]);
+      if (base === undefined) return undefined;
+      const w = p.w[i];
+      x += w * prep.coords[base * 3];
+      y += w * prep.coords[base * 3 + 1];
+      z += w * prep.coords[base * 3 + 2];
+      if (pointScalar) sc += w * pointScalar(p.ids[i]);
+      if (w > bestW) {
+        bestW = w;
+        best = p.ids[i];
+      }
+    }
+    const li = localPoints.length / 3;
+    localPoints.push(x, y, z);
+    localScalars?.push(sc);
+    localGlobalIds?.push(best);
+    curvedIndex.set(key, li);
+    return li;
+  };
+  const emitPatch = (patch: CurvedPatch, kind: "line" | "poly", scalarOf: number, entity: number): boolean => {
+    const map: number[] = [];
+    for (const p of patch.points) {
+      const li = curvedLocal(p);
+      if (li === undefined) return false;
+      map.push(li);
+    }
+    for (const c of patch.cells) {
+      const lis = c.map((k) => map[k]);
+      if (kind === "line") {
+        lines.push(lis.length, ...lis);
+        lineScalars?.push(scalarOf);
+        lineEntities?.push(entity);
+      } else {
+        polys.push(lis.length, ...lis);
+        polyScalars?.push(scalarOf);
+        polyEntities?.push(entity);
+      }
+    }
+    return true;
+  };
+  const faceFull = curved ? new Map<bigint, number[]>() : undefined;
+
   const faceIds = new Map<bigint, number[]>();
   const faceCount = new Map<bigint, number>();
   const trackOwner = !!cellScalar || wantPickMaps;
@@ -216,6 +303,13 @@ export function buildDisplayGeometry(
         vertEntities?.push(cell.entityId ?? -1);
       }
     } else if (t.category === "line") {
+      if (curved && cell.cellType === C.QUADRATIC_EDGE && cell.nodeIds.length >= 3) {
+        const full = Array.from({ length: 3 }, (_, i) => cell.nodeIds[i]);
+        const patch = tessellateEdge(full, curved.level);
+        if (patch && full.every((id) => prep.index.has(id))) {
+          if (emitPatch(patch, "line", cellScalar ? cellScalar(cell.entityId) : 0, cell.entityId ?? -1)) continue;
+        }
+      }
       const a = localOf(corners[0]);
       const b = localOf(corners[1]);
       if (a !== undefined && b !== undefined) {
@@ -224,18 +318,32 @@ export function buildDisplayGeometry(
         lineEntities?.push(cell.entityId ?? -1);
       }
     } else if (t.category === "surface") {
+      const need = cell.cellType === undefined ? 0 : CURVED_SURFACE_NODES[cell.cellType] ?? 0;
+      if (curved && need && cell.nodeIds.length >= need) {
+        const full = Array.from({ length: need }, (_, i) => cell.nodeIds[i]);
+        if (full.every((id) => prep.index.has(id))) {
+          const patch = tessellateFace(full, curved.level);
+          if (patch && emitPatch(patch, "poly", cellScalar ? cellScalar(cell.entityId) : 0, cell.entityId ?? -1)) continue;
+        }
+      }
       const lis = corners.map(localOf) as number[];
       polys.push(lis.length, ...lis);
       polyScalars?.push(cellScalar!(cell.entityId));
       polyEntities?.push(cell.entityId ?? -1);
     } else if (t.category === "volume" && t.faces) {
-      for (const face of t.faces) {
-        const ids = face.map((fi) => corners[fi]);
+      const qv = curved && cell.cellType !== undefined ? CURVED_VOLUME[cell.cellType] : undefined;
+      const qFaces = qv && cell.nodeIds.length >= QUADRATIC_VOLUME_NODES[qv] ? quadraticFaces(qv) : undefined;
+      for (let f = 0; f < t.faces.length; f++) {
+        const ids = t.faces[f].map((fi) => corners[fi]);
         const key = faceKey(ids);
         faceCount.set(key, (faceCount.get(key) ?? 0) + 1);
         if (!faceIds.has(key)) {
           faceIds.set(key, ids);
           faceOwner?.set(key, cell.entityId);
+          if (qFaces) {
+            const full = qFaces[f].map((li) => cell.nodeIds[li]);
+            if (full.every((id) => prep.index.has(id))) faceFull!.set(key, full);
+          }
         }
       }
     }
@@ -243,6 +351,11 @@ export function buildDisplayGeometry(
 
   for (const [key, ids] of faceIds) {
     if (faceCount.get(key) === 1) {
+      const full = faceFull?.get(key);
+      if (full) {
+        const patch = tessellateFace(full, curved!.level);
+        if (patch && emitPatch(patch, "poly", cellScalar ? cellScalar(faceOwner!.get(key)) : 0, faceOwner?.get(key) ?? -1)) continue;
+      }
       const lis = ids.map(localOf) as number[];
       polys.push(lis.length, ...lis);
       polyScalars?.push(cellScalar!(faceOwner!.get(key)));

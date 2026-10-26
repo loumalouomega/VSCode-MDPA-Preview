@@ -15,6 +15,7 @@
  * interrupted and a reply cannot eat a draft.
  */
 
+import { t } from "../src/parser/i18n/runtime";
 import { glyph } from "../src/uiGlyphs";
 import type { FlowBalance, FlowSeries } from "../src/parser/flowBalance";
 import { flowSectionLabel, type FlowBalanceForm } from "../src/parser/flowBalanceForm";
@@ -70,11 +71,11 @@ export function renderFlowBalancePanel(
   header.className = "meshsize-header";
   const title = document.createElement("div");
   title.className = "meshsize-title";
-  title.textContent = "Flow balance";
+  title.textContent = t("Flow balance");
   header.appendChild(title);
   const closeBtn = document.createElement("button");
   closeBtn.className = "meshsize-close";
-  closeBtn.title = "Close";
+  closeBtn.title = t("Close");
   closeBtn.innerHTML = glyph("x");
   closeBtn.addEventListener("click", () => handlers.onClose());
   header.appendChild(closeBtn);
@@ -195,7 +196,7 @@ export function renderFlowBalancePanel(
   // Sections: one row per boundary, with a remove button.
   const sectionLabel = document.createElement("div");
   sectionLabel.className = "meshsize-section";
-  sectionLabel.textContent = "Sections";
+  sectionLabel.textContent = t("Sections");
   container.appendChild(sectionLabel);
   form.sections.forEach((s, i) => {
     const partSel = select(
@@ -213,7 +214,7 @@ export function renderFlowBalancePanel(
     const remove = document.createElement("button");
     remove.className = "panel-btn";
     remove.textContent = "✕";
-    remove.title = "Remove this section";
+    remove.title = t("Remove this section");
     remove.disabled = form.sections.length <= 1;
     remove.addEventListener("click", () => {
       form.sections.splice(i, 1);
@@ -225,7 +226,7 @@ export function renderFlowBalancePanel(
   addBar.className = "meshsize-actions";
   const add = document.createElement("button");
   add.className = "panel-btn";
-  add.textContent = "Add section";
+  add.textContent = t("Add section");
   add.addEventListener("click", () => {
     form.sections.push({ name: "", part: "" });
     handlers.onRows();
@@ -271,8 +272,8 @@ export function renderFlowBalancePanel(
   actions.appendChild(compute);
   const exp = document.createElement("button");
   exp.className = "panel-btn";
-  exp.textContent = "Export CSV";
-  exp.title = "Save the table below as CSV";
+  exp.textContent = t("Export CSV");
+  exp.title = t("Save the table below as CSV");
   exp.disabled = state.busy || !state.result;
   exp.addEventListener("click", () => handlers.onExport());
   actions.appendChild(exp);
@@ -285,7 +286,7 @@ export function renderFlowBalancePanel(
   // picking a row jumps the 3D view to that step.
   const seriesLabel = document.createElement("div");
   seriesLabel.className = "meshsize-section";
-  seriesLabel.textContent = "All steps";
+  seriesLabel.textContent = t("All steps");
   container.appendChild(seriesLabel);
   const seriesActions = document.createElement("div");
   seriesActions.className = "meshsize-actions";
@@ -293,20 +294,20 @@ export function renderFlowBalancePanel(
   runSeries.className = "panel-btn";
   runSeries.textContent = state.seriesProgress ? "Scanning…" : "All steps";
   runSeries.disabled = !!state.seriesProgress;
-  runSeries.title = "Balance every step of the time series";
+  runSeries.title = t("Balance every step of the time series");
   runSeries.addEventListener("click", () => handlers.onSeries());
   seriesActions.appendChild(runSeries);
   if (state.seriesProgress) {
     const cancel = document.createElement("button");
     cancel.className = "panel-btn";
-    cancel.textContent = "Cancel";
+    cancel.textContent = t("Cancel");
     cancel.addEventListener("click", () => handlers.onSeriesCancel());
     seriesActions.appendChild(cancel);
   }
   const exportSeries = document.createElement("button");
   exportSeries.className = "panel-btn";
-  exportSeries.textContent = "Export series CSV";
-  exportSeries.title = "Save the per-step table as CSV";
+  exportSeries.textContent = t("Export series CSV");
+  exportSeries.title = t("Save the per-step table as CSV");
   exportSeries.disabled = !state.series;
   exportSeries.addEventListener("click", () => handlers.onExportSeries());
   seriesActions.appendChild(exportSeries);
@@ -352,7 +353,7 @@ export function renderFlowBalancePanel(
       tr.appendChild(dropCell);
       if (!rowData.error && rowData.result) {
         tr.style.cursor = "pointer";
-        tr.title = "Show this step";
+        tr.title = t("Show this step");
         tr.addEventListener("click", () => handlers.onPickStep(rowData.frameIndex));
       }
       stable2.appendChild(tr);

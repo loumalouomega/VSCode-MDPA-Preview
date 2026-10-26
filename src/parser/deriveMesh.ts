@@ -25,6 +25,7 @@ import { restrictToElements, elementMeasures } from "./selectCells";
 import { extractSkinModel } from "./extractSkin";
 import { decimateModel, DecimateParams } from "./decimate";
 import { sampleGrid, GridSampleSpec } from "./gridSample";
+import { generateMesh, octreeMeshModel, octreeModel, cadSurfaceModel, GenerateSpec, OctreeMeshSpec, OctreeSpec, CadSurfaceSpec } from "./kernelMeshes";
 import { describeStreamlines, streamlinesToModel, traceStreamlines, StreamlineParams, StreamlineResult } from "./streamlines";
 import type { StreamlineOptions } from "./streamlines";
 import type { MeshioMesh as RawMeshioMesh } from "./meshioConvert";
@@ -82,10 +83,10 @@ export type DecimateSpec = { kind: "decimate" } & DecimateParams;
  */
 export type StreamlineSpec = { kind: "streamlines"; frame?: string } & StreamlineParams;
 
-export type DeriveSpec = ({ kind: "featureEdges" } & FeatureEdgeOptions) | SliceSpec | IsosurfaceSpec | ThresholdSpec | DecimateSpec | GridSampleSpec | StreamlineSpec | IgaRefineSpec | IgaSampleSpec;
-export const DERIVE_KINDS = ["featureEdges", "slice", "isosurface", "threshold", "decimate", "grid", "voxelize", "sdfVolume", "streamlines", "igaRefine", "igaSample"] as const;
+export type DeriveSpec = ({ kind: "featureEdges" } & FeatureEdgeOptions) | SliceSpec | IsosurfaceSpec | ThresholdSpec | DecimateSpec | GridSampleSpec | StreamlineSpec | IgaRefineSpec | IgaSampleSpec | GenerateSpec | OctreeMeshSpec | OctreeSpec | CadSurfaceSpec;
+export const DERIVE_KINDS = ["featureEdges", "slice", "isosurface", "threshold", "decimate", "grid", "voxelize", "sdfVolume", "streamlines", "igaRefine", "igaSample", "generate", "octreeMesh", "octree", "cadSurface"] as const;
 /** Kinds that need no input mesh at all (a grid is made from nothing). */
-export const DERIVE_STANDALONE_KINDS: readonly string[] = ["grid"];
+export const DERIVE_STANDALONE_KINDS: readonly string[] = ["grid", "generate"];
 
 /**
  * IGA h/p refinement of the model's NURBS side channel (`model.nurbs` — see
@@ -275,6 +276,19 @@ export async function deriveMesh(
           (r.warnings.length ? ` ${r.warnings.join(" ")}` : ""),
         suffix: "decimated",
       };
+    }
+    case "generate":
+    case "octreeMesh":
+    case "octree":
+    case "cadSurface": {
+      if (signal?.aborted) throw new Error("cancelled");
+      const r =
+        spec.kind === "generate" ? await generateMesh(spec, diagnostics)
+        : spec.kind === "octreeMesh" ? await octreeMeshModel(model, spec, diagnostics)
+        : spec.kind === "octree" ? await octreeModel(model, spec, diagnostics)
+        : await cadSurfaceModel(model, spec, diagnostics);
+      if (signal?.aborted) throw new Error("cancelled");
+      return r;
     }
     case "igaRefine":
     case "igaSample": {

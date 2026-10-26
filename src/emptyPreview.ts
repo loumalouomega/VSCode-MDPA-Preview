@@ -64,9 +64,10 @@ import {
   shouldSummarize,
   summarizeMeshFile,
   SUMMARY_THRESHOLD_MB_DEFAULT,
+  sanitizeFieldSelection,
 } from "./parser/meshSummary";
 import { MdpaModel } from "./parser/types";
-import { toWireModel } from "./parser/modelWire";
+import { createFieldStager } from "./parser/modelWire";
 import { meshExtname } from "./parser/meshFormats";
 import { MeshAnalysisMessage, runMeshAnalysis } from "./meshAnalysis";
 import { createAnalysisDispatcher, createStreamlineController } from "./analysisDispatch";
@@ -239,26 +240,30 @@ function attachEmptyPanel(
 
   const isMdpa = (p: string): boolean => meshExtname(p) === ".mdpa";
 
+  // Geometry-first delivery for large field volumes (`requestField` fetches rows).
+  // Timeline frames stay whole: the recorder resolves a frame when it is on screen.
+  const stager = createFieldStager();
+
   const postModelMessage = (model: MdpaModel, keepCamera: boolean): void => {
     const name = session.fileName ?? path.basename(session.fsPath ?? "mesh");
     if (session.currentGroup || session.inFileTimeValues) {
       panel.webview.postMessage({
         type: "vtkFrame",
-        model: toWireModel(model),
+        ...stager.wire(model, false),
         ...session.lastFrame,
         midNodes: [],
       });
     } else if (isMdpa(session.fsPath ?? "")) {
       panel.webview.postMessage({
         type: "model",
-        model: toWireModel(model),
+        ...stager.wire(model, true),
         fileName: name,
         keepCamera,
       });
     } else {
       panel.webview.postMessage({
         type: "vtkFrame",
-        model: toWireModel(model),
+        ...stager.wire(model, true),
         frameIndex: 0,
         stepLabel: "",
         totalFrames: 1,
@@ -368,7 +373,7 @@ function attachEmptyPanel(
       session.lastFrame = { frameIndex, stepLabel: step, totalFrames: group.steps.length };
       panel.webview.postMessage({
         type: "vtkFrame",
-        model: toWireModel(adopted),
+        ...stager.wire(adopted, false),
         ...session.lastFrame,
         midNodes: [],
       });
@@ -410,7 +415,7 @@ function attachEmptyPanel(
       };
       panel.webview.postMessage({
         type: "vtkFrame",
-        model: toWireModel(adopted),
+        ...stager.wire(adopted, false),
         ...session.lastFrame,
         midNodes: [],
       });
@@ -500,7 +505,7 @@ function attachEmptyPanel(
           session.lastModel = model;
           panel.webview.postMessage({
             type: "model",
-            model: toWireModel(model),
+            ...stager.wire(model, !hadBase),
             fileName,
             keepCamera: hadBase,
           });
@@ -563,7 +568,7 @@ function attachEmptyPanel(
           (phase, bytesRead, totalBytes) => {
             if (!session.disposed) panel.webview.postMessage({ type: "progress", phase, bytesRead, totalBytes });
           },
-          { signal }
+          { signal, fields: session.selectedFields }
         )
       );
       if (solo === undefined) return;
@@ -573,7 +578,7 @@ function attachEmptyPanel(
       session.lastFrame = { frameIndex: 0, stepLabel: "", totalFrames: 1 };
       panel.webview.postMessage({
         type: "vtkFrame",
-        model: toWireModel(adopted),
+        ...stager.wire(adopted, true),
         frameIndex: 0,
         stepLabel: "",
         totalFrames: 1,
@@ -734,6 +739,11 @@ function attachEmptyPanel(
       }
       return;
     }
+    if (msg?.type === "requestField") {
+      const reply = session.disposed ? undefined : stager.answer(msg.stageId, msg.key);
+      if (reply) void panel.webview.postMessage(reply);
+      return;
+    }
     if (msg?.type === "ready") {
       session.docInfo?.sync(true);
       session.postEngineStatus();
@@ -760,6 +770,7 @@ function attachEmptyPanel(
     if (!session.isBound) {
       if (msg?.type === "meshSummaryOpenFull") {
         session.userForcedFull = true;
+        session.selectedFields = sanitizeFieldSelection(msg.fields);
         await loadBound("initial");
         return;
       }
@@ -768,6 +779,7 @@ function attachEmptyPanel(
     }
     if (msg?.type === "meshSummaryOpenFull") {
       session.userForcedFull = true;
+      session.selectedFields = sanitizeFieldSelection(msg.fields);
       await loadBound("initial");
     } else if (msg?.type === "vtkRequestFrame") {
       const fi = typeof msg.frameIndex === "number" ? msg.frameIndex : 0;
@@ -799,6 +811,9 @@ function attachEmptyPanel(
       msg?.type === "menuSplitMesh" ||
       msg?.type === "menuExportSimplified" ||
       msg?.type === "menuExportGrid" ||
+      msg?.type === "menuExportOctree" ||
+      msg?.type === "menuExportCadSurface" ||
+      msg?.type === "menuGenerateMesh" ||
       msg?.type === "menuExportTable" ||
       msg?.type === "menuExportSeries" ||
       msg?.type === "menuExportAnalysis" ||
@@ -948,6 +963,7 @@ function attachEmptyPanel(
   session.track(msgSub);
   session.track({ dispose: () => recording.dispose() });
   session.track({ dispose: () => plots?.dispose() });
+  session.track({ dispose: () => stager.clear() });
   panel.onDidDispose(() => {
     persistSession(context, session);
     for (const w of fileWatchers) w.dispose();

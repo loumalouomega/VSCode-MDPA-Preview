@@ -48,6 +48,7 @@
  * a transfer focuses the first newly-arrived field.
  */
 
+import { t } from "../src/parser/i18n/runtime";
 import { validateSizeExpr } from "../src/parser/sizeExpr";
 import { scopeVariables } from "../src/parser/fieldCalc";
 import {
@@ -988,7 +989,7 @@ function renderTrackingRow(row: VarRow, index: number): HTMLElement {
     const show = document.createElement("button");
     show.type = "button";
     show.className = "var-row-show";
-    show.title = "Show this field on the mesh";
+    show.title = t("Show this field on the mesh");
     show.innerHTML = `<span class="toolbar-icon">${TOOLBAR_ICONS.play}</span>`;
     show.addEventListener("click", () => {
       // Same one-shot focus handoff a computed row uses; main.ts opens the
@@ -1002,7 +1003,7 @@ function renderTrackingRow(row: VarRow, index: number): HTMLElement {
   const del = document.createElement("button");
   del.type = "button";
   del.className = "var-row-del";
-  del.title = "Remove this variable (the field stays on the mesh)";
+  del.title = t("Remove this variable (the field stays on the mesh)");
   del.innerHTML = `<span class="toolbar-icon">${TOOLBAR_ICONS.close}</span>`;
   del.addEventListener("click", () => {
     dismissedKeys.add(rowKey(rows[index]));
@@ -1123,7 +1124,7 @@ function renderDefinitionRow(row: VarRow, index: number): HTMLElement {
   } else {
     const label = document.createElement("span");
     label.className = "var-track-name";
-    label.textContent = "Transfer fields";
+    label.textContent = t("Transfer fields");
     line1.appendChild(label);
   }
   const icon = document.createElement("span");
@@ -1133,7 +1134,7 @@ function renderDefinitionRow(row: VarRow, index: number): HTMLElement {
   line1.appendChild(icon);
   const methodSelect = document.createElement("select");
   methodSelect.className = "edit-sel edit-sel-grow";
-  methodSelect.title = "How this variable is computed — every Fields operation";
+  methodSelect.title = t("How this variable is computed — every Fields operation");
   for (const [value, label] of ROW_METHODS) {
     const opt = document.createElement("option");
     opt.value = value;
@@ -1149,7 +1150,7 @@ function renderDefinitionRow(row: VarRow, index: number): HTMLElement {
   const del = document.createElement("button");
   del.type = "button";
   del.className = "var-row-del";
-  del.title = "Remove this variable";
+  del.title = t("Remove this variable");
   del.innerHTML = `<span class="toolbar-icon">${TOOLBAR_ICONS.close}</span>`;
   del.addEventListener("click", () => {
     if (row.name.trim() && !isTransferRow(row)) dismissedKeys.add(rowKey(row));
@@ -1196,7 +1197,7 @@ function renderDefinitionRow(row: VarRow, index: number): HTMLElement {
       pathInput.readOnly = true;
       const browse = document.createElement("button");
       browse.type = "button";
-      browse.title = "Choose the surface mesh to measure distance to";
+      browse.title = t("Choose the surface mesh to measure distance to");
       browse.className = "var-icon-btn";
       browse.innerHTML = `<span class="toolbar-icon">${TOOLBAR_ICONS.open}</span>`;
       browse.addEventListener("click", () => {
@@ -1215,8 +1216,8 @@ function renderDefinitionRow(row: VarRow, index: number): HTMLElement {
       // looking unfinished.
       const hint = document.createElement("span");
       hint.className = "edit-row-label";
-      hint.textContent = "to this mesh's exterior skin (volume cells only)";
-      hint.title = "Measures to the boundary faces of the volume cells — the same surface Advanced ▸ Export skin… writes. Needs volume cells; a shell or 2D mesh has no skin distinct from itself.";
+      hint.textContent = t("to this mesh's exterior skin (volume cells only)");
+      hint.title = t("Measures to the boundary faces of the volume cells — the same surface Advanced ▸ Export skin… writes. Needs volume cells; a shell or 2D mesh has no skin distinct from itself.");
       line2.appendChild(hint);
       break;
     }
@@ -1278,7 +1279,7 @@ function renderDefinitionRow(row: VarRow, index: number): HTMLElement {
       pathInput.readOnly = true;
       const browse = document.createElement("button");
       browse.type = "button";
-      browse.title = "Choose the mesh whose fields are transferred onto this one";
+      browse.title = t("Choose the mesh whose fields are transferred onto this one");
       browse.className = "var-icon-btn";
       browse.innerHTML = `<span class="toolbar-icon">${TOOLBAR_ICONS.open}</span>`;
       browse.addEventListener("click", () => {
@@ -1386,7 +1387,7 @@ function renderDefinitionRow(row: VarRow, index: number): HTMLElement {
       // the form's own option text, so the two cannot disagree.
       const dirSelect = document.createElement("select");
       dirSelect.className = "edit-sel edit-sel-grow";
-      dirSelect.title = "Averaging direction";
+      dirSelect.title = t("Averaging direction");
       for (const [v, label] of [
         ["nodalToElemental", "nodal → elemental"],
         ["elementalToNodal", "elemental → nodal"],

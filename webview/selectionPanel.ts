@@ -7,6 +7,7 @@
 // SubModelPart (an ordinary, undoable applyOp) and an export. Pure DOM,
 // mirrors inspectPanel.ts.
 
+import { t } from "../src/parser/i18n/runtime";
 import { glyph } from "../src/uiGlyphs";
 import { fmt } from "./panelWidgets";
 import { SelectionSet, describeSeed } from "../src/parser/selectionCore";
@@ -113,11 +114,11 @@ export function renderSelectionPanel(
   header.className = "field-header";
   const title = document.createElement("div");
   title.className = "field-title";
-  title.textContent = "Selection";
+  title.textContent = t("Selection");
   header.appendChild(title);
   const closeBtn = document.createElement("button");
   closeBtn.className = "field-close";
-  closeBtn.title = "Close";
+  closeBtn.title = t("Close");
   closeBtn.innerHTML = glyph("x");
   closeBtn.addEventListener("click", () => handlers.onClose());
   header.appendChild(closeBtn);
@@ -177,7 +178,7 @@ export function renderSelectionPanel(
     radio.type = "radio";
     radio.name = "sel-active";
     radio.checked = i === state.activeIndex;
-    radio.title = "Make this the active set (picks, isolate and hide act on it)";
+    radio.title = t("Make this the active set (picks, isolate and hide act on it)");
     radio.addEventListener("change", () => handlers.onSetActive(i));
     row.appendChild(radio);
     const label = document.createElement("span");
@@ -187,7 +188,7 @@ export function renderSelectionPanel(
     row.appendChild(label);
     const del = document.createElement("button");
     del.className = "panel-icon-btn";
-    del.title = "Delete this set";
+    del.title = t("Delete this set");
     del.innerHTML = glyph("x");
     del.addEventListener("click", () => handlers.onDelete(i));
     row.appendChild(del);
@@ -197,7 +198,7 @@ export function renderSelectionPanel(
   if (state.sets.length === 0) {
     const hint = document.createElement("div");
     hint.className = "inspect-summary";
-    hint.textContent = "Ctrl+click entities on the mesh to fill a set, or seed one below. A field seed re-resolves against every new frame, so it follows the timeline. Sets are saved with the view and come back when you reopen the mesh.";
+    hint.textContent = t("Ctrl+click entities on the mesh to fill a set, or seed one below. A field seed re-resolves against every new frame, so it follows the timeline. Sets are saved with the view and come back when you reopen the mesh.");
     container.appendChild(hint);
   }
 
@@ -210,7 +211,7 @@ export function renderSelectionPanel(
     const frameBtn = document.createElement("button");
     frameBtn.className = "panel-btn";
     frameBtn.innerHTML = `<span class="ui-glyph">${glyph("maximize")}</span> Frame`;
-    frameBtn.title = "Frame the selection";
+    frameBtn.title = t("Frame the selection");
     frameBtn.addEventListener("click", () => handlers.onFrame());
     actions.appendChild(frameBtn);
     actions.appendChild(smallBtn("New SubModelPart", "Create a SubModelPart holding the selection (an ordinary, undoable operation)", () => {
@@ -235,7 +236,7 @@ export function renderSelectionPanel(
     subInput.type = "text";
     subInput.id = "sel-smp-name";
     subInput.className = "edit-text";
-    subInput.placeholder = "SubModelPart name";
+    subInput.placeholder = t("SubModelPart name");
     subInput.addEventListener("keydown", (e) => {
       if (e.key === "Enter") {
         const parent = document.getElementById("sel-smp-parent") as HTMLSelectElement | null;
@@ -247,10 +248,10 @@ export function renderSelectionPanel(
     const parentSel = document.createElement("select");
     parentSel.id = "sel-smp-parent";
     parentSel.className = "edit-sel";
-    parentSel.title = "Parent SubModelPart (none = top level)";
+    parentSel.title = t("Parent SubModelPart (none = top level)");
     const optNone = document.createElement("option");
     optNone.value = "";
-    optNone.textContent = "— top level —";
+    optNone.textContent = t("— top level —");
     parentSel.appendChild(optNone);
     for (const p of state.partPaths) {
       const o = document.createElement("option");
@@ -267,8 +268,8 @@ export function renderSelectionPanel(
     const isolateBtn = document.createElement("button");
     isolateBtn.className = "panel-btn";
     isolateBtn.classList.toggle("active", state.isolate);
-    isolateBtn.textContent = "Isolate";
-    isolateBtn.title = "Show only the selection: every block layer the selection does not touch is suppressed";
+    isolateBtn.textContent = t("Isolate");
+    isolateBtn.title = t("Show only the selection: every block layer the selection does not touch is suppressed");
     isolateBtn.addEventListener("click", () => handlers.onIsolate());
     visActions.appendChild(isolateBtn);
     visActions.appendChild(smallBtn("Hide", "Suppress every block layer the selection touches (block granularity)", () => handlers.onHide()));
@@ -314,7 +315,7 @@ export function renderSelectionPanel(
   const qualitySel = document.createElement("select");
   qualitySel.id = "sel-seed-quality";
   qualitySel.className = "edit-sel";
-  qualitySel.title = "meshQuality's per-element metrics";
+  qualitySel.title = t("meshQuality's per-element metrics");
   for (const m of [["edgeRatio", "Aspect / Edge ratio"], ["minAngle", "Min angle"], ["maxAngle", "Max angle"], ["gradation", "Size gradation"]] as const) {
     const o = document.createElement("option");
     o.value = m[0];
@@ -326,19 +327,19 @@ export function renderSelectionPanel(
   propInput.type = "number";
   propInput.id = "sel-seed-prop";
   propInput.className = "edit-num";
-  propInput.placeholder = "property id";
+  propInput.placeholder = t("property id");
   seedRow.appendChild(propInput);
   const loInput = document.createElement("input");
   loInput.type = "number";
   loInput.id = "sel-seed-lo";
   loInput.className = "edit-num";
-  loInput.placeholder = "min";
+  loInput.placeholder = t("min");
   seedRow.appendChild(loInput);
   const hiInput = document.createElement("input");
   hiInput.type = "number";
   hiInput.id = "sel-seed-hi";
   hiInput.className = "edit-num";
-  hiInput.placeholder = "max";
+  hiInput.placeholder = t("max");
   seedRow.appendChild(hiInput);
   const anyCheck = document.createElement("input");
   anyCheck.type = "checkbox";
@@ -352,7 +353,7 @@ export function renderSelectionPanel(
   exprInput.type = "text";
   exprInput.id = "sel-seed-expr";
   exprInput.className = "edit-text";
-  exprInput.placeholder = "z <= 0.0 && x > 1";
+  exprInput.placeholder = t("z <= 0.0 && x > 1");
   exprInput.title =
     "Boolean formula over x, y, z, nodal fields and globals: < <= > >= == != && || ! and + - * / ^ functions. " +
     "Example: z <= 0.0 selects the base of the model.";
@@ -360,7 +361,7 @@ export function renderSelectionPanel(
   const ruleSel = document.createElement("select");
   ruleSel.id = "sel-seed-rule";
   ruleSel.className = "edit-sel";
-  ruleSel.title = "all: every node of a cell satisfies the formula · any: at least one · centroid: at the cell centroid";
+  ruleSel.title = t("all: every node of a cell satisfies the formula · any: at least one · centroid: at the cell centroid");
   for (const [v, t] of [["all", "all nodes"], ["any", "any node"], ["centroid", "centroid"]] as const) {
     const o = document.createElement("option");
     o.value = v;
@@ -376,12 +377,12 @@ export function renderSelectionPanel(
   nameInput.type = "text";
   nameInput.id = "sel-seed-name";
   nameInput.className = "edit-text";
-  nameInput.placeholder = "set name";
+  nameInput.placeholder = t("set name");
   confirmRow.appendChild(nameInput);
   const go = document.createElement("button");
   go.className = "panel-btn";
-  go.textContent = "Add set";
-  go.title = "Resolve the seed against the CURRENT model and add it";
+  go.textContent = t("Add set");
+  go.title = t("Resolve the seed against the CURRENT model and add it");
   /** Builds the seed from the row and adds the set; true when a set was added. */
   const addSeed = (): boolean => {
     const kind = (document.getElementById("sel-seed-kind") as HTMLSelectElement).value;
@@ -426,8 +427,8 @@ export function renderSelectionPanel(
   const goPart = document.createElement("button");
   goPart.className = "panel-btn";
   goPart.id = "sel-seed-create-part";
-  goPart.textContent = "Add & create SubModelPart";
-  goPart.title = "Add the set, then turn it into a top-level SubModelPart named like the set (its nodes ride along)";
+  goPart.textContent = t("Add & create SubModelPart");
+  goPart.title = t("Add the set, then turn it into a top-level SubModelPart named like the set (its nodes ride along)");
   goPart.addEventListener("click", () => {
     const name = ((document.getElementById("sel-seed-name") as HTMLInputElement)?.value ?? "").trim();
     if (!name) {

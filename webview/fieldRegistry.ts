@@ -348,6 +348,13 @@ export function noteFieldFireFromMessage(
       noteFieldFire({ origin: originOverride ?? "Partition", expectedKeys: ["Elemental:PARTITION_INDEX"] });
       return;
     }
+    case "segment":
+    case "refinePatches": {
+      // One label field per id space (Elements/Geometries vs Conditions); which of them
+      // exist depends on the mesh, so the inventory diff attributes it.
+      noteFieldFire({ origin: originOverride ?? (op === "segment" ? "Segment" : "Refine patches"), expectedKeys: [] });
+      return;
+    }
     case "setElementRadius": {
       // Creates a radius field whose kind (Elemental vs Conditional) depends
       // on the mesh — the diff attributes it.

@@ -1,3 +1,4 @@
+import { t } from "../src/parser/i18n/runtime";
 import { CaptureSettings } from "../src/parser/capturePlan";
 
 export interface ScreenshotPanelState {
@@ -11,7 +12,7 @@ export function renderScreenshotPanel(root: HTMLElement, state: ScreenshotPanelS
 }): void {
   root.replaceChildren();
   const heading = document.createElement("div"); heading.className = "meshsize-header";
-  const title = document.createElement("strong"); title.textContent = "Screenshot"; heading.append(title);
+  const title = document.createElement("strong"); title.textContent = t("Screenshot"); heading.append(title);
   const button = (label: string, action: () => void): HTMLButtonElement => {
     const b = document.createElement("button"); b.type = "button"; b.textContent = label;
     b.addEventListener("click", action); return b;

@@ -5,6 +5,7 @@
 // — so the markup has to be shared too, or a second copy quietly drifts off the
 // stylesheet. Pure DOM: no vtk, no model types.
 
+import { t } from "../src/parser/i18n/runtime";
 import { COLORMAPS, gradientCss, gradientCssFromStops, ColorStop } from "./colormaps";
 import { filterColormaps, groupByCategory } from "../src/parser/colormapSearch";
 
@@ -93,7 +94,7 @@ export function colormapSelectControl(selected: string, onChange: (name: string)
   const search = document.createElement("input");
   search.type = "search";
   search.className = "field-input";
-  search.placeholder = "Search colormaps…";
+  search.placeholder = t("Search colormaps…");
   search.value = colormapQuery;
   wrap.appendChild(search);
 
@@ -104,7 +105,7 @@ export function colormapSelectControl(selected: string, onChange: (name: string)
   safe.checked = colormapOnlySafe;
   safeLabel.appendChild(safe);
   safeLabel.appendChild(document.createTextNode("Colour-blind safe only"));
-  safeLabel.title = "Only maps whose published source rates them safe for the common colour-vision deficiencies";
+  safeLabel.title = t("Only maps whose published source rates them safe for the common colour-vision deficiencies");
   wrap.appendChild(safeLabel);
 
   const sel = document.createElement("select");
@@ -152,7 +153,7 @@ export function colormapRow(
   row.className = "field-row";
   const l = document.createElement("label");
   l.className = "field-label";
-  l.textContent = "Colormap";
+  l.textContent = t("Colormap");
   row.appendChild(l);
   row.appendChild(colormapSelectControl(selected, onChange));
   return row;

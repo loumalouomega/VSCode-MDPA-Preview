@@ -59,6 +59,7 @@ import { curvatureModel, gaussBonnetResidual } from "../parser/curvature";
 import { compareMeshes, compareFieldModel } from "../parser/meshCompare";
 import { fieldUnitLabel } from "../parser/fieldDimensions";
 import { DeriveSpec, DERIVE_KINDS, DERIVE_STANDALONE_KINDS } from "../parser/deriveMesh";
+import { GENERATOR_SHAPES, GeneratorShape } from "../parser/kernelMeshes";
 import type { StreamSeeds } from "../parser/streamlines";
 import { writeRawMeshioBytes } from "../parser/meshio";
 import { probeAlongPath, probeToCsv } from "../parser/pathProbe";
@@ -1192,6 +1193,19 @@ export interface StepFitOptions {
    * measurement off.
    */
   faceDeviation?: boolean;
+  /** meshio++ 17.13.0: how patches no primitive explains are treated (default "legacy", every output as before). */
+  freeformMode?: "legacy" | "adaptive" | "network" | "auto";
+  freeformParameterization?: "auto" | "projection" | "lscm" | "harmonic";
+  /** A patch network's continuity at an extraordinary vertex (default "g1x"). */
+  extraordinaryVertex?: "g0" | "g1" | "g1x" | "g1xx";
+  localRefine?: "knots" | "thb";
+  freeformG1ToleranceDeg?: number;
+  freeformMaxControlPoints?: number;
+  layoutTargetPatchSize?: number;
+  layoutMaxValenceDeviation?: number;
+  resegmentRounds?: number;
+  layoutSnapToFeatures?: boolean;
+  validateBySurfaceSampling?: boolean;
 }
 
 function provenanceModeOf(v: string | undefined): ProvenanceMode {
@@ -1746,7 +1760,11 @@ export async function meshDerive(args: {
     | "sdfVolume"
     | "streamlines"
     | "igaRefine"
-    | "igaSample";
+    | "igaSample"
+    | "generate"
+    | "octreeMesh"
+    | "octree"
+    | "cadSurface";
   outputPath: string;
   outputFormat?: string;
   /** Read this step of a multi-step file instead of the first (the frame every kind works on). */
@@ -1810,6 +1828,23 @@ export async function meshDerive(args: {
   edges?: boolean;
   /** B-rep: keep only the cells inside the trimming loops. */
   trim?: boolean;
+  /** generate: which procedural mesh, and its arguments by name (see GENERATORS in kernelMeshes.ts). */
+  shape?: string;
+  params?: Record<string, unknown>;
+  /** octreeMesh: upstream's OctreeMeshOptions verbatim (the kernel validates keys and ranges). */
+  options?: Record<string, unknown>;
+  /** octree (17.8.0): the root lattice, level range and balance rule. */
+  rootCells?: number[];
+  minLevel?: number;
+  maxLevel?: number;
+  balance?: string;
+  /** cadSurface (17.13.0): the target edge length and the optional controls. */
+  targetSize?: number;
+  maxChordalDeviation?: number;
+  minPointsPerEdge?: number;
+  tolerance?: number;
+  recordFaceIds?: boolean;
+  strict?: boolean;
 }, execution: PlotExecution = {}): Promise<object> {
   if (!args.path && !DERIVE_STANDALONE_KINDS.includes(args.kind)) throw new Error(`kind "${args.kind}" needs a \`path\`.`);
   const src = args.path
@@ -1900,6 +1935,37 @@ export async function meshDerive(args: {
       minSpeed: args.minSpeed,
       maxSeeds: args.maxSeeds,
       frame: args.path ? `${path.basename(args.path)}${args.timeStep !== undefined ? `, step ${args.timeStep}` : ""}` : undefined,
+    };
+  } else if (args.kind === "generate") {
+    if (!args.shape) throw new Error(`generate needs a \`shape\` (${GENERATOR_SHAPES.join(", ")}).`);
+    if (!(GENERATOR_SHAPES as string[]).includes(args.shape)) throw new Error(`shape must be one of ${GENERATOR_SHAPES.join(", ")}.`);
+    spec = { kind: "generate", shape: args.shape as GeneratorShape, params: args.params };
+  } else if (args.kind === "octreeMesh") {
+    spec = { kind: "octreeMesh", options: args.options };
+  } else if (args.kind === "octree") {
+    spec = {
+      kind: "octree",
+      rootCells: args.rootCells,
+      minLevel: args.minLevel,
+      maxLevel: args.maxLevel,
+      bounds: args.bounds,
+      padding: args.padding,
+      paddingRelative: args.paddingRelative,
+      balance: args.balance,
+      fill: args.fill,
+      sign: args.sign,
+    };
+  } else if (args.kind === "cadSurface") {
+    if (args.targetSize === undefined) throw new Error("cadSurface needs a `targetSize` (the edge length to mesh to).");
+    spec = {
+      kind: "cadSurface",
+      targetSize: args.targetSize,
+      maxChordalDeviation: args.maxChordalDeviation,
+      minPointsPerEdge: args.minPointsPerEdge,
+      tolerance: args.tolerance,
+      recordFaceIds: args.recordFaceIds,
+      edges: args.edges,
+      strict: args.strict,
     };
   } else if (args.kind === "igaRefine" || args.kind === "igaSample") {
     // Both run on the model's NURBS side channel (model.nurbs); a mesh

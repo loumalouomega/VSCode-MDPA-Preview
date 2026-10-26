@@ -14,6 +14,7 @@
  * untrusted file, and this module is the one that renders the most of them.
  */
 
+import { t } from "../src/parser/i18n/runtime";
 import type { MeshSummary } from "../src/parser/meshSummary";
 
 /** Bytes as a short human string — a summary is about orders of magnitude. */
@@ -102,7 +103,7 @@ function nameList(title: string, names: string[]): HTMLElement | undefined {
 export function renderSummaryOverlay(
   container: HTMLElement,
   s: MeshSummary,
-  handlers: { onOpenFull: () => void }
+  handlers: { onOpenFull: (fields?: string[]) => void }
 ): void {
   container.textContent = "";
   container.hidden = false;
@@ -114,7 +115,7 @@ export function renderSummaryOverlay(
   header.className = "meshsize-header";
   const title = document.createElement("div");
   title.className = "meshsize-title";
-  title.textContent = "Header summary";
+  title.textContent = t("Header summary");
   header.appendChild(title);
   cardEl.appendChild(header);
 
@@ -159,11 +160,48 @@ export function renderSummaryOverlay(
     cardEl.appendChild(blocks);
   }
 
-  for (const el of [
-    nameList("Nodal data", s.pointDataNames),
-    nameList("Cell data", s.cellDataNames),
-    nameList("Field data", s.fieldDataNames),
-  ]) {
+  // Selective read: only for readers that honour `arrays` (XDMF, Gmsh); MED and
+  // Exodus ignore it, so offering it there would promise what the reader skips.
+  const selectable = /^\.(xdmf|xmf|msh)$/i.test(s.ext);
+  const chosen = new Set<string>();
+  const NAME_LIMIT = 40;
+  const picker = (title: string, names: string[]): HTMLElement | undefined => {
+    if (names.length === 0) return undefined;
+    const el = card(`${title} (${names.length})`);
+    for (const name of names.slice(0, NAME_LIMIT)) {
+      const label = document.createElement("label");
+      label.className = "edit-check";
+      const box = document.createElement("input");
+      box.type = "checkbox";
+      box.addEventListener("change", () => {
+        if (box.checked) chosen.add(name);
+        else chosen.delete(name);
+      });
+      const text = document.createElement("span");
+      text.textContent = name;
+      text.title = name;
+      label.append(box, text);
+      el.appendChild(label);
+    }
+    if (names.length > NAME_LIMIT) {
+      const more = document.createElement("div");
+      more.className = "meshsize-summary summary-unknown";
+      more.textContent = t("+{n} more not listed — use \"Open full mesh anyway\" to load every array.", { n: names.length - NAME_LIMIT });
+      el.appendChild(more);
+    }
+    return el;
+  };
+  for (const el of selectable
+    ? [
+        picker("Nodal data", s.pointDataNames),
+        picker("Cell data", s.cellDataNames),
+        nameList("Field data", s.fieldDataNames),
+      ]
+    : [
+        nameList("Nodal data", s.pointDataNames),
+        nameList("Cell data", s.cellDataNames),
+        nameList("Field data", s.fieldDataNames),
+      ]) {
     if (el) cardEl.appendChild(el);
   }
 
@@ -187,7 +225,7 @@ export function renderSummaryOverlay(
     p.className = "meshsize-summary summary-unknown";
     // Not "none": an absent value here is a fact about the FORMAT, and saying
     // so is what stops a blank reading as a zero.
-    p.textContent = `Not reported by this format: ${s.unknown.join(", ")}.`;
+    p.textContent = t("Not reported by this format: {list}.", { list: s.unknown.join(", ") });
     cardEl.appendChild(p);
   }
   for (const n of s.notes) {
@@ -202,13 +240,27 @@ export function renderSummaryOverlay(
   const btn = document.createElement("button");
   btn.id = "summary-open-full";
   btn.type = "button";
-  btn.textContent = "Open full mesh anyway";
+  btn.textContent = t("Open full mesh anyway");
   btn.addEventListener("click", () => {
     btn.disabled = true;
-    btn.textContent = "Loading…";
+    btn.textContent = t("Loading…");
     handlers.onOpenFull();
   });
   actions.appendChild(btn);
+  if (selectable && s.pointDataNames.length + s.cellDataNames.length > 0) {
+    const sel = document.createElement("button");
+    sel.id = "summary-open-selected";
+    sel.type = "button";
+    sel.textContent = t("Open with selected fields");
+    sel.title = t("Load the mesh reading only the ticked arrays (none ticked = all).");
+    sel.addEventListener("click", () => {
+      sel.disabled = true;
+      btn.disabled = true;
+      sel.textContent = t("Loading…");
+      handlers.onOpenFull([...chosen]);
+    });
+    actions.appendChild(sel);
+  }
   cardEl.appendChild(actions);
 
   container.appendChild(cardEl);

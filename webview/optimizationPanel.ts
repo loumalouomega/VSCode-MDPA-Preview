@@ -11,6 +11,7 @@
  * than being bridged.
  */
 
+import { t } from "../src/parser/i18n/runtime";
 import { glyph } from "../src/uiGlyphs";
 import type { OptimizationSummary, SummaryCell } from "../src/problemtype/optimization/summaryLog";
 import { optimizationRowText } from "../src/problemtype/optimization/summaryLog";
@@ -159,7 +160,7 @@ export function renderOptimizationPanel(container: HTMLElement, state: Optimizat
   title.textContent = state.caseName ? `Optimization — ${state.caseName}` : "Optimization progress";
   const close = document.createElement("button");
   close.className = "meshsize-close";
-  close.title = "Close";
+  close.title = t("Close");
   close.innerHTML = glyph("x");
   close.addEventListener("click", () => handlers.onClose());
   header.append(title, close);
@@ -224,7 +225,7 @@ export function renderOptimizationPanel(container: HTMLElement, state: Optimizat
       card.className = "meshsize-card";
       const cardTitle = document.createElement("div");
       cardTitle.className = "meshsize-card-title";
-      cardTitle.textContent = "Constraints — standardized value (≤ 0 is satisfied)";
+      cardTitle.textContent = t("Constraints — standardized value (≤ 0 is satisfied)");
       const canvas = document.createElement("canvas");
       canvas.className = "opt-chart";
       const series = summary.constraints.map((c, i) => ({
