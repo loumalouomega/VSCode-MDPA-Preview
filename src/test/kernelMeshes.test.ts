@@ -8,7 +8,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { deriveMesh } from "../parser/deriveMesh";
-import { generateMesh, estimateGeneratedCells, GENERATOR_SHAPES, GENERATE_MAX_CELLS } from "../parser/kernelMeshes";
+import { generateMesh, estimateGeneratedCells, GENERATOR_SHAPES, GENERATE_MAX_CELLS, validateCadSurfaceSpec, cadSurfaceOptionsFrom, describeCadSurface, CadSurfaceReport } from "../parser/kernelMeshes";
+import { recordedDeriveParameters } from "../parser/deriveMesh";
 import { parseMdpa } from "../parser/mdpaParser";
 import { MdpaModel } from "../parser/types";
 import { icosphere } from "./fixtures/shapes";
@@ -81,3 +82,60 @@ function sphereWithoutFaces(): MdpaModel {
   return parseMdpa("Begin Nodes\n1 0 0 0\n2 1 0 0\nEnd Nodes\n") as unknown as MdpaModel;
 }
 void empty;
+
+test("cadSurface options: order 3 is refused by name, malformed controls are named before the kernel runs", () => {
+  const spec = (o: object) => ({ kind: "cadSurface" as const, targetSize: 0.5, ...o });
+  assert.equal(validateCadSurfaceSpec(spec({})), undefined);
+  assert.equal(validateCadSurfaceSpec(spec({ order: 2, minAngle: 25, faceSizes: { 0: 0.1 }, edgeSizes: { 3: 0.05 } })), undefined);
+  assert.match(validateCadSurfaceSpec(spec({ order: 3 })) ?? "", /triangle10 \/ line4/);
+  assert.match(validateCadSurfaceSpec(spec({ order: 4 })) ?? "", /order must be 1 or 2/);
+  assert.match(validateCadSurfaceSpec(spec({ minAngle: 60 })) ?? "", /minAngle/);
+  assert.match(validateCadSurfaceSpec(spec({ poleRings: 9 })) ?? "", /poleRings/);
+  assert.match(validateCadSurfaceSpec(spec({ smoothIterations: 1.5 })) ?? "", /integer/);
+  assert.match(validateCadSurfaceSpec(spec({ smoothMethod: "gauss" })) ?? "", /smoothMethod/);
+  assert.match(validateCadSurfaceSpec(spec({ reparamConditionNumber: 1 })) ?? "", /above 1/);
+  assert.match(validateCadSurfaceSpec(spec({ reparamConditionNumber: 5, order: 2 })) ?? "", /order 1 only/);
+  assert.match(validateCadSurfaceSpec(spec({ faceSizes: { a: 0.1 } })) ?? "", /not a 0-based index/);
+  assert.match(validateCadSurfaceSpec(spec({ edgeSizes: { 1: 0 } })) ?? "", /positive/);
+  assert.match(validateCadSurfaceSpec(spec({ backgroundArray: "h" })) ?? "", /background mesh/);
+  assert.match(validateCadSurfaceSpec({ kind: "cadSurface", targetSize: 0 }) ?? "", /targetSize/);
+});
+
+test("cadSurface options: an unknown key is rejected with the known list, undefined values are dropped", () => {
+  assert.deepEqual(cadSurfaceOptionsFrom(undefined), {});
+  assert.deepEqual(cadSurfaceOptionsFrom({ minAngle: 25, strict: undefined }), { minAngle: 25 });
+  assert.throws(() => cadSurfaceOptionsFrom({ minAngel: 25 }), /Unknown CAD meshing option\(s\): minAngel\. Known: .*minAngle/);
+  assert.throws(() => cadSurfaceOptionsFrom([1]), /must be an object/);
+});
+
+test("cadSurface: a background mesh is replaced by its label in the recorded recipe", () => {
+  const spec = { kind: "cadSurface" as const, targetSize: 0.3, backgroundModel: empty(), backgroundLabel: "size.vtu", backgroundArray: "h" };
+  const rec = recordedDeriveParameters(spec);
+  assert.equal("backgroundModel" in rec, false);
+  assert.equal(rec.backgroundLabel, "size.vtu");
+  assert.equal(JSON.stringify(rec).includes("coords"), false);
+});
+
+test("cadSurface summary states what each option did", () => {
+  const base: CadSurfaceReport = {
+    faces: 2, triangles: 100, points: 60, failedFaces: [],
+    edges: { total: 3, open: 0, nonManifold: 0, misoriented: 0, maxGap: 0 },
+    edgeLength: { min: 0.1, max: 0.4 }, angleDeg: { min: 9.2, max: 120 }, angleHistogram: [],
+    refinementPoints: 30, smoothed: 4, curvedStraightened: 2,
+    angleBound: { requested: 30, minInputAngleDeg: 180, belowBound: true, boundDeg: 31, facesBelowBound: 1 },
+    corners: [], cornersCount: 2, limitedByEdges: [4, 7], limitedByEdgesCount: 2, virtualEdges: [], virtualEdgesCount: 1,
+    reparametrised: [{ taken: true }, { taken: false }], mergedFaces: [{ merged: true }], toleranceUses: [{}],
+    loppedCorners: [{ guaranteed: true }, { guaranteed: false }], warnings: ["w"],
+  };
+  const text = describeCadSurface(base, { minAngle: 30, order: 2 });
+  assert.match(text, /Quadratic output.*2 element\(s\).*straight-sided/);
+  assert.match(text, /Angle bound 30°: 30 refinement point\(s\), 4 smoothed; 2 corner\/pole\(s\) on 1 face\(s\) force triangles under it, every other triangle is at least 31°/);
+  assert.match(text, /Edge sizes limit the mesh at 2 edge\(s\): 4, 7\./);
+  assert.match(text, /1 virtual edge chain/);
+  assert.match(text, /2 face\(s\) over the reparametrisation condition number, 1 flattened/);
+  assert.match(text, /1 sliver face\(s\) found, 1 meshed with a neighbour/);
+  assert.match(text, /Declared tolerances accepted 1 gap/);
+  assert.match(text, /2 corner\(s\) lopped, 1 without the guarantee/);
+  assert.match(describeCadSurface({ ...base, angleBound: { ...base.angleBound!, belowBound: false }, loppedCorners: [] }, { minAngle: 30 }), /met \(smallest angle 31°\)/);
+  assert.match(describeCadSurface({ ...base, angleBound: undefined, loppedCorners: [] }, { lopCorners: true }), /lopCorners has no effect without minAngle/);
+});

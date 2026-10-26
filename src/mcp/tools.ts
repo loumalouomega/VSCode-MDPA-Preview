@@ -58,8 +58,8 @@ import { surfaceDefects } from "../parser/surfaceDefects";
 import { curvatureModel, gaussBonnetResidual } from "../parser/curvature";
 import { compareMeshes, compareFieldModel } from "../parser/meshCompare";
 import { fieldUnitLabel } from "../parser/fieldDimensions";
-import { DeriveSpec, DERIVE_KINDS, DERIVE_STANDALONE_KINDS } from "../parser/deriveMesh";
-import { GENERATOR_SHAPES, GeneratorShape } from "../parser/kernelMeshes";
+import { DeriveSpec, DERIVE_KINDS, DERIVE_STANDALONE_KINDS, recordedDeriveParameters } from "../parser/deriveMesh";
+import { GENERATOR_SHAPES, GeneratorShape, cadSurfaceOptionsFrom, CadSurfaceOptionsInput } from "../parser/kernelMeshes";
 import type { StreamSeeds } from "../parser/streamlines";
 import { writeRawMeshioBytes } from "../parser/meshio";
 import { probeAlongPath, probeToCsv } from "../parser/pathProbe";
@@ -1845,6 +1845,8 @@ export async function meshDerive(args: {
   tolerance?: number;
   recordFaceIds?: boolean;
   strict?: boolean;
+  /** cadSurface (17.19.0–17.21.0): angle bound, order, size controls and the rest; `backgroundPath` names a mesh file read as the size field. */
+  cadOptions?: CadSurfaceOptionsInput;
 }, execution: PlotExecution = {}): Promise<object> {
   if (!args.path && !DERIVE_STANDALONE_KINDS.includes(args.kind)) throw new Error(`kind "${args.kind}" needs a \`path\`.`);
   const src = args.path
@@ -1957,15 +1959,25 @@ export async function meshDerive(args: {
     };
   } else if (args.kind === "cadSurface") {
     if (args.targetSize === undefined) throw new Error("cadSurface needs a `targetSize` (the edge length to mesh to).");
+    const { backgroundPath, ...cad } = cadSurfaceOptionsFrom(args.cadOptions);
+    let backgroundModel: MdpaModel | undefined;
+    if (backgroundPath) backgroundModel = (await loadMesh(backgroundPath, undefined, undefined, undefined, undefined, undefined, execution.signal)).model;
     spec = {
+      ...cad,
+      // The flat arguments predate `cadOptions` and win when both name a control.
+      ...Object.fromEntries(
+        Object.entries({
+          maxChordalDeviation: args.maxChordalDeviation,
+          minPointsPerEdge: args.minPointsPerEdge,
+          tolerance: args.tolerance,
+          recordFaceIds: args.recordFaceIds,
+          edges: args.edges,
+          strict: args.strict,
+        }).filter(([, v]) => v !== undefined)
+      ),
       kind: "cadSurface",
       targetSize: args.targetSize,
-      maxChordalDeviation: args.maxChordalDeviation,
-      minPointsPerEdge: args.minPointsPerEdge,
-      tolerance: args.tolerance,
-      recordFaceIds: args.recordFaceIds,
-      edges: args.edges,
-      strict: args.strict,
+      ...(backgroundModel ? { backgroundModel, backgroundLabel: path.basename(backgroundPath as string) } : {}),
     };
   } else if (args.kind === "igaRefine" || args.kind === "igaSample") {
     // Both run on the model's NURBS side channel (model.nurbs); a mesh
@@ -2015,7 +2027,7 @@ export async function meshDerive(args: {
   const warnings: string[] = [];
   let written: string;
   let report: ExportReport | undefined;
-  const deriveOps = [{ op: `derive:${spec.kind}`, parameters: spec }];
+  const deriveOps = [{ op: `derive:${spec.kind}`, parameters: recordedDeriveParameters(spec) }];
   if (meshExtname(path.resolve(args.outputPath)) === ".vti") {
     // The one container our unstructured writers cannot produce: a dense lattice, written straight from meshio++'s own mesh.
     if (!derived.raw || !derived.denseLattice) {
@@ -2063,6 +2075,7 @@ export async function meshDerive(args: {
     blocks: derived.model.blocks.map(blockSummary),
     fields: derived.model.fields.map((f) => ({ kind: f.kind, variable: f.variable, components: f.components, count: f.ids.length })),
     ...(derived.streamlines ? { streamlines: derived.streamlines } : {}),
+    ...(derived.cadSurface ? { cadSurface: derived.cadSurface } : {}),
     warnings,
     diagnostics: diagnosticsBlock(derived.model),
   };

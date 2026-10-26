@@ -92,3 +92,7 @@ The side channel has one sharp rule: **any applied edit drops it.** A mesh you t
 - **No glTF writer routing**: the kernel has one, and an explicit `outputFormat: "gltf"` reaches it through `mesh_convert`, but no extension maps to it — nothing in this extension emits glTF yet.
 
 ![A NURBS box refined with igaRefine and re-sampled, shown beside mesh_info's nurbs section](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/iga-refine.png)
+
+## Meshing the faces of a B-rep
+
+**Advanced ▸ Mesh CAD faces…** (and `mesh_derive` with `kind: "cadSurface"`) triangulates the faces of the open `.cad.json` (or a STEP/IGES read) into one conforming surface mesh, one SubModelPart and a `CAD_FACE` value per face. Since meshio++ 17.21.0 it can also refine to a **minimum triangle angle**, smooth, produce **curved quadratic** `triangle6`/`line3` elements (`order: 2`; order 3 is refused because the extension cannot hold `triangle10`/`line4`), size the mesh from **curvature**, **gaps** (`cellsAcrossGaps`), **per-face / per-edge sizes** or a **background size field** from another mesh, and mesh sliver faces with a neighbour. Every option is optional; see the [mesh editing guide](./mesh-editing) for the JSON prompt and what the summary reports.

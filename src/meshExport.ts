@@ -35,9 +35,10 @@ import {
 import { extractSubModelPart } from "./parser/subModelPartExtract";
 import { restrictToCells } from "./parser/selectCells";
 import { extractSkinModel } from "./parser/extractSkin";
-import { deriveMesh, DeriveSpec, DeriveResult, DERIVE_KINDS } from "./parser/deriveMesh";
+import { deriveMesh, DeriveSpec, DeriveResult, DERIVE_KINDS, recordedDeriveParameters } from "./parser/deriveMesh";
 import { estimateGrid, describeGridEstimate, triangleSurfaceOf, GRID_MAX_CELLS, GRID_CONFIRM_CELLS } from "./parser/gridSample";
-import { GENERATOR_SHAPES, GENERATOR_EXAMPLES, GeneratorShape, estimateGeneratedCells, GENERATE_MAX_CELLS } from "./parser/kernelMeshes";
+import { GENERATOR_SHAPES, GENERATOR_EXAMPLES, GeneratorShape, estimateGeneratedCells, GENERATE_MAX_CELLS, CadSurfaceSpec, cadSurfaceOptionsFrom, validateCadSurfaceSpec } from "./parser/kernelMeshes";
+import { parseMeshFile } from "./parser/meshFileParser";
 import { exportReportHtml } from "./parser/exportReportHtml";
 import { writeRawMeshioBytes, meshioFullInstalled } from "./parser/meshio";
 import { partitionParts, partitionManifest } from "./parser/partitionExport";
@@ -941,7 +942,7 @@ export async function exportDerived(
   // A trace is of the frame on screen (edits applied); the export says which file it came from.
   if (spec.kind === "streamlines" && !spec.frame) spec = { ...spec, frame: `${path.basename(ctx.fsPath)}, frame on screen` };
   let derived: DeriveResult;
-  const deriveOps = [...(ctx.ops ?? []), { op: `derive:${spec.kind}`, parameters: spec }];
+  const deriveOps = [...(ctx.ops ?? []), { op: `derive:${spec.kind}`, parameters: recordedDeriveParameters(spec) }];
   try {
     derived = await vscode.window.withProgress(
       { location: vscode.ProgressLocation.Notification, title: `Computing ${spec.kind}…`, cancellable: true },
@@ -1136,7 +1137,9 @@ export async function exportOctreeMesh(ctx: ExportContext): Promise<void> {
 /**
  * File ▸ Mesh CAD faces…: triangulates the faces of the open B-rep (a
  * `.cad.json`, or a STEP/IGES read) into one conforming surface mesh. The
- * B-rep side channel exists only while the model is unedited.
+ * B-rep side channel exists only while the model is unedited. Two prompts: the
+ * edge length, then an optional JSON object of the meshio++ 17.19.0–17.21.0
+ * controls (angle bound, order 1–2, size fields, per-face sizes, …).
  */
 export async function exportCadSurface(ctx: ExportContext): Promise<void> {
   if (!ctx.model.nurbs) {
@@ -1154,7 +1157,39 @@ export async function exportCadSurface(ctx: ExportContext): Promise<void> {
     validateInput: (v) => (Number.isFinite(Number(v)) && Number(v) > 0 ? undefined : "A positive number."),
   });
   if (answer === undefined) return;
-  await exportDerived(ctx, { kind: "cadSurface", targetSize: Number(answer) });
+  const optionsAnswer = await vscode.window.showInputBox({
+    title: "Mesh CAD faces — options (JSON, optional)",
+    prompt:
+      'Leave {} for the plain mesh. Any of: minAngle (degrees, under 60), smoothIterations, smoothMethod, order (1 or 2), curvatureDeviation, cellsAcrossGaps, grading, faceSizes {"0": 0.1}, edgeSizes, backgroundPath + backgroundArray (a size field in another mesh), metric, virtualEdges, virtualFaces, modelTolerances, reparamConditionNumber, lopCorners, poleRings, strict, …',
+    value: "{}",
+    validateInput: (v) => {
+      try {
+        const o = cadSurfaceOptionsFrom(JSON.parse(v));
+        const { backgroundPath: _bg, ...rest } = o;
+        return validateCadSurfaceSpec({ kind: "cadSurface", targetSize: Number(answer), ...rest });
+      } catch (e) {
+        return e instanceof SyntaxError ? "Not valid JSON." : e instanceof Error ? e.message : String(e);
+      }
+    },
+  });
+  if (optionsAnswer === undefined) return;
+  const { backgroundPath, ...options } = cadSurfaceOptionsFrom(JSON.parse(optionsAnswer));
+  let background: Pick<CadSurfaceSpec, "backgroundModel" | "backgroundLabel"> = {};
+  if (backgroundPath) {
+    // Relative to the mesh's folder, like the command line's file arguments.
+    const resolved = resolveCommandPath(backgroundPath, path.dirname(ctx.fsPath));
+    if (!resolved.ok) {
+      vscode.window.showWarningMessage(`Mesh CAD faces: ${resolved.reason}`);
+      return;
+    }
+    try {
+      background = { backgroundModel: await parseMeshFile(resolved.path), backgroundLabel: path.basename(resolved.path) };
+    } catch (e) {
+      vscode.window.showWarningMessage(`Mesh CAD faces: could not read the background mesh ${resolved.path}: ${e instanceof Error ? e.message : String(e)}`);
+      return;
+    }
+  }
+  await exportDerived(ctx, { kind: "cadSurface", targetSize: Number(answer), ...options, ...background });
 }
 
 /**

@@ -25,7 +25,7 @@ import { restrictToElements, elementMeasures } from "./selectCells";
 import { extractSkinModel } from "./extractSkin";
 import { decimateModel, DecimateParams } from "./decimate";
 import { sampleGrid, GridSampleSpec } from "./gridSample";
-import { generateMesh, octreeMeshModel, octreeModel, cadSurfaceModel, GenerateSpec, OctreeMeshSpec, OctreeSpec, CadSurfaceSpec } from "./kernelMeshes";
+import { generateMesh, octreeMeshModel, octreeModel, cadSurfaceModel, GenerateSpec, OctreeMeshSpec, OctreeSpec, CadSurfaceSpec, CadSurfaceReport } from "./kernelMeshes";
 import { describeStreamlines, streamlinesToModel, traceStreamlines, StreamlineParams, StreamlineResult } from "./streamlines";
 import type { StreamlineOptions } from "./streamlines";
 import type { MeshioMesh as RawMeshioMesh } from "./meshioConvert";
@@ -131,10 +131,25 @@ export interface DeriveResult {
   denseLattice?: boolean;
   /** Present for `streamlines`: how each line ended and which seeds gave none. */
   streamlines?: Pick<StreamlineResult, "seeds" | "terminationCounts" | "rejected" | "cancelled" | "truncated">;
+  /** Present for `cadSurface`: the structured meshing report behind the summary. */
+  cadSurface?: CadSurfaceReport;
   /** One or two sentences: what was cut, and how much of the source it covers. */
   summary: string;
   /** Appended to the source stem for a default filename. */
   suffix: string;
+}
+
+/**
+ * The spec as it is written into a recipe / provenance block: a `cadSurface`
+ * background mesh is a whole parsed model, so it is replaced by the label of
+ * the file it came from.
+ */
+export function recordedDeriveParameters(spec: DeriveSpec): Record<string, unknown> {
+  if (spec.kind === "cadSurface" && spec.backgroundModel) {
+    const { backgroundModel: _model, ...rest } = spec;
+    return { ...rest, backgroundLabel: spec.backgroundLabel ?? "(a mesh)" };
+  }
+  return { ...spec };
 }
 
 const finite3 = (v: unknown): v is Vec3 => Array.isArray(v) && v.length === 3 && v.every((x) => typeof x === "number" && Number.isFinite(x));

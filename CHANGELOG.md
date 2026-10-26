@@ -4,6 +4,19 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.23.0] - 2026-10-26
+
+### Added
+
+- meshio++ is now `^17.21.0` (from `^17.13.0`). The whole functional delta is `meshCadSurface`; the other 136 kernel functions and every reader/writer key are identical (lean 81 readers / 82 writers, full 83 / 82), so `transientAudit` and the format tables pass unedited. All of it is adopted. Packaged `.vsix`: 54.75 MB (54.11 MB before).
+- **Mesh CAD faces…** (and `mesh_derive` `kind: "cadSurface"`) gains the 17.19.0–17.21.0 controls: `minAngle` refinement with `smoothIterations`/`smoothMethod`, `lopCorners` and `poleRings`; curved `order: 2` (`triangle6`/`line3`) output; sizing by `curvatureDeviation`, `cellsAcrossGaps` and `grading`, per-face / per-edge sizes (`faceSizes`, `edgeSizes`) and a size field read from another mesh (`backgroundPath` + `backgroundArray`); `metric`, `virtualEdges`, `virtualFaces`, `modelTolerances` and `reparamConditionNumber`. The File-menu command asks for the edge length and then an optional JSON object of these controls; MCP takes them as `cadOptions`.
+- The CAD surface report: the summary states the refinement and smoothing counts, whether the angle bound was met or which corners and poles force smaller angles, the edges limiting the size, curved elements kept straight, virtual edges, reparametrised and merged faces, accepted tolerances and lopped corners, and `mesh_derive` returns the same as a structured `cadSurface` object with the angle histogram.
+
+### Changed
+
+- `order: 3` (`triangle10`/`line4`) is refused by name for CAD surface meshes: the extension's cell model and renderer carry linear and quadratic cells only.
+- A `cadSurface` background mesh is recorded in recipes and export provenance by file name, never as the mesh itself. The File-menu options prompt is compile-checked only (no VS Code integration harness).
+
 ## [5.22.0] - 2026-10-26
 
 ### Added
