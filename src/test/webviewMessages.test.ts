@@ -19,7 +19,7 @@ test("English output is byte-identical with and without an explicit en/unknown l
 test("a shipped catalogue only names strings that exist in the chrome, and falls back per key", () => {
   const english = buildPreviewHtml(base);
   const dir = path.join(__dirname, "..", "..", "webview");
-  const runtimeSrc = [dir, path.join(dir, "plots")].flatMap((d) => fs.readdirSync(d).filter((f) => f.endsWith(".ts")).map((f) => fs.readFileSync(path.join(d, f), "utf8"))).join("\n");
+  const runtimeSrc = [dir, path.join(dir, "plots")].flatMap((d) => fs.readdirSync(d).filter((f) => f.endsWith(".ts")).map((f) => fs.readFileSync(path.join(d, f), "utf8"))).concat(fs.readFileSync(path.join(__dirname, "..", "..", "src", "monitorSave.ts"), "utf8")).join("\n");
   for (const loc of shippedLocales()) {
     for (const key of Object.keys(catalogueFor(loc)!)) {
       const inChrome = localizeHtml(english, { catalogue: { [key]: "\u0001" }, pseudo: false }).includes("\u0001");

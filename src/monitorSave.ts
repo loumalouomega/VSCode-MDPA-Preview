@@ -21,13 +21,14 @@ import {
   upsertMonitor,
   validateMonitor,
 } from "./problemtype/monitors";
+import { t } from "./parser/i18n/runtime";
 import type { RegionOperation } from "./parser/plot/types";
 
 export async function saveMonitorFromViewer(resultPath: string, msg: Record<string, unknown>): Promise<void> {
   const cases = findMonitorCases(resultPath);
   if (cases.length === 0) {
     void vscode.window.showInformationMessage(
-      "No case was found for this result. Monitors belong to a case: generate or run a case for the mesh first (it leaves a .kratoscase.json or .kratosrun.json beside it), or add the monitor with the case_monitors MCP tool."
+      t("No case was found for this result. Monitors belong to a case: generate or run a case for the mesh first (it leaves a .kratoscase.json or .kratosrun.json beside it), or add the monitor with the case_monitors MCP tool.")
     );
     return;
   }
@@ -35,7 +36,7 @@ export async function saveMonitorFromViewer(resultPath: string, msg: Record<stri
   if (cases.length > 1) {
     const pick = await vscode.window.showQuickPick(
       cases.map((c) => ({ label: c.stem, description: c.dir, c })),
-      { title: "Save the monitor to which case?", placeHolder: "More than one case is next to this result" }
+      { title: t("Save the monitor to which case?"), placeHolder: t("More than one case is next to this result") }
     );
     if (!pick) return;
     chosen = pick.c;
@@ -44,16 +45,16 @@ export async function saveMonitorFromViewer(resultPath: string, msg: Record<stri
   for (const w of read.parsed.warnings) void vscode.window.showWarningMessage(w);
   const built = await buildSource(msg, read.parsed.monitors);
   if (!built) return;
-  const name = await vscode.window.showInputBox({ title: "Monitor name", value: built.name, prompt: "Shown in Kratos Runs and in exports" });
+  const name = await vscode.window.showInputBox({ title: t("Monitor name"), value: built.name, prompt: t("Shown in Kratos Runs and in exports") });
   if (name === undefined) return;
   const { monitor, problem } = validateMonitor({ id: built.id, name: name || built.name, source: built.source });
   if (!monitor) {
-    void vscode.window.showErrorMessage(problem ?? "The monitor is not valid.");
+    void vscode.window.showErrorMessage(problem ?? t("The monitor is not valid."));
     return;
   }
   try {
     const file = writeMonitors(chosen.meshPath, upsertMonitor(read.parsed.monitors, monitor));
-    void vscode.window.showInformationMessage(`Saved monitor "${monitor.name}" to ${path.basename(file)}. Evaluate it from Kratos Runs ▸ Export Monitors… or Plot Monitors.`);
+    void vscode.window.showInformationMessage(t("Saved monitor \"{name}\" to {file}. Evaluate it from Kratos Runs ▸ Export Monitors… or Plot Monitors.", { name: monitor.name, file: path.basename(file) }));
   } catch (err) {
     void vscode.window.showErrorMessage(err instanceof Error ? err.message : String(err));
   }
@@ -71,7 +72,7 @@ async function buildSource(msg: Record<string, unknown>, existing: readonly { id
   if (msg.source === "point") {
     const coordinates = Array.isArray(msg.coordinates) ? parseXyz(msg.coordinates.join(",")) : undefined;
     if (!coordinates) {
-      void vscode.window.showErrorMessage("The picked node has no usable coordinates.");
+      void vscode.window.showErrorMessage(t("The picked node has no usable coordinates."));
       return undefined;
     }
     return { ...suggestPointMonitor({ variable, coordinates }, existing), source: { type: "point", variable, coordinates } };
@@ -82,17 +83,17 @@ async function buildSource(msg: Record<string, unknown>, existing: readonly { id
         !!f && typeof f === "object" && typeof (f as { variable?: unknown }).variable === "string"
     );
     if (fields.length === 0) {
-      void vscode.window.showInformationMessage("This mesh has no fields to monitor.");
+      void vscode.window.showInformationMessage(t("This mesh has no fields to monitor."));
       return undefined;
     }
     const field = await vscode.window.showQuickPick(
-      fields.map((f) => ({ label: f.variable, description: `${f.kind}, ${f.components} component${f.components === 1 ? "" : "s"}`, f })),
-      { title: "Monitor which field?" }
+      fields.map((f) => ({ label: f.variable, description: `${f.kind}, ${f.components}`, f })),
+      { title: t("Monitor which field?") }
     );
     if (!field) return undefined;
     const op = await vscode.window.showQuickPick(
       regionOperationsFor(Number(field.f.components) || 1).map((label) => ({ label })),
-      { title: `Quantity of ${field.f.variable} over ${msg.submodelpart ? String(msg.submodelpart) : "the whole mesh"}` }
+      { title: msg.submodelpart ? t("Quantity of {v} over {part}", { v: field.f.variable, part: String(msg.submodelpart) }) : t("Quantity of {v} over the whole mesh", { v: field.f.variable }) }
     );
     if (!op) return undefined;
     const operation = op.label as RegionOperation;
@@ -100,7 +101,7 @@ async function buildSource(msg: Record<string, unknown>, existing: readonly { id
     const source: Record<string, unknown> = { type: "region", kind: field.f.kind, variable: field.f.variable, operation };
     if (submodelpart) source.submodelpart = submodelpart;
     if (needsReferencePoint(operation)) {
-      const text = await vscode.window.showInputBox({ title: "Moment reference point", prompt: "x, y, z (never assumed)", validateInput: (v) => (parseXyz(v) ? undefined : "Enter three numbers: x, y, z") });
+      const text = await vscode.window.showInputBox({ title: t("Moment reference point"), prompt: t("x, y, z (never assumed)"), validateInput: (v) => (parseXyz(v) ? undefined : t("Enter three numbers: x, y, z")) });
       const point = text === undefined ? undefined : parseXyz(text);
       if (!point) return undefined;
       source.referencePoint = point;

@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- Host-side messages start to follow the display language: the monitor-saving prompts and notifications are translated (es, fr, de, pt-br); other host notifications remain English.
 - Inspect can now save coordinate monitors (**At point**) and regional monitors (**Monitor region** on a SubModelPart) as well as entity monitors; the host asks for the field, the quantity and, for moments, the reference point. Not driven under VS Code.
 - View ▾ ▸ **Curved quadratic cells**: quadratic edges, faces and the boundary of quadratic volume cells are drawn with their mid-side nodes (display only; stored cells and exports are unchanged). Off by default.
 - Per-format audit of quadratic node ordering (`highOrderOrdering.test.ts`): six quadratic cell types round-trip through eight meshio++ formats with every mid node still on its VTK-ordered edge; the Abaqus writer rejects pyramid13.
