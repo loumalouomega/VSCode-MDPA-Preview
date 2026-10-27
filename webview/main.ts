@@ -50,6 +50,8 @@ import { buildFlowBalanceRequest, defaultFlowBalanceForm } from "../src/parser/f
 import type { FlowBalance } from "../src/parser/flowBalance";
 
 import { EntityBlock, EntityKind, FieldData, MdpaModel, SubModelPart } from "../src/parser/types";
+import { constraintNodeIds } from "../src/parser/constraintsParser";
+import { buildConstraintLinks } from "../src/parser/constraintLinks";
 import { computeMeshQuality, QualityReport } from "../src/parser/meshQuality";
 import { computeMeshSize, MeshSizeResult } from "../src/parser/meshSize";
 import {
@@ -1380,6 +1382,46 @@ function beamConstant(): number {
 // not hidden, so their visibility survives — and this one overlay is drawn.
 // Picking is disabled while it shows, because a decimated triangle is a
 // re-meshed patch that no source cell owns; the status line says so.
+// Slave-to-master links of the multi-point constraints (View ▸ Constraint links):
+// one overlay layer, rebuilt from the model after every scene rebuild.
+const CONSTRAINT_LINKS_ID = "constraints:links";
+const CONSTRAINT_LINKS_COLOR: RGB = [0.95, 0.6, 0.1];
+let constraintLinksOn = false;
+
+function setConstraintLinks(on: boolean): void {
+  constraintLinksOn = on;
+  document.querySelector('[data-action="constraintLinks"]')?.classList.toggle("active", on);
+  applyConstraintLinks();
+}
+
+function applyConstraintLinks(): void {
+  removeLayer(CONSTRAINT_LINKS_ID);
+  if (!constraintLinksOn) {
+    render();
+    return;
+  }
+  const links = model ? buildConstraintLinks(model) : undefined;
+  if (!links || links.segments === 0) {
+    messageEl.textContent = "This mesh has no multi-point constraints to draw.";
+    render();
+    return;
+  }
+  const geometry = backend.createGeometry({ points: links.points, lines: links.lines });
+  registerGlobalOverlay(
+    CONSTRAINT_LINKS_ID,
+    () => {
+      const prop = backend.createProp();
+      prop.setGeometry(geometry);
+      prop.setColoring({ kind: "none" });
+      prop.setStyle({ color: CONSTRAINT_LINKS_COLOR, lineWidth: 2 });
+      return prop;
+    },
+    geometry
+  );
+  messageEl.textContent = `Constraint links: ${links.segments.toLocaleString()} slave→master segment(s)${links.missing ? `, ${links.missing} skipped (node not in the mesh)` : ""}.`;
+  render();
+}
+
 const LOD_LAYER_ID = "lod:surface";
 const LOD_COLOR: RGB = [0.62, 0.72, 0.85];
 let lodEnabled = false;
@@ -2493,6 +2535,7 @@ function buildScene(resetCam = true): void {
   if (normalsVisible) applyNormalsLayer();
   // clearScene() dropped the LOD surface too: a rebuilt model needs a fresh one.
   if (lodEnabled) requestLod();
+  if (constraintLinksOn) applyConstraintLinks();
   // ...and the streamlines: the field they follow belongs to the frame that was
   // just replaced, so a drawn trace is re-traced against the new one.
   refreshStreamlineChoices();
@@ -3922,6 +3965,7 @@ function dispatchToolbarAction(action: string | undefined, _target?: HTMLElement
   else if (action === "edges") setShowEdges(!showEdges);
   else if (action === "nodeIds") setNodeIds(!showNodeIds);
   else if (action === "lod") setLod(!lodEnabled);
+  else if (action === "constraintLinks") setConstraintLinks(!constraintLinksOn);
   else if (action === "curved") setCurved(curvedLevel === 0);
   else if (action === "flatParts") {
     setOutlineView({ ...outlineView, flattenSubModelParts: !outlineView.flattenSubModelParts }, true);
@@ -3993,6 +4037,7 @@ function uiToggleState(action: string): boolean | undefined {
     case "edges": return showEdges;
     case "nodeIds": return showNodeIds;
     case "lod": return lodEnabled;
+    case "constraintLinks": return constraintLinksOn;
     case "pan": return panMode;
     case "grid": return gridVisible;
     case "flatParts": return outlineView.flattenSubModelParts;
@@ -5190,6 +5235,34 @@ function frameTableSelection(): void {
  * part of the click: scanning down a column would otherwise throw the camera
  * around once per row.
  */
+/** The constraints naming a node, one readable line each (id, variable, role, partners). */
+function constraintLinesFor(node: number): string[] {
+  const out: string[] = [];
+  for (const b of model?.constraints ?? []) {
+    for (const r of b.rows) {
+      if (r.kind !== "linear") continue;
+      const slave = r.slaveIds.includes(node);
+      const master = r.masterIds.includes(node);
+      if (!slave && !master) continue;
+      const v = b.variables.join(" ");
+      out.push(
+        slave
+          ? `#${r.id} ${v}: slave of ${r.masterIds.map((m, i) => `${m}×${+r.weights[i].toPrecision(4)}`).join(" + ")}${r.constant ? ` + ${r.constant}` : ""}`
+          : `#${r.id} ${v}: master of ${r.slaveIds.join(", ")} (weight ${+r.weights[r.masterIds.indexOf(node)].toPrecision(4)})`
+      );
+      if (out.length >= 8) return out;
+    }
+  }
+  return out;
+}
+
+function constraintNodeIdsOf(m: MdpaModel | undefined, id: number): number[] | undefined {
+  for (const b of m?.constraints ?? []) {
+    for (const r of b.rows) if (r.kind === "linear" && r.id === id) return constraintNodeIds(r);
+  }
+  return undefined;
+}
+
 function selectTableRow(kind: TableKind, id: number): void {
   // Plot selection can arrive before the table opens. Matching IDs in another
   // association must not highlight a node row for an elemental sample.
@@ -5200,8 +5273,12 @@ function selectTableRow(kind: TableKind, id: number): void {
     dataTableState.focusRow = undefined;
   }
   dataTableState.selectedId = id;
+  // A constraint highlights every node it names (slave and masters) as points.
+  const constraintNodes = kind === "Constraints" ? constraintNodeIdsOf(model, id) : undefined;
   const cell: Cell | undefined =
-    kind === "Nodes"
+    kind === "Constraints"
+      ? constraintNodes && constraintNodes.length > 0 ? { nodeIds: Int32Array.from(constraintNodes) } : undefined
+      : kind === "Nodes"
       ? { nodeIds: Int32Array.from([id]) }
       : kind === "Elements"
         ? elementById.get(id)
@@ -6000,6 +6077,7 @@ function isOverlayLayer(id: string): boolean {
     id === STREAMLINE_LAYER_ID ||
     id === STREAMLINE_SEED_LAYER_ID ||
     id === LOD_LAYER_ID ||
+    id === CONSTRAINT_LINKS_ID ||
     MESHSIZE_LAYER_IDS.includes(id) ||
     id.startsWith(SEL_LAYER_PREFIX) ||
     id.startsWith(USER_LAYER_PREFIX) ||
@@ -8988,6 +9066,7 @@ function handleInspectPick(displayX: number, displayY: number): void {
         coords,
         smpPaths: idx.nodes.get(result.nodeId) ?? [],
         fields: fieldValuesForEntity("Nodal", result.nodeId),
+        constraints: constraintLinesFor(result.nodeId),
       };
     }
   }

@@ -847,7 +847,7 @@ export function registerAllTools(server: McpServer): void {
         "Caveat: Kratos gives each entity kind its own id space, so a field spanning several kinds resolves last-write-wins for a colliding id — the same behaviour as the viewer's field panel.",
       inputSchema: {
         path: meshPath,
-        kind: z.enum(["Nodes", "Elements", "Conditions", "Geometries"]),
+        kind: z.enum(["Nodes", "Elements", "Conditions", "Geometries", "Constraints"]),
         outputPath: z
           .string()
           .optional()

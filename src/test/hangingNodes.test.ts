@@ -7,6 +7,11 @@ import { addHangingNodeConstraints, findHangingNodes, HANGING_PART } from "../pa
 import { countConstraints, definedConstraintIds } from "../parser/constraintsParser";
 import { removeOrphanNodes } from "../parser/removeOrphanNodes";
 import { renumberModel } from "../parser/renumberMesh";
+import { cropModel } from "../parser/cropMesh";
+import { mergeModels } from "../parser/mergeMesh";
+import { buildConstraintLinks } from "../parser/constraintLinks";
+import { OperationHistory } from "../parser/opHistoryCore";
+import { undefinedConstraintIds } from "../parser/constraintsParser";
 
 /** One coarse cube [0,2]^3 beside a fine 2x2x2 block on [2,4]x[0,2]x[0,2]. */
 function twoLevel(): string {
@@ -111,4 +116,48 @@ test("a conforming mesh has none", () => {
   assert.equal(findHangingNodes(parseMdpa(src)).nodes.length, 0);
   const r = addHangingNodeConstraints(parseMdpa(src));
   assert.equal(r.constraints, 0);
+});
+
+const idsOf = (m: ReturnType<typeof parseMdpa>) => definedConstraintIds(m.constraints);
+
+test("crop drops a constraint whose node leaves and keeps the part list consistent", () => {
+  const { model } = addHangingNodeConstraints(parseMdpa(twoLevel()), { variables: ["DISPLACEMENT_X"] });
+  assert.equal(idsOf(model).length, 5);
+  // Keep y <= 1: the coarse cube (nodes at y = 2) goes, the fine cells stay, and the
+  // constraints whose masters sit at y = 2 must go with it rather than dangle.
+  const r = cropModel(model, { kind: "bbox", lo: [-1, -1, -1], hi: [5, 1, 5], mode: "all" });
+  assert.ok(r.droppedConstraints > 0);
+  assert.ok(idsOf(r.model).length < 5);
+  assert.deepEqual(undefinedConstraintIds(r.model.constraints, r.model.subModelParts), []);
+});
+
+test("merging a second mesh offsets its constraints past the first and keeps both sets", () => {
+  const a = addHangingNodeConstraints(parseMdpa(twoLevel()), { variables: ["DISPLACEMENT_X"] }).model;
+  const b = addHangingNodeConstraints(parseMdpa(twoLevel()), { variables: ["DISPLACEMENT_X"] }).model;
+  const merged = mergeModels(a, b, { name: "Other" }).model;
+  const ids = idsOf(merged);
+  assert.equal(ids.length, 10);
+  assert.equal(new Set(ids).size, 10, "no id collides");
+  assert.deepEqual(undefinedConstraintIds(merged.constraints, merged.subModelParts), []);
+});
+
+test("undo and redo remove and restore the generated constraints", async () => {
+  const h = new OperationHistory();
+  h.setBase(parseMdpa(twoLevel()));
+  await h.applyNew({ op: "addHangingNodeConstraints", variables: ["DISPLACEMENT_X"] });
+  assert.equal(idsOf((await h.current()).model).length, 5);
+  h.undo();
+  assert.equal(idsOf((await h.current()).model).length, 0);
+  h.redo();
+  assert.equal(idsOf((await h.current()).model).length, 5);
+});
+
+test("buildConstraintLinks gives one segment per slave-master pair", () => {
+  const { model } = addHangingNodeConstraints(parseMdpa(twoLevel()), { variables: ["DISPLACEMENT_X"] });
+  const links = buildConstraintLinks(model);
+  const expected = (model.constraints ?? []).flatMap((b) => b.rows).reduce((n, r) => n + (r.kind === "linear" ? r.slaveIds.length * r.masterIds.length : 0), 0);
+  assert.equal(links.segments, expected);
+  assert.equal(links.lines.length, expected * 3);
+  assert.equal(links.missing, 0);
+  assert.equal(buildConstraintLinks(model, { variable: "TEMPERATURE" }).segments, 0);
 });

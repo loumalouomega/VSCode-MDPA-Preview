@@ -294,6 +294,7 @@ const VIEW: CommandSpec[] = [
   ui("grid", "view", "Cube axes grid", "grid"),
   ui("nodeIds", "view", "Node id labels (small meshes only)", "nodeIds", { aliases: ["nodeids"] }),
   ui("lod", "view", "Level-of-detail surface preview", "lod"),
+  ui("constraintLinks", "view", "Draw slave→master links of the multi-point constraints", "constraintLinks"),
   ui("flatParts", "view", "Flat SubModelPart list in the outline", "flatParts"),
   ui("ortho", "view", "Parallel (orthographic) projection", "parallelProjection", { aliases: ["parallelProjection"] }),
   ui("pan", "view", "Pan mode for the left mouse button", "pan"),
