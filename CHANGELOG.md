@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [5.25.0] - 2026-10-27
+
+### Changed
+
+- **Hanging-node constraints follow Kratos' constraint-block layout.** Kratos reads the number of master dofs from the `Begin Constraints` header (the slave variable followed by one variable per master) and needs every row of a block to match it. Constraint blocks now repeat the variable once for the slave and once per master, and rows are grouped so each block links the same number of dofs (an edge node has 2 masters, a face node 4). The writer also splits an older block that mixed master counts when it saves, and `createConstraint` writes the repeated header.
+- **Any dof variable can be tied, not only `DISPLACEMENT`.** `addHangingNodeConstraints` (sidebar, command line, `mesh_transform`) and `mesh_derive` with `kind: "octreeMesh"` and `hangingConstraints` accept scalars such as `TEMPERATURE` or `PRESSURE` as they are, and expand a vector name (`DISPLACEMENT`, `VELOCITY`, `MESH_DISPLACEMENT`, or a nodal vector field of the mesh) to `_X`, `_Y` and, on a 3D mesh, `_Z`. The default is `DISPLACEMENT`. The Data table and Inspect show each variable name once.
+
+### Added
+
+- Inspecting a node that a multi-point constraint names now also highlights the nodes it is tied to, and `scripts/screenshots/check-constraint-view.mjs` checks the Constraint links overlay, the Data table **Constraints** kind and Inspect's constraint lines in Chromium against the new `hanging_two_level.mdpa` fixture.
+
 ## [5.24.0] - 2026-10-27
 
 ### Added
@@ -1387,7 +1398,8 @@ Four silent-correctness fixes. None of them threw, and none was visible in the m
 
 - Initial release: custom editor preview for `.mdpa` files.
 
-[Unreleased]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.24.0...HEAD
+[Unreleased]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.25.0...HEAD
+[5.25.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.24.0...v5.25.0
 [5.24.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.22.0...v5.24.0
 [5.15.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.14.0...v5.15.0
 [4.20.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.19.0...v4.20.0
