@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [5.24.0] - 2026-10-27
+
 ### Added
 
 - **Hanging-node constraints (roadmap item 23).** A hexahedral or quadrilateral mesh with non-conforming nodes (a hexahedral octree, a refined patch) can now tie each hanging node to the end nodes of the coarse edge or face it sits on, with a `LinearMasterSlaveConstraint` per node and variable (default `DISPLACEMENT_X/Y/Z`), listed in a `HangingNodes` SubModelPart. The parents are recovered from the geometry, chains resolve to end masters, and a linear field is reproduced exactly at every hanging node. Reach it from the sidebar (**Tie hanging nodes**), the command line (`addHangingNodeConstraints`), `mesh_transform`, or `mesh_derive` with `kind: "octreeMesh"` and `hangingConstraints`. `createConstraint` and `deleteConstraint` edit single constraints. View ▸ **Constraint links** draws the slave→master segments, Inspect lists the constraints naming the picked node, the Data table has a **Constraints** kind (also `mesh_export_table`), and preflight warns about a constraint naming a node no cell uses or a slave that a constraint-list condition also fixes.
@@ -1385,7 +1387,8 @@ Four silent-correctness fixes. None of them threw, and none was visible in the m
 
 - Initial release: custom editor preview for `.mdpa` files.
 
-[Unreleased]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.15.0...HEAD
+[Unreleased]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.24.0...HEAD
+[5.24.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.22.0...v5.24.0
 [5.15.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.14.0...v5.15.0
 [4.20.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.19.0...v4.20.0
 [4.19.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.18.0...v4.19.0
