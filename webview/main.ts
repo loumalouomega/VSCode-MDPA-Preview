@@ -1612,6 +1612,9 @@ let fieldPanelCollapsed = false;
 // --- Inspect / picking ---------------------------------------------------
 const INSPECT_MARKER_ID = "inspect:marker";
 const INSPECT_MARKER_COLOR: RGB = [1.0, 0.85, 0.1];
+// The other nodes tied to a picked node by a multi-point constraint.
+const INSPECT_CONSTRAINT_ID = "inspect:constraint";
+const INSPECT_CONSTRAINT_COLOR: RGB = [0.95, 0.4, 0.1];
 const MEASURE_POINTS_ID = "inspect:measure-points";
 const MEASURE_LINE_ID = "inspect:measure-line";
 const MEASURE_COLOR: RGB = [1.0, 0.4, 0.85];
@@ -5256,6 +5259,19 @@ function constraintLinesFor(node: number): string[] {
   return out;
 }
 
+/** Every other node tied to `node` by a linear constraint (slaves and masters alike). */
+function constraintPartnersOf(node: number): number[] {
+  const out = new Set<number>();
+  for (const b of model?.constraints ?? []) {
+    for (const r of b.rows) {
+      if (r.kind !== "linear") continue;
+      if (!r.slaveIds.includes(node) && !r.masterIds.includes(node)) continue;
+      for (const n of constraintNodeIds(r)) if (n !== node) out.add(n);
+    }
+  }
+  return [...out];
+}
+
 function constraintNodeIdsOf(m: MdpaModel | undefined, id: number): number[] | undefined {
   for (const b of m?.constraints ?? []) {
     for (const r of b.rows) if (r.kind === "linear" && r.id === id) return constraintNodeIds(r);
@@ -7155,6 +7171,7 @@ function hideInspectPanel(): void {
   inspectPanelEl.style.display = "none";
   document.querySelector('#toolbar button[data-action="inspect"]')?.classList.remove("active");
   removeLayer(INSPECT_MARKER_ID);
+  removeLayer(INSPECT_CONSTRAINT_ID);
   removeLayer(MEASURE_POINTS_ID);
   removeLayer(MEASURE_LINE_ID);
   syncPickStatus();
@@ -7255,6 +7272,7 @@ function renderInspectUI(): void {
 function clearInspectSelection(): void {
   inspectSelection = undefined;
   removeLayer(INSPECT_MARKER_ID);
+  removeLayer(INSPECT_CONSTRAINT_ID);
   renderInspectUI();
   render();
 }
@@ -9088,6 +9106,13 @@ function handleInspectPick(displayX: number, displayY: number): void {
       : undefined;
   removeLayer(INSPECT_MARKER_ID);
   if (markerCell) addLayer(INSPECT_MARKER_ID, [markerCell], INSPECT_MARKER_COLOR, true);
+
+  // A node in a multi-point constraint also lights up the nodes it is tied to.
+  removeLayer(INSPECT_CONSTRAINT_ID);
+  const partners = result.nodeId !== undefined ? constraintPartnersOf(result.nodeId) : [];
+  if (partners.length > 0) {
+    addLayer(INSPECT_CONSTRAINT_ID, [{ nodeIds: Int32Array.from(partners) }], INSPECT_CONSTRAINT_COLOR, true);
+  }
 
   renderInspectUI();
   render();
