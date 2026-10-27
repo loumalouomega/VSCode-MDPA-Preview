@@ -72,7 +72,9 @@ test("addHangingNodeConstraints writes one row per hanging node and variable, an
 test("the constraints survive a write/re-parse and node-changing ops", () => {
   const { model } = addHangingNodeConstraints(parseMdpa(twoLevel()), { variables: ["DISPLACEMENT_X"] });
   const text = writeMdpa(model);
-  assert.match(text, /Begin Constraints LinearMasterSlaveConstraint DISPLACEMENT_X/);
+  // Kratos fixes the master-dof count from the header: slave + 2 masters (edge) or 4 (face).
+  assert.match(text, /^Begin Constraints LinearMasterSlaveConstraint DISPLACEMENT_X DISPLACEMENT_X DISPLACEMENT_X$/m);
+  assert.match(text, /^Begin Constraints LinearMasterSlaveConstraint DISPLACEMENT_X( DISPLACEMENT_X){4}$/m);
   const again = parseMdpa(text);
   assert.equal(countConstraints(again.constraints).linear, 5);
   assert.equal(countConstraints(again.constraints).raw, 0);
@@ -160,4 +162,22 @@ test("buildConstraintLinks gives one segment per slave-master pair", () => {
   assert.equal(links.lines.length, expected * 3);
   assert.equal(links.missing, 0);
   assert.equal(buildConstraintLinks(model, { variable: "TEMPERATURE" }).segments, 0);
+});
+
+test("every constraint block links the same number of dofs as its header names", () => {
+  const { model } = addHangingNodeConstraints(parseMdpa(twoLevel()));
+  assert.equal(model.constraints!.length, 6); // 3 variables x {edge, face}
+  const again = parseMdpa(writeMdpa(model));
+  for (const b of again.constraints!) {
+    assert.ok(new Set(b.variables).size === 1);
+    for (const r of b.rows) assert.ok(r.kind === "linear" && b.variables.length === 1 + r.masterIds.length);
+  }
+});
+
+test("the writer splits an old single-header block that mixes master counts", () => {
+  const old = parseMdpa(writeMdpa(addHangingNodeConstraints(parseMdpa(twoLevel()), { variables: ["DISPLACEMENT_X"] }).model));
+  const merged = { ...old, constraints: [{ ...old.constraints![0], variables: ["DISPLACEMENT_X"], rows: old.constraints!.flatMap((b) => b.rows) }] };
+  const back = parseMdpa(writeMdpa(merged));
+  assert.equal(back.constraints!.length, 2);
+  for (const b of back.constraints!) for (const r of b.rows) assert.ok(r.kind === "linear" && b.variables.length === 1 + r.masterIds.length);
 });

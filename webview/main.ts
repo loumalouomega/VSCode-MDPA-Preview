@@ -5247,7 +5247,7 @@ function constraintLinesFor(node: number): string[] {
       const slave = r.slaveIds.includes(node);
       const master = r.masterIds.includes(node);
       if (!slave && !master) continue;
-      const v = b.variables.join(" ");
+      const v = [...new Set(b.variables)].join(" ");
       out.push(
         slave
           ? `#${r.id} ${v}: slave of ${r.masterIds.map((m, i) => `${m}×${+r.weights[i].toPrecision(4)}`).join(" + ")}${r.constant ? ` + ${r.constant}` : ""}`

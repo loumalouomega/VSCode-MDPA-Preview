@@ -198,21 +198,29 @@ export const MENU_ACTION_COMMANDS: Readonly<Record<string, string>> = {
 };
 
 export const ADVANCED_MENU_HTML = `<div id="advanced-popup" class="hidden" role="menu">
-        <button type="button" class="file-menu-item" data-action="meshSize" role="menuitem" title="Mesh size (nodal / element) + box-whisker">${ic("meshSize")}<span>Mesh Size</span></button>
+        <div class="file-menu-group-label" role="presentation">Special entities</div>
         <button type="button" class="file-menu-item" data-action="spheres" role="menuitem" title="Render one-node (particle) elements as spheres sized by RADIUS">${ic("spheres")}<span>Spheres…</span></button>
         <button type="button" class="file-menu-item" data-action="beams" role="menuitem" title="Render line (1D) elements as tubes sized by their CROSS_AREA section">${ic("beam")}<span>Beams…</span></button>
         <button type="button" class="file-menu-item" data-action="volume" role="menuitem" title="Show a regular lattice (.vti, sampled grids) as a volume, slices or iso surfaces">${ic("fieldContour")}<span>Volume view…</span></button>
+        <div class="file-menu-sep"></div>
+        <div class="file-menu-group-label" role="presentation">Analysis</div>
+        <button type="button" class="file-menu-item" data-action="meshSize" role="menuitem" title="Mesh size (nodal / element) + box-whisker">${ic("meshSize")}<span>Mesh Size</span></button>
         <button type="button" class="file-menu-item" data-action="normals" role="menuitem" title="Draw face normals — an inverted element points its arrow against its neighbours">${ic("normals")}<span>Face normals</span></button>
         <button type="button" class="file-menu-item" data-action="integrals" role="menuitem" title="Cell-measure-weighted total and mean of every cell field, per mesh and per region">${ic("average")}<span>Field integrals…</span></button>
         <button type="button" class="file-menu-item" data-action="streamlines" role="menuitem" title="Trace steady streamlines of a nodal vector field from seed points, a line, a plane or a SubModelPart, and export them as line cells">${ic("fieldQuiver")}<span>Streamlines…</span></button>
         <button type="button" class="file-menu-item" data-action="flowBalance" role="menuitem" title="Signed flux and area-weighted pressure through named SubModelPart boundaries: net flux, imbalance and pressure drop">${ic("average")}<span>Flow balance…</span></button>
+        <div class="file-menu-sep"></div>
+        <div class="file-menu-group-label" role="presentation">Special problemtypes</div>
         <button type="button" class="file-menu-item" data-action="optimizationProgress" role="menuitem" title="Follow an optimization run: objective and constraints per iteration, read from the optimizer's summary file">${ic("results")}<span>Optimization progress…</span></button>
         <button type="button" class="file-menu-item" data-action="windTunnel" role="menuitem" title="A few steps from a body surface to a wind-tunnel mesh and a prepared fluid case: tunnel box, refinement, carved body, boundary layer, wake and force coefficients">${ic("fieldQuiver")}<span>Virtual wind tunnel…</span></button>
-        <button type="button" class="file-menu-item" data-action="linkPreviews" role="menuitem" title="Link this preview with another open mesh or run so their camera, field, colour range, clip plane and physical time follow each other">${ic("merge")}<span>Link previews…</span></button>
-        <button type="button" class="file-menu-item" data-action="compareSplit" role="menuitem" title="Show a second mesh file in one split pane next to this one, coloured by the same field where it has it — a read-only reference, never edited">${ic("grid")}<span>Compare in split…</span></button>
+        <div class="file-menu-sep"></div>
+        <div class="file-menu-group-label" role="presentation">Data</div>
         <button type="button" class="file-menu-item" data-action="exportReport" role="menuitem" title="Inspect the latest export's fidelity and provenance">${ic("info")}<span>Export report…</span></button>
         <button type="button" class="file-menu-item" data-action="dataTable" role="menuitem" title="Browse every node/element value as a table, and export it as CSV or XLSX">${ic("info")}<span>Data table…</span></button>
         <button type="button" class="file-menu-item" data-action="plots" role="menuitem" title="Build scientific plots from mesh fields, histories, line probes and CSV/TSV tables">${ic("info")}<span>Plot builder…</span></button>
+        <button type="button" class="file-menu-item" data-action="propertiesEditor" role="menuitem" title="Browse and edit the Begin Properties sets: values, assign to a SubModelPart, clone or delete — beams' CROSS_AREA is one of these">${ic("edit")}<span>Properties editor…</span></button>
+        <div class="file-menu-sep"></div>
+        <div class="file-menu-group-label" role="presentation">Mesh</div>
         <button type="button" class="file-menu-item" data-action="exportSkin" role="menuitem" title="Export the boundary skin of the volume cells as an independent mesh file">${ic("crop")}<span>Export skin…</span></button>
         <button type="button" class="file-menu-item" data-action="exportPartitions" role="menuitem" title="Split the mesh into N per-part files (with optional ghost layers) and a manifest, for a distributed run — each part keeps the source's ids">${ic("partition")}<span>Export partitions…</span></button>
         <button type="button" class="file-menu-item" data-action="splitMesh" role="menuitem" title="Write one file per connected body, element type or field value">${ic("crop")}<span>Split mesh…</span></button>
@@ -222,7 +230,9 @@ export const ADVANCED_MENU_HTML = `<div id="advanced-popup" class="hidden" role=
         <button type="button" class="file-menu-item" data-action="cadSurface" role="menuitem" title="Triangulate the faces of the open CAD B-rep (.cad.json, STEP/IGES) into one conforming surface mesh, one SubModelPart per CAD face">${ic("remesh")}<span>Mesh CAD faces…</span></button>
         <button type="button" class="file-menu-item" data-action="generateMesh" role="menuitem" title="Write a procedural mesh from nothing: rectangle, box, disk, sphere, cylinder, annulus, L-shape, plate with a hole, honeycomb or reference cells">${ic("grid")}<span>Generate mesh…</span></button>
         <div class="file-menu-sep"></div>
-        <button type="button" class="file-menu-item" data-action="propertiesEditor" role="menuitem" title="Browse and edit the Begin Properties sets: values, assign to a SubModelPart, clone or delete — beams' CROSS_AREA is one of these">${ic("edit")}<span>Properties editor…</span></button>
+        <div class="file-menu-group-label" role="presentation">View and compare</div>
+        <button type="button" class="file-menu-item" data-action="linkPreviews" role="menuitem" title="Link this preview with another open mesh or run so their camera, field, colour range, clip plane and physical time follow each other">${ic("merge")}<span>Link previews…</span></button>
+        <button type="button" class="file-menu-item" data-action="compareSplit" role="menuitem" title="Show a second mesh file in one split pane next to this one, coloured by the same field where it has it — a read-only reference, never edited">${ic("grid")}<span>Compare in split…</span></button>
         <button type="button" class="file-menu-item" data-action="lighting" role="menuitem" title="Specular / ambient / diffuse + backface culling">${ic("lighting")}<span>Lighting…</span></button>
         <button type="button" class="file-menu-item" data-action="bookmarks" role="menuitem" title="Save and restore named camera views">${ic("bookmark")}<span>Camera Bookmarks…</span></button>
       </div>`;

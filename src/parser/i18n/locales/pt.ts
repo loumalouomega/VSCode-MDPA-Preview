@@ -652,4 +652,9 @@ export const pt: Catalogue = {
   "Enter three numbers: x, y, z": "Informe três números: x, y, z",
   "Quantity of {v} over {part}": "Grandeza de {v} sobre {part}",
   "Quantity of {v} over the whole mesh": "Grandeza de {v} sobre toda a malha",
+  "Special entities": "Entidades especiais",
+  "Special problemtypes": "Problemtypes especiais",
+  "Data": "Dados",
+  "Mesh": "Malha",
+  "View and compare": "Vista e comparação",
 };

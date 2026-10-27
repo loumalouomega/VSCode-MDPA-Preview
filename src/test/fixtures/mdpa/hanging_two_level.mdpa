@@ -47,28 +47,37 @@ Begin Elements Element3D8N
   9 0 14 26 30 20 17 28 31 22
 End Elements
 
-Begin Constraints LinearMasterSlaveConstraint DISPLACEMENT_X
+Begin Constraints LinearMasterSlaveConstraint DISPLACEMENT_X DISPLACEMENT_X DISPLACEMENT_X
   1 0.0 [0.5, 0.5] 11 2 3
   2 0.0 [0.5, 0.5] 12 2 6
-  3 0.0 [0.25, 0.25, 0.25, 0.25] 15 2 3 6 7
-  4 0.0 [0.5, 0.5] 18 6 7
-  5 0.0 [0.5, 0.5] 21 3 7
+  3 0.0 [0.5, 0.5] 18 6 7
+  4 0.0 [0.5, 0.5] 21 3 7
 End Constraints
 
-Begin Constraints LinearMasterSlaveConstraint DISPLACEMENT_Y
+Begin Constraints LinearMasterSlaveConstraint DISPLACEMENT_X DISPLACEMENT_X DISPLACEMENT_X DISPLACEMENT_X DISPLACEMENT_X
+  5 0.0 [0.25, 0.25, 0.25, 0.25] 15 2 3 6 7
+End Constraints
+
+Begin Constraints LinearMasterSlaveConstraint DISPLACEMENT_Y DISPLACEMENT_Y DISPLACEMENT_Y
   6 0.0 [0.5, 0.5] 11 2 3
   7 0.0 [0.5, 0.5] 12 2 6
-  8 0.0 [0.25, 0.25, 0.25, 0.25] 15 2 3 6 7
-  9 0.0 [0.5, 0.5] 18 6 7
-  10 0.0 [0.5, 0.5] 21 3 7
+  8 0.0 [0.5, 0.5] 18 6 7
+  9 0.0 [0.5, 0.5] 21 3 7
 End Constraints
 
-Begin Constraints LinearMasterSlaveConstraint DISPLACEMENT_Z
+Begin Constraints LinearMasterSlaveConstraint DISPLACEMENT_Y DISPLACEMENT_Y DISPLACEMENT_Y DISPLACEMENT_Y DISPLACEMENT_Y
+  10 0.0 [0.25, 0.25, 0.25, 0.25] 15 2 3 6 7
+End Constraints
+
+Begin Constraints LinearMasterSlaveConstraint DISPLACEMENT_Z DISPLACEMENT_Z DISPLACEMENT_Z
   11 0.0 [0.5, 0.5] 11 2 3
   12 0.0 [0.5, 0.5] 12 2 6
-  13 0.0 [0.25, 0.25, 0.25, 0.25] 15 2 3 6 7
-  14 0.0 [0.5, 0.5] 18 6 7
-  15 0.0 [0.5, 0.5] 21 3 7
+  13 0.0 [0.5, 0.5] 18 6 7
+  14 0.0 [0.5, 0.5] 21 3 7
+End Constraints
+
+Begin Constraints LinearMasterSlaveConstraint DISPLACEMENT_Z DISPLACEMENT_Z DISPLACEMENT_Z DISPLACEMENT_Z DISPLACEMENT_Z
+  15 0.0 [0.25, 0.25, 0.25, 0.25] 15 2 3 6 7
 End Constraints
 
 Begin SubModelPart HangingNodes

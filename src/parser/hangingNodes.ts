@@ -24,6 +24,7 @@ import {
   filterConstraintsById,
   maxDefinedConstraintId,
   pruneSubModelPartConstraints,
+  constraintHeaderVariables,
 } from "./constraintsParser";
 import type { MdpaModel, SubModelPart } from "./types";
 
@@ -290,15 +291,23 @@ export function addHangingNodeConstraints(model: MdpaModel, params: HangingConst
   const listed = (p: SubModelPart): number[] => [...Array.from(p.constraintIds), ...p.children.flatMap(listed)];
   for (const id of parts.flatMap(listed)) if (id > next) next = id;
   const ids: number[] = [];
-  const blocks: ConstraintBlock[] = variables.map((variable) => ({
-    name: "LinearMasterSlaveConstraint",
-    variables: [variable],
-    rows: nodes.map((h): LinearConstraint => {
-      const id = ++next;
-      ids.push(id);
-      return { kind: "linear", id, constant: 0, weights: h.weights, slaveIds: [h.node], masterIds: h.masters };
-    }),
-  }));
+  // Kratos reads the number of master dofs from the block header and every row
+  // must match it: one block per variable and per master count (edge 2, face 4),
+  // the variable repeated once for the slave and once per master.
+  const blocks: ConstraintBlock[] = [];
+  const counts = [...new Set(nodes.map((h) => h.masters.length))].sort((a, b) => a - b);
+  for (const variable of variables) {
+    for (const count of counts) {
+      const rows = nodes
+        .filter((h) => h.masters.length === count)
+        .map((h): LinearConstraint => {
+          const id = ++next;
+          ids.push(id);
+          return { kind: "linear", id, constant: 0, weights: h.weights, slaveIds: [h.node], masterIds: h.masters };
+        });
+      blocks.push({ name: "LinearMasterSlaveConstraint", variables: constraintHeaderVariables(variable, count), rows });
+    }
+  }
   const owner: SubModelPart = {
     name: HANGING_PART,
     path: HANGING_PART,

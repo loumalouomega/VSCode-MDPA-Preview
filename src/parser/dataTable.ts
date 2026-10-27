@@ -245,7 +245,7 @@ function prepareConstraintTable(
     for (const r of b.rows) {
       if (r.kind !== "linear") continue;
       if (keep && !keep.has(r.id)) continue;
-      rows.push({ id: r.id, variable: b.variables.join(" "), row: r });
+      rows.push({ id: r.id, variable: [...new Set(b.variables)].join(" "), row: r });
     }
   }
   push("id", "id");

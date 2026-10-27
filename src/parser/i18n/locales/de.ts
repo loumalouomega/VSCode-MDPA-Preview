@@ -652,4 +652,9 @@ export const de: Catalogue = {
   "Enter three numbers: x, y, z": "Geben Sie drei Zahlen ein: x, y, z",
   "Quantity of {v} over {part}": "Größe von {v} über {part}",
   "Quantity of {v} over the whole mesh": "Größe von {v} über das gesamte Netz",
+  "Special entities": "Spezielle Entitäten",
+  "Special problemtypes": "Spezielle Problemtypen",
+  "Data": "Daten",
+  "Mesh": "Netz",
+  "View and compare": "Ansicht und Vergleich",
 };

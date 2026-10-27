@@ -10,6 +10,7 @@ import {
   filterConstraintsById,
   maxDefinedConstraintId,
   pruneSubModelPartConstraints,
+  constraintHeaderVariables,
 } from "./constraintsParser";
 import type { MdpaModel, SubModelPart } from "./types";
 
@@ -42,11 +43,12 @@ export function createConstraintModel(model: MdpaModel, p: CreateConstraintParam
   id += 1;
   const row = { kind: "linear" as const, id, constant: p.constant ?? 0, weights: p.weights.slice(), slaveIds: [p.slave], masterIds: p.masters.slice() };
   const name = "LinearMasterSlaveConstraint";
-  const at = blocks.findIndex((b) => b.name === name && b.variables.length === 1 && b.variables[0] === p.variable);
+  const header = constraintHeaderVariables(p.variable, p.masters.length);
+  const at = blocks.findIndex((b) => b.name === name && b.variables.length === header.length && b.variables.every((v) => v === p.variable));
   const next: ConstraintBlock[] =
     at >= 0
       ? blocks.map((b, i) => (i === at ? { ...b, rows: [...b.rows, row] } : b))
-      : [...blocks, { name, variables: [p.variable], rows: [row] }];
+      : [...blocks, { name, variables: header, rows: [row] }];
 
   let parts = model.subModelParts;
   if (p.part) {

@@ -652,4 +652,9 @@ export const es: Catalogue = {
   "Enter three numbers: x, y, z": "Introduzca tres números: x, y, z",
   "Quantity of {v} over {part}": "Magnitud de {v} sobre {part}",
   "Quantity of {v} over the whole mesh": "Magnitud de {v} sobre toda la malla",
+  "Special entities": "Entidades especiales",
+  "Special problemtypes": "Problemtypes especiales",
+  "Data": "Datos",
+  "Mesh": "Malla",
+  "View and compare": "Vista y comparación",
 };

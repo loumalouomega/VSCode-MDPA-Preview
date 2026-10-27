@@ -1560,7 +1560,7 @@ body {
   background: var(--ds-menu-sep);
 }
 
-#file-menu-popup .file-menu-group-label {
+:is(#file-menu-popup, #advanced-popup) .file-menu-group-label {
   display: flex;
   align-items: center;
   gap: var(--ui-s-3);
