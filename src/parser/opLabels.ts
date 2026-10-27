@@ -46,6 +46,9 @@ export const OP_LABELS: Record<OpName, string> = {
   // genuinely different things, so both labels say which one they are.
   reorder: "Reorder nodes (storage order)",
   renumber: "Renumber (compact ids)",
+  addHangingNodeConstraints: "Tie hanging nodes (constraints)",
+  createConstraint: "Create constraint",
+  deleteConstraint: "Delete constraints",
   partition: "Partition",
   segment: "Segment surface patches",
   refinePatches: "Refine patches",

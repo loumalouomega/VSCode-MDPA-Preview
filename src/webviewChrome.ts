@@ -888,6 +888,13 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
                 </div>
               </div>
               <div class="edit-form collapsed">
+                <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("check")}<span>Tie hanging nodes</span></button>
+                <div class="edit-form-row">
+                  <label class="edit-field"><span>variables</span><input type="text" id="hang-vars" class="edit-text" value="DISPLACEMENT_X, DISPLACEMENT_Y, DISPLACEMENT_Z" spellcheck="false"></label>
+                  <button type="button" class="edit-apply" data-op="addHangingNodeConstraints" title="Find the nodes that sit in the middle of a coarse hexahedron or quadrilateral edge/face (an octree, a refined patch) and tie each to its masters with a linear constraint — a linear field is reproduced exactly">${ic("check")}</button>
+                </div>
+              </div>
+              <div class="edit-form collapsed">
                 <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("partition")}<span>Partition</span></button>
                 <div class="edit-form-row">
                   <label class="edit-field"><span>parts</span><input type="number" id="partition-nparts" class="edit-num" value="2" min="1" step="1"></label>

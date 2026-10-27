@@ -15,6 +15,7 @@
  * Pure module (no vscode / DOM): the wasm is loaded through `loadMeshio`.
  */
 
+import { addHangingNodeConstraints } from "./hangingNodes";
 import type { MdpaDiagnostic, MdpaModel } from "./types";
 import { meshioToModel, modelToMeshio, sanitizeVariable } from "./meshioConvert";
 import { loadMeshio } from "./meshio";
@@ -239,6 +240,12 @@ export async function generateMesh(spec: GenerateSpec, diagnostics: MdpaDiagnost
 export interface OctreeMeshSpec {
   kind: "octreeMesh";
   options?: Record<string, unknown>;
+  /**
+   * Tie the hanging nodes of the hexahedral leaves with LinearMasterSlaveConstraints
+   * (`true` = DISPLACEMENT_X/Y/Z, or the variables to tie). The kernel reports only a
+   * count, so the parents are recovered from the geometry — see `hangingNodes.ts`.
+   */
+  hangingConstraints?: boolean | string[];
 }
 
 const defined = (o: Record<string, unknown>) => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined && v !== null));
@@ -262,7 +269,17 @@ export async function octreeMeshModel(model: MdpaModel, spec: OctreeMeshSpec, di
   }
   if (r.output === "castellated") parts.push(`${r.numSurrogateFaces.toLocaleString("en-US")} surrogate boundary face(s), ${r.numHanging.toLocaleString("en-US")} hanging node(s).`);
   if (r.warnings.length) parts.push(r.warnings.join(" "));
-  return { model: read, summary: parts.join(" "), suffix: `octree_${r.output}` };
+  let out = read;
+  if (spec.hangingConstraints) {
+    const tied = addHangingNodeConstraints(read, { variables: Array.isArray(spec.hangingConstraints) ? spec.hangingConstraints : undefined });
+    out = tied.model;
+    parts.push(
+      tied.hanging > 0
+        ? `Tied ${tied.hanging} hanging node(s) with ${tied.constraints} constraint(s) (SubModelPart "HangingNodes").`
+        : "No hanging node to tie in this output."
+    );
+  }
+  return { model: out, summary: parts.join(" "), suffix: `octree_${r.output}` };
 }
 
 /** Options of the older `octree` (17.8.0); positional in the kernel, named here. */
