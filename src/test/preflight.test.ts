@@ -302,3 +302,31 @@ test("a condition-level requirement is reported once per part and targets it", a
   assert.equal(found[0].target?.smpPath, "Support");
   assert.equal(found[0].target?.conditionId, "displacement");
 });
+
+test("constraints: a node no cell uses and a fixed slave are findings", async () => {
+  const model = parseMdpa(MDPA + `
+Begin Nodes
+99 5.0 5.0 5.0
+End Nodes
+`);
+  const withConstraints = {
+    ...model,
+    constraints: [
+      {
+        name: "LinearMasterSlaveConstraint",
+        variables: ["DISPLACEMENT_X"],
+        rows: [
+          { kind: "linear" as const, id: 1, constant: 0, weights: [1], slaveIds: [1], masterIds: [4] },
+          { kind: "linear" as const, id: 2, constant: 0, weights: [1], slaveIds: [4], masterIds: [99] },
+        ],
+      },
+    ],
+  };
+  const report = await preflightCase(structural, withConstraints, goodState(), "beam");
+  assert.deepEqual(codes(report.findings, "constraint-unused-node")[0]?.target?.entityIds, [99]);
+  const fixed = codes(report.findings, "constraint-slave-fixed")[0];
+  assert.equal(fixed?.target?.smpPath, "Support");
+  assert.deepEqual(fixed?.target?.entityIds, [1]);
+  const clean = await preflightCase(structural, parseMdpa(MDPA), goodState(), "beam");
+  assert.equal(codes(clean.findings, "constraint-slave-fixed").length, 0);
+});

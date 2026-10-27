@@ -27,6 +27,8 @@ export interface InspectNodeInfo {
   coords: [number, number, number];
   smpPaths: string[];
   fields: InspectFieldValue[];
+  /** One line per multi-point constraint that names this node. */
+  constraints?: string[];
 }
 
 export interface InspectSelection {
@@ -262,6 +264,7 @@ export function renderInspectPanel(
     container.appendChild(section(`Nearest node ${n.id}`));
     container.appendChild(row("Coords", fmtValue(n.coords)));
     container.appendChild(smpList(n.smpPaths,state.canPlotSeries?handlers.onSaveRegionMonitor:undefined));
+    for (const line of n.constraints ?? []) container.appendChild(row(t("Constraint"), line));
     container.appendChild(fieldsTable(n.fields,state.canPlotSeries?variable=>handlers.onPlotOverTime?.("node",variable):undefined,state.canPlotSeries&&handlers.onSaveMonitor?variable=>handlers.onSaveMonitor?.("node",variable):undefined,state.canPlotSeries&&handlers.onSavePointMonitor?variable=>handlers.onSavePointMonitor?.(variable):undefined));
     const btn = plotBtn("node", n.fields.length);
     if (btn) container.appendChild(btn);

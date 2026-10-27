@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- **Hanging-node constraints (roadmap item 23).** A hexahedral or quadrilateral mesh with non-conforming nodes (a hexahedral octree, a refined patch) can now tie each hanging node to the end nodes of the coarse edge or face it sits on, with a `LinearMasterSlaveConstraint` per node and variable (default `DISPLACEMENT_X/Y/Z`), listed in a `HangingNodes` SubModelPart. The parents are recovered from the geometry, chains resolve to end masters, and a linear field is reproduced exactly at every hanging node. Reach it from the sidebar (**Tie hanging nodes**), the command line (`addHangingNodeConstraints`), `mesh_transform`, or `mesh_derive` with `kind: "octreeMesh"` and `hangingConstraints`. `createConstraint` and `deleteConstraint` edit single constraints. View ▸ **Constraint links** draws the slave→master segments, Inspect lists the constraints naming the picked node, the Data table has a **Constraints** kind (also `mesh_export_table`), and preflight warns about a constraint naming a node no cell uses or a slave that a constraint-list condition also fixes.
+
 ### Changed
 
 - **The packaged plotting acceptance matrix grew (roadmap item 19).** The installed-VSIX harnesses now cover `plot_run_resolve` (verified, unverified with or without a receipt, unresolved), a changed companion and changed or missing PVD→PVTU→VTU pieces, the Field panel's **Plot distribution**, Plots **Show on mesh**, the `volumeTotal` and `sectionComparison` presets, the whole-mesh exterior-boundary integral, the opt-in persistent cache, and a million-row table cancelled, superseded in flight and disposed mid-collection. Fixtures, commands and observed values are recorded in `doc/plotting-library.md`. The budgets themselves stay Node-level: no real desktop VS Code, Remote-SSH or KKSS session was available here, so the extension-host, remote-filesystem and webview-delivery measurements remain explicitly unverified rather than passed.

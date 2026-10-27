@@ -1831,6 +1831,8 @@ export async function meshDerive(args: {
   /** generate: which procedural mesh, and its arguments by name (see GENERATORS in kernelMeshes.ts). */
   shape?: string;
   params?: Record<string, unknown>;
+  /** octreeMesh: tie the hexahedral leaves' hanging nodes with LinearMasterSlaveConstraints (true, or the variables). */
+  hangingConstraints?: boolean | string[];
   /** octreeMesh: upstream's OctreeMeshOptions verbatim (the kernel validates keys and ranges). */
   options?: Record<string, unknown>;
   /** octree (17.8.0): the root lattice, level range and balance rule. */
@@ -1943,7 +1945,7 @@ export async function meshDerive(args: {
     if (!(GENERATOR_SHAPES as string[]).includes(args.shape)) throw new Error(`shape must be one of ${GENERATOR_SHAPES.join(", ")}.`);
     spec = { kind: "generate", shape: args.shape as GeneratorShape, params: args.params };
   } else if (args.kind === "octreeMesh") {
-    spec = { kind: "octreeMesh", options: args.options };
+    spec = { kind: "octreeMesh", options: args.options, hangingConstraints: args.hangingConstraints };
   } else if (args.kind === "octree") {
     spec = {
       kind: "octree",

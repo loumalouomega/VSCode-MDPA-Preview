@@ -94,6 +94,8 @@ import {
   SURFACE_REMESH_METRICS,
 } from "./meshing";
 import { mergeManyModels, MergeMeshParams, MergeSource } from "./mergeMesh";
+import { addHangingNodeConstraints } from "./hangingNodes";
+import { createConstraintModel, deleteConstraintsModel } from "./constraintOps";
 import { renumberModel, RenumberParams, RENUMBER_TARGETS, RenumberTarget } from "./renumberMesh";
 import {
   gradientFieldModel,
@@ -333,6 +335,11 @@ export type OpRecord =
   | ({ op: "sdfDistance"; path?: string; part?: string; skin?: boolean } & SdfParams)
   | ({ op: "transferField"; path: string } & TransferFieldParams)
   | ({ op: "renumber" } & RenumberParams)
+  // Multi-point constraints (roadmap item 23). `addHangingNodeConstraints` ties every
+  // hanging node of a hexahedral/quad mesh to its edge or face masters.
+  | { op: "addHangingNodeConstraints"; variables?: string[] }
+  | { op: "createConstraint"; slave: number; masters: number[]; weights: number[]; variable: string; constant?: number; part?: string }
+  | { op: "deleteConstraint"; ids: number[] }
   // `path` is the pre-N-ary spelling, kept optional so an old recipe still
   // type-checks on its way through parseOpsJson; mergeSourcePaths resolves both.
   | ({ op: "mergeMesh"; paths?: string[]; path?: string } & MergeMeshParams)
@@ -983,6 +990,24 @@ export function applyOp(model: MdpaModel, rec: OpRecord): OpOutcome {
         model: r.model,
         message: `Split ${r.splitCells} cell(s) into ${r.producedSimplices} simplices.`,
       };
+    }
+    case "addHangingNodeConstraints": {
+      const r = addHangingNodeConstraints(model, { variables: rec.variables });
+      if (r.hanging === 0 && r.replaced === 0) {
+        return { model, noop: true, message: "No hanging nodes found (hexahedra and quadrilaterals are examined) — nothing to tie." };
+      }
+      const chain = r.chained > 0 ? `, ${r.chained} resolved through another hanging node` : "";
+      const again = r.replaced > 0 ? ` Replaced ${r.replaced} constraint(s) of an earlier run.` : "";
+      return { model: r.model, message: `Tied ${r.hanging} hanging node(s) with ${r.constraints} constraint(s) in SubModelPart "HangingNodes"${chain}.${again}` };
+    }
+    case "createConstraint": {
+      const r = createConstraintModel(model, rec);
+      return { model: r.model, message: `Created constraint ${r.id} on ${rec.variable}: node ${rec.slave} ← ${rec.masters.length} master(s).` };
+    }
+    case "deleteConstraint": {
+      const r = deleteConstraintsModel(model, rec.ids);
+      if (r.deleted === 0) return { model, noop: true, message: "None of those constraint ids is defined." };
+      return { model: r.model, message: `Deleted ${r.deleted} constraint(s).` };
     }
     case "renumber": {
       const r = renumberModel(model, rec);
@@ -1666,6 +1691,9 @@ const KNOWN_OPS = new Set<OpName>([
   "smooth",
   "reorder",
   "renumber",
+  "addHangingNodeConstraints",
+  "createConstraint",
+  "deleteConstraint",
   "partition",
   "segment",
   "refinePatches",
@@ -2688,6 +2716,43 @@ export function opRecordFromMessage(
           : defaultGlobalName(variable, reduction as GlobalReduction);
       return { op, variable, kind, reduction: reduction as GlobalReduction, output };
     }
+    case "addHangingNodeConstraints": {
+      const rec: Extract<OpRecord, { op: "addHangingNodeConstraints" }> = { op };
+      if (msg.variables !== undefined && msg.variables !== "") {
+        const list = Array.isArray(msg.variables) ? msg.variables : String(msg.variables).split(/[\s,]+/);
+        const vars = list.map((v) => String(v).trim()).filter(Boolean);
+        if (vars.some((v) => !/^[A-Za-z_][A-Za-z0-9_]*$/.test(v))) return undefined;
+        if (vars.length) rec.variables = vars;
+      }
+      return rec;
+    }
+    case "createConstraint": {
+      const nums = (v: unknown): number[] | undefined => {
+        const raw = Array.isArray(v) ? v : typeof v === "string" ? v.split(/[\s,]+/).filter(Boolean) : undefined;
+        if (!raw) return undefined;
+        const out = raw.map(Number);
+        return out.every(Number.isFinite) ? out : undefined;
+      };
+      const slave = Number(msg.slave);
+      const masters = nums(msg.masters);
+      const weights = nums(msg.weights);
+      const variable = typeof msg.variable === "string" ? msg.variable.trim() : "";
+      if (!Number.isInteger(slave) || !masters || !weights || !variable) return undefined;
+      const rec: Extract<OpRecord, { op: "createConstraint" }> = { op, slave, masters, weights, variable };
+      if (msg.constant !== undefined && msg.constant !== "") {
+        const c = Number(msg.constant);
+        if (!Number.isFinite(c)) return undefined;
+        rec.constant = c;
+      }
+      if (typeof msg.part === "string" && msg.part.trim()) rec.part = msg.part.trim();
+      return rec;
+    }
+    case "deleteConstraint": {
+      const raw = Array.isArray(msg.ids) ? msg.ids : typeof msg.ids === "string" ? msg.ids.split(/[\s,]+/).filter(Boolean) : undefined;
+      const ids = raw?.map(Number);
+      if (!ids || ids.length === 0 || !ids.every((v) => Number.isInteger(v) && v > 0)) return undefined;
+      return { op, ids };
+    }
     case "renumber": {
       const rec: Extract<OpRecord, { op: "renumber" }> = { op };
       const target = msg.target;
@@ -3400,6 +3465,20 @@ function validateParams(rec: OpRecord, warnings: string[]): boolean {
       return rec.onConflict === undefined || TRANSFER_CONFLICTS.includes(rec.onConflict)
         ? true
         : bad("invalid onConflict");
+    }
+    case "addHangingNodeConstraints": {
+      return rec.variables === undefined || (Array.isArray(rec.variables) && rec.variables.every((v) => typeof v === "string" && /^[A-Za-z_][A-Za-z0-9_]*$/.test(v)))
+        ? true
+        : bad("invalid variables");
+    }
+    case "createConstraint": {
+      if (!Number.isInteger(rec.slave)) return bad("missing/invalid slave");
+      if (!Array.isArray(rec.masters) || rec.masters.length === 0 || !rec.masters.every(Number.isFinite)) return bad("missing/invalid masters");
+      if (!Array.isArray(rec.weights) || rec.weights.length !== rec.masters.length || !rec.weights.every(Number.isFinite)) return bad("one weight per master is required");
+      return typeof rec.variable === "string" && rec.variable.length > 0 ? true : bad("missing variable");
+    }
+    case "deleteConstraint": {
+      return Array.isArray(rec.ids) && rec.ids.length > 0 && rec.ids.every((v) => Number.isInteger(v) && v > 0) ? true : bad("missing/invalid ids");
     }
     case "renumber": {
       if (rec.target !== undefined && !RENUMBER_TARGETS.has(rec.target)) return bad("invalid target");

@@ -243,6 +243,7 @@ export const VIEW_MENU_HTML = `<div id="view-popup" class="hidden" role="menu">
         <button type="button" class="file-menu-item" data-action="grid" role="menuitemcheckbox" title="Toggle background grid">${ic("grid")}<span>Grid</span></button>
         <button type="button" class="file-menu-item active" data-action="edges" role="menuitemcheckbox" title="Toggle mesh edge lines — off so a transparent mesh reads as surfaces">${ic("wireframe")}<span>Edges</span></button>
         <button type="button" class="file-menu-item" data-action="lod" role="menuitemcheckbox" title="Draw a decimated surface in place of the full layers — for navigating a big mesh. The mesh itself is untouched; picking is off while it shows">${ic("wireframe")}<span>Level of detail</span></button>
+        <button type="button" class="file-menu-item" data-action="constraintLinks" role="menuitemcheckbox" title="Draw a line from every slave node to its masters for the multi-point constraints (hanging nodes, tied dofs)">${ic("normals")}<span>Constraint links</span></button>
         <button type="button" class="file-menu-item" data-action="curved" role="menuitemcheckbox" title="Draw quadratic cells with their mid-side nodes (curved edges and faces). Display only: the stored cells and every export are unchanged">${ic("wireframe")}<span>Curved quadratic cells</span></button>
         <button type="button" class="file-menu-item" data-action="flatParts" role="menuitemcheckbox" title="List every SubModelPart as one flat row labelled with its full path, instead of the nested tree. View-only: layers, visibility and the mesh are untouched">${ic("tree")}<span>Flat SubModelPart list</span></button>
         <div class="file-menu-sep"></div>
@@ -885,6 +886,13 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
                   </select></label>
                   <label class="edit-field"><span>from</span><input type="number" id="renumber-start" class="edit-num" value="1" min="1" step="1"></label>
                   <button type="button" class="edit-apply" data-op="renumber" title="Compact ids into a gapless run — each entity kind numbered independently, as Kratos does">${ic("check")}</button>
+                </div>
+              </div>
+              <div class="edit-form collapsed">
+                <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("check")}<span>Tie hanging nodes</span></button>
+                <div class="edit-form-row">
+                  <label class="edit-field"><span>variables</span><input type="text" id="hang-vars" class="edit-text" value="DISPLACEMENT_X, DISPLACEMENT_Y, DISPLACEMENT_Z" spellcheck="false"></label>
+                  <button type="button" class="edit-apply" data-op="addHangingNodeConstraints" title="Find the nodes that sit in the middle of a coarse hexahedron or quadrilateral edge/face (an octree, a refined patch) and tie each to its masters with a linear constraint — a linear field is reproduced exactly">${ic("check")}</button>
                 </div>
               </div>
               <div class="edit-form collapsed">

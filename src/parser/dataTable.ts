@@ -33,10 +33,11 @@
 import { EntityBlock, EntityKind, FieldBlockKind, FieldData, MdpaModel, SubModelPart } from "./types";
 import type { MembershipIndex } from "./smpMembership";
 import { fieldUnitLabel } from "./fieldDimensions";
+import type { LinearConstraint } from "./constraintsParser";
 
-export type TableKind = "Nodes" | "Elements" | "Conditions" | "Geometries";
+export type TableKind = "Nodes" | "Elements" | "Conditions" | "Geometries" | "Constraints";
 
-export const TABLE_KINDS: TableKind[] = ["Nodes", "Elements", "Conditions", "Geometries"];
+export const TABLE_KINDS: TableKind[] = ["Nodes", "Elements", "Conditions", "Geometries", "Constraints"];
 
 export function isTableKind(v: unknown): v is TableKind {
   return typeof v === "string" && (TABLE_KINDS as string[]).includes(v);
@@ -190,6 +191,8 @@ export function prepareTable(
     columnTypes.push(type);
   };
 
+  if (kind === "Constraints") return prepareConstraintTable(model, opts, columns, columnTypes, push);
+
   const keep =
     opts.submodelpart
       ? (() => {
@@ -212,6 +215,63 @@ export function prepareTable(
   return kind === "Nodes"
     ? prepareNodeTable(model, opts, keep, partMap, columns, columnTypes, push)
     : prepareEntityTable(model, kind, opts, keep, partMap, columns, columnTypes, push);
+}
+
+/**
+ * One row per LINEAR constraint (a raw row has no readable id and is left out;
+ * `mesh_info` counts it). Columns: id, variable, slave, masters, weights,
+ * constant. Masters and weights are space-joined text, like the connectivity
+ * cell of an entity table without `nodeColumns`. A SubModelPart filter keeps
+ * the ids that part's subtree lists.
+ */
+function prepareConstraintTable(
+  model: MdpaModel,
+  opts: TableOptions,
+  columns: string[],
+  columnTypes: ColumnType[],
+  push: (name: string, type: ColumnType) => void
+): TableView {
+  const part = opts.submodelpart ? findPart(model.subModelParts, opts.submodelpart) : undefined;
+  const keep = opts.submodelpart ? new Set<number>() : undefined;
+  if (keep && part) {
+    const walk = (p: SubModelPart): void => {
+      for (let i = 0; i < p.constraintIds.length; i++) keep.add(p.constraintIds[i]);
+      p.children.forEach(walk);
+    };
+    walk(part);
+  }
+  const rows: { id: number; variable: string; row: LinearConstraint }[] = [];
+  for (const b of model.constraints ?? []) {
+    for (const r of b.rows) {
+      if (r.kind !== "linear") continue;
+      if (keep && !keep.has(r.id)) continue;
+      rows.push({ id: r.id, variable: b.variables.join(" "), row: r });
+    }
+  }
+  push("id", "id");
+  push("variable", "text");
+  push("slave", "text");
+  push("masters", "text");
+  push("weights", "text");
+  push("constant", "f64");
+  const rowInto = (i: number, out: CellValue[]): CellValue[] => {
+    const r = rows[i];
+    out[0] = r.id;
+    out[1] = r.variable;
+    out[2] = r.row.slaveIds.join(" ");
+    out[3] = r.row.masterIds.join(" ");
+    out[4] = r.row.weights.map((w) => String(+w.toPrecision(8))).join(" ");
+    out[5] = r.row.constant;
+    return out;
+  };
+  return {
+    kind: "Constraints",
+    columns,
+    columnTypes,
+    rowCount: rows.length,
+    row: (i) => rowInto(i, new Array<CellValue>(columns.length)),
+    rowInto,
+  };
 }
 
 function fieldsFor(
@@ -432,6 +492,7 @@ function writeConnectivity(
 export function tableRowCount(model: MdpaModel, kind: TableKind, opts: TableOptions = {}): number {
   if (opts.submodelpart) return prepareTable(model, kind, opts).rowCount;
   if (kind === "Nodes") return model.nodeCount;
+  if (kind === "Constraints") return prepareTable(model, kind, opts).rowCount;
   const entityKind = ENTITY_KIND_OF[kind];
   let n = 0;
   for (const b of model.blocks) if (b.kind === entityKind) n += b.count;

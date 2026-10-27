@@ -16,6 +16,8 @@ import { fieldCalcModel } from "../parser/fieldCalc";
 import { extractSkinModel } from "../parser/extractSkin";
 import { simplexifyModel } from "../parser/simplexify";
 import { writeMdpa } from "../parser/writers/mdpaWriter";
+import { parseMdpa } from "../parser/mdpaParser";
+import { countConstraints } from "../parser/constraintsParser";
 import { icosphere } from "./fixtures/shapes";
 
 const tmpDir = () => fs.mkdtempSync(path.join(os.tmpdir(), "mcp-kernel-"));
@@ -52,6 +54,31 @@ test("mesh_derive octreeMesh and octree mesh the inside of a closed surface", as
   const o = (await meshDerive({ path: sphere, kind: "octree", maxLevel: 3, outputPath: lattice })) as { summary?: string };
   assert.ok(fs.existsSync(lattice));
   assert.match(o.summary ?? "", /Octree/);
+});
+
+test("mesh_derive octreeMesh with hangingConstraints writes a re-readable constraint set that reproduces a linear field", async () => {
+  const dir = tmpDir();
+  const sphere = path.join(dir, "sphere.mdpa");
+  fs.writeFileSync(sphere, writeMdpa(icosphere(1, 2)));
+  const out = path.join(dir, "hex.mdpa");
+  const r = (await meshDerive({ path: sphere, kind: "octreeMesh", options: { output: "castellated", maxSize: 2, minSize: 0.15 }, hangingConstraints: true, outputPath: out })) as { summary?: string };
+  // The kernel counts its own hanging nodes; the geometric recovery must find the same ones.
+  const kernel = /(\d+) hanging node\(s\)\. Tied (\d+) hanging/.exec(r.summary ?? "");
+  assert.ok(kernel && Number(kernel[1]) > 0 && kernel[1] === kernel[2], `kernel and recovery agree: ${r.summary}`);
+  const model = parseMdpa(fs.readFileSync(out, "utf8"));
+  const lin = countConstraints(model.constraints).linear;
+  assert.ok(lin > 0 && lin % 3 === 0, "three displacement components per hanging node");
+  assert.equal(countConstraints(model.constraints).raw, 0);
+  // Every row ties a node to masters whose weights sum to 1 and reproduces a linear field.
+  const at = new Map<number, number[]>();
+  for (let i = 0; i < model.nodeCount; i++) at.set(model.nodeIds[i], [model.coords[i * 3], model.coords[i * 3 + 1], model.coords[i * 3 + 2]]);
+  const f = (id: number) => { const p = at.get(id)!; return 2 * p[0] - 3 * p[1] + 0.7 * p[2] + 1; };
+  for (const b of model.constraints ?? []) for (const row of b.rows) {
+    if (row.kind !== "linear") continue;
+    assert.ok(Math.abs(row.weights.reduce((a, c) => a + c, 0) - 1) < 1e-6);
+    const tied = row.masterIds.reduce((sum, m, j) => sum + row.weights[j] * f(m), 0);
+    assert.ok(Math.abs(tied - f(row.slaveIds[0])) < 1e-4, "linear field reproduced");
+  }
 });
 
 test("mesh_derive cadSurface triangulates the B-rep of a fitted .cad.json, one SubModelPart per face", async () => {

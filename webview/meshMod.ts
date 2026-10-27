@@ -111,6 +111,7 @@ export function initMeshMod(postMessage: PostMessage): void {
   const SYNC_BUILDERS: Record<string, () => Record<string, unknown> | undefined> = {
     setElementRadius: buildRadiusMsg,
     renumber: buildRenumberMsg,
+    addHangingNodeConstraints: buildHangingMsg,
     refine: buildRefineMsg,
     crop: buildCropMsg,
     fieldCalc: buildFieldCalcMsg,
@@ -1659,6 +1660,15 @@ export function setMergeMeshPaths(paths: string[], target = "mergeMesh"): void {
     input.value = `${mergePaths.length} files: ${shown}${names.length > 2 ? ", …" : ""}`;
     input.title = mergePaths.join("\n");
   }
+}
+
+// --- hanging-node constraints (sync) ----------------------------------------
+
+function buildHangingMsg(): Record<string, unknown> | undefined {
+  const raw = (document.getElementById("hang-vars") as HTMLInputElement | null)?.value ?? "";
+  const variables = raw.split(/[\s,]+/).filter(Boolean);
+  if (variables.some((v) => !/^[A-Za-z_][A-Za-z0-9_]*$/.test(v))) return undefined;
+  return { type: "applyOp", op: "addHangingNodeConstraints", ...(variables.length ? { variables } : {}) };
 }
 
 // --- renumber (sync) --------------------------------------------------------

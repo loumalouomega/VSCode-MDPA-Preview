@@ -24,6 +24,8 @@ import { EntityKind, MdpaModel, SubModelPart } from "../parser/types";
 import { computeMeshQuality } from "../parser/meshQuality";
 import { findIsolatedNodeIds } from "../parser/isolatedNodes";
 import { surfaceDefects } from "../parser/surfaceDefects";
+import { constraintNodeIds } from "../parser/constraintsParser";
+import { subModelPartNodeIds } from "../parser/subModelPartExtract";
 import { CaseState, FieldRequirement, ProblemtypeRuntime } from "./types";
 import { fieldDefault } from "./api";
 import { isFieldVisible } from "./layout";
@@ -180,6 +182,53 @@ function qualityFindings(model: MdpaModel, cap: number): Finding[] {
     }
   }
   qualityCache.set(model, { cap, findings: out });
+  return out;
+}
+
+/**
+ * Constraint findings. A constraint naming a node no cell uses is dead weight
+ * (Kratos adds the constraint to a part that has no equation for it), and a
+ * slave that a `constraints`-list condition also fixes is over-determined: the
+ * Dirichlet value and the master-slave relation both claim the same dof.
+ */
+function constraintFindings(model: MdpaModel, state: CaseState, conditions: { id: string; label: string; list: string }[]): Finding[] {
+  const out: Finding[] = [];
+  if (!model.constraints || model.constraints.length === 0) return out;
+  const used = new Set<number>();
+  for (const b of model.blocks) for (const n of b.connectivity) if (n > 0) used.add(n);
+  const unused = new Set<number>();
+  const slaves = new Set<number>();
+  for (const block of model.constraints) {
+    for (const row of block.rows) {
+      if (row.kind !== "linear") continue;
+      for (const n of constraintNodeIds(row)) if (!used.has(n)) unused.add(n);
+      for (const n of row.slaveIds) slaves.add(n);
+    }
+  }
+  if (unused.size > 0) {
+    out.push({
+      severity: "warning",
+      code: "constraint-unused-node",
+      message: `${unused.size} node(s) named by a constraint belong to no cell, so the constraint has nothing to act on.`,
+      target: { entityIds: [...unused].sort((a, b) => a - b).slice(0, SAMPLE_IDS) },
+    });
+  }
+  const fixing = new Map(conditions.map((c) => [c.id, c]));
+  for (const a of state.assignments) {
+    const cond = fixing.get(a.conditionId);
+    if (!cond || cond.list !== "constraints_process_list") continue;
+    const nodes = subModelPartNodeIds(model, a.smpPath);
+    if (!nodes) continue;
+    const both = [...slaves].filter((n) => nodes.has(n));
+    if (both.length > 0) {
+      out.push({
+        severity: "warning",
+        code: "constraint-slave-fixed",
+        message: `"${cond.label}" on "${a.smpPath}" fixes ${both.length} node(s) that are also slaves of a multi-point constraint; the two would over-determine them.`,
+        target: { smpPath: a.smpPath, conditionId: a.conditionId, entityIds: both.sort((x, y) => x - y).slice(0, SAMPLE_IDS) },
+      });
+    }
+  }
   return out;
 }
 
@@ -373,6 +422,9 @@ export async function preflightCase(
       add("info", "property-unused", `Properties defined but used by no entity: ${unused.slice(0, LIST_LIMIT).join(", ")}${unused.length > LIST_LIMIT ? ` and ${unused.length - LIST_LIMIT} more` : ""}.`);
     }
   }
+
+  // --- 5b. Multi-point constraints (former roadmap item 23). ---
+  findings.push(...constraintFindings(model, state, decl.conditions));
 
   // --- 6. Mesh quality (mesh-wide; the metrics have no per-part split). ---
   if (opts.quality !== false) {
