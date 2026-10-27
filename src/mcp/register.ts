@@ -968,7 +968,7 @@ export function registerAllTools(server: McpServer): void {
     "mesh_capabilities",
     {
       description:
-        "meshio++ capability inventory: the installed WASM artifacts — the lean build's readers/writers, per-reader options-awareness (timeStep/lenient), flavour, backend and cgnslib, plus the full artifact (OpenCASCADE, zstd, lz4, bzip2) and its own live reader/writer list — next to the extension's routing (read candidates, write targets, in-file vs filename timelines, header-only metadata set, lenient retries, unrouted keys with reasons). Ask this before assuming a format, reader key or timeStep works.",
+        "meshio++ capability inventory: the installed WASM artifacts — the lean build's readers/writers, per-reader options-awareness (timeStep/lenient), flavour, backend and cgnslib, plus the full artifact (OpenCASCADE, zstd, lz4, bzip2) and its own live reader/writer list — next to the extension's routing (read candidates, write targets, in-file vs filename timelines, header-only metadata set, lenient retries, unrouted keys with reasons). Ask this before assuming a format, reader key or timeStep works. `runtime` reports what THIS server process wired: where the meshio++ tree was resolved (node_modules vs the bundled copy) and, per MMG/oracle/derived/read/write, whether it runs in a worker or fell back in-process — a packaged distribution missing a file shows up there.",
       inputSchema: {},
     },
     run(meshCapabilities)

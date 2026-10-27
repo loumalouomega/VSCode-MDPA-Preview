@@ -113,7 +113,7 @@ import {
   verifyReport,
 } from "../parser/exportReport";
 import { isNativeExportExtension } from "../parser/writers/exportFormats";
-import { meshioPackageVersion } from "../parser/meshio";
+import { meshioPackageSource, meshioPackageVersion } from "../parser/meshio";
 import {
   EXPORTABLE_EXTENSIONS,
   isExportableExtension,
@@ -135,6 +135,7 @@ import {
 import { packPvdSeries, PackPvdResult, pvdOutputClash, pvdPieceDir } from "../parser/packPvd";
 import { buildMembershipIndex } from "../parser/smpMembership";
 import { getMeshCapabilities } from "../parser/meshCapabilities";
+import { getRuntimeWiring } from "../parser/runtimeWiring";
 import { writeXlsx } from "../parser/writers/xlsxWriter";
 import { computeMeshQuality } from "../parser/meshQuality";
 import { SelectionSeed, resolveSeed } from "../parser/selectionCore";
@@ -2716,6 +2717,10 @@ export async function meshSelect(args: {
 export async function meshCapabilities(): Promise<object> {
   return {
     ...await getMeshCapabilities(),
+    // What this process actually wired (workers found beside the bundle, the
+    // kernel tree's location): a packaged distribution that lost a file falls
+    // back silently, and this is where that becomes visible.
+    runtime: { ...getRuntimeWiring(), meshio: meshioPackageSource() ?? null },
     plotting: PLOT_CAPABILITIES,
     windTunnel: {
       tools: ["wind_tunnel_plan", "wind_tunnel_generate"],

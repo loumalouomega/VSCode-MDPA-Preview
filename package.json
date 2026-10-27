@@ -1305,6 +1305,7 @@
     "bench:heartbeat": "node scripts/bench/host-heartbeat.mjs",
     "bench:plot": "node scripts/bench/plot-budget.mjs",
     "bench:large-mesh": "node scripts/bench/large-mesh.mjs",
+    "check:staged": "node scripts/staged/check-staged-mcp.mjs",
     "install-ext": "bash install.sh",
     "reinstall": "bash scripts/reinstall-local.sh"
   },

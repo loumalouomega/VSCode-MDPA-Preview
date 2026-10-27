@@ -1331,6 +1331,21 @@ test("mesh_derive igaSample/igaRefine run the NURBS side channel; a plain mesh i
   );
 });
 
+test("mesh_capabilities reports how this process was wired (workers, kernel tree)", async () => {
+  const caps = (await meshCapabilities()) as {
+    runtime: {
+      workers: Record<string, string>;
+      mmgWasm: string;
+      meshio: { dir: string; source: string } | null;
+    };
+  };
+  // In-process tests install no worker, which is exactly what must be visible.
+  assert.deepEqual(Object.keys(caps.runtime.workers).sort(), ["derived", "meshioRead", "meshioWrite", "mmg", "oracle"]);
+  for (const mode of Object.values(caps.runtime.workers)) assert.match(mode, /^(worker|in-process)$/);
+  assert.match(caps.runtime.mmgWasm, /^(bundled|package)$/);
+  assert.ok(caps.runtime.meshio && /^(node_modules|bundled)$/.test(caps.runtime.meshio.source));
+});
+
 test("mesh_capabilities reports the live build next to the routing tables", async () => {
   // The headless query roadmap Tier 1 item 1 asks for: readers/writers from
   // the live artifact, per-reader options-awareness, and the extension's own

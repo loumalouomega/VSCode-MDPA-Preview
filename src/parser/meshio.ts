@@ -1215,6 +1215,30 @@ function packageDir(): string {
 }
 
 /**
+ * Where the kernel tree is read from, reported (never decided) here: the same
+ * two-step resolution `packageDir()` performs, without loading anything.
+ * `source` is the fact a staged-distribution check needs — a packaged server
+ * that silently resolved `node_modules` is running against the checkout, not
+ * against what it ships. `undefined` when neither layout carries the module.
+ */
+export function meshioPackageSource():
+  | { dir: string; source: "node_modules" | "bundled" }
+  | undefined {
+  try {
+    return {
+      dir: path.dirname(require.resolve("@meshioplusplus/wasm/package.json")),
+      source: "node_modules",
+    };
+  } catch {
+    /* packaged layout below */
+  }
+  const bundled = path.join(__dirname, "meshio");
+  return fs.existsSync(path.join(bundled, "src", "index.mjs"))
+    ? { dir: bundled, source: "bundled" }
+    : undefined;
+}
+
+/**
  * The installed `@meshioplusplus/wasm` version, or undefined when no
  * package.json is found in either layout. Reads the same two locations
  * `packageDir()` resolves (dev node_modules, then the packaged dist/meshio
