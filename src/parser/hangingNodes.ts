@@ -249,7 +249,7 @@ export function findHangingNodes(model: MdpaModel): HangingResult {
 }
 
 export interface HangingConstraintParams {
-  /** Variables to tie; default the three displacement components. */
+  /** Variables to tie; a vector name (DISPLACEMENT, VELOCITY…) expands to its components. Default the displacement components. */
   variables?: string[];
 }
 
@@ -264,13 +264,44 @@ export interface HangingConstraintResult {
 
 export const DEFAULT_HANGING_VARIABLES = ["DISPLACEMENT_X", "DISPLACEMENT_Y", "DISPLACEMENT_Z"];
 
+/** Kratos `array_1d<double,3>` nodal variables a user may name without a component. */
+const KRATOS_VECTOR_VARIABLES = new Set([
+  "DISPLACEMENT", "VELOCITY", "ACCELERATION", "ROTATION", "ANGULAR_VELOCITY", "ANGULAR_ACCELERATION",
+  "MESH_DISPLACEMENT", "MESH_VELOCITY", "MESH_ACCELERATION", "REACTION", "REACTION_MOMENT",
+  "VOLUME_ACCELERATION", "MOMENTUM", "FORCE", "MOMENT", "EXTERNAL_FORCE", "INTERNAL_FORCE",
+  "BODY_FORCE", "NORMAL", "TORQUE",
+]);
+
+/**
+ * A Kratos dof is a scalar, so a vector variable ("DISPLACEMENT", "VELOCITY", a
+ * nodal vector field of the mesh) is tied component by component: `NAME_X`,
+ * `NAME_Y` (and `NAME_Z` on a 3D mesh). Names already carrying a component, and
+ * scalars (TEMPERATURE, PRESSURE, …), pass through unchanged. Duplicates collapse.
+ */
+export function expandConstraintVariables(model: MdpaModel, names: readonly string[]): string[] {
+  const fieldWidth = new Map<string, number>();
+  for (const f of model.fields) if (f.kind === "Nodal") fieldWidth.set(f.variable, f.components);
+  const out: string[] = [];
+  const add = (v: string) => { if (!out.includes(v)) out.push(v); };
+  for (const raw of names) {
+    const name = raw.trim();
+    if (!name) continue;
+    const width = fieldWidth.get(name);
+    const vector = (width !== undefined && width > 1) || (width === undefined && KRATOS_VECTOR_VARIABLES.has(name));
+    if (!vector) { add(name); continue; }
+    const comps = model.is3D && (width === undefined || width >= 3) ? ["X", "Y", "Z"] : ["X", "Y"];
+    for (const c of comps) add(`${name}_${c}`);
+  }
+  return out;
+}
+
 /**
  * Adds one `LinearMasterSlaveConstraint` per hanging node and variable, listed in
  * a top-level `HangingNodes` SubModelPart. A re-run replaces its own earlier
  * output instead of stacking a second set.
  */
 export function addHangingNodeConstraints(model: MdpaModel, params: HangingConstraintParams = {}): HangingConstraintResult {
-  const variables = (params.variables?.length ? params.variables : DEFAULT_HANGING_VARIABLES).map((v) => v.trim()).filter(Boolean);
+  const variables = expandConstraintVariables(model, params.variables?.length ? params.variables : DEFAULT_HANGING_VARIABLES);
   if (variables.length === 0) throw new Error("Name at least one variable to tie.");
   const { nodes, chained } = findHangingNodes(model);
 

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 
 import { parseMdpa } from "../parser/mdpaParser";
 import { writeMdpa } from "../parser/writers/mdpaWriter";
-import { addHangingNodeConstraints, findHangingNodes, HANGING_PART } from "../parser/hangingNodes";
+import { addHangingNodeConstraints, expandConstraintVariables, findHangingNodes, HANGING_PART } from "../parser/hangingNodes";
 import { countConstraints, definedConstraintIds } from "../parser/constraintsParser";
 import { removeOrphanNodes } from "../parser/removeOrphanNodes";
 import { renumberModel } from "../parser/renumberMesh";
@@ -180,4 +180,14 @@ test("the writer splits an old single-header block that mixes master counts", ()
   const back = parseMdpa(writeMdpa(merged));
   assert.equal(back.constraints!.length, 2);
   for (const b of back.constraints!) for (const r of b.rows) assert.ok(r.kind === "linear" && b.variables.length === 1 + r.masterIds.length);
+});
+
+test("vector variables expand to components, scalars pass through, 2D drops Z", () => {
+  const model = parseMdpa(twoLevel());
+  const r = addHangingNodeConstraints(model, { variables: ["VELOCITY", "TEMPERATURE", "VELOCITY_X"] });
+  const vars = new Set(r.model.constraints!.map((b) => b.variables[0]));
+  assert.deepEqual([...vars].sort(), ["TEMPERATURE", "VELOCITY_X", "VELOCITY_Y", "VELOCITY_Z"]);
+  assert.equal(r.constraints, 5 * 4);
+  const flat = { ...model, is3D: false };
+  assert.deepEqual(expandConstraintVariables(flat, ["DISPLACEMENT"]), ["DISPLACEMENT_X", "DISPLACEMENT_Y"]);
 });
