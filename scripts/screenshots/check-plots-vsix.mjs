@@ -11,12 +11,16 @@ const require=createRequire(import.meta.url),root=path.resolve(path.dirname(file
 const {chromium}=require(process.env.PLAYWRIGHT_MODULE??"playwright-core");
 const base=process.env.UI_ROOT??"/tmp/opencode/plot-ui",workspace=path.join(base,"workspace");
 await fs.mkdir(workspace,{recursive:true});await fs.mkdir(path.join(base,"user/User"),{recursive:true});
-await fs.writeFile(path.join(base,"user/User/settings.json"),JSON.stringify({"workbench.startupEditor":"none","files.autoSave":"off","kratos.showWhatsNew":false,"workbench.colorTheme":"Default Dark Modern","workbench.editor.enablePreview":false,"workbench.secondarySideBar.defaultVisibility":"hidden"}));
+await fs.writeFile(path.join(base,"user/User/settings.json"),JSON.stringify({"workbench.startupEditor":"none","files.autoSave":"off","kratos.showWhatsNew":false,"kratos.plots.persistentCache":true,"workbench.colorTheme":"Default Dark Modern","workbench.editor.enablePreview":false,"workbench.secondarySideBar.defaultVisibility":"hidden"}));
 const mdpa="Begin Nodes\n1 0 0 0\n2 1 0 0\n3 0 1 0\nEnd Nodes\nBegin Elements Element2D3N\n1 0 1 2 3\nEnd Elements\nBegin NodalData RESPONSE\n1 0 1\n2 0 3\n3 0 5\nEnd NodalData\n";
 await fs.writeFile(path.join(workspace,"sample.mdpa"),mdpa);
 await fs.writeFile(path.join(workspace,"sample.vtk"),"# vtk DataFile Version 3.0\nPlot fixture\nASCII\nDATASET UNSTRUCTURED_GRID\nPOINTS 3 float\n0 0 0\n1 0 0\n0 1 0\nCELLS 1 4\n3 0 1 2\nCELL_TYPES 1\n5\nPOINT_DATA 3\nSCALARS RESPONSE float 1\nLOOKUP_TABLE default\n1 3 5\n");
 await fs.writeFile(path.join(workspace,"response.csv"),"Time [s],Measured [N],Predicted [N]\n0,1,1.2\n1,3,2.8\n2,NA,5\n3,7,7.2\n4,9,8.8\n");
 await fs.writeFile(path.join(workspace,"surface.csv"),"x [m],y [m],pressure [Pa]\n0,0,0\n1,0,1\n2,0,2\n0,1,1\n1,1,NA\n2,1,3\n0,2,2\n1,2,3\n2,2,4\n");
+const large=path.join(workspace,"large.csv");
+{const handle=await fs.open(large,"w");try{await handle.write("t,a,b,c,d,e,f,g\n");for(let start=0;start<1000000;start+=10000){const rows=[];for(let i=start;i<start+10000;i++)rows.push(`${i},${i*.5},${i%17},${i%23},${i%29},${i%31},${i%37},${i%41}`);await handle.write(rows.join("\n")+"\n");}}finally{await handle.close();}}
+const cacheMesh=path.join(workspace,`cache-${Date.now()}.mdpa`);
+await fs.writeFile(cacheMesh,"Begin Nodes\n1 0 0 0\n2 1 0 0\n3 0 1 0\nEnd Nodes\nBegin Elements Element2D3N\n1 0 1 2 3\nEnd Elements\nBegin NodalData CACHE\n1 0 1\n2 0 2\n3 0 3\nEnd NodalData\n");
 const password=randomBytes(24).toString("hex"),env={...process.env,PASSWORD:password};delete env.VSCODE_IPC_HOOK_CLI;
 const server=spawn(process.env.CODE_SERVER??"/tmp/opencode/code-server-4.140.0-linux-amd64/bin/code-server",["--bind-addr","127.0.0.1:8199","--disable-workspace-trust","--disable-telemetry","--user-data-dir",path.join(base,"user"),"--extensions-dir",path.join(base,"extensions"),workspace],{env,stdio:["ignore","pipe","pipe"]});
 const log=await fs.open(path.join(base,"server.log"),"w");server.stdout.on("data",b=>void log.write(b));server.stderr.on("data",b=>void log.write(b));
@@ -28,7 +32,7 @@ try {
   await page.goto(`http://127.0.0.1:8199/?folder=${encodeURIComponent(workspace)}`);
   if(await page.locator('input[type="password"]').count()){await page.locator('input[type="password"]').fill(password);await page.keyboard.press("Enter");}
   await page.locator(".monaco-workbench").waitFor();
-  const command=async text=>{await page.locator(".part.titlebar").click({position:{x:20,y:10}});await page.keyboard.press("F1");const input=page.locator(".quick-input-widget input").first();await input.waitFor({state:"visible"});await page.waitForFunction(()=>document.querySelector(".quick-input-widget input")?.value.startsWith(">"));await input.fill(`>${text}`);await page.locator(".quick-input-widget .monaco-list-row").filter({hasText:text}).first().click();};
+  const command=async text=>{await page.keyboard.press("Escape");await page.locator(".part.titlebar").click({position:{x:300,y:16}});await page.keyboard.press("F1");const widget=page.locator(".quick-input-widget").first();await widget.waitFor({state:"visible"});const input=widget.locator("input").first();await input.waitFor({state:"visible"});await input.fill(`>${text}`);await page.waitForFunction(()=>document.querySelector(".quick-input-widget input")?.value.startsWith(">"));await widget.locator(".monaco-list-row").filter({hasText:text}).first().click();};
   const frame=async selector=>{for(let i=0;i<100;i++){for(const f of page.frames())if(await f.locator(selector).count()&&await f.locator(selector).isVisible())return f;await page.waitForTimeout(100);}throw new Error(`Missing webview ${selector}`);};
   const ready=async plot=>{await plot.waitForFunction(()=>document.querySelector("#plot-status")?.textContent.includes("full-resolution points")&&!document.querySelector("#plot-status").textContent.startsWith("Partial"));await plot.waitForFunction(()=>document.querySelector("#plot-chart")?.data?.length>0&&document.querySelector("#plot-chart").getAttribute("aria-busy")!=="true");};
   const screenshots=path.join(root,"doc/public/screenshots");await fs.mkdir(screenshots,{recursive:true});
@@ -51,6 +55,22 @@ try {
     assert.equal(await plot.locator("#plot-config").isVisible(),false);const quick=plot.locator("#plot-quick");const fields=await quick.getByLabel("Quantity",{exact:true}).locator("option").allTextContents();assert.ok(fields.some(v=>v.includes("RESPONSE")),fields.join(" · "));await quick.getByLabel("Target",{exact:true}).selectOption("region");await quick.getByLabel("Operation",{exact:true}).selectOption("mean");await quick.getByRole("button",{name:"Add region curve",exact:true}).click();await ready(plot);assert.deepEqual(await plot.evaluate(()=>document.querySelector("#plot-chart").data[0].y),[3]);assert.equal(await page.locator(".tab").count(),tabs,"mesh plotting must remain embedded");
     assert.equal(await page.locator(".tab.dirty").count(),0,"read-only plotting dirtied a mesh");
   }
-  console.log(JSON.stringify({packaged:true,standalone:true,providers:["MDPA","VTK"],themes:["dark","light","high-contrast"],meshDirty:false,screenshots:3},null,2));
+  // Acceptance: the opt-in persistent extraction cache is observable through
+  // the packaged host, not only in unit tests.
+  await command("View: Close All Editors");await command("Kratos Mesh: Scientific Plot Builder");plot=await frame("#plot-app");
+  await plot.getByRole("button",{name:"Add source",exact:true}).click();await plot.getByLabel("Source type",{exact:true}).selectOption("mesh");await plot.getByLabel("File",{exact:true}).fill(cacheMesh);await plot.getByLabel("File",{exact:true}).press("Tab");await plot.getByRole("button",{name:"Inspect source",exact:true}).click();await ready(plot);
+  await plot.getByRole("button",{name:"Refresh",exact:true}).click();await ready(plot);await plot.waitForFunction(()=>document.querySelector("#plot-diagnostics")?.textContent.includes("Persistent extraction cache hit"));
+  // Acceptance: a million-row table can be cancelled without publishing a
+  // complete or stale result, and a superseding edit wins the in-flight race.
+  await command("View: Close All Editors");await command("Kratos Mesh: Scientific Plot Builder");plot=await frame("#plot-app");
+  await plot.getByRole("button",{name:"Add source",exact:true}).click();await plot.getByLabel("File",{exact:true}).fill(large);await plot.getByLabel("File",{exact:true}).press("Tab");await plot.getByRole("button",{name:"Add series",exact:true}).click();
+  await plot.waitForFunction(()=>document.querySelector("#plot-status")?.textContent.startsWith("Collecting full-resolution data"));await plot.getByRole("button",{name:"Cancel",exact:true}).click();await plot.waitForFunction(()=>document.querySelector("#plot-status")?.textContent.startsWith("Partial result"));
+  assert.deepEqual(await plot.evaluate(()=>document.querySelector("#plot-chart").data??[]),[]);const cancelledStatus=await plot.locator("#plot-status").innerText();assert.ok(cancelledStatus.startsWith("Partial result"),`Cancelled collection must stay partial: ${cancelledStatus}`);assert.ok(!cancelledStatus.includes("1000000 full-resolution points"),`Cancelled collection must not publish the full table: ${cancelledStatus}`);
+  await plot.getByRole("button",{name:"Refresh",exact:true}).click();await plot.waitForFunction(()=>document.querySelector("#plot-status")?.textContent.startsWith("Collecting full-resolution data"));
+  await plot.getByLabel("Title",{exact:true}).fill("Superseded request A");await plot.getByLabel("Title",{exact:true}).press("Tab");await plot.waitForTimeout(80);await plot.getByLabel("Title",{exact:true}).fill("Superseded request B");await plot.getByLabel("Title",{exact:true}).press("Tab");await ready(plot);
+  assert.equal(await plot.locator("#plot-chart-tools .plot-heading-title").textContent(),"Superseded request B");
+  await plot.getByRole("button",{name:"Refresh",exact:true}).click();await plot.waitForFunction(()=>document.querySelector("#plot-status")?.textContent.startsWith("Collecting full-resolution data"));await command("View: Close All Editors");await page.waitForTimeout(500);await command("Kratos Mesh: Scientific Plot Builder");plot=await frame("#plot-app");
+  assert.deepEqual(await plot.evaluate(()=>document.querySelector("#plot-chart").data??[]),[]);assert.ok(!(await plot.locator("#plot-status").innerText()).includes("full-resolution points"),"Disposal must not publish the discarded collection");
+  console.log(JSON.stringify({packaged:true,standalone:true,persistentCacheHit:true,largeTableCancellation:true,supersession:true,disposalRace:true,providers:["MDPA","VTK"],themes:["dark","light","high-contrast"],meshDirty:false,screenshots:3},null,2));
 } catch(e){if(page){await page.screenshot({path:path.join(base,"failure.png")});await fs.writeFile(path.join(base,"failure.txt"),(await page.locator("body").innerText())+"\nFrames: "+page.frames().map(f=>f.url()).join("\n"));}throw e;}
 finally {await browser.close();server.kill("SIGTERM");await log.close();}

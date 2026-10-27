@@ -9,7 +9,7 @@ import assert from "node:assert/strict";
 const require=createRequire(import.meta.url),root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),"../..");
 const {chromium}=require(process.env.PLAYWRIGHT_MODULE??"playwright-core");
 const base=process.env.UI_ROOT??"/tmp/opencode/fem-ui",workspace=path.join(base,"workspace"),port=8201;
-await fs.mkdir(workspace,{recursive:true});await fs.mkdir(path.join(base,"user/User"),{recursive:true});
+await fs.mkdir(workspace,{recursive:true});for(const name of await fs.readdir(workspace))if(/\.kratos(view|run)\.json$/.test(name))await fs.rm(path.join(workspace,name),{force:true});await fs.mkdir(path.join(base,"user/User"),{recursive:true});
 await fs.writeFile(path.join(base,"user/User/settings.json"),JSON.stringify({"workbench.startupEditor":"none","files.autoSave":"off","kratos.showWhatsNew":false,"workbench.colorTheme":"Default Dark Modern","workbench.editor.enablePreview":false,"workbench.secondarySideBar.defaultVisibility":"hidden"}));
 function mdpa(step){return `Begin Nodes
 1 0 0 0
@@ -38,6 +38,15 @@ Begin NodalData DISPLACEMENT
 3 0 [3] (0,0,${step})
 4 0 [3] (0,0,0)
 End NodalData
+Begin NodalData TEMPERATURE
+1 0 ${step+1}
+2 0 ${step+2}
+3 0 ${step+3}
+4 0 ${step+4}
+End NodalData
+Begin ElementalData ENERGY
+1 ${6*(step+1)}
+End ElementalData
 Begin SubModelPart Wall
 Begin SubModelPartNodes
 1
@@ -46,6 +55,16 @@ Begin SubModelPartNodes
 End SubModelPartNodes
 Begin SubModelPartConditions
 1
+End SubModelPartConditions
+End SubModelPart
+Begin SubModelPart Inlet
+Begin SubModelPartNodes
+1
+2
+4
+End SubModelPartNodes
+Begin SubModelPartConditions
+2
 End SubModelPartConditions
 End SubModelPart
 `;}
@@ -94,7 +113,7 @@ try {
   const mesh=await open("FEM_0_0.mdpa","Open MDPA Preview");
   const tabCount=await page.locator(".tab").count();
   assert.equal(await mesh.evaluate(()=>!!window.Plotly),false,"Plotly must not load before Plots is opened");
-  await mesh.locator('#toolbar [data-action="field"]').click();await mesh.locator("#field-panel").waitFor({state:"visible"});
+  for(let i=0;i<20&&!await mesh.locator("#field-panel").isVisible();i++){await mesh.locator('#toolbar [data-action="field"]').click();await mesh.waitForTimeout(150);}await mesh.locator("#field-panel").waitFor({state:"visible"});
   await mesh.locator('#toolbar [data-action="plots"]').click();await mesh.getByLabel("Quantity",{exact:true}).waitFor();
   assert.equal(await mesh.locator("#plot-config").isVisible(),false,"Advanced must start hidden");
   // Displayed-field default: a PRESSURE contour is showing, so the plot Quantity must follow it (not the old DISPLACEMENT preference).
@@ -137,12 +156,44 @@ try {
   await mesh.locator("#plot-curves .plot-curve-row").last().getByRole("button",{name:"Follow timeline",exact:true}).click();await ready(mesh);await mesh.locator("#plot-actions").getByRole("button",{name:"Cancel",exact:true}).click();await mesh.getByRole("button",{name:"Next frame",exact:true}).click();await mesh.waitForFunction(()=>document.querySelector("#sb-count-frame")?.textContent.includes("frame 2"));await assertProfiles(mesh,[[36.4,37.4,38.4],[12,12,12]]);
   await mesh.locator("#plot-curves").getByRole("button",{name:"Resume following",exact:true}).click();await assertProfiles(mesh,[[36.4,37.4,38.4],[24.2,24.7,25.2]]);await page.screenshot({path:path.join(screenshots,"fem-timeline-profile.png")});
   assert.equal(await page.locator(".tab.dirty").count(),0,"Plotting dirtied the mesh");
+  // Acceptance: Field-panel distributions, Presets, Show on mesh and the
+  // exterior-boundary convention all run through the packaged host/webview.
+  await mesh.locator("#tl-scrub").evaluate(el=>{el.value="0";el.dispatchEvent(new Event("input",{bubbles:true}));});
+  await mesh.waitForFunction(()=>document.querySelector("#tl-scrub")?.value==="0"&&document.querySelector("#sb-count-frame")?.textContent.includes("frame 1"));
+  while(await mesh.locator("#plot-curves").getByRole("button",{name:"Remove",exact:true}).count())await mesh.locator("#plot-curves").getByRole("button",{name:"Remove",exact:true}).first().click();
+  assert.equal(await mesh.locator("#field-panel").isVisible(),true,"Field panel should remain open for the distribution check");
+  await mesh.locator("#field-panel select.field-select").first().selectOption("Nodal:TEMPERATURE");
+  await mesh.waitForFunction(()=>document.querySelector("#field-panel select.field-select")?.value==="Nodal:TEMPERATURE");
+  await mesh.locator("#field-panel").getByRole("button",{name:"Plot distribution",exact:true}).click();await ready(mesh);
+  await mesh.waitForFunction(()=>document.querySelector("#plot-diagnostics")?.textContent.includes("Histogram: 20 equal-width bins"));
+  const histogram=await mesh.evaluate(()=>{const t=document.querySelector("#plot-chart").data[0];return {bins:t.x.length,count:t.y.reduce((a,b)=>a+b,0),nonempty:t.y.filter(v=>v>0).length};});assert.equal(histogram.bins,20);assert.equal(histogram.count,4);assert.equal(histogram.nonempty,4);
+  assert.match(await mesh.locator("#plot-chart-tools .plot-heading-title").textContent(),/TEMPERATURE distribution/);
+  const quick=mesh.locator("#plot-quick");
+  await quick.getByLabel("Quantity",{exact:true}).selectOption("Nodal:DISPLACEMENT");await quick.getByLabel("Component",{exact:true}).selectOption("magnitude");await quick.getByRole("button",{name:"Show on mesh",exact:true}).click();
+  await mesh.waitForFunction(()=>document.querySelector("#field-panel select.field-select")?.value==="Nodal:DISPLACEMENT");
+  // Presets: a packaged context with an elemental field and two sections.
+  while(await mesh.locator("#plot-curves").getByRole("button",{name:"Remove",exact:true}).count())await mesh.locator("#plot-curves").getByRole("button",{name:"Remove",exact:true}).first().click();
+  await quick.getByLabel("Target",{exact:true}).selectOption("region");await quick.getByLabel("Quantity",{exact:true}).selectOption("Nodal:PRESSURE");await quick.getByLabel("Scope",{exact:true}).selectOption("history");
+  const preset=quick.getByLabel("Preset",{exact:true});await preset.waitFor();const presetOptions=await preset.locator("option").allTextContents();assert.ok(presetOptions.some(v=>v.includes("Measure-weighted total")),presetOptions.join(" · "));assert.ok(presetOptions.some(v=>v.includes("Section comparison")),presetOptions.join(" · "));
+  await preset.selectOption("volumeTotal");await quick.getByRole("button",{name:"Build preset",exact:true}).click();await ready(mesh);
+  await mesh.waitForFunction(()=>{const d=document.querySelector("#plot-chart")?.data?.[0]?.y;return d?.length===3&&d.every((v,i)=>Math.abs(v-(i+1))<1e-8);});
+  assert.match(await mesh.locator("#plot-chart-tools .plot-heading-title").textContent(),/ENERGY measure-weighted total/);
+  await preset.selectOption("sectionComparison");await quick.getByLabel("Section",{exact:true}).selectOption("Wall");await quick.getByLabel("Compare with",{exact:true}).selectOption("Inlet");await quick.getByRole("button",{name:"Build preset",exact:true}).click();await ready(mesh);
+  await mesh.waitForFunction(()=>{const d=document.querySelector("#plot-chart")?.data;return d?.length===2&&d.every(t=>t.y.length===3&&Math.abs(t.y[0]-12)<1e-8&&Math.abs(t.y[1]-74/3)<1e-8&&Math.abs(t.y[2]-112/3)<1e-8);});
+  // Exterior-boundary conventions: the four outer faces of the one tetra, never Conditions.
+  while(await mesh.locator("#plot-curves").getByRole("button",{name:"Remove",exact:true}).count())await mesh.locator("#plot-curves").getByRole("button",{name:"Remove",exact:true}).first().click();
+  await quick.getByLabel("Target",{exact:true}).selectOption("region");await quick.getByLabel("Region",{exact:true}).selectOption("");await quick.getByLabel("Quantity",{exact:true}).selectOption("Nodal:PRESSURE");await quick.getByLabel("Operation",{exact:true}).selectOption("boundaryIntegral");await quick.getByLabel("Scope",{exact:true}).selectOption("current");await quick.getByLabel("Boundary",{exact:true}).selectOption("exterior");
+  assert.equal(await quick.getByLabel("Normals",{exact:true}).count(),0,"Exterior boundaries own their outward orientation");
+  await quick.getByRole("button",{name:"Add region curve",exact:true}).click();await ready(mesh);
+  const exterior=await mesh.evaluate(()=>document.querySelector("#plot-chart").data[0].y[0]);assert.ok(Math.abs(exterior-12*(1.5+Math.sqrt(3)/2))<1e-8,String(exterior));
+  const exteriorDiagnostics=await mesh.locator("#plot-diagnostics").textContent();assert.match(exteriorDiagnostics,/Exterior boundary of 1 volume element\(s\): 4 faces owned once, 0 interior faces skipped/);assert.match(exteriorDiagnostics,/Nodal fields only; no Conditions are read/);
+  assert.equal(await page.locator(".tab.dirty").count(),0,"Plot acceptance checks dirtied the mesh");
   const vtk=await open("vtk_0_0.vtk","Open VTK Preview");await vtk.locator('#toolbar [data-action="plots"]').click();await vtk.waitForFunction(()=>document.querySelector("#plot-app")?.dataset.plotReady==="true");await vtk.locator("#plot-quick").getByLabel("Entity ID",{exact:true}).fill("1");await vtk.locator("#plot-quick").getByLabel("Entity ID",{exact:true}).press("Tab");await vtk.getByRole("button",{name:"Plot node 1",exact:true}).click();await ready(vtk);assert.deepEqual(await vtk.evaluate(()=>document.querySelector("#plot-chart").data[0].y),[1,4]);
   await profiles(vtk,"vtk_0_0.vtk",0,0);await vtk.getByRole("button",{name:"Next frame",exact:true}).click();await assertProfiles(vtk,[[1.3,1.55,1.8],[4.3,4.55,4.8]]);
   await vtk.locator("#timeline-bar").getByText("Resample",{exact:true}).click();await vtk.getByLabel("Target times or start:stop:step",{exact:true}).fill("0.5,1");await vtk.getByLabel("Source times (optional comma-separated)",{exact:true}).fill("0,1");await vtk.getByLabel("Continuous unknown fields (kind:variable)",{exact:true}).fill("Nodal:PRESSURE");await vtk.locator("#timeline-bar").getByRole("button",{name:"Apply",exact:true}).click();
   await vtk.locator("#plot-curves").getByRole("button",{name:"Resume following",exact:true}).waitFor();assert.ok((await vtk.locator("#plot-status").innerText()).includes("following paused"));await assertProfiles(vtk,[[1.3,1.55,1.8],[4.3,4.55,4.8]]);
   await vtk.locator("#plot-curves").getByRole("button",{name:"Resume following",exact:true}).click();await assertProfiles(vtk,[[1.3,1.55,1.8],[2.8,3.05,3.3]]);await vtk.getByRole("button",{name:"Next frame",exact:true}).click();await assertProfiles(vtk,[[1.3,1.55,1.8],[4.3,4.55,4.8]]);
   assert.equal(await page.locator(".tab.dirty").count(),0);assert.deepEqual(errors,[]);assert.deepEqual(violations,[]);
-  console.log(JSON.stringify({packaged:true,embedded:true,lazyPlotly:true,multiPoint:true,meshClickAppend:true,visualPicker:true,narrowPane:true,lineScatterStepArea:true,bubble:true,pieDoughnut:true,curvesPreserved:true,regionResultant:loads,linkedPeak:true,docking:true,advancedHidden:true,timelineProfiles:true,fixedProfilesRetained:true,followingCancelResume:true,resampledProfile:true,timelineRebindingExplicit:true,providers:["MDPA","VTK"],themes:3,meshDirty:false,cspViolations:violations,screenshots:7},null,2));
+  console.log(JSON.stringify({packaged:true,embedded:true,lazyPlotly:true,multiPoint:true,meshClickAppend:true,visualPicker:true,narrowPane:true,lineScatterStepArea:true,bubble:true,pieDoughnut:true,curvesPreserved:true,regionResultant:loads,linkedPeak:true,docking:true,advancedHidden:true,timelineProfiles:true,fixedProfilesRetained:true,followingCancelResume:true,resampledProfile:true,timelineRebindingExplicit:true,fieldDistribution:{bins:histogram.bins,count:histogram.count},showOnMesh:true,presets:["volumeTotal","sectionComparison"],exteriorBoundary:true,exteriorIntegral:exterior,providers:["MDPA","VTK"],themes:3,meshDirty:false,cspViolations:violations,screenshots:7},null,2));
 } catch(e){if(page){await page.screenshot({path:path.join(base,"failure.png")});await fs.writeFile(path.join(base,"failure.txt"),(await page.locator("body").innerText())+"\nFrames: "+page.frames().map(f=>f.url()).join("\n"));}throw e;}
 finally {await browser.close();server.kill("SIGTERM");await log.close();}

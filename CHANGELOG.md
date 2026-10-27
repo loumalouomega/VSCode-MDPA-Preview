@@ -4,6 +4,16 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **The packaged plotting acceptance matrix grew (roadmap item 19).** The installed-VSIX harnesses now cover `plot_run_resolve` (verified, unverified with or without a receipt, unresolved), a changed companion and changed or missing PVD→PVTU→VTU pieces, the Field panel's **Plot distribution**, Plots **Show on mesh**, the `volumeTotal` and `sectionComparison` presets, the whole-mesh exterior-boundary integral, the opt-in persistent cache, and a million-row table cancelled, superseded in flight and disposed mid-collection. Fixtures, commands and observed values are recorded in `doc/plotting-library.md`. The budgets themselves stay Node-level: no real desktop VS Code, Remote-SSH or KKSS session was available here, so the extension-host, remote-filesystem and webview-delivery measurements remain explicitly unverified rather than passed.
+
+### Fixed
+
+- **An OpenFOAM case no longer re-discovers itself when the preview saves its view state.** Opening a `.foam` case persists `case.kratosview.json` beside the marker, and that format's timeline watcher (`{*,*/*}`) matched the sidecar as a mesh change: the debounced reload could start while **Show in mesh** was still loading the owning frame, and the navigation guard then refused the handoff with "Preview changed, is edited/resampled/busy, or navigation was superseded; no sample was selected." The extension's own `*.kratosview.json` sidecar is no longer treated as a mesh change, so an owning preview keeps the navigation it was asked for.
+
 ## [5.23.0] - 2026-10-26
 
 ### Added
