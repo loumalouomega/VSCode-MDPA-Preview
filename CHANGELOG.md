@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [5.26.0] - 2026-10-27
+
 ### Added
 
 - **Curved cells can be exported as a linear copy (roadmap item 10).** Advanced ▸ **Tessellate curved cells…** (`kratos.mesh.exportTessellated`) and `mesh_derive` with `kind: "tessellate"` and `levels` (0–5) write a copy of the mesh in which every 6-node triangle, 8/9-node quad, 10-node tetrahedron and 27-node hexahedron is tessellated through its own shape functions into linear triangles/tetrahedra. Unlike the sidebar's in-place Tessellate operation, the open mesh keeps its curved cells; the copy tags every Element and Condition with `SOURCE_ENTITY_ID`, the id of the cell it came from. A mesh with no curved cells is refused by name. New tests also pin that two adjacent quadratic tetrahedra weld into a watertight display surface and that the curved-display subdivision is imported by nothing but the display geometry builder, so it can never reach a writer.
@@ -1409,7 +1411,8 @@ Four silent-correctness fixes. None of them threw, and none was visible in the m
 
 - Initial release: custom editor preview for `.mdpa` files.
 
-[Unreleased]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.25.0...HEAD
+[Unreleased]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.26.0...HEAD
+[5.26.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.25.0...v5.26.0
 [5.25.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.24.0...v5.25.0
 [5.24.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.22.0...v5.24.0
 [5.15.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.14.0...v5.15.0

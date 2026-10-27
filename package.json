@@ -2,7 +2,7 @@
   "name": "vscode-mdpa",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "5.25.0",
+  "version": "5.26.0",
   "icon": "images/icon_transparency.png",
   "publisher": "kratos-multiphysics",
   "license": "AGPL-3.0-or-later",
