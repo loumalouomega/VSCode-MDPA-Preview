@@ -1170,6 +1170,7 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
         msg?.type === "menuExportPartitions" ||
         msg?.type === "menuSplitMesh" ||
         msg?.type === "menuExportSimplified" ||
+        msg?.type === "menuExportTessellated" ||
         msg?.type === "menuExportGrid" ||
         msg?.type === "menuExportOctree" ||
         msg?.type === "menuExportCadSurface" ||

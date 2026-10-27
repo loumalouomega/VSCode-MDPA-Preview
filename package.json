@@ -489,6 +489,11 @@
         "category": "%category.KratosMesh%"
       },
       {
+        "command": "kratos.mesh.exportTessellated",
+        "title": "%command.kratos.mesh.exportTessellated.title%",
+        "category": "%category.KratosMesh%"
+      },
+      {
         "command": "kratos.mesh.exportGrid",
         "title": "%command.kratos.mesh.exportGrid.title%",
         "category": "%category.KratosMesh%"

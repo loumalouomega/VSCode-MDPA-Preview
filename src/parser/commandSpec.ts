@@ -358,6 +358,7 @@ const FILES: CommandSpec[] = [
   post("exportPartitions", "file", "Export one file per partition", "menuExportPartitions"),
   post("splitMesh", "file", "Split into components/types/fields", "menuSplitMesh"),
   post("simplify", "file", "Export a simplified surface copy", "menuExportSimplified"),
+  post("tessellateCurved", "file", "Export a linear copy of the curved cells", "menuExportTessellated"),
   post("sampleGrid", "file", "Sample to a grid / voxelization / SDF volume", "menuExportGrid"),
   post("octreeMesh", "file", "Write an octree tetrahedral/hexahedral volume mesh of the surface", "menuExportOctree"),
   post("cadSurface", "file", "Triangulate the faces of the open CAD B-rep", "menuExportCadSurface"),

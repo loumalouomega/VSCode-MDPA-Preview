@@ -18,6 +18,8 @@ export interface InspectEntityInfo {
   kind: "Element" | "Condition" | "Geometry";
   id: number;
   blockName?: string;
+  /** Set when this Element is one of the tetrahedra a read polyhedron was decomposed into. */
+  polyhedron?: { index: number; children: number };
   smpPaths: string[];
   fields: InspectFieldValue[];
 }
@@ -253,6 +255,7 @@ export function renderInspectPanel(
     const e = sel.entity;
     container.appendChild(section(`${e.kind} ${e.id}`));
     if (e.blockName) container.appendChild(row("Block", e.blockName));
+    if (e.polyhedron) container.appendChild(row(t("Polyhedron"), t("#{n} (decomposed into {k} tetrahedra)", { n: String(e.polyhedron.index + 1), k: String(e.polyhedron.children) })));
     container.appendChild(smpList(e.smpPaths,state.canPlotSeries?handlers.onSaveRegionMonitor:undefined));
     container.appendChild(fieldsTable(e.fields,state.canPlotSeries?variable=>handlers.onPlotOverTime?.("entity",variable):undefined,state.canPlotSeries&&handlers.onSaveMonitor?variable=>handlers.onSaveMonitor?.("entity",variable):undefined));
     const btn = plotBtn("entity", e.fields.length);

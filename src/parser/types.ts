@@ -191,8 +191,40 @@ export interface MdpaModel {
    * summaries report `format`/`patches`/`faces` only.
    */
   nurbs?: NurbsSideChannel;
+  /**
+   * The ORIGINAL polyhedral cells of a file whose polyhedra were decomposed into
+   * tetrahedra on read (VTU `VTK_POLYHEDRON`, a meshio++ polyhedron block), so a
+   * writer that can hold a polyhedron (today the native `.vtu` writer) may emit
+   * the real cell instead of its fan. The model itself still holds only the
+   * tetrahedra — everything else sees an ordinary tetrahedral mesh.
+   *
+   * LIVE DATA with the same sharp rule as `nurbs`: a mesh an operation changed
+   * no longer matches these cells, so every applied edit that can move a node or
+   * a cell id DROPS it (operations.ts's `applyOpAsync` keeps it only across
+   * unscoped rigid/scale transforms and field-only ops). Plain typed arrays, so
+   * it survives a worker crossing and is never JSON.stringify'd (`mesh_info`
+   * reports counts only).
+   */
+  polyhedra?: PolyhedralTopology;
   /** Optional derived/auxiliary data (mesh size, …); never serialized. */
   derived?: DerivedMeshData;
+}
+
+/** See `MdpaModel.polyhedra`. All ids are model ids, not array indices. */
+export interface PolyhedralTopology {
+  /** Number of polyhedra. */
+  count: number;
+  /** Node ids of every face corner, face after face. */
+  nodes: Int32Array;
+  /** Face i spans `nodes[faceOffsets[i]..faceOffsets[i+1])`; length = faces + 1. */
+  faceOffsets: Int32Array;
+  /** Polyhedron p owns faces `cellOffsets[p]..cellOffsets[p+1]`; length = count + 1. */
+  cellOffsets: Int32Array;
+  /** Polyhedron p was decomposed into the Elements `childIds[childOffsets[p]..childOffsets[p+1])`. */
+  childOffsets: Int32Array;
+  childIds: Int32Array;
+  /** Ids of the nodes the decomposition invented (a face centre, a cell centre). */
+  apexNodeIds: Int32Array;
 }
 
 /** See `MdpaModel.nurbs`. */

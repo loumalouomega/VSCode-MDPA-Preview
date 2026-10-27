@@ -17,6 +17,7 @@
   "command.kratos.mesh.exportPartitions.title": "Export Partitions (Per-Part Files with Ghost Layers)…",
   "command.kratos.mesh.splitMesh.title": "Split Mesh (Components / Element Types / Field Values)…",
   "command.kratos.mesh.exportSimplified.title": "Simplify Surface (Export a Decimated Copy)…",
+  "command.kratos.mesh.exportTessellated.title": "Tessellate Curved Cells (Export a Linear Copy)…",
   "command.kratos.mesh.exportGrid.title": "Sample to Grid (Voxel Occupancy / Signed-Distance Volume)…",
   "command.kratos.mesh.exportOctree.title": "Octree Volume Mesh of the Surface (Tetrahedra / Hexahedra)…",
   "command.kratos.mesh.exportCadSurface.title": "Mesh the CAD Faces of a B-rep (Surface Triangulation)…",

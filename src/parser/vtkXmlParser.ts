@@ -15,6 +15,7 @@ import {
   finalizeModel,
 } from "./modelBuilder";
 import { decomposePolyhedronBlock } from "./polyhedronDecompose";
+import { PolyhedraCollector } from "./polyhedraTopology";
 import {
   decodeDataArray,
   findAll,
@@ -93,6 +94,13 @@ class ModelStaging {
    * against a single CellData value, which would otherwise go unreplicated.
    */
   readonly flatPerSourceCell: number[] = [];
+  /** The original polyhedra, for the `MdpaModel.polyhedra` side channel. */
+  readonly polyhedra = new PolyhedraCollector();
+
+  /** A source cell that staged nothing (unusable polyhedron): keeps CellData aligned. */
+  skipSourceCell(): void {
+    this.flatPerSourceCell.push(0);
+  }
 
   get nodeCount(): number {
     return this.coords.length / 3;
@@ -149,6 +157,7 @@ class ModelStaging {
           line: 0,
           message: "A VTK_POLYHEDRON's `faces` entry is truncated; cell skipped.",
         });
+        this.skipSourceCell();
         return 0;
       }
       for (let k = 0; k < n; k++) data.push(faces[at + k]);
@@ -166,7 +175,12 @@ class ModelStaging {
       3,
       this.nodeCount
     );
-    if (d.tetRow.length === 0) return 0;
+    if (d.tetRow.length === 0) {
+      this.skipSourceCell();
+      return 0;
+    }
+    const firstFlat = this.nCellsStaged;
+    this.polyhedra.addApex(this.nodeCount, d.addedParents.length);
     for (const p of d.addedPoints) this.coords.push(p);
     for (const parents of d.addedParents) this.addedNodeParents.push(parents);
     for (let t = 0; t < d.tetRow.length; t++) {
@@ -174,6 +188,7 @@ class ModelStaging {
       this.addCell(TETRA, d.tets.subarray(t * 4, t * 4 + 4), 0, false);
     }
     this.flatPerSourceCell.push(d.tetRow.length); // ONE source cell, N tets
+    this.polyhedra.add(data, faceOffsets, firstFlat, d.tetRow.length);
     return d.tetRow.length;
   }
 
@@ -245,13 +260,16 @@ class ModelStaging {
       fields.push(field);
     }
 
-    return finalizeModel({
+    const model = finalizeModel({
       nodeCount: this.nodeCount,
       coords: new Float32Array(this.coords),
       blocks,
       fields,
       diagnostics,
     });
+    const polyhedra = this.polyhedra.build(flatExpansion);
+    if (polyhedra) model.polyhedra = polyhedra;
+    return model;
   }
 }
 
@@ -399,6 +417,7 @@ function buildUnstructured(file: VtkXmlFile, diagnostics: MdpaDiagnostic[]): Mdp
                 "A VTK_POLYHEDRON cell has no `faces`/`faceoffsets` entry, so its " +
                 "shape is unknown; skipped.",
             });
+            staging.skipSourceCell();
           }
           start = end;
           continue;
@@ -411,7 +430,8 @@ function buildUnstructured(file: VtkXmlFile, diagnostics: MdpaDiagnostic[]): Mdp
           line: 0,
           message:
             `${polyhedra} VTK_POLYHEDRON cell(s) decomposed into ${tets} tetrahedra ` +
-            `for display. The original polyhedra are not preserved on export.`,
+            `for display. The original polyhedra are kept as a side channel and ` +
+            `written back by the .vtu writer; any edit that changes the mesh drops them.`,
         });
       }
     }

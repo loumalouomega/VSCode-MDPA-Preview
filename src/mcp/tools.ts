@@ -728,6 +728,20 @@ export async function meshInfo(args: {
           },
         }
       : {}),
+    // Reported only for a file whose polyhedra were decomposed on read and are
+    // still intact (see MdpaModel.polyhedra): counts only, never the arrays.
+    // The `.vtu` writer emits these as VTK_POLYHEDRON cells; every other format
+    // writes the tetrahedra, and any edit that changes the mesh drops the channel.
+    ...(model.polyhedra
+      ? {
+          polyhedra: {
+            count: model.polyhedra.count,
+            tetrahedra: model.polyhedra.childIds.length,
+            apexNodes: model.polyhedra.apexNodeIds.length,
+            preservedOn: [".vtu"],
+          },
+        }
+      : {}),
     // The 1D counterpart of `spheres`. `sectioned` on a non-zero `cells` is
     // what separates a beam frame from a 2D boundary skin or an imported
     // wireframe, which are the same line cells with nothing attached — see
@@ -1756,6 +1770,7 @@ export async function meshDerive(args: {
     | "isosurface"
     | "threshold"
     | "decimate"
+    | "tessellate"
     | "grid"
     | "voxelize"
     | "sdfVolume"
@@ -1803,6 +1818,8 @@ export async function meshDerive(args: {
   nonManifold?: boolean;
   inconsistent?: boolean;
   frozenPart?: string;
+  /** tessellate: divisions per axis / recursive splits (0-5, default 2). */
+  levels?: number;
   dims?: number[];
   spacing?: number[];
   resolution?: number[];
@@ -1898,6 +1915,8 @@ export async function meshDerive(args: {
       featureAngle: args.featureAngle,
       frozenPart: args.frozenPart,
     };
+  } else if (args.kind === "tessellate") {
+    spec = { kind: "tessellate", levels: args.levels };
   } else if (args.kind === "grid") {
     spec = {
       kind: "grid",

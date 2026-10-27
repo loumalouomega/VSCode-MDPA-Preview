@@ -1231,7 +1231,29 @@ export async function applyOpAsync(
   if (out.model.nurbs && !isOracleOp(rec.op) && !out.noop) {
     delete out.model.nurbs;
   }
+  // The polyhedra side channel (`model.polyhedra`) names the tetrahedra a read
+  // polyhedron was decomposed into and the nodes it invented; it is only valid
+  // while those cells and nodes are exactly as read. Unlike the NURBS channel
+  // the oracle ops do NOT keep it (several of them adopt a new topology), so
+  // it survives only the ops that cannot change a cell id, a node id or a
+  // connectivity row.
+  if (out.model.polyhedra && !out.noop && !preservesPolyhedra(rec)) {
+    delete out.model.polyhedra;
+  }
   return out;
+}
+
+/** Ops that leave every cell, node id and connectivity row alone (and move nodes rigidly or not at all). */
+const POLYHEDRA_PRESERVING_OPS: ReadonlySet<string> = new Set([
+  "fieldCalc", "averageField", "renameField", "keepFields", "dropFields", "conditionField",
+  "convertFieldUnits", "reduceField", "writeMeshSizeFields", "setProperty", "createProperty", "cloneProperty",
+]);
+const POLYHEDRA_TRANSFORM_OPS: ReadonlySet<string> = new Set(["translate", "scale", "rotate"]);
+
+function preservesPolyhedra(rec: OpRecord): boolean {
+  if (POLYHEDRA_PRESERVING_OPS.has(rec.op)) return true;
+  // A scoped transform moves only some nodes, so a polyhedron straddling the scope would tear.
+  return POLYHEDRA_TRANSFORM_OPS.has(rec.op) && !(rec as { part?: string }).part;
 }
 
 /**

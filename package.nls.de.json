@@ -13,6 +13,7 @@
   "command.kratos.mesh.exportPartitions.title": "Partitionen exportieren (Dateien pro Teil mit Geisterschichten)…",
   "command.kratos.mesh.splitMesh.title": "Netz teilen (Komponenten / Elementtypen / Feldwerte)…",
   "command.kratos.mesh.exportSimplified.title": "Oberfläche vereinfachen (reduzierte Kopie exportieren)…",
+  "command.kratos.mesh.exportTessellated.title": "Gekrümmte Zellen tesselieren (lineare Kopie exportieren)…",
   "command.kratos.mesh.exportGrid.title": "Auf Gitter abtasten (Voxelbelegung / Volumen mit vorzeichenbehaftetem Abstand)…",
   "command.kratos.mesh.exportOctree.title": "Octree-Volumennetz der Oberfläche (Tetraeder / Hexaeder)…",
   "command.kratos.mesh.exportCadSurface.title": "CAD-Flächen eines B-Rep vernetzen (Oberflächentriangulierung)…",

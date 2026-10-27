@@ -242,6 +242,18 @@ test("mesh_info opens a mesh whose cells are polyhedral", async () => {
     "6 quad faces x 4 edges of tetrahedra"
   );
   assert.ok(info.blocks.every((b) => b.stride === 4), "all tetrahedra");
+
+  // The original polyhedron is remembered (counts only in mesh_info) and the
+  // native .vtu writer emits it back as a single VTK_POLYHEDRON cell.
+  const withPoly = info as unknown as { polyhedra?: { count: number; tetrahedra: number } };
+  assert.deepEqual(withPoly.polyhedra && { count: withPoly.polyhedra.count, tetrahedra: withPoly.polyhedra.tetrahedra }, { count: 1, tetrahedra: 24 });
+  const out = path.join(dir, "poly.vtu");
+  await meshConvert({ path: src, outputPath: out });
+  const text = fs.readFileSync(out, "utf8");
+  assert.match(text, /NumberOfPoints="8" NumberOfCells="1"/);
+  assert.match(text, /Name="faces"/);
+  const again = (await meshInfo({ path: out })) as unknown as { polyhedra?: { count: number } };
+  assert.equal(again.polyhedra?.count, 1, "and it reads back as the same polyhedron");
 });
 
 // --- SubModelPart tree operations through the MCP surface --------------------

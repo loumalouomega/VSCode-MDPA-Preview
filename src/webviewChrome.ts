@@ -188,6 +188,7 @@ export const MENU_ACTION_COMMANDS: Readonly<Record<string, string>> = {
   exportPartitions: "kratos.mesh.exportPartitions",
   splitMesh: "kratos.mesh.splitMesh",
   simplify: "kratos.mesh.exportSimplified",
+  tessellateCurved: "kratos.mesh.exportTessellated",
   sampleGrid: "kratos.mesh.exportGrid",
   octreeMesh: "kratos.mesh.exportOctree",
   cadSurface: "kratos.mesh.exportCadSurface",
@@ -225,6 +226,7 @@ export const ADVANCED_MENU_HTML = `<div id="advanced-popup" class="hidden" role=
         <button type="button" class="file-menu-item" data-action="exportPartitions" role="menuitem" title="Split the mesh into N per-part files (with optional ghost layers) and a manifest, for a distributed run — each part keeps the source's ids">${ic("partition")}<span>Export partitions…</span></button>
         <button type="button" class="file-menu-item" data-action="splitMesh" role="menuitem" title="Write one file per connected body, element type or field value">${ic("crop")}<span>Split mesh…</span></button>
         <button type="button" class="file-menu-item" data-action="simplify" role="menuitem" title="Write a simplified COPY of a triangle surface (quadric-error edge collapse): survivors keep their ids and boundary/creases are pinned">${ic("remesh")}<span>Simplify surface…</span></button>
+        <button type="button" class="file-menu-item" data-action="tessellateCurved" role="menuitem" title="Write a LINEAR copy of the curved (quadratic) cells, tessellated through their own shape functions; every cell carries SOURCE_ENTITY_ID. The open mesh keeps its curved cells">${ic("quadratic")}<span>Tessellate curved cells…</span></button>
         <button type="button" class="file-menu-item" data-action="sampleGrid" role="menuitem" title="Write a voxel occupancy or a signed-distance volume of the surface on a regular lattice (.vti keeps the sdf header)">${ic("grid")}<span>Sample to grid…</span></button>
         <button type="button" class="file-menu-item" data-action="octreeMesh" role="menuitem" title="Write a tetrahedral or hexahedral volume mesh of the inside of the surface, graded on an octree (meshio++ octreeMesh)">${ic("remesh")}<span>Octree volume mesh…</span></button>
         <button type="button" class="file-menu-item" data-action="cadSurface" role="menuitem" title="Triangulate the faces of the open CAD B-rep (.cad.json, STEP/IGES) into one conforming surface mesh, one SubModelPart per CAD face">${ic("remesh")}<span>Mesh CAD faces…</span></button>

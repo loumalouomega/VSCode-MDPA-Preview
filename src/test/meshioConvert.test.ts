@@ -258,7 +258,13 @@ test("a ragged polyhedron block is decomposed into tetrahedra", () => {
   assert.equal(m.blocks[0].count, 24);
   assert.equal(m.nodeCount, 8 + 7);
   assert.match(d[0].message, /decomposed into 24 tetrahedra/);
-  assert.match(d[0].message, /not preserved on export/);
+  assert.match(d[0].message, /kept as a side channel/);
+  const p = m.polyhedra!;
+  assert.equal(p.count, 1, "the original polyhedron is remembered");
+  assert.equal(p.cellOffsets[1], 6, "with its six faces");
+  assert.deepEqual([...p.nodes.slice(0, 4)], [1, 4, 3, 2]);
+  assert.deepEqual([...p.childIds].sort((a, b) => a - b), [...m.blocks[0].entityIds].sort((a, b) => a - b));
+  assert.deepEqual([...p.apexNodeIds].sort((a, b) => a - b), [9, 10, 11, 12, 13, 14, 15]);
 });
 
 test("the decomposed tetrahedra reproduce the polyhedron's volume exactly", () => {

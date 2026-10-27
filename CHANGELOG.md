@@ -8,8 +8,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- **Curved cells can be exported as a linear copy (roadmap item 10).** Advanced ▸ **Tessellate curved cells…** (`kratos.mesh.exportTessellated`) and `mesh_derive` with `kind: "tessellate"` and `levels` (0–5) write a copy of the mesh in which every 6-node triangle, 8/9-node quad, 10-node tetrahedron and 27-node hexahedron is tessellated through its own shape functions into linear triangles/tetrahedra. Unlike the sidebar's in-place Tessellate operation, the open mesh keeps its curved cells; the copy tags every Element and Condition with `SOURCE_ENTITY_ID`, the id of the cell it came from. A mesh with no curved cells is refused by name. New tests also pin that two adjacent quadratic tetrahedra weld into a watertight display surface and that the curved-display subdivision is imported by nothing but the display geometry builder, so it can never reach a writer.
+- **Original polyhedra are remembered on read and written back to `.vtu` (roadmap item 10).** A `VTK_POLYHEDRON` cell in a `.vtu`, or a polyhedron block meshio++ hands over (CGNS `NFACE_n`, MED, OpenFOAM, …), is still drawn as the tetrahedra it is decomposed into, but the file's faces, the tetrahedra each polyhedron became and the nodes the decomposition invented are kept as a side channel (`MdpaModel.polyhedra`). The native `.vtu` writer emits the real polyhedron instead of its fan and leaves out the invented nodes; every other format still writes tetrahedra. Inspect names the polyhedron a picked tetrahedron belongs to, and `mesh_info` reports a `polyhedra` section. Any edit that can change a node or cell id drops the channel (only unscoped translate/scale/rotate and field-only operations keep it).
 - **Staged-distribution check for the MCP server** (`npm run check:staged`, own CI job). It copies `dist/` outside the checkout, runs the shipped `mcpServer.js` from there over stdio and asserts kernel identity, that nothing resolves into the repository, a small-fixture matrix through the read, write, oracle, derived and MMG workers, agreement with the in-process core, cancellation of a running remesh and detection of each removable artifact. Skipped runtimes report UNVERIFIED rather than passing.
 - **`mesh_capabilities.runtime`** reports how the server process was wired: where the meshio++ tree was resolved (`node_modules` or the bundled copy), whether each of the MMG, oracle, derived, read and write runners is a worker or fell back in-process, and where the MMG wasm came from.
+
+### Fixed
+
+- A `VTK_POLYHEDRON` whose `faces` entry is missing or truncated no longer shifts the Elemental cell data of every cell after it: the skipped cell now counts as a source cell that staged nothing.
 
 ## [5.25.0] - 2026-10-27
 

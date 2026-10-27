@@ -46,8 +46,11 @@ export const TESSELLATE_MAX_LEVELS = 5;
 /** Refuse a request whose estimated output would exceed this many cells. */
 export const TESSELLATE_MAX_CELLS = 5_000_000;
 
+/** Per kind code (0 Elements, 1 Conditions, 2 Geometries): parent entity id -> ids of its children (the first child keeps the parent's id). */
+export type TessellateParents = Map<number, Map<number, number[]>>;
+
 export type TessellateOutcome =
-  | { model: MdpaModel; changed: true; message: string }
+  | { model: MdpaModel; changed: true; message: string; parents: TessellateParents }
   | { model: MdpaModel; changed: false; message: string };
 
 const C = VtkCellType;
@@ -260,5 +263,33 @@ export async function tessellateModel(
       : `Warning: ${r.numFacetsWithBadCount} facet(s) do not have a conforming cell count.`,
     "Each child keeps its parent's property, SubModelParts and cell-field values; the first child keeps the parent's id and its siblings take fresh ids.",
   ];
-  return { model: out, changed: true, message: parts.filter(Boolean).join(" ") };
+  return { model: out, changed: true, message: parts.filter(Boolean).join(" "), parents: table };
+}
+
+/**
+ * Tags every child cell of a tessellated copy with the entity it came from:
+ * `SOURCE_ENTITY_ID` as an Elemental field over the Elements and a Conditional
+ * one over the Conditions (the field kind carries the entity kind, and each
+ * kind is its own id space). A cell that passed through unchanged is its own
+ * source. Geometries have no field kind, so they carry no tag.
+ */
+export function withTessellateSourceFields(model: MdpaModel, parents: TessellateParents): MdpaModel {
+  const fields = model.fields.filter((f) => f.variable !== "SOURCE_ENTITY_ID");
+  const kinds: [EntityKind, number, FieldData["kind"]][] = [["Elements", 0, "Elemental"], ["Conditions", 1, "Conditional"]];
+  for (const [entityKind, code, fieldKind] of kinds) {
+    const parentOf = new Map<number, number>();
+    for (const [parent, kids] of parents.get(code) ?? []) for (const k of kids) parentOf.set(k, parent);
+    const ids: number[] = [];
+    const values: number[] = [];
+    for (const b of model.blocks) {
+      if (b.kind !== entityKind) continue;
+      for (let i = 0; i < b.count; i++) {
+        const id = b.entityIds[i];
+        ids.push(id);
+        values.push(parentOf.get(id) ?? id);
+      }
+    }
+    if (ids.length > 0) fields.push({ kind: fieldKind, variable: "SOURCE_ENTITY_ID", components: 1, ids: Int32Array.from(ids), values: Float64Array.from(values) });
+  }
+  return { ...model, fields };
 }

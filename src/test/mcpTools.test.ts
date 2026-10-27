@@ -6,6 +6,7 @@ import * as path from "node:path";
 import { ADOPTING_OPS } from "../parser/adoptingOps";
 import { flowDuct, icosphere, tetBar } from "./fixtures/shapes";
 import { writeMdpa } from "../parser/writers/mdpaWriter";
+import { linearToQuadratic } from "../parser/linearToQuadratic";
 import { PLOT_CAPABILITIES } from "../parser/plot/recipe";
 
 import {
@@ -3070,6 +3071,20 @@ test("mesh_derive decimate writes a simplified copy that keeps entity ids, and r
   assert.ok(back.blocks.every((b) => [...b.entityIds].every((id) => srcIds.has(id))), "survivors keep their source entity ids");
   await assert.rejects(meshDerive({ path: sphere, kind: "decimate", outputPath: path.join(dir, "x.mdpa") }), /exactly one/);
   await assert.rejects(meshDerive({ path: writeFixture(dir), kind: "decimate", ratio: 0.5, outputPath: path.join(dir, "y.mdpa") }), /volume cells|quadrilateral|Export skin|Simplexify/);
+});
+
+test("mesh_derive tessellate writes a linear copy with source ids, and refuses a mesh with no curved cells", async () => {
+  const dir = tmpDir();
+  fs.writeFileSync(path.join(dir, "quad.mdpa"), writeMdpa(linearToQuadratic(tetBar(2)).model));
+  const out = path.join(dir, "linear.mdpa");
+  const r = (await meshDerive({ path: path.join(dir, "quad.mdpa"), kind: "tessellate", levels: 1, outputPath: out })) as { summary: string };
+  assert.match(r.summary, /Tessellated 14 curved cell\(s\) at 1 level/);
+  const back = parseMdpa(fs.readFileSync(out, "utf8"));
+  assert.equal(back.blocks.filter((b) => b.kind === "Elements").reduce((s, b) => s + b.count, 0), 96);
+  assert.ok(back.fields.some((f) => f.variable === "SOURCE_ENTITY_ID" && f.kind === "Elemental"));
+  const lin = path.join(dir, "linear_in.mdpa");
+  fs.writeFileSync(lin, writeMdpa(tetBar(2)));
+  await assert.rejects(meshDerive({ path: lin, kind: "tessellate", outputPath: path.join(dir, "x.mdpa") }), /No curved cells/);
 });
 
 test("mesh_transform chains surfaceRemesh, volumeMesh and optimizeVolume, each adopted in place with its identity policy", async () => {

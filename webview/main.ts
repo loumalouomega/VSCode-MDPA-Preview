@@ -154,6 +154,7 @@ import { renderScreenshotPanel } from "./screenshotPanel";
 import { thresholdCells } from "../src/parser/thresholdCells";
 import { blockCentroids } from "../src/parser/render/hardwareSelection";
 import { resolveEntity, resolvePick } from "../src/parser/pickResolve";
+import { polyhedronOfElement } from "../src/parser/polyhedraTopology";
 import { buildMembershipIndex, MembershipIndex } from "../src/parser/smpMembership";
 import { findIsolatedNodeIds, findIsolatedNodeIdsInScope } from "../src/parser/isolatedNodes";
 import { VtkCellType } from "../src/parser/geometryMap";
@@ -4004,6 +4005,7 @@ function dispatchToolbarAction(action: string | undefined, _target?: HTMLElement
   else if (action === "exportPartitions") vscode.postMessage({ type: "menuExportPartitions" });
   else if (action === "splitMesh") vscode.postMessage({ type: "menuSplitMesh" });
   else if (action === "simplify") vscode.postMessage({ type: "menuExportSimplified" });
+  else if (action === "tessellateCurved") vscode.postMessage({ type: "menuExportTessellated" });
   else if (action === "sampleGrid") vscode.postMessage({ type: "menuExportGrid" });
   else if (action === "octreeMesh") vscode.postMessage({ type: "menuExportOctree" });
   else if (action === "cadSurface") vscode.postMessage({ type: "menuExportCadSurface" });
@@ -9072,6 +9074,7 @@ function handleInspectPick(displayX: number, displayY: number): void {
       kind: entityKind,
       id: result.entityId,
       blockName: pick.layerId.split(":").slice(2).join(":") || undefined,
+      polyhedron: pick.kind === "Elements" ? polyhedronOfElement(model?.polyhedra, result.entityId) : undefined,
       smpPaths: smpMap.get(result.entityId) ?? [],
       fields: fieldKind ? fieldValuesForEntity(fieldKind, result.entityId) : [],
     };

@@ -1,6 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { parseVtkXml } from "../parser/vtkXmlParser";
+import { writeVtu } from "../parser/writers/vtkXmlWriter";
+import { polyhedronOfElement } from "../parser/polyhedraTopology";
 
 const TRIANGLE = 5;
 
@@ -380,4 +382,67 @@ test("a VTK_POLYHEDRON without faces/faceoffsets is reported, not mis-staged", (
     m.diagnostics.some((d) => /no `faces`\/`faceoffsets`/.test(d.message)),
     `expected a diagnostic, got ${m.diagnostics.map((d) => d.message)}`
   );
+});
+
+// ---- the polyhedra side channel (MdpaModel.polyhedra) ------------------------
+
+test("a read polyhedron is remembered: faces, the tetrahedra it became and the nodes it invented", () => {
+  const m = parseVtkXml(vtuDoc(POLYHEDRON_PIECE));
+  const p = m.polyhedra!;
+  assert.ok(p, "the side channel is set");
+  assert.equal(p.count, 1);
+  assert.equal(p.cellOffsets.length, 2);
+  assert.equal(p.cellOffsets[1], 6, "six quad faces");
+  assert.equal(p.nodes.length, 24);
+  assert.deepEqual([...p.nodes.slice(0, 4)], [1, 4, 3, 2], "node ids are the 0-based indices + 1");
+  assert.equal(p.childIds.length, 24);
+  assert.deepEqual([...p.childIds].sort((a, b) => a - b), m.blocks[0].entityIds.length === 24 ? [...m.blocks[0].entityIds].sort((a, b) => a - b) : []);
+  assert.deepEqual([...p.apexNodeIds].sort((a, b) => a - b), [9, 10, 11, 12, 13, 14, 15]);
+  assert.deepEqual(polyhedronOfElement(p, p.childIds[5]), { index: 0, children: 24 });
+  assert.equal(polyhedronOfElement(p, 9999), undefined);
+});
+
+test("the .vtu writer emits the polyhedron back, not its tetrahedra, and drops the invented nodes", () => {
+  const m = parseVtkXml(vtuDoc(POLYHEDRON_PIECE));
+  const text = writeVtu(m);
+  assert.match(text, /NumberOfPoints="8" NumberOfCells="1"/);
+  assert.match(text, /Name="faces"/);
+  const back = parseVtkXml(Buffer.from(text, "utf8"));
+  assert.equal(back.polyhedra?.count, 1, "and it reads back as the same polyhedron");
+  assert.equal(back.blocks[0].count, 24);
+  assert.equal(back.nodeCount, 15);
+  assert.deepEqual([...back.polyhedra!.nodes], [...m.polyhedra!.nodes]);
+  const t = back.fields.find((f) => f.variable === "T")!;
+  assert.deepEqual([...t.values.slice(0, 8)], [0, 0, 0, 0, 1, 1, 1, 1], "the nodal data of the real nodes is intact");
+  const mat = back.fields.find((f) => f.variable === "MAT")!;
+  assert.ok(Array.from(mat.values).every((v) => v === 7), "the cell data rides on the polyhedron");
+});
+
+test("a polyhedron whose tetrahedra are partly gone is written as the tetrahedra that remain", () => {
+  const m = parseVtkXml(vtuDoc(POLYHEDRON_PIECE));
+  const first = m.blocks[0];
+  const trimmed = { ...m, blocks: [{ ...first, count: 23, entityIds: first.entityIds.slice(0, 23), connectivity: first.connectivity.slice(0, 23 * 4) }] };
+  const text = writeVtu(trimmed);
+  assert.doesNotMatch(text, /Name="faces"/);
+  assert.match(text, /NumberOfPoints="15" NumberOfCells="23"/);
+});
+
+test("a polyhedron with no usable faces keeps the cell data of the cells after it aligned", () => {
+  const two = POLYHEDRON_PIECE.replace('NumberOfCells="1"', 'NumberOfCells="2"')
+    .replace('>0 1 2 3 4 5 6 7</DataArray>', '>0 1 2 3 4 5 6 7 0 1 2 3</DataArray>')
+    .replace('Name="offsets" format="ascii">8<', 'Name="offsets" format="ascii">8 12<')
+    .replace('Name="types" format="ascii">42<', 'Name="types" format="ascii">42 10<')
+    .replace('Name="faceoffsets" format="ascii">31<', 'Name="faceoffsets" format="ascii">31 -1<')
+    .replace('Name="MAT" format="ascii">7<', 'Name="MAT" format="ascii">7 3<');
+  const ok = parseVtkXml(vtuDoc(two));
+  const mat = ok.fields.find((f) => f.variable === "MAT")!;
+  assert.equal(mat.values.length, 25, "24 tets of the polyhedron + the real tet");
+  assert.equal(mat.values[24], 3);
+  // Now break the polyhedron's faces: its tets vanish, and the tet after it must still get ITS value.
+  const broken = two.replace(/(Name="faces" format="ascii">\s*)6/, "$1 9");
+  const m = parseVtkXml(vtuDoc(broken));
+  assert.ok(m.diagnostics.some((d) => /truncated/.test(d.message)));
+  const bm = m.fields.find((f) => f.variable === "MAT")!;
+  assert.deepEqual([...bm.values], [3], "the surviving tetrahedron keeps its own cell value");
+  assert.equal(m.polyhedra, undefined);
 });

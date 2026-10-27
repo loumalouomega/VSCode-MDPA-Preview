@@ -279,6 +279,9 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("kratos.mesh.exportSimplified", () =>
       dispatchMenu({ type: "menuExportSimplified" })
     ),
+    vscode.commands.registerCommand("kratos.mesh.exportTessellated", () =>
+      dispatchMenu({ type: "menuExportTessellated" })
+    ),
     vscode.commands.registerCommand("kratos.mesh.exportGrid", () =>
       dispatchMenu({ type: "menuExportGrid" })
     ),

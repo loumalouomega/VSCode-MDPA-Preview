@@ -14,6 +14,7 @@ import { deriveMesh } from "../parser/deriveMesh";
 import { restrictToElements, elementMeasures } from "../parser/selectCells";
 import { MdpaModel } from "../parser/types";
 import { tetBar as bar } from "./fixtures/shapes";
+import { linearToQuadratic } from "../parser/linearToQuadratic";
 
 const parse = (text: string): MdpaModel => {
   const r = parseMdpa(text) as unknown as { model?: MdpaModel };
@@ -140,4 +141,36 @@ test("a constraint reaching outside the selected region is dropped and counted",
   const { measure, dimension } = elementMeasures(m);
   assert.equal(dimension, 3);
   assert.ok(Math.abs([...measure.values()].reduce((a, b) => a + b, 0) - 4) < 1e-9, "four unit cubes");
+});
+
+test("a tessellated copy is linear, keeps the volume, names each cell's source and leaves the input curved", async () => {
+  const q = linearToQuadratic(bar(2)).model;
+  const before = q.blocks.map((b) => [b.name, b.count, b.vtkCellType]);
+  const r = await deriveMesh(q, { kind: "tessellate", levels: 1 });
+  assert.equal(r.suffix, "tessellated");
+  assert.deepEqual(q.blocks.map((b) => [b.name, b.count, b.vtkCellType]), before, "the open mesh is not edited");
+  const tets = r.model.blocks.filter((b) => b.kind === "Elements");
+  assert.ok(tets.every((b) => b.vtkCellType === 10), "linear tetrahedra");
+  assert.equal(tets.reduce((s, b) => s + b.count, 0), 12 * 8);
+  const measure = (m: MdpaModel) => [...elementMeasures(m).measure.values()].reduce((a, b) => a + b, 0);
+  assert.ok(Math.abs(measure(r.model) - measure(q)) < 1e-6 * measure(q));
+
+  const src = field(r.model, "Elemental", "SOURCE_ENTITY_ID")!;
+  assert.equal(src.ids.length, 12 * 8);
+  const parents = new Set(q.blocks.filter((b) => b.kind === "Elements").flatMap((b) => [...b.entityIds]));
+  const perParent = new Map<number, number>();
+  for (const v of src.values) {
+    assert.ok(parents.has(v), `source ${v} is a cell of the input`);
+    perParent.set(v, (perParent.get(v) ?? 0) + 1);
+  }
+  assert.ok([...perParent.values()].every((n) => n === 8), "each tetra10 has eight children at one level");
+  assert.ok(field(r.model, "Conditional", "SOURCE_ENTITY_ID"), "the boundary conditions are tagged too");
+  assert.match(r.summary, /SOURCE_ENTITY_ID/);
+});
+
+test("tessellating a mesh with no curved cells, or with bad levels, is refused by name", async () => {
+  await assert.rejects(deriveMesh(bar(2), { kind: "tessellate" }), /No curved cells/);
+  const q = linearToQuadratic(bar(2)).model;
+  await assert.rejects(deriveMesh(q, { kind: "tessellate", levels: 9 }), /integer from 0 to 5/);
+  await assert.rejects(deriveMesh(q, { kind: "tessellate", levels: 1.5 }), /integer from 0 to 5/);
 });

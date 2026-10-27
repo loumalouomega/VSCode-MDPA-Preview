@@ -13,6 +13,7 @@
   "command.kratos.mesh.exportPartitions.title": "Exportar partições (arquivos por parte com camadas fantasma)…",
   "command.kratos.mesh.splitMesh.title": "Dividir malha (componentes / tipos de elemento / valores de campo)…",
   "command.kratos.mesh.exportSimplified.title": "Simplificar superfície (exportar uma cópia simplificada)…",
+  "command.kratos.mesh.exportTessellated.title": "Tesselar células curvas (exportar uma cópia linear)…",
   "command.kratos.mesh.exportGrid.title": "Amostrar em grade (ocupação de voxels / volume de distância com sinal)…",
   "command.kratos.mesh.exportOctree.title": "Malha de volume octree da superfície (tetraedros / hexaedros)…",
   "command.kratos.mesh.exportCadSurface.title": "Malhar as faces CAD de um B-rep (triangulação de superfície)…",

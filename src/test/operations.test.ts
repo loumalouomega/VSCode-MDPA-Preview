@@ -207,6 +207,28 @@ Begin Elements Element3D4N
 End Elements
 `;
 
+test("the polyhedra side channel survives rigid, global transforms and field ops, and nothing else", async () => {
+  const base = parseMdpa(SRC) as unknown as import("../parser/types").MdpaModel;
+  const polyhedra = {
+    count: 1,
+    nodes: Int32Array.from([1, 2, 3]),
+    faceOffsets: Int32Array.from([0, 3]),
+    cellOffsets: Int32Array.from([0, 1]),
+    childOffsets: Int32Array.from([0, 1]),
+    childIds: Int32Array.from([1]),
+    apexNodeIds: Int32Array.from([4]),
+  };
+  const m = { ...base, polyhedra };
+  const kept = await applyOpAsync(m, { op: "translate", dx: 1, dy: 0, dz: 0 });
+  assert.equal(kept.model.polyhedra, polyhedra, "a global translate moves nodes rigidly");
+  const scoped = await applyOpAsync(m, { op: "translate", dx: 1, dy: 0, dz: 0, part: "Nowhere" });
+  assert.equal(scoped.model.polyhedra, m.polyhedra, "an unknown scope is a noop and changes nothing");
+  const merged = await applyOpAsync(m, { op: "removeOrphanNodes" });
+  assert.equal(merged.model.polyhedra, undefined, "removing nodes invalidates the apex ids");
+  const refined = await applyOpAsync(m, { op: "mergeNodes", tolerance: 100 });
+  assert.equal(refined.model.polyhedra, undefined, "welding nodes invalidates the faces");
+});
+
 test("MMG ops are async-only: applyOp throws, applyOpAsync runs them", async () => {
   const m = parseMdpa(TET_SRC);
   assert.ok(isAsyncOp("remesh"));

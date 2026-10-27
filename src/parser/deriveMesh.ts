@@ -24,6 +24,7 @@ import { thresholdCells, ThresholdRule } from "./thresholdCells";
 import { restrictToElements, elementMeasures } from "./selectCells";
 import { extractSkinModel } from "./extractSkin";
 import { decimateModel, DecimateParams } from "./decimate";
+import { tessellateModel, withTessellateSourceFields, TessellateParams, TESSELLATE_MAX_LEVELS } from "./tessellate";
 import { sampleGrid, GridSampleSpec } from "./gridSample";
 import { generateMesh, octreeMeshModel, octreeModel, cadSurfaceModel, GenerateSpec, OctreeMeshSpec, OctreeSpec, CadSurfaceSpec, CadSurfaceReport } from "./kernelMeshes";
 import { describeStreamlines, streamlinesToModel, traceStreamlines, StreamlineParams, StreamlineResult } from "./streamlines";
@@ -77,14 +78,22 @@ export interface ThresholdSpec {
 export type DecimateSpec = { kind: "decimate" } & DecimateParams;
 
 /**
+ * A LINEAR copy of the open mesh's curved cells (6-node triangles, 8/9-node
+ * quads, 10-node tetrahedra, 27-node hexahedra) tessellated through their own
+ * shape functions (see tessellate.ts). The open mesh keeps its high-order cells;
+ * the copy tags every cell with the entity it came from (`SOURCE_ENTITY_ID`).
+ */
+export type TessellateSpec = { kind: "tessellate" } & TessellateParams;
+
+/**
  * Steady streamlines of a Nodal vector field, as line cells (see streamlines.ts).
  * `frame` names the frame the field came from — a file (and step) the caller
  * knows and this module does not — and is repeated in the summary.
  */
 export type StreamlineSpec = { kind: "streamlines"; frame?: string } & StreamlineParams;
 
-export type DeriveSpec = ({ kind: "featureEdges" } & FeatureEdgeOptions) | SliceSpec | IsosurfaceSpec | ThresholdSpec | DecimateSpec | GridSampleSpec | StreamlineSpec | IgaRefineSpec | IgaSampleSpec | GenerateSpec | OctreeMeshSpec | OctreeSpec | CadSurfaceSpec;
-export const DERIVE_KINDS = ["featureEdges", "slice", "isosurface", "threshold", "decimate", "grid", "voxelize", "sdfVolume", "streamlines", "igaRefine", "igaSample", "generate", "octreeMesh", "octree", "cadSurface"] as const;
+export type DeriveSpec = ({ kind: "featureEdges" } & FeatureEdgeOptions) | SliceSpec | IsosurfaceSpec | ThresholdSpec | DecimateSpec | TessellateSpec | GridSampleSpec | StreamlineSpec | IgaRefineSpec | IgaSampleSpec | GenerateSpec | OctreeMeshSpec | OctreeSpec | CadSurfaceSpec;
+export const DERIVE_KINDS = ["featureEdges", "slice", "isosurface", "threshold", "decimate", "tessellate", "grid", "voxelize", "sdfVolume", "streamlines", "igaRefine", "igaSample", "generate", "octreeMesh", "octree", "cadSurface"] as const;
 /** Kinds that need no input mesh at all (a grid is made from nothing). */
 export const DERIVE_STANDALONE_KINDS: readonly string[] = ["grid", "generate"];
 
@@ -290,6 +299,19 @@ export async function deriveMesh(
           `Surviving faces keep their entity ids, property ids and cell-field values; a node keeps the lowest id merged into it, and its nodal fields are upstream's blend of the endpoints (an approximation for optimal placement).` +
           (r.warnings.length ? ` ${r.warnings.join(" ")}` : ""),
         suffix: "decimated",
+      };
+    }
+    case "tessellate": {
+      if (signal?.aborted) throw new Error("cancelled");
+      const levels = spec.levels ?? 2;
+      if (!Number.isInteger(levels) || levels < 0 || levels > TESSELLATE_MAX_LEVELS) throw new Error(`Tessellation levels must be an integer from 0 to ${TESSELLATE_MAX_LEVELS}.`);
+      const r = await tessellateModel(model, { levels }, diagnostics);
+      if (signal?.aborted) throw new Error("cancelled");
+      if (!r.changed) throw new Error(r.message);
+      return {
+        model: withTessellateSourceFields(r.model, r.parents),
+        summary: `${r.message} Each Element/Condition carries SOURCE_ENTITY_ID, the id of the cell it was tessellated from. The open mesh keeps its curved cells.`,
+        suffix: "tessellated",
       };
     }
     case "generate":

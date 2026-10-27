@@ -36,6 +36,7 @@ import { extractSubModelPart } from "./parser/subModelPartExtract";
 import { restrictToCells } from "./parser/selectCells";
 import { extractSkinModel } from "./parser/extractSkin";
 import { deriveMesh, DeriveSpec, DeriveResult, DERIVE_KINDS, recordedDeriveParameters } from "./parser/deriveMesh";
+import { isCurvedCellType, TESSELLATE_MAX_LEVELS } from "./parser/tessellate";
 import { estimateGrid, describeGridEstimate, triangleSurfaceOf, GRID_MAX_CELLS, GRID_CONFIRM_CELLS } from "./parser/gridSample";
 import { GENERATOR_SHAPES, GENERATOR_EXAMPLES, GeneratorShape, estimateGeneratedCells, GENERATE_MAX_CELLS, CadSurfaceSpec, cadSurfaceOptionsFrom, validateCadSurfaceSpec } from "./parser/kernelMeshes";
 import { parseMeshFile } from "./parser/meshFileParser";
@@ -105,6 +106,7 @@ export interface MenuMessage {
     | "menuExportPartitions"
     | "menuSplitMesh"
     | "menuExportSimplified"
+    | "menuExportTessellated"
     | "menuExportGrid"
     | "menuExportOctree"
     | "menuExportCadSurface"
@@ -187,6 +189,7 @@ export async function runMenu(
   else if (msg.type === "menuExportPartitions") await exportPartitions(ctx);
   else if (msg.type === "menuSplitMesh") await splitMesh(ctx);
   else if (msg.type === "menuExportSimplified") await exportSimplified(ctx, msg.format, msg.outputFormat);
+  else if (msg.type === "menuExportTessellated") await exportTessellated(ctx, msg.format, msg.outputFormat);
   else if (msg.type === "menuExportGrid") await exportGrid(ctx);
   else if (msg.type === "menuExportOctree") await exportOctreeMesh(ctx);
   else if (msg.type === "menuExportCadSurface") await exportCadSurface(ctx);
@@ -1070,6 +1073,31 @@ export async function exportGrid(ctx: ExportContext): Promise<void> {
     if (go !== "Continue") return;
   }
   await exportDerived(ctx, kind.value === "voxelize" ? { kind: "voxelize", cellSize } : { kind: "sdfVolume", cellSize });
+}
+
+/**
+ * Advanced ▸ Tessellate curved cells…: asks the number of levels, then exports
+ * a LINEAR copy of the mesh's quadratic cells through the derived-mesh path.
+ * Never an edit of the open mesh (the sidebar's Tessellate operation is the
+ * in-place, undoable counterpart); the copy tags each cell with its source.
+ */
+export async function exportTessellated(ctx: ExportContext, targetExt?: string, outputFormat?: string): Promise<void> {
+  const curved = ctx.model.blocks.filter((b) => isCurvedCellType(b.vtkCellType)).reduce((s, b) => s + b.count, 0);
+  if (curved === 0) {
+    void vscode.window.showInformationMessage("The mesh has no curved cells to tessellate (6-node triangles, 8/9-node quads, 10-node tetrahedra, 27-node hexahedra).");
+    return;
+  }
+  const answer = await vscode.window.showInputBox({
+    title: "Tessellate curved cells — levels",
+    prompt: `Levels (0-${TESSELLATE_MAX_LEVELS}) for ${curved} curved cell(s): divisions per axis for quads/hexahedra, 2^levels per edge for triangles/tetrahedra.`,
+    value: "2",
+    validateInput: (v) => {
+      const n = Number(v);
+      return Number.isInteger(n) && n >= 0 && n <= TESSELLATE_MAX_LEVELS ? undefined : `An integer from 0 to ${TESSELLATE_MAX_LEVELS}.`;
+    },
+  });
+  if (answer === undefined) return;
+  await exportDerived(ctx, { kind: "tessellate", levels: Number(answer) }, targetExt, outputFormat);
 }
 
 /**
