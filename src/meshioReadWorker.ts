@@ -14,8 +14,11 @@
  */
 
 import { parentPort } from "node:worker_threads";
-import { readMeshioInProcess } from "./parser/meshio";
+import { markSingleOperationThread, readMeshioInProcess } from "./parser/meshio";
 import type { MeshioReadJob, MeshioReadResults } from "./parser/meshio";
+
+// One read per worker thread, which then ends (see markSingleOperationThread).
+markSingleOperationThread();
 
 export interface MeshioReadWorkRequest {
   job: MeshioReadJob;

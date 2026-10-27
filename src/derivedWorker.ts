@@ -12,6 +12,10 @@ import { parentPort } from "node:worker_threads";
 import { runDerivedInProcess } from "./parser/derivedRunner";
 import type { DerivedJob, DerivedOutput } from "./parser/derivedRunner";
 import type { MdpaDiagnostic } from "./parser/types";
+import { markSingleOperationThread } from "./parser/meshio";
+
+// One derivation per worker thread, which then ends (see markSingleOperationThread).
+markSingleOperationThread();
 
 export type DerivedWorkResponse =
   | { type: "progress"; message: string }

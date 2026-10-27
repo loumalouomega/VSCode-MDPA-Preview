@@ -16,6 +16,10 @@ import { parentPort } from "node:worker_threads";
 import { writeMeshioInProcess } from "./parser/writers/meshWriter";
 import type { MeshioWriteJob, MeshioWriteOutcome } from "./parser/writers/meshWriter";
 import type { MdpaModel } from "./parser/types";
+import { markSingleOperationThread } from "./parser/meshio";
+
+// One write per worker thread, which then ends (see markSingleOperationThread).
+markSingleOperationThread();
 
 export interface MeshioWriteWorkRequest {
   model: MdpaModel;

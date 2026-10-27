@@ -49,7 +49,12 @@ export interface MeshCapabilities {
   packageVersion?: string;
   namedWriters: string[];
   operations: { available: string[]; unavailable: { name: string; reason: string }[] };
-  /** Sequential or threaded build actually instantiated (`parallelBackend`). */
+  /**
+   * The build this process instantiated for its own in-process calls
+   * (`parallelBackend`). The host thread always gets the sequential build: the
+   * threaded one is used only inside the single-operation worker threads (see
+   * `markSingleOperationThread` in parser/meshio.ts).
+   */
   backend: string;
   /**
    * The LIVE build's flavour ("lean" here) and the optional native libraries

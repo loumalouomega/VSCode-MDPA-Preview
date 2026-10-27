@@ -53,11 +53,18 @@ import type {
  *           function="a" error: function import requires a callable)
  * — an error that names neither the file nor the variant.  meshio.test.ts pins
  * this so a refactor cannot quietly reintroduce a fixed path.
+ *
+ * Which build an instance gets is decided here, not by upstream's `auto`: the
+ * threaded build only in a worker thread that runs one operation and then ends
+ * (`markSingleOperationThread`), the sequential build everywhere else.  The
+ * threaded build's pthread pool outlives the instance, so an in-process caller
+ * leaks it.
  */
 
 import * as fs from "fs";
 import * as path from "path";
 import { pathToFileURL } from "url";
+import { isMainThread } from "node:worker_threads";
 
 import {
   MeshioMedInfo,
@@ -1308,11 +1315,12 @@ function namespace(): Promise<MeshioNamespace> {
  *
  * Deliberately NOT memoized: the build sets ALLOW_MEMORY_GROWTH=1, so a
  * long-lived instance would pin the high-water mark of the largest mesh ever
- * opened for the lifetime of the extension host.  Dropping the instance lets
- * the whole WebAssembly.Memory go at GC — the same reasoning that gives MMG a
- * worker per run.  It also means no MEMFS bookkeeping: a throwing read leaves
- * no debris behind.  Only the ES-module namespace is cached (expensive to
- * resolve, holds no heap).
+ * opened.  Dropping an instance lets its WebAssembly.Memory go at GC — which
+ * only the SEQUENTIAL build can rely on: the threaded build's pthread pool keeps
+ * its memory alive, so it is handed out only to a worker thread that ends after
+ * one operation (`markSingleOperationThread`).  It also means no MEMFS
+ * bookkeeping: a throwing read leaves no debris behind.  Only the ES-module
+ * namespace is cached (expensive to resolve, holds no heap).
  */
 export function loadMeshio(): Promise<MeshioModule> {
   // Reported to the status bar's engine line (engineActivity.ts): the one place
@@ -1375,7 +1383,12 @@ async function loadMeshioFlavour(full: boolean): Promise<MeshioModule> {
     ...extraOverrides,
   };
   const flavour = full ? { full: true as const } : {};
-  if (forceSequential) return ns.loadMeshioPlusPlus(overrides, { ...flavour, variant: "seq" });
+  // The threaded build only in a single-operation worker thread (see
+  // `markSingleOperationThread`); the sequential build everywhere else.
+  const threaded = singleOperationThread && !isMainThread;
+  if (forceSequential || !threaded) {
+    return ns.loadMeshioPlusPlus(overrides, { ...flavour, variant: "seq" });
+  }
   try {
     return await ns.loadMeshioPlusPlus(overrides, full ? { full: true } : undefined);
   } catch (e) {
@@ -1418,6 +1431,30 @@ function loadMeshioForRead(ext: string, candidates: readonly string[]): Promise<
 
 /** Set once if the auto-selected (threaded) build fails to instantiate. */
 let forceSequential = false;
+
+/** Set by `markSingleOperationThread`; see there for why. */
+let singleOperationThread = false;
+
+/**
+ * Lets THIS worker thread instantiate the threaded build. Call it at the top of
+ * a worker entry point that runs exactly one operation and is then terminated
+ * (the read, write, oracle, derived and analysis workers). Nothing else calls it.
+ *
+ * Measured on Node 20, which has no `navigator` global, so the threaded glue
+ * falls back to an eight-thread pool: each threaded instance started eight
+ * worker threads, and no later GC released them or the shared memory they hold.
+ * Sixty instances held 491 threads and 4.4 GB. The sequential build is reclaimed
+ * at GC. Terminating the thread that instantiated the threaded build releases
+ * all of it (52 threads back to 11), which is why a worker that ends after one
+ * operation may use it. A worker that reads many meshes, and the host thread,
+ * must not: their instances would accumulate until the process exits. The test
+ * suite runs every in-process read in the host thread, which took it to 12.5 GB
+ * on a 16 GB machine and got the hosted Linux runner shut down (CI run
+ * 40533717580).
+ */
+export function markSingleOperationThread(): void {
+  singleOperationThread = true;
+}
 
 /** A file to place in the virtual filesystem before reading. */
 export interface MeshioInputFile {

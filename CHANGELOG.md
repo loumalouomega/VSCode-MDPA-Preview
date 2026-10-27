@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed
+
+- **Linux CI ran out of memory mid-suite** (run 40533717580, where the hosted runner was shut down during `node --test out/test/`). Every threaded meshio++ instance started eight worker threads that nothing released, so each in-process read kept about 75 MB and eight threads alive; the full suite peaked at 12.5 GB on a 16 GB machine. The threaded build is now instantiated only by a worker thread that runs one operation and then ends (the read, write, oracle, derived and analysis workers). The host thread and the workers that read many meshes use the sequential build, which the garbage collector reclaims.
+- **A mesh load cancelled while its file was being sized could hang.** An abort that landed during the file-size read left the load pending forever and raised an uncaught error; the load now rejects with `cancelled`.
+
 ## [5.26.0] - 2026-10-27
 
 ### Added
