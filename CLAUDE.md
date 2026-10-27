@@ -21,6 +21,8 @@ npm run bench:heartbeat # host event-loop stall, in-process vs worker (scripts/b
 node scripts/gen-export-fidelity.js  # regenerate src/parser/exportFidelityTable.ts from four reference meshes through every writer (needs build:tests); optional compiled-tree argument supports isolated kernel validation
 ```
 
+Real-host checks (packaged `.vsix` in code-server + playwright-core, no Remote-SSH): `NODE_PATH=<playwright-core dir> node scripts/vscode-host/{smoke,responsiveness,commands,autosave,monitors,staged}.mjs` after `npm run package` and `vsce package --no-dependencies -o out/host/ext.vsix` (VS Code's bundled Node 24). They are not part of `npm test`. The webview content document is rewritten (`document.open`), which drops any `message` listener installed at document start: install listeners after load or wrap `addEventListener`.
+
 **esbuild owns all emit** — `tsc` is only for type-checking and test compilation. Do not run `tsc` to build the extension.
 
 To run a single test file:
