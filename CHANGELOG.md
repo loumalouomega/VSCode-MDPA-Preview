@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- **Staged-distribution check for the MCP server** (`npm run check:staged`, own CI job). It copies `dist/` outside the checkout, runs the shipped `mcpServer.js` from there over stdio and asserts kernel identity, that nothing resolves into the repository, a small-fixture matrix through the read, write, oracle, derived and MMG workers, agreement with the in-process core, cancellation of a running remesh and detection of each removable artifact. Skipped runtimes report UNVERIFIED rather than passing.
+- **`mesh_capabilities.runtime`** reports how the server process was wired: where the meshio++ tree was resolved (`node_modules` or the bundled copy), whether each of the MMG, oracle, derived, read and write runners is a worker or fell back in-process, and where the MMG wasm came from.
+
 ## [5.25.0] - 2026-10-27
 
 ### Changed
