@@ -81,6 +81,7 @@ import {
 import { repairSurfaceModel, RepairSurfaceParams } from "./repairSurface";
 import { tessellateModel, TessellateParams, TESSELLATE_MAX_LEVELS } from "./tessellate";
 import { curvatureModel, gaussBonnetResidual, CurvatureParams, CURVATURE_DUAL_AREAS, CurvatureDualArea } from "./curvature";
+import { projectToCadModel, describeProjectToCad, ProjectToCadParams } from "./projectCad";
 import { shrinkwrapModel, sobolevDeformModel, describeInverted, ShrinkwrapParams, SobolevParams } from "./deform";
 import { compareFieldModel, CompareFieldParams, CORRESPONDENCES, Correspondence } from "./meshCompare";
 import { markComponentsModel, MarkComponentsParams } from "./splitComponents";
@@ -315,6 +316,8 @@ export type OpRecord =
   // mesh, or its own skin — exactly one.
   | ({ op: "shrinkwrap"; path?: string; part?: string; skin?: boolean } & ShrinkwrapParams)
   | ({ op: "sobolevDeform" } & SobolevParams)
+  // Moves CAD-tagged surface nodes back onto the B-rep of `path` (a .cad.json or STEP/IGES file); see projectCad.ts.
+  | ({ op: "projectToCad"; path: string } & ProjectToCadParams)
   // Compares one of THIS mesh's fields with the same field of another file and
   // writes <base>_DIFF/_ABS/_REL (see meshCompare.ts). Async: it reads the file.
   | ({ op: "compareField"; path: string } & CompareFieldParams)
@@ -405,6 +408,7 @@ const ASYNC_OPS = new Set<OpName>([
   "curvature",
   "shrinkwrap",
   "sobolevDeform",
+  "projectToCad",
   "compareField",
   "remesh",
   "levelset",
@@ -503,6 +507,7 @@ const ORACLE_OPS: ReadonlySet<OpName> = new Set<OpName>([
   "curvature",
   "shrinkwrap",
   "sobolevDeform",
+  "projectToCad",
   "compareField",
   "smooth",
   "reorder",
@@ -1160,6 +1165,7 @@ export function applyOp(model: MdpaModel, rec: OpRecord): OpOutcome {
     case "curvature":
     case "shrinkwrap":
     case "sobolevDeform":
+    case "projectToCad":
     case "compareField":
     case "smooth":
     case "reorder":
@@ -1461,6 +1467,28 @@ async function applyAsyncOpInProcess(
       parts.push(`Wrote ${r.written.map((w) => w.replace(/^[A-Za-z]+:/, "")).join(", ")}.`);
       return { model: r.model, message: parts.join(" ") };
     }
+    case "projectToCad": {
+      let brepModel: MdpaModel;
+      try {
+        brepModel = await parseMergeSource(rec.path);
+      } catch (err) {
+        const why = err instanceof Error ? err.message : String(err);
+        return { model, noop: true, message: `Could not read "${rec.path}" (${why}).` };
+      }
+      if (!brepModel.nurbs || brepModel.nurbs.format !== "cad_json") {
+        return {
+          model,
+          noop: true,
+          message: `"${rec.path}" carries no CAD B-rep (it must be a .cad.json, or a STEP/IGES file read on the full build).`,
+        };
+      }
+      const r = await projectToCadModel(model, { info: brepModel.nurbs.info }, rec);
+      if (r.message) return { model, noop: true, message: r.message };
+      if (r.numProjected === 0) {
+        return { model, noop: true, message: `No node was projected (${r.numTooFar} too far, ${r.numFailed} failed, ${r.numHeld} not selected to move).` };
+      }
+      return { model: r.model, message: describeProjectToCad(r, `"${rec.path}"`) };
+    }
     case "sobolevDeform": {
       const r = await sobolevDeformModel(model, rec);
       if (r.message) return { model, noop: true, message: r.message };
@@ -1739,6 +1767,7 @@ const KNOWN_OPS = new Set<OpName>([
   "curvature",
   "shrinkwrap",
   "sobolevDeform",
+  "projectToCad",
   "compareField",
   "reduceField",
   "fieldGradient",
@@ -2178,6 +2207,26 @@ export function opRecordFromMessage(
         const v = Number(msg[k]);
         if (!Number.isFinite(v) || v < 0) return undefined;
         rec[k] = v;
+      }
+      return rec;
+    }
+    case "projectToCad": {
+      const path = typeof msg.path === "string" ? msg.path.trim() : "";
+      if (!path) return undefined;
+      const rec: Extract<OpRecord, { op: "projectToCad" }> = { op, path };
+      for (const k of ["faceField", "edgeField", "movePart", "pinPart"] as const) {
+        const v = msg[k];
+        if (typeof v === "string" && v.trim().length > 0) rec[k] = v.trim();
+      }
+      if (msg.maxDistance !== undefined && msg.maxDistance !== "") {
+        const v = Number(msg.maxDistance);
+        if (!Number.isFinite(v) || v < 0) return undefined;
+        rec.maxDistance = v;
+      }
+      if (msg.trimSamples !== undefined && msg.trimSamples !== "") {
+        const v = Number(msg.trimSamples);
+        if (!Number.isInteger(v) || v < 1) return undefined;
+        rec.trimSamples = v;
       }
       return rec;
     }
@@ -3236,6 +3285,15 @@ function validateParams(rec: OpRecord, warnings: string[]): boolean {
       for (const k of ["atol", "rtol"] as const) {
         if (rec[k] !== undefined && !(Number.isFinite(rec[k]) && (rec[k] as number) >= 0)) return bad(`invalid ${k}`);
       }
+      return true;
+    }
+    case "projectToCad": {
+      if (typeof rec.path !== "string" || rec.path.length === 0) return bad("missing path");
+      for (const k of ["faceField", "edgeField"] as const) {
+        if (rec[k] !== undefined && (typeof rec[k] !== "string" || !isValidFieldName(rec[k] as string))) return bad(`invalid ${k}`);
+      }
+      if (rec.maxDistance !== undefined && !(Number.isFinite(rec.maxDistance) && rec.maxDistance >= 0)) return bad("invalid maxDistance");
+      if (rec.trimSamples !== undefined && !(Number.isInteger(rec.trimSamples) && rec.trimSamples >= 1)) return bad("invalid trimSamples");
       return true;
     }
     case "sobolevDeform": {

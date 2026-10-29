@@ -13,6 +13,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **Generate mesh…** gains 21 shapes: `line`, `circle`, `helix`, `spherePoints`, `boxPoints`, `tetraSphere`, `octaSphere`, `cubeSphere`, `geoSphere`, `torus`, `moebius`, `tube`, `cone`, `capsule`, `boxSurface`, `platonic`, `ball`, `sphericalShell`, `pipe`, `fichera` and `solidTorus`, and a `complete` parameter on every shape with side regions that adds each region the generator can name.
 - **Mesh CAD faces…** (`cadOptions`) gains `untangle`, `quads` (`none`/`dominant`/`all`), `quadPairs` and an anisotropic size metric read from another mesh (`metricBackgroundPath` + `metricArray` + `metricError`). `voxelize` takes a `plane` for planar surfaces.
 
+- **Project onto CAD…** (`projectToCad` in the Mesh Modification sidebar, `mesh_transform` and the command line) moves the nodes of a CAD-tagged surface mesh back onto the B-rep of a `.cad.json` (or a STEP/IGES file on the full build). It reads the `CAD_FACE` (and optional `CAD_EDGE`) field that Mesh CAD faces… writes, changes only coordinates (ids, SubModelParts and fields are untouched), takes `maxDistance`, `movePart` and `pinPart`, and reports nodes too far, ambiguous, failed or outside a face's trim loops, plus any cell it folds over. A mesh with no `CAD_FACE` field is refused by name.
+
 ### Changed
 
 - Wedge and pyramid blocks read from a kernel result are named `Element3D6N` / `Element3D5N` instead of `Element_13` / `Element_14`, so boundary-layer meshes are legal Kratos input.

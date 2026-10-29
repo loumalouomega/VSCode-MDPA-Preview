@@ -43,13 +43,13 @@ function boundsOf(coords: Float32Array, n: number): MdpaModel["bounds"] {
 }
 
 /** Node ids of a SubModelPart and its whole subtree. */
-function partNodeIds(part: SubModelPart, into = new Set<number>()): Set<number> {
+export function partNodeIds(part: SubModelPart, into = new Set<number>()): Set<number> {
   for (const id of part.nodeIds) into.add(id);
   for (const c of part.children) partNodeIds(c, into);
   return into;
 }
 
-function movedModel(model: MdpaModel, points: ArrayLike<number>): MdpaModel {
+export function movedModel(model: MdpaModel, points: ArrayLike<number>): MdpaModel {
   const coords = new Float32Array(model.coords);
   for (let i = 0; i < model.nodeCount * 3; i++) coords[i] = points[i];
   return { ...model, coords, bounds: boundsOf(coords, model.nodeCount) };

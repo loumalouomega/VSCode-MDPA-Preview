@@ -126,6 +126,15 @@ Projects the mesh's nodes onto a target **triangle surface** — a scan, a CAD s
 
 Only coordinates change: blocks, ids, SubModelParts, Properties and every field survive untouched. Because there is no inversion guard, the result message counts the **volume cells inverted** and **surface cells folded over** by the move, so a bad projection is reported instead of found by the solver.
 
+#### Project onto CAD
+
+Moves the nodes of a **CAD-tagged surface mesh** back onto the B-rep it came from, through meshio++'s `projectToCad` (17.23.0). The mesh must carry the one-component `CAD_FACE` field naming each surface cell's CAD face (and optionally `CAD_EDGE` for lines) — **Mesh CAD faces…** writes both, so the intended loop is: mesh the CAD, edit or smooth the surface, then project it back. Pick the **CAD file** (a `.cad.json`, or a STEP/IGES file on the full build); change the field names if your tags are called something else.
+
+- **max dist** leaves nodes farther than this from the CAD in place and counts them.
+- **move only** / **keep fixed** restrict or hold nodes by SubModelPart, exactly as in Shrinkwrap (held nodes are bit-identical).
+
+Only coordinates change; ids, SubModelParts and fields survive. A projection removes the offset **normal** to the CAD, so a node pushed along the surface stays where it slid to. The message counts nodes put on edges and corners, nodes too far, ambiguous or failed, nodes that landed outside their face's trim loops (with the first ids) and any cell the move folded over. A mesh with no `CAD_FACE` field, or a file with no B-rep, is refused with the reason. Tags do not survive an operation that renumbers or remeshes the surface, so project right after an edit that keeps ids. The same op is `projectToCad` in `mesh_transform` and on the command line.
+
 #### Sobolev deformation
 
 Moves the nodes by a raw displacement field after smoothing it through the mesh's own finite-element operators — `(M + ℓ²K) u = M d`, a screened-Poisson low-pass filter whose cutoff wavelength is the **length scale** ℓ. It is what turns a jagged per-node displacement (a shape gradient, scattered measurements, a model's raw output) into one a mesh can follow without tangling; short wavelengths are suppressed, long ones pass nearly untouched, and a length scale of 0 applies the displacement unfiltered. Unlike **Smooth**, which improves a mesh's shape and knows nothing about a field, this filters a displacement you already have and then applies it.

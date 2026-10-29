@@ -854,6 +854,31 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
                   <div class="edit-progress-msg"></div>
                 </div>
               </div>
+              <div class="edit-form collapsed" id="pcad-form">
+                <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("sdf")}<span>Project onto CAD…</span></button>
+                <div class="edit-form-row">
+                  <label class="edit-field edit-field-grow"><span>CAD file</span><input type="text" id="pcad-path" class="edit-text" placeholder="Choose a .cad.json…" readonly></label>
+                  <button type="button" id="pcad-browse" class="panel-icon-btn" title="Choose the CAD B-rep (.cad.json, or a STEP/IGES file on the full build) to project onto">${ic("open")}</button>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field" title="The Elemental/Conditional field naming each surface cell's CAD face (Mesh CAD faces… writes CAD_FACE)."><span>face field</span><input type="text" id="pcad-face" class="edit-text" value="CAD_FACE"></label>
+                  <label class="edit-field" title="The field naming each line's CAD edge. Optional."><span>edge field</span><input type="text" id="pcad-edge" class="edit-text" value="CAD_EDGE"></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field" title="Nodes farther than this from the CAD stay where they are. 0 = unlimited."><span>max dist</span><input type="number" id="pcad-maxdist" class="edit-num edit-num-wide" value="0" min="0" step="any"></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field edit-field-grow" title="Only the nodes of this SubModelPart (and its subtree) may move."><span>move only</span><select id="pcad-move" class="edit-sel edit-sel-grow"><option value="">— all nodes —</option></select></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field edit-field-grow" title="The nodes of this SubModelPart (and its subtree) are held in place."><span>keep fixed</span><select id="pcad-pin" class="edit-sel edit-sel-grow"><option value="">— none —</option></select></label>
+                  <button type="button" class="edit-apply edit-apply-mmg" data-op="projectToCad" title="Move the nodes onto the CAD faces they are tagged with; the message reports nodes too far, ambiguous or outside a face's trims, and any cell it folds over" data-run-title="Project the nodes onto the CAD"><span class="apply-play">${ic("play")}</span><span class="apply-stop">${ic("stop")}</span></button>
+                </div>
+                <div class="edit-progress hidden" id="pcad-progress">
+                  <div class="edit-progress-track"><div class="edit-progress-bar"></div></div>
+                  <div class="edit-progress-msg"></div>
+                </div>
+              </div>
               <div class="edit-form collapsed" id="sob-form">
                 <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("smooth")}<span>Sobolev deformation</span></button>
                 <div class="edit-form-row">

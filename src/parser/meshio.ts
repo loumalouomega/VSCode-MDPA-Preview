@@ -270,6 +270,15 @@ export interface MeshioModule {
     mesh: MeshioMesh; dimension: number; numHangingNodes: number; numTJunctions: number; numPartialOverlaps: number; numUnweldedFacets: number;
     numBoundaryFacets: number; numNonManifoldFacets: number; conforming: boolean; interfaceMode: string; warnings: string[];
   };
+  /**
+   * Move a CAD-tagged surface mesh onto its B-rep (meshio++ >= 17.23.0): `info` is a
+   * `CadJsonInfo`, the mesh names each cell's CAD face (`cad:face`) and each line's edge
+   * (`cad:edge`). Only point coordinates change; the point count and order are kept.
+   */
+  projectToCad(mesh: MeshioMesh, info: object, options?: Record<string, unknown>): {
+    mesh: MeshioMesh; numProjected: number; numOnEdges: number; numOnCurves: number; numCorners: number; numAmbiguous: number;
+    numTooFar: number; numFailed: number; numOutsideTrim: number; maxMove: number; outsideTrim: number[]; warnings: string[];
+  };
   /** Whether the Netgen / MMG backends are linked into this artifact (17.23.0). `tetrahedralize` falls back to the native octree without Netgen. */
   hasNetgen(): boolean;
   hasMmg(): boolean;
