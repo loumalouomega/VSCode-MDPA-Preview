@@ -72,6 +72,7 @@ export const OP_LABELS: Record<OpName, string> = {
   curvature: "Surface curvature (mean / Gaussian / principal)",
   shrinkwrap: "Shrinkwrap onto a surface",
   sobolevDeform: "Sobolev deformation (smoothed displacement)",
+  projectToCad: "Project nodes onto the CAD B-rep",
   compareField: "Compare a field with another mesh",
   reduceField: "Global reduction (min/max/mean/…)",
   fieldGradient: "Field gradient / divergence / curl",

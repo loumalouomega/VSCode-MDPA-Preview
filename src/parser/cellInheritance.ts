@@ -60,6 +60,8 @@ export function defaultBlockName(kind: EntityKind, vtkCellType: number | undefin
   } else if (kind === "Elements") {
     if (vtkCellType === C.TETRA) return "Element3D4N";
     if (vtkCellType === C.HEXAHEDRON) return "Element3D8N";
+    if (vtkCellType === C.WEDGE) return "Element3D6N";
+    if (vtkCellType === C.PYRAMID) return "Element3D5N";
     if (vtkCellType === C.TRIANGLE) return "Element2D3N";
     if (vtkCellType === C.QUAD) return "Element2D4N";
     if (vtkCellType === C.LINE) return "Element2D2N";

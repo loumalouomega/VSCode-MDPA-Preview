@@ -16,6 +16,7 @@
   "command.kratos.mesh.exportTessellated.title": "Tesseler les cellules courbes (exporter une copie linéaire)…",
   "command.kratos.mesh.exportGrid.title": "Échantillonner sur une grille (occupation de voxels / volume de distance signée)…",
   "command.kratos.mesh.exportOctree.title": "Maillage volumique octree de la surface (tétraèdres / hexaèdres)…",
+  "command.kratos.mesh.exportKernelOp.title": "Balayage, symétrie et couches (extrusion / révolution / couche limite / tétraédrisation)…",
   "command.kratos.mesh.exportCadSurface.title": "Mailler les faces CAO d'un B-rep (triangulation de surface)…",
   "command.kratos.mesh.generate.title": "Générer un maillage procédural (rectangle, boîte, sphère, cylindre…)…",
   "command.kratos.mesh.packSeries.title": "Regrouper la série temporelle dans un fichier…",

@@ -4008,6 +4008,7 @@ function dispatchToolbarAction(action: string | undefined, _target?: HTMLElement
   else if (action === "tessellateCurved") vscode.postMessage({ type: "menuExportTessellated" });
   else if (action === "sampleGrid") vscode.postMessage({ type: "menuExportGrid" });
   else if (action === "octreeMesh") vscode.postMessage({ type: "menuExportOctree" });
+  else if (action === "kernelOp") vscode.postMessage({ type: "menuExportKernelOp" });
   else if (action === "cadSurface") vscode.postMessage({ type: "menuExportCadSurface" });
   else if (action === "generateMesh") vscode.postMessage({ type: "menuGenerateMesh" });
   else if (action === "find") toggleFindBar();

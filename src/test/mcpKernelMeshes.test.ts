@@ -194,3 +194,20 @@ test("mesh_capabilities names the new operations as available", async () => {
     assert.ok(!caps.operations.unavailable.some((u) => u.name.startsWith(name)), `${name} is not also unavailable`);
   }
 });
+
+test("mesh_derive runs the 17.23.0 sweep, mirror and layer kernels from a file", async () => {
+  const dir = tmpDir();
+  const sphere = path.join(dir, "sphere.mdpa");
+  fs.writeFileSync(sphere, writeMdpa(icosphere(1, 1)));
+  const layers = path.join(dir, "layers.vtu");
+  const b = (await meshDerive({ path: sphere, kind: "boundaryLayer", options: { firstHeight: 0.02, numLayers: 2 }, outputPath: layers })) as { summary?: string };
+  assert.ok(fs.existsSync(layers));
+  assert.match(b.summary ?? "", /Boundary layer/);
+  const box = await generateMesh({ kind: "generate", shape: "box", params: { dims: [2, 2, 2] } });
+  const boxPath = path.join(dir, "box.mdpa");
+  fs.writeFileSync(boxPath, writeMdpa(box.model));
+  const mirrored = path.join(dir, "mirrored.vtu");
+  const m = (await meshDerive({ path: boxPath, kind: "mirror", options: { normal: [1, 0, 0], keepOriginal: true }, outputPath: mirrored })) as { summary?: string };
+  assert.match(m.summary ?? "", /Mirrored/);
+  await assert.rejects(meshDerive({ path: boxPath, kind: "extrude", options: { bogus: 1 }, outputPath: path.join(dir, "x.vtu") }), /bogus|unknown/i);
+});

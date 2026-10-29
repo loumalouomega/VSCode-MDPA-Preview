@@ -252,6 +252,7 @@ const OPERATIONS: CommandSpec[] = [
   op("repairSurface", "Fix winding, fill holes, weld a surface mesh", "fixOrientation:bool orientOutward:bool fillHoles:bool splitNonManifold:bool maxHoleEdges:int weldTolerance:number", "repairSurface fillHoles=true"),
   op("tessellate", "Split curved (quadratic) cells into linear triangles/tetrahedra", "levels:int", "tessellate levels=2"),
   op("curvature", "Surface curvature fields (mean, gaussian, principal)", "mean:bool gaussian:bool principal:bool area:bool includeBoundary:bool dualArea(mixed-voronoi|barycentric) outputPrefix", "curvature mean=true gaussian=true"),
+  op("projectToCad", "Move CAD-tagged surface nodes onto the B-rep of a .cad.json file", "path! faceField edgeField maxDistance:number trimSamples:int movePart:part pinPart:part", "projectToCad path=part.cad.json"),
   op("shrinkwrap", "Project nodes onto a target surface (file, SubModelPart or skin)", "path part:part skin:bool offset:number blend:number maxDistance:number movePart:part pinPart:part normalWeight(angle|area) recordDistance:bool", "shrinkwrap part=Wall"),
   op("sobolevDeform", "Smooth deformation of the mesh from a displacement field", "variable:field! lengthScale:number! fixedPart:part fixBoundary:bool maxIterations:int tolerance:number", "sobolevDeform variable=DISPLACEMENT lengthScale=0.1"),
   // Meshing
@@ -360,6 +361,7 @@ const FILES: CommandSpec[] = [
   post("simplify", "file", "Export a simplified surface copy", "menuExportSimplified"),
   post("tessellateCurved", "file", "Export a linear copy of the curved cells", "menuExportTessellated"),
   post("sampleGrid", "file", "Sample to a grid / voxelization / SDF volume", "menuExportGrid"),
+  post("kernelOp", "file", "Extrude, revolve, mirror, boundary-layer, tetrahedralize or check the open mesh (new mesh)", "menuExportKernelOp"),
   post("octreeMesh", "file", "Write an octree tetrahedral/hexahedral volume mesh of the surface", "menuExportOctree"),
   post("cadSurface", "file", "Triangulate the faces of the open CAD B-rep", "menuExportCadSurface"),
   post("generateMesh", "file", "Write a procedural mesh (rectangle, box, sphere, …)", "menuGenerateMesh"),

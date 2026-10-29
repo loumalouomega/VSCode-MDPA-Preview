@@ -577,6 +577,7 @@ export const fr: Catalogue = {
   "Simplify surface…": "Simplifier la surface…",
   "Sample to grid…": "Échantillonner sur une grille…",
   "Octree volume mesh…": "Maillage volumique octree…",
+  "Sweep, mirror and layers…": "Balayage, symétrie et couches…",
   "Mesh CAD faces…": "Mailler les faces CAO…",
   "Generate mesh…": "Générer un maillage…",
   "Properties editor…": "Éditeur de propriétés…",

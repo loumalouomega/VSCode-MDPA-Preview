@@ -60,6 +60,7 @@ import { compareMeshes, compareFieldModel } from "../parser/meshCompare";
 import { fieldUnitLabel } from "../parser/fieldDimensions";
 import { DeriveSpec, DERIVE_KINDS, DERIVE_STANDALONE_KINDS, recordedDeriveParameters } from "../parser/deriveMesh";
 import { GENERATOR_SHAPES, GeneratorShape, cadSurfaceOptionsFrom, CadSurfaceOptionsInput } from "../parser/kernelMeshes";
+import { KERNEL_OP_KINDS, KernelOpKind } from "../parser/kernelOps";
 import type { StreamSeeds } from "../parser/streamlines";
 import { writeRawMeshioBytes } from "../parser/meshio";
 import { probeAlongPath, probeToCsv } from "../parser/pathProbe";
@@ -1780,7 +1781,14 @@ export async function meshDerive(args: {
     | "generate"
     | "octreeMesh"
     | "octree"
-    | "cadSurface";
+    | "cadSurface"
+    | "extrude"
+    | "revolve"
+    | "mirror"
+    | "boundaryLayer"
+    | "tetrahedralize"
+    | "errorSize"
+    | "checkConformity";
   outputPath: string;
   outputFormat?: string;
   /** Read this step of a multi-step file instead of the first (the frame every kind works on). */
@@ -1830,6 +1838,8 @@ export async function meshDerive(args: {
   fill?: "all" | "surface" | "inside";
   sign?: "pseudonormal" | "winding-number" | "unsigned";
   attachOccupancy?: boolean;
+  /** voxelize: the plane of a planar surface, auto (default) | xy | xz | yz. */
+  plane?: "auto" | "xy" | "xz" | "yz";
   structure?: "voxel" | "octree";
   location?: "corner" | "center";
   band?: number;
@@ -1935,7 +1945,7 @@ export async function meshDerive(args: {
     };
     spec =
       args.kind === "voxelize"
-        ? { kind: "voxelize", ...lattice, fill: args.fill, attachOccupancy: args.attachOccupancy }
+        ? { kind: "voxelize", ...lattice, fill: args.fill, attachOccupancy: args.attachOccupancy, plane: args.plane }
         : { kind: "sdfVolume", ...lattice, structure: args.structure, location: args.location, band: args.band, rootResolution: args.rootResolution, maxDepth: args.maxDepth };
   } else if (args.kind === "streamlines") {
     if (!args.variable) throw new Error("Streamlines need a `variable` (a Nodal vector field).");
@@ -1964,6 +1974,8 @@ export async function meshDerive(args: {
     if (!args.shape) throw new Error(`generate needs a \`shape\` (${GENERATOR_SHAPES.join(", ")}).`);
     if (!(GENERATOR_SHAPES as string[]).includes(args.shape)) throw new Error(`shape must be one of ${GENERATOR_SHAPES.join(", ")}.`);
     spec = { kind: "generate", shape: args.shape as GeneratorShape, params: args.params };
+  } else if (KERNEL_OP_KINDS.includes(args.kind as KernelOpKind)) {
+    spec = { kind: args.kind as KernelOpKind, options: args.options };
   } else if (args.kind === "octreeMesh") {
     spec = { kind: "octreeMesh", options: args.options, hangingConstraints: args.hangingConstraints };
   } else if (args.kind === "octree") {
@@ -1981,9 +1993,11 @@ export async function meshDerive(args: {
     };
   } else if (args.kind === "cadSurface") {
     if (args.targetSize === undefined) throw new Error("cadSurface needs a `targetSize` (the edge length to mesh to).");
-    const { backgroundPath, ...cad } = cadSurfaceOptionsFrom(args.cadOptions);
+    const { backgroundPath, metricBackgroundPath, ...cad } = cadSurfaceOptionsFrom(args.cadOptions);
     let backgroundModel: MdpaModel | undefined;
     if (backgroundPath) backgroundModel = (await loadMesh(backgroundPath, undefined, undefined, undefined, undefined, undefined, execution.signal)).model;
+    let metricBackgroundModel: MdpaModel | undefined;
+    if (metricBackgroundPath) metricBackgroundModel = (await loadMesh(metricBackgroundPath, undefined, undefined, undefined, undefined, undefined, execution.signal)).model;
     spec = {
       ...cad,
       // The flat arguments predate `cadOptions` and win when both name a control.
@@ -2000,6 +2014,7 @@ export async function meshDerive(args: {
       kind: "cadSurface",
       targetSize: args.targetSize,
       ...(backgroundModel ? { backgroundModel, backgroundLabel: path.basename(backgroundPath as string) } : {}),
+      ...(metricBackgroundModel ? { metricBackgroundModel, metricBackgroundLabel: path.basename(metricBackgroundPath as string) } : {}),
     };
   } else if (args.kind === "igaRefine" || args.kind === "igaSample") {
     // Both run on the model's NURBS side channel (model.nurbs); a mesh

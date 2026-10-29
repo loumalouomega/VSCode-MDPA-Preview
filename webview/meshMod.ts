@@ -31,6 +31,7 @@ let smpPaths: string[] = [];
  */
 let sdfPath = "";
 let swPath = "";
+let pcadPath = "";
 let cmpPath = "";
 /** #sdf-part's sentinel for "the mesh's own exterior skin" — never a real SubModelPart path. */
 const SDF_SKIN = "@skin";
@@ -149,6 +150,7 @@ export function initMeshMod(postMessage: PostMessage): void {
     ["merge-browse", "mergeMesh"],
     ["sdf-browse", "sdfDistance"],
     ["sw-browse", "shrinkwrap"],
+    ["pcad-browse", "projectToCad"],
     ["cmp-browse", "compareField"],
     ["xfer-browse", "transferField"],
   ] as const) {
@@ -304,6 +306,7 @@ const ASYNC_BUILDERS: Record<string, () => Record<string, unknown> | undefined> 
   optimizeVolume: buildOptimizeVolumeMsg,
   curvature: buildCurvatureMsg,
   shrinkwrap: buildShrinkwrapMsg,
+  projectToCad: buildProjectToCadMsg,
   compareField: buildCompareFieldMsg,
   sobolevDeform: buildSobolevMsg,
   smooth: buildSmoothMsg,
@@ -679,6 +682,8 @@ export function setMeshModParts(parts: { path: string; children: unknown[] }[]):
   fillPartSelect("sw-target", paths, "— none —", true);
   fillPartSelect("sw-move", paths, "— all nodes —", false);
   fillPartSelect("sw-pin", paths, "— none —", false);
+  fillPartSelect("pcad-move", paths, "— all nodes —", false);
+  fillPartSelect("pcad-pin", paths, "— none —", false);
   fillPartSelect("sob-fixed", paths, "— none —", false);
 }
 
@@ -1392,6 +1397,22 @@ function buildShrinkwrapMsg(): Record<string, unknown> | undefined {
   return msg;
 }
 
+function buildProjectToCadMsg(): Record<string, unknown> | undefined {
+  if (!pcadPath) return undefined;
+  const msg: Record<string, unknown> = { type: "applyOp", op: "projectToCad", path: pcadPath };
+  const face = (document.getElementById("pcad-face") as HTMLInputElement | null)?.value.trim();
+  if (face && face !== "CAD_FACE") msg.faceField = face;
+  const edge = (document.getElementById("pcad-edge") as HTMLInputElement | null)?.value.trim();
+  if (edge && edge !== "CAD_EDGE") msg.edgeField = edge;
+  const maxDistance = optNum("pcad-maxdist");
+  if (maxDistance !== undefined && maxDistance > 0) msg.maxDistance = maxDistance;
+  const move = (document.getElementById("pcad-move") as HTMLSelectElement | null)?.value;
+  if (move) msg.movePart = move;
+  const pin = (document.getElementById("pcad-pin") as HTMLSelectElement | null)?.value;
+  if (pin) msg.pinPart = pin;
+  return msg;
+}
+
 function buildSobolevMsg(): Record<string, unknown> | undefined {
   const variable = (document.getElementById("sob-variable") as HTMLSelectElement | null)?.value ?? "";
   const lengthScale = optNum("sob-length");
@@ -1621,11 +1642,21 @@ export function setMergeMeshPaths(paths: string[], target = "mergeMesh"): void {
   // only the merge form has an N-file summary to render.
   if (target !== "mergeMesh") {
     const id =
-      target === "sdfDistance" ? "sdf-path" : target === "shrinkwrap" ? "sw-path" : target === "compareField" ? "cmp-path" : "xfer-path";
+      target === "sdfDistance"
+        ? "sdf-path"
+        : target === "shrinkwrap"
+          ? "sw-path"
+          : target === "projectToCad"
+            ? "pcad-path"
+            : target === "compareField"
+              ? "cmp-path"
+              : "xfer-path";
     const single = document.getElementById(id) as HTMLInputElement | null;
     if (!single) return;
     if (target === "compareField") {
       cmpPath = clean[0] ?? "";
+    } else if (target === "projectToCad") {
+      pcadPath = clean[0] ?? "";
     } else if (target === "shrinkwrap") {
       swPath = clean[0] ?? "";
       if (swPath) {

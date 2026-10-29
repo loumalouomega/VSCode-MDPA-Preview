@@ -504,6 +504,11 @@
         "category": "%category.KratosMesh%"
       },
       {
+        "command": "kratos.mesh.exportKernelOp",
+        "title": "%command.kratos.mesh.exportKernelOp.title%",
+        "category": "%category.KratosMesh%"
+      },
+      {
         "command": "kratos.mesh.exportCadSurface",
         "title": "%command.kratos.mesh.exportCadSurface.title%",
         "category": "%category.KratosMesh%"
@@ -1328,7 +1333,7 @@
     "@kitware/vtk.js": "^37.4.6",
     "@kratos-flowgraph/flowgraph": "^1.0.2",
     "@loumalouomega/mmg-wasm": "^0.1.0",
-    "@meshioplusplus/wasm": "^17.21.0",
+    "@meshioplusplus/wasm": "^17.23.0",
     "@modelcontextprotocol/sdk": "^1.32.2",
     "cors": "^2.8.5",
     "ejs": "^7.0.2",

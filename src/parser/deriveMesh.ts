@@ -26,6 +26,7 @@ import { extractSkinModel } from "./extractSkin";
 import { decimateModel, DecimateParams } from "./decimate";
 import { tessellateModel, withTessellateSourceFields, TessellateParams, TESSELLATE_MAX_LEVELS } from "./tessellate";
 import { sampleGrid, GridSampleSpec } from "./gridSample";
+import { kernelOpModel, KernelOpSpec } from "./kernelOps";
 import { generateMesh, octreeMeshModel, octreeModel, cadSurfaceModel, GenerateSpec, OctreeMeshSpec, OctreeSpec, CadSurfaceSpec, CadSurfaceReport } from "./kernelMeshes";
 import { describeStreamlines, streamlinesToModel, traceStreamlines, StreamlineParams, StreamlineResult } from "./streamlines";
 import type { StreamlineOptions } from "./streamlines";
@@ -92,8 +93,8 @@ export type TessellateSpec = { kind: "tessellate" } & TessellateParams;
  */
 export type StreamlineSpec = { kind: "streamlines"; frame?: string } & StreamlineParams;
 
-export type DeriveSpec = ({ kind: "featureEdges" } & FeatureEdgeOptions) | SliceSpec | IsosurfaceSpec | ThresholdSpec | DecimateSpec | TessellateSpec | GridSampleSpec | StreamlineSpec | IgaRefineSpec | IgaSampleSpec | GenerateSpec | OctreeMeshSpec | OctreeSpec | CadSurfaceSpec;
-export const DERIVE_KINDS = ["featureEdges", "slice", "isosurface", "threshold", "decimate", "tessellate", "grid", "voxelize", "sdfVolume", "streamlines", "igaRefine", "igaSample", "generate", "octreeMesh", "octree", "cadSurface"] as const;
+export type DeriveSpec = ({ kind: "featureEdges" } & FeatureEdgeOptions) | SliceSpec | IsosurfaceSpec | ThresholdSpec | DecimateSpec | TessellateSpec | GridSampleSpec | StreamlineSpec | IgaRefineSpec | IgaSampleSpec | GenerateSpec | OctreeMeshSpec | OctreeSpec | CadSurfaceSpec | KernelOpSpec;
+export const DERIVE_KINDS = ["featureEdges", "slice", "isosurface", "threshold", "decimate", "tessellate", "grid", "voxelize", "sdfVolume", "streamlines", "igaRefine", "igaSample", "generate", "octreeMesh", "octree", "cadSurface", "extrude", "revolve", "mirror", "boundaryLayer", "tetrahedralize", "errorSize", "checkConformity"] as const;
 /** Kinds that need no input mesh at all (a grid is made from nothing). */
 export const DERIVE_STANDALONE_KINDS: readonly string[] = ["grid", "generate"];
 
@@ -154,9 +155,13 @@ export interface DeriveResult {
  * the file it came from.
  */
 export function recordedDeriveParameters(spec: DeriveSpec): Record<string, unknown> {
-  if (spec.kind === "cadSurface" && spec.backgroundModel) {
-    const { backgroundModel: _model, ...rest } = spec;
-    return { ...rest, backgroundLabel: spec.backgroundLabel ?? "(a mesh)" };
+  if (spec.kind === "cadSurface" && (spec.backgroundModel || spec.metricBackgroundModel)) {
+    const { backgroundModel: _model, metricBackgroundModel: _metric, ...rest } = spec;
+    return {
+      ...rest,
+      ...(spec.backgroundModel ? { backgroundLabel: spec.backgroundLabel ?? "(a mesh)" } : {}),
+      ...(spec.metricBackgroundModel ? { metricBackgroundLabel: spec.metricBackgroundLabel ?? "(a mesh)" } : {}),
+    };
   }
   return { ...spec };
 }
@@ -324,6 +329,18 @@ export async function deriveMesh(
         : spec.kind === "octreeMesh" ? await octreeMeshModel(model, spec, diagnostics)
         : spec.kind === "octree" ? await octreeModel(model, spec, diagnostics)
         : await cadSurfaceModel(model, spec, diagnostics);
+      if (signal?.aborted) throw new Error("cancelled");
+      return r;
+    }
+    case "extrude":
+    case "revolve":
+    case "mirror":
+    case "boundaryLayer":
+    case "tetrahedralize":
+    case "errorSize":
+    case "checkConformity": {
+      if (signal?.aborted) throw new Error("cancelled");
+      const r = await kernelOpModel(model, spec, diagnostics);
       if (signal?.aborted) throw new Error("cancelled");
       return r;
     }

@@ -16,6 +16,7 @@
   "command.kratos.mesh.exportTessellated.title": "Gekrümmte Zellen tesselieren (lineare Kopie exportieren)…",
   "command.kratos.mesh.exportGrid.title": "Auf Gitter abtasten (Voxelbelegung / Volumen mit vorzeichenbehaftetem Abstand)…",
   "command.kratos.mesh.exportOctree.title": "Octree-Volumennetz der Oberfläche (Tetraeder / Hexaeder)…",
+  "command.kratos.mesh.exportKernelOp.title": "Sweep, Spiegeln & Schichten (Extrudieren / Rotieren / Grenzschicht / Tetraeder)…",
   "command.kratos.mesh.exportCadSurface.title": "CAD-Flächen eines B-Rep vernetzen (Oberflächentriangulierung)…",
   "command.kratos.mesh.generate.title": "Prozedurales Netz erzeugen (Rechteck, Quader, Kugel, Zylinder…)…",
   "command.kratos.mesh.packSeries.title": "Zeitreihe in einer Datei bündeln…",

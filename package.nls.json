@@ -20,6 +20,7 @@
   "command.kratos.mesh.exportTessellated.title": "Tessellate Curved Cells (Export a Linear Copy)…",
   "command.kratos.mesh.exportGrid.title": "Sample to Grid (Voxel Occupancy / Signed-Distance Volume)…",
   "command.kratos.mesh.exportOctree.title": "Octree Volume Mesh of the Surface (Tetrahedra / Hexahedra)…",
+  "command.kratos.mesh.exportKernelOp.title": "Sweep, Mirror & Layers (Extrude / Revolve / Boundary Layer / Tetrahedralize)…",
   "command.kratos.mesh.exportCadSurface.title": "Mesh the CAD Faces of a B-rep (Surface Triangulation)…",
   "command.kratos.mesh.generate.title": "Generate a Procedural Mesh (Rectangle, Box, Sphere, Cylinder…)…",
   "command.kratos.mesh.packSeries.title": "Pack Time Series Into One File…",

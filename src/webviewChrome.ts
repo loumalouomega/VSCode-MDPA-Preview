@@ -191,6 +191,7 @@ export const MENU_ACTION_COMMANDS: Readonly<Record<string, string>> = {
   tessellateCurved: "kratos.mesh.exportTessellated",
   sampleGrid: "kratos.mesh.exportGrid",
   octreeMesh: "kratos.mesh.exportOctree",
+  kernelOp: "kratos.mesh.exportKernelOp",
   cadSurface: "kratos.mesh.exportCadSurface",
   generateMesh: "kratos.mesh.generate",
   nodeIds: "kratos.mdpa.toggleNodeIds",
@@ -229,6 +230,7 @@ export const ADVANCED_MENU_HTML = `<div id="advanced-popup" class="hidden" role=
         <button type="button" class="file-menu-item" data-action="tessellateCurved" role="menuitem" title="Write a LINEAR copy of the curved (quadratic) cells, tessellated through their own shape functions; every cell carries SOURCE_ENTITY_ID. The open mesh keeps its curved cells">${ic("quadratic")}<span>Tessellate curved cells…</span></button>
         <button type="button" class="file-menu-item" data-action="sampleGrid" role="menuitem" title="Write a voxel occupancy or a signed-distance volume of the surface on a regular lattice (.vti keeps the sdf header)">${ic("grid")}<span>Sample to grid…</span></button>
         <button type="button" class="file-menu-item" data-action="octreeMesh" role="menuitem" title="Write a tetrahedral or hexahedral volume mesh of the inside of the surface, graded on an octree (meshio++ octreeMesh)">${ic("remesh")}<span>Octree volume mesh…</span></button>
+        <button type="button" class="file-menu-item" data-action="kernelOp" role="menuitem" title="Write a new mesh by extruding or revolving the open one, mirroring it, growing boundary layers, tetrahedralizing a skin, deriving an error-based size field or checking conformity (meshio++ 17.23.0)">${ic("remesh")}<span>Sweep, mirror and layers…</span></button>
         <button type="button" class="file-menu-item" data-action="cadSurface" role="menuitem" title="Triangulate the faces of the open CAD B-rep (.cad.json, STEP/IGES) into one conforming surface mesh, one SubModelPart per CAD face">${ic("remesh")}<span>Mesh CAD faces…</span></button>
         <button type="button" class="file-menu-item" data-action="generateMesh" role="menuitem" title="Write a procedural mesh from nothing: rectangle, box, disk, sphere, cylinder, annulus, L-shape, plate with a hole, honeycomb or reference cells">${ic("grid")}<span>Generate mesh…</span></button>
         <div class="file-menu-sep"></div>
@@ -848,6 +850,31 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
                   <button type="button" class="edit-apply edit-apply-mmg" data-op="shrinkwrap" title="Project the nodes onto the target — a projection, not a collision-free fit; the message reports any cell it folds over" data-run-title="Project the nodes onto the target surface"><span class="apply-play">${ic("play")}</span><span class="apply-stop">${ic("stop")}</span></button>
                 </div>
                 <div class="edit-progress hidden" id="sw-progress">
+                  <div class="edit-progress-track"><div class="edit-progress-bar"></div></div>
+                  <div class="edit-progress-msg"></div>
+                </div>
+              </div>
+              <div class="edit-form collapsed" id="pcad-form">
+                <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("sdf")}<span>Project onto CAD…</span></button>
+                <div class="edit-form-row">
+                  <label class="edit-field edit-field-grow"><span>CAD file</span><input type="text" id="pcad-path" class="edit-text" placeholder="Choose a .cad.json…" readonly></label>
+                  <button type="button" id="pcad-browse" class="panel-icon-btn" title="Choose the CAD B-rep (.cad.json, or a STEP/IGES file on the full build) to project onto">${ic("open")}</button>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field" title="The Elemental/Conditional field naming each surface cell's CAD face (Mesh CAD faces… writes CAD_FACE)."><span>face field</span><input type="text" id="pcad-face" class="edit-text" value="CAD_FACE"></label>
+                  <label class="edit-field" title="The field naming each line's CAD edge. Optional."><span>edge field</span><input type="text" id="pcad-edge" class="edit-text" value="CAD_EDGE"></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field" title="Nodes farther than this from the CAD stay where they are. 0 = unlimited."><span>max dist</span><input type="number" id="pcad-maxdist" class="edit-num edit-num-wide" value="0" min="0" step="any"></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field edit-field-grow" title="Only the nodes of this SubModelPart (and its subtree) may move."><span>move only</span><select id="pcad-move" class="edit-sel edit-sel-grow"><option value="">— all nodes —</option></select></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field edit-field-grow" title="The nodes of this SubModelPart (and its subtree) are held in place."><span>keep fixed</span><select id="pcad-pin" class="edit-sel edit-sel-grow"><option value="">— none —</option></select></label>
+                  <button type="button" class="edit-apply edit-apply-mmg" data-op="projectToCad" title="Move the nodes onto the CAD faces they are tagged with; the message reports nodes too far, ambiguous or outside a face's trims, and any cell it folds over" data-run-title="Project the nodes onto the CAD"><span class="apply-play">${ic("play")}</span><span class="apply-stop">${ic("stop")}</span></button>
+                </div>
+                <div class="edit-progress hidden" id="pcad-progress">
                   <div class="edit-progress-track"><div class="edit-progress-bar"></div></div>
                   <div class="edit-progress-msg"></div>
                 </div>
