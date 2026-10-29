@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- meshio++ is now `^17.23.0` (from `^17.21.0`). The delta is additive: nine new kernel functions, 21 new procedural generators, new `voxelize` and `meshCadSurface` controls, and one new format key, `medit_sol` (lean 82 readers / 83 writers, full 84 / 83), which is left unrouted because a Medit solution file carries values only and no geometry. `transientAudit` and the format tables pass unedited. Neither artifact links Netgen or MMG (`hasNetgen()` / `hasMmg()` are false).
+- **Advanced ▸ Sweep, mirror and layers…** (`kratos.mesh.exportKernelOp`) and `mesh_derive` kinds `extrude`, `revolve`, `mirror`, `boundaryLayer`, `tetrahedralize`, `errorSize` and `checkConformity` write a new mesh from the open one through the matching meshio++ kernel, with the kernel's own options as JSON (`options` in MCP). Without Netgen, `tetrahedralize` runs the native octree backend and says the boundary is fitted within a reported distance rather than kept exactly. `projectToCad` is not routed (it needs a mesh and a B-rep from two sources).
+- **Generate mesh…** gains 21 shapes: `line`, `circle`, `helix`, `spherePoints`, `boxPoints`, `tetraSphere`, `octaSphere`, `cubeSphere`, `geoSphere`, `torus`, `moebius`, `tube`, `cone`, `capsule`, `boxSurface`, `platonic`, `ball`, `sphericalShell`, `pipe`, `fichera` and `solidTorus`, and a `complete` parameter on every shape with side regions that adds each region the generator can name.
+- **Mesh CAD faces…** (`cadOptions`) gains `untangle`, `quads` (`none`/`dominant`/`all`), `quadPairs` and an anisotropic size metric read from another mesh (`metricBackgroundPath` + `metricArray` + `metricError`). `voxelize` takes a `plane` for planar surfaces.
+
+### Changed
+
+- Wedge and pyramid blocks read from a kernel result are named `Element3D6N` / `Element3D5N` instead of `Element_13` / `Element_14`, so boundary-layer meshes are legal Kratos input.
+
 ### Fixed
 
 - **Linux CI ran out of memory mid-suite** (run 40533717580, where the hosted runner was shut down during `node --test out/test/`). Every threaded meshio++ instance started eight worker threads that nothing released, so each in-process read kept about 75 MB and eight threads alive; the full suite peaked at 12.5 GB on a 16 GB machine. The threaded build is now instantiated only by a worker thread that runs one operation and then ends (the read, write, oracle, derived and analysis workers). The host thread and the workers that read many meshes use the sequential build, which the garbage collector reclaims.

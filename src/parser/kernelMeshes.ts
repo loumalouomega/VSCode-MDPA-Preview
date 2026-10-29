@@ -94,7 +94,73 @@ export const GENERATORS = {
   referenceCells: [
     { name: "types", type: "strs" }, { name: "pairs", type: "bool" },
   ],
+  line: [
+    { name: "n", type: "int" }, { name: "start", type: "nums" }, { name: "end", type: "nums" }, { name: "order", type: "int" }
+  ],
+  circle: [
+    { name: "radius", type: "num" }, { name: "n", type: "int" }, { name: "center", type: "nums" }, { name: "order", type: "int" }
+  ],
+  helix: [
+    { name: "radius", type: "num" }, { name: "pitch", type: "num" }, { name: "turns", type: "num" }, { name: "n", type: "int" }, { name: "center", type: "nums" }, { name: "order", type: "int" }
+  ],
+  spherePoints: [
+    { name: "n", type: "int" }, { name: "radius", type: "num" }, { name: "center", type: "nums" }
+  ],
+  boxPoints: [
+    { name: "n", type: "int" }, { name: "size", type: "nums" }, { name: "origin", type: "nums" }, { name: "seed", type: "int" }
+  ],
+  tetraSphere: [
+    { name: "radius", type: "num" }, { name: "subdivisions", type: "int" }, { name: "center", type: "nums" }, { name: "order", type: "int" }
+  ],
+  octaSphere: [
+    { name: "radius", type: "num" }, { name: "subdivisions", type: "int" }, { name: "center", type: "nums" }, { name: "order", type: "int" }
+  ],
+  cubeSphere: [
+    { name: "radius", type: "num" }, { name: "n", type: "int" }, { name: "center", type: "nums" }, { name: "cellType", type: "str" }, { name: "order", type: "int" }
+  ],
+  geoSphere: [
+    { name: "radius", type: "num" }, { name: "n", type: "int" }, { name: "center", type: "nums" }, { name: "order", type: "int" }
+  ],
+  torus: [
+    { name: "majorRadius", type: "num" }, { name: "minorRadius", type: "num" }, { name: "nu", type: "int" }, { name: "nv", type: "int" }, { name: "center", type: "nums" }, { name: "cellType", type: "str" }, { name: "order", type: "int" }
+  ],
+  moebius: [
+    { name: "radius", type: "num" }, { name: "width", type: "num" }, { name: "nu", type: "int" }, { name: "nv", type: "int" }, { name: "numTwists", type: "int" }, { name: "center", type: "nums" }, { name: "cellType", type: "str" }, { name: "order", type: "int" }
+  ],
+  tube: [
+    { name: "radius", type: "num" }, { name: "height", type: "num" }, { name: "ntheta", type: "int" }, { name: "nz", type: "int" }, { name: "center", type: "nums" }, { name: "cellType", type: "str" }, { name: "order", type: "int" }
+  ],
+  cone: [
+    { name: "radius", type: "num" }, { name: "height", type: "num" }, { name: "ntheta", type: "int" }, { name: "nz", type: "int" }, { name: "center", type: "nums" }, { name: "cellType", type: "str" }, { name: "order", type: "int" }
+  ],
+  capsule: [
+    { name: "radius", type: "num" }, { name: "height", type: "num" }, { name: "ntheta", type: "int" }, { name: "nz", type: "int" }, { name: "ncap", type: "int" }, { name: "center", type: "nums" }, { name: "cellType", type: "str" }, { name: "order", type: "int" }
+  ],
+  boxSurface: [
+    { name: "dims", type: "ints" }, { name: "size", type: "nums" }, { name: "origin", type: "nums" }, { name: "cellType", type: "str" }, { name: "order", type: "int" }
+  ],
+  platonic: [
+    { name: "name", type: "str" }, { name: "radius", type: "num" }, { name: "center", type: "nums" }
+  ],
+  ball: [
+    { name: "radius", type: "num" }, { name: "n", type: "int" }, { name: "center", type: "nums" }, { name: "cellType", type: "str" }, { name: "order", type: "int" }
+  ],
+  sphericalShell: [
+    { name: "innerRadius", type: "num" }, { name: "outerRadius", type: "num" }, { name: "n", type: "int" }, { name: "nr", type: "int" }, { name: "ratio", type: "num" }, { name: "center", type: "nums" }, { name: "order", type: "int" }
+  ],
+  pipe: [
+    { name: "innerRadius", type: "num" }, { name: "outerRadius", type: "num" }, { name: "height", type: "num" }, { name: "ntheta", type: "int" }, { name: "nr", type: "int" }, { name: "nz", type: "int" }, { name: "ratio", type: "num" }, { name: "center", type: "nums" }, { name: "order", type: "int" }
+  ],
+  fichera: [
+    { name: "n", type: "int" }, { name: "size", type: "num" }, { name: "center", type: "nums" }, { name: "cellType", type: "str" }, { name: "order", type: "int" }
+  ],
+  solidTorus: [
+    { name: "majorRadius", type: "num" }, { name: "minorRadius", type: "num" }, { name: "n", type: "int" }, { name: "nu", type: "int" }, { name: "center", type: "nums" }, { name: "order", type: "int" }
+  ],
 } as const satisfies Record<string, readonly ArgSpec[]>;
+
+/** Generators with no trailing `complete` flag (point clouds, the Platonic catalogue, the planar tilings). */
+const NO_COMPLETE: ReadonlySet<string> = new Set(["honeycomb", "referenceCells", "spherePoints", "boxPoints", "platonic"]);
 
 export type GeneratorShape = keyof typeof GENERATORS;
 export const GENERATOR_SHAPES = Object.keys(GENERATORS) as GeneratorShape[];
@@ -114,6 +180,27 @@ export const GENERATOR_EXAMPLES: Record<GeneratorShape, { description: string; p
   plateWithHole: { description: "square plate around a circular hole", params: { radius: 0.25, size: 1, nt: 8, nr: 8 } },
   honeycomb: { description: "pointy-top hexagon tiling (one polygon block)", params: { dims: [6, 6], edge: 1 } },
   referenceCells: { description: "one cell of every meshio type in reference coordinates", params: {} },
+  line: { description: "polyline of n segments between two points", params: { n: 10, start: [0, 0, 0], end: [1, 0, 0] } },
+  circle: { description: "closed ring of line segments", params: { radius: 1, n: 32 } },
+  helix: { description: "helical polyline", params: { radius: 1, pitch: 1, turns: 3, n: 96 } },
+  spherePoints: { description: "point cloud on a sphere (Fibonacci)", params: { n: 500, radius: 1 } },
+  boxPoints: { description: "seeded random point cloud in a box", params: { n: 500, size: [1, 1, 1], seed: 1 } },
+  tetraSphere: { description: "sphere surface refined from a tetrahedron", params: { radius: 1, subdivisions: 3 } },
+  octaSphere: { description: "sphere surface refined from an octahedron", params: { radius: 1, subdivisions: 3 } },
+  cubeSphere: { description: "sphere surface from a projected cube (quads)", params: { radius: 1, n: 8 } },
+  geoSphere: { description: "geodesic sphere surface of triangles", params: { radius: 1, n: 6 } },
+  torus: { description: "torus surface", params: { majorRadius: 1, minorRadius: 0.25, nu: 48, nv: 16 } },
+  moebius: { description: "Moebius strip surface", params: { radius: 1, width: 0.5, nu: 48, nv: 6 } },
+  tube: { description: "open cylindrical surface along z", params: { radius: 0.5, height: 2, ntheta: 24, nz: 12 } },
+  cone: { description: "cone surface with its base", params: { radius: 0.5, height: 1, ntheta: 24, nz: 8 } },
+  capsule: { description: "cylinder with hemispherical caps (surface)", params: { radius: 0.5, height: 1, ntheta: 24, nz: 8, ncap: 6 } },
+  boxSurface: { description: "boundary surface of a box only", params: { dims: [8, 8, 8], size: [1, 1, 1] } },
+  platonic: { description: "a Platonic solid surface by name", params: { name: "icosahedron", radius: 1 } },
+  ball: { description: "solid ball of hexahedra", params: { radius: 1, n: 6 } },
+  sphericalShell: { description: "solid spherical shell of hexahedra", params: { innerRadius: 0.5, outerRadius: 1, n: 6, nr: 3 } },
+  pipe: { description: "solid pipe (hollow cylinder) of hexahedra", params: { innerRadius: 0.5, outerRadius: 1, height: 2, ntheta: 24, nr: 3, nz: 8 } },
+  fichera: { description: "Fichera corner (cube minus an octant)", params: { n: 3, size: 2 } },
+  solidTorus: { description: "solid torus of hexahedra", params: { majorRadius: 1, minorRadius: 0.25, n: 4, nu: 32 } },
 };
 
 export interface GenerateSpec {
@@ -158,7 +245,7 @@ function coerceArg(shape: string, a: ArgSpec, v: unknown): unknown {
  * that were read as Elements are the mesh's boundary faces — Conditions in
  * Kratos — so they move to their own id space first (the FLAC3D face rule).
  */
-function withKratosBlockNames(model: MdpaModel): MdpaModel {
+export function withKratosBlockNames(model: MdpaModel): MdpaModel {
   const hasVolume = model.blocks.some((b) => b.count > 0 && cellCategory(b.vtkCellType) === "volume");
   const base = hasVolume ? reclassifyFlac3dFaces(model) : model;
   return {
@@ -171,7 +258,7 @@ function withKratosBlockNames(model: MdpaModel): MdpaModel {
 }
 
 /** Upper-cases the Kratos-style names of upstream's arrays (`meshioToModel` already turned `sdf:distance` into `sdf_distance`). */
-function legalFields(model: MdpaModel, rename: Record<string, string> = {}): MdpaModel {
+export function legalFields(model: MdpaModel, rename: Record<string, string> = {}): MdpaModel {
   return { ...model, fields: model.fields.map((f) => (rename[f.variable] ? { ...f, variable: rename[f.variable] } : f)) };
 }
 
@@ -201,6 +288,27 @@ export function estimateGeneratedCells(shape: GeneratorShape, p: Record<string, 
     case "plateWithHole": return 4 * num(p.nt, 8) * num(p.nr, 8) * 2;
     case "honeycomb": return prod(p.dims, [1, 1]);
     case "referenceCells": return 1;
+    case "line": return num(p.n, 8);
+    case "circle": return num(p.n, 16);
+    case "helix": return num(p.n, 32);
+    case "spherePoints": return num(p.n, 100);
+    case "boxPoints": return num(p.n, 100);
+    case "tetraSphere": return 4 * 4 ** Math.max(0, num(p.subdivisions, 3));
+    case "octaSphere": return 8 * 4 ** Math.max(0, num(p.subdivisions, 2));
+    case "cubeSphere": return 6 * num(p.n, 4) ** 2 * (p.cellType === "triangle" ? 2 : 1);
+    case "geoSphere": return 20 * num(p.n, 4) ** 2;
+    case "torus": return num(p.nu, 32) * num(p.nv, 16) * 2;
+    case "moebius": return num(p.nu, 32) * num(p.nv, 4) * 2;
+    case "tube": return num(p.ntheta, 16) * num(p.nz, 4) * 2;
+    case "cone": return num(p.ntheta, 16) * (num(p.nz, 4) + 1) * 2;
+    case "capsule": return num(p.ntheta, 16) * (num(p.nz, 4) + 2 * num(p.ncap, 4)) * 2;
+    case "boxSurface": { const d = (Array.isArray(p.dims) ? p.dims : [1, 1, 1]).map(Number); const [a, b, c] = [d[0] ?? 1, d[1] ?? 1, d[2] ?? 1]; return 4 * (a * b + b * c + a * c); }
+    case "platonic": return 100;
+    case "ball": return 6 * num(p.n, 4) ** 3;
+    case "sphericalShell": return 6 * num(p.n, 4) ** 2 * num(p.nr, 2) * 2;
+    case "pipe": return num(p.ntheta, 16) * num(p.nr, 2) * num(p.nz, 4) * 6;
+    case "fichera": return 7 * num(p.n, 2) ** 3 * (p.cellType === "tetra" ? 6 : 1);
+    case "solidTorus": return num(p.n, 4) ** 2 * num(p.nu, 32) * 2;
   }
 }
 
@@ -209,7 +317,11 @@ export async function generateMesh(spec: GenerateSpec, diagnostics: MdpaDiagnost
   const args = GENERATORS[spec.shape] as readonly ArgSpec[] | undefined;
   if (!args) throw new Error(`shape must be one of ${GENERATOR_SHAPES.join(", ")}.`);
   const params = spec.params ?? {};
+  // 17.23.0: every shape with an `order` slot also takes `complete` (after maxCells): carry the
+  // full set of side regions the generator can name.
+  const takesComplete = !NO_COMPLETE.has(spec.shape);
   const known = new Set(args.map((a) => a.name));
+  if (takesComplete) known.add("complete");
   for (const k of Object.keys(params)) {
     if (!known.has(k)) throw new Error(`${spec.shape} has no parameter "${k}" (it takes ${[...known].join(", ")}).`);
   }
@@ -221,8 +333,10 @@ export async function generateMesh(spec: GenerateSpec, diagnostics: MdpaDiagnost
   const m = await loadMeshio();
   // referenceCells and honeycomb differ in arity: only the shapes with a maxCells slot get one.
   const withMax = spec.shape !== "referenceCells";
+  if (takesComplete && params.complete !== undefined && typeof params.complete !== "boolean") throw new Error(`${spec.shape}: "complete" must be true or false.`);
+  const tail: unknown[] = takesComplete ? [GENERATE_MAX_CELLS, params.complete === true] : [GENERATE_MAX_CELLS];
   const call = (m as unknown as Record<string, (...a: unknown[]) => unknown>)[spec.shape];
-  const mesh = (withMax ? call.call(m, ...positional, GENERATE_MAX_CELLS) : call.call(m, ...positional)) as Parameters<typeof meshioToModel>[0];
+  const mesh = (withMax ? call.call(m, ...positional, ...tail) : call.call(m, ...positional)) as Parameters<typeof meshioToModel>[0];
   // referenceCells is a catalogue of one cell per meshio type: keep the type names.
   const read = meshioToModel(mesh, diagnostics);
   const model = spec.shape === "referenceCells" ? read : withKratosBlockNames(read);
@@ -381,6 +495,21 @@ export interface CadSurfaceSpec {
   virtualFaces?: boolean;
   /** Lop acute corners in place of concentric shells; effective only with `minAngle` above 0. */
   lopCorners?: boolean;
+  /** With order 2 or 3, move a face's own high-order nodes on the surface to untangle a folded curved element (17.22.0). */
+  untangle?: boolean;
+  /** Recombine triangles into quads: "none" (default), "dominant" or "all" (quads only; no `virtualEdges`) (17.22.0). */
+  quads?: "none" | "dominant" | "all";
+  /** How triangles pair into quads: "matching" (default) or "greedy". */
+  quadPairs?: "matching" | "greedy";
+  /**
+   * An anisotropic metric from another mesh: its 9-component Nodal `metricArray` is a field's Hessian
+   * (or its 1-component one is the field, whose Hessian is taken), with target interpolation error
+   * `metricError`. A parsed model for the same reason as `backgroundModel`.
+   */
+  metricBackgroundModel?: MdpaModel;
+  metricBackgroundLabel?: string;
+  metricArray?: string;
+  metricError?: number;
 }
 
 const CAD_SURFACE_ORDER_MESSAGE =
@@ -428,18 +557,25 @@ export function validateCadSurfaceSpec(spec: CadSurfaceSpec): string | undefined
       if (!isNum(v) || !(v > 0)) return `${what}: the size of ${k} must be a positive number.`;
     }
   }
+  if (spec.quads !== undefined && !["none", "dominant", "all"].includes(spec.quads)) return 'quads must be "none", "dominant" or "all".';
+  if (spec.quadPairs !== undefined && spec.quadPairs !== "matching" && spec.quadPairs !== "greedy") return 'quadPairs must be "matching" or "greedy".';
+  if (spec.metricBackgroundModel !== undefined) {
+    if (!spec.metricArray) return "metricBackground needs metricArray, the Nodal field of that mesh (a Hessian or a scalar) to take the metric from.";
+    if (!isNum(spec.metricError) || !(spec.metricError > 0)) return "metricError must be a positive number when a metric background is given.";
+  } else if (spec.metricArray !== undefined || spec.metricError !== undefined) return "metricArray / metricError need a metric background mesh, which was not given.";
   if (spec.backgroundModel === undefined && spec.backgroundArray !== undefined) return "backgroundArray names a field of the background mesh, which was not given.";
   return undefined;
 }
 
 /** The controls a caller may set beside `targetSize`; `backgroundPath` stands in for `backgroundModel` until the caller reads the file. */
-export type CadSurfaceOptionsInput = Partial<Omit<CadSurfaceSpec, "kind" | "targetSize" | "backgroundModel">> & { backgroundPath?: string };
+export type CadSurfaceOptionsInput = Partial<Omit<CadSurfaceSpec, "kind" | "targetSize" | "backgroundModel" | "metricBackgroundModel">> & { backgroundPath?: string; metricBackgroundPath?: string };
 
 export const CAD_SURFACE_OPTION_KEYS: readonly string[] = [
   "maxChordalDeviation", "minPointsPerEdge", "tolerance", "recordFaceIds", "edges", "matchUnreferencedTrims", "strict", "maxPoints",
   "minAngle", "smoothIterations", "smoothMethod", "order", "grading", "curvatureDeviation", "cellsAcrossGaps", "poleRings",
   "faceSizes", "edgeSizes", "backgroundPath", "backgroundArray", "metric", "virtualEdges", "reparamConditionNumber",
   "modelTolerances", "virtualFaces", "lopCorners",
+  "untangle", "quads", "quadPairs", "metricBackgroundPath", "metricArray", "metricError",
 ];
 
 /**
@@ -501,7 +637,7 @@ export async function cadSurfaceModel(model: MdpaModel, spec: CadSurfaceSpec, di
   if (channel.format !== "cad_json") {
     throw new Error(`The side channel is ${channel.format}; a CAD surface mesh needs a B-rep (a .cad.json, or a STEP/IGES read).`);
   }
-  const { kind: _kind, backgroundModel, backgroundArray, backgroundLabel: _label, ...options } = spec;
+  const { kind: _kind, backgroundModel, backgroundArray, backgroundLabel: _label, metricBackgroundModel, metricBackgroundLabel: _mlabel, ...options } = spec;
   const kernelOptions: Record<string, unknown> = { ...options };
   if (backgroundModel) {
     const name = backgroundArray ?? "size";
@@ -517,6 +653,14 @@ export async function cadSurfaceModel(model: MdpaModel, spec: CadSurfaceSpec, di
     }
     kernelOptions.background = { ...mesh, point_data: { [name]: sizes }, point_data_components: undefined, cell_data: {}, cell_data_components: undefined };
     kernelOptions.backgroundArray = name;
+  }
+  if (metricBackgroundModel) {
+    const mesh = modelToMeshio(metricBackgroundModel, diagnostics, { dim: 3 });
+    const name = spec.metricArray as string;
+    if (!(mesh.point_data ?? {})[name] && !(mesh.point_data ?? {})[sanitizeVariable(name)]) {
+      throw new Error(`The metric background mesh has no Nodal field "${name}" (it has: ${metricBackgroundModel.fields.filter((f) => f.kind === "Nodal").map((f) => f.variable).join(", ") || "none"}).`);
+    }
+    kernelOptions.metricBackground = { ...mesh, cell_data: {}, cell_data_components: undefined };
   }
   const m = await loadMeshio();
   const r = m.meshCadSurface(channel.info as Parameters<typeof m.meshCadSurface>[0], defined(kernelOptions) as unknown as Parameters<typeof m.meshCadSurface>[1]);

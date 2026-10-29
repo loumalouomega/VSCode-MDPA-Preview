@@ -360,6 +360,7 @@ const FILES: CommandSpec[] = [
   post("simplify", "file", "Export a simplified surface copy", "menuExportSimplified"),
   post("tessellateCurved", "file", "Export a linear copy of the curved cells", "menuExportTessellated"),
   post("sampleGrid", "file", "Sample to a grid / voxelization / SDF volume", "menuExportGrid"),
+  post("kernelOp", "file", "Extrude, revolve, mirror, boundary-layer, tetrahedralize or check the open mesh (new mesh)", "menuExportKernelOp"),
   post("octreeMesh", "file", "Write an octree tetrahedral/hexahedral volume mesh of the surface", "menuExportOctree"),
   post("cadSurface", "file", "Triangulate the faces of the open CAD B-rep", "menuExportCadSurface"),
   post("generateMesh", "file", "Write a procedural mesh (rectangle, box, sphere, …)", "menuGenerateMesh"),

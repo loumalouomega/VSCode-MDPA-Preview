@@ -16,6 +16,7 @@
   "command.kratos.mesh.exportTessellated.title": "Teselar celdas curvas (exportar una copia lineal)…",
   "command.kratos.mesh.exportGrid.title": "Muestrear a rejilla (ocupación de vóxeles / volumen de distancia con signo)…",
   "command.kratos.mesh.exportOctree.title": "Malla de volumen octree de la superficie (tetraedros / hexaedros)…",
+  "command.kratos.mesh.exportKernelOp.title": "Barrido, simetría y capas (extruir / revolucionar / capa límite / tetraedrizar)…",
   "command.kratos.mesh.exportCadSurface.title": "Mallar las caras CAD de un B-rep (triangulación de superficie)…",
   "command.kratos.mesh.generate.title": "Generar una malla procedural (rectángulo, caja, esfera, cilindro…)…",
   "command.kratos.mesh.packSeries.title": "Empaquetar serie temporal en un archivo…",

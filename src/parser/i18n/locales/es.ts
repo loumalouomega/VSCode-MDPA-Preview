@@ -577,6 +577,7 @@ export const es: Catalogue = {
   "Simplify surface…": "Simplificar superficie…",
   "Sample to grid…": "Muestrear a rejilla…",
   "Octree volume mesh…": "Malla de volumen octree…",
+  "Sweep, mirror and layers…": "Barrido, simetría y capas…",
   "Mesh CAD faces…": "Mallar caras CAD…",
   "Generate mesh…": "Generar malla…",
   "Properties editor…": "Editor de propiedades…",

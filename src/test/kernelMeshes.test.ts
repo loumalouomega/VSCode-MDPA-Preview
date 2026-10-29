@@ -139,3 +139,14 @@ test("cadSurface summary states what each option did", () => {
   assert.match(describeCadSurface({ ...base, angleBound: { ...base.angleBound!, belowBound: false }, loppedCorners: [] }, { minAngle: 30 }), /met \(smallest angle 31°\)/);
   assert.match(describeCadSurface({ ...base, angleBound: undefined, loppedCorners: [] }, { lopCorners: true }), /lopCorners has no effect without minAngle/);
 });
+
+test("cadSurface validates the 17.23.0 quad and metric-background controls before the kernel runs", () => {
+  const ok = { kind: "cadSurface" as const, targetSize: 0.1 };
+  assert.equal(validateCadSurfaceSpec({ ...ok, quads: "dominant", quadPairs: "greedy", untangle: true, order: 2 }), undefined);
+  assert.match(validateCadSurfaceSpec({ ...ok, quads: "some" as never }) ?? "", /quads must be/);
+  assert.match(validateCadSurfaceSpec({ ...ok, quadPairs: "x" as never }) ?? "", /quadPairs must be/);
+  assert.match(validateCadSurfaceSpec({ ...ok, metricArray: "h" }) ?? "", /need a metric background/);
+  assert.match(validateCadSurfaceSpec({ ...ok, metricBackgroundModel: icosphere(1, 1) }) ?? "", /needs metricArray/);
+  assert.match(validateCadSurfaceSpec({ ...ok, metricBackgroundModel: icosphere(1, 1), metricArray: "h" }) ?? "", /metricError/);
+  assert.deepEqual(cadSurfaceOptionsFrom({ quads: "all", metricBackgroundPath: "m.vtu" }), { quads: "all", metricBackgroundPath: "m.vtu" });
+});

@@ -1383,7 +1383,7 @@ test("mesh_capabilities reports the live build next to the routing tables", asyn
       adoptingOperations: string[];
     };
   };
-  assert.equal(caps.packageVersion, "17.21.0");
+  assert.equal(caps.packageVersion, "17.23.0");
   assert.ok(caps.backend.length > 0);
   assert.equal(caps.hasCgnslib, true);
   // 15.x bump (roadmap item 3) added vtkhdf/pvd/pvtu/pvtp/pcd/xyz/lsdyna/frd/
@@ -1423,8 +1423,8 @@ test("mesh_capabilities reports the live build next to the routing tables", asyn
   // unrouted (see meshCapabilities' operations.unavailable), the last adopted
   // by the .step export (faceDeviation: the fitted solid is measured against
   // the skin it came from).
-  assert.equal(caps.live.readers.length, 81);
-  assert.equal(caps.live.writers.length, 82);
+  assert.equal(caps.live.readers.length, 82);
+  assert.equal(caps.live.writers.length, 83);
   // 17.2.0 ships a FULL artifact beside the lean one; mesh_capabilities
   // reports both, live (see meshCapabilities.ts's `full`). The lean build is
   // what `live`/`readers` describe; `build` names its flavour, and the full
@@ -1445,8 +1445,8 @@ test("mesh_capabilities reports the live build next to the routing tables", asyn
   assert.equal(caps.full.build?.lz4, true);
   assert.equal(caps.full.build?.bzip2, true);
   assert.equal((caps.full.build as { kahip?: boolean } | undefined)?.kahip, true, "KaHIP is linked into the full build");
-  assert.equal(caps.full.build?.readers.length, 83);
-  assert.equal(caps.full.build?.writers.length, 82);
+  assert.equal(caps.full.build?.readers.length, 84);
+  assert.equal(caps.full.build?.writers.length, 83);
   assert.ok(caps.full.build?.readers.includes("step"));
   assert.ok(caps.full.build?.readers.includes("iges"));
   assert.ok(caps.live.readers.includes("vtm"));

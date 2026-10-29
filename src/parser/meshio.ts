@@ -173,6 +173,12 @@ export interface XdmfTimeSeriesWriter {
   close(): void;
 }
 
+/** Shared result of `extrude` / `revolve` (meshio++ 17.23.0). */
+export interface KernelSweepResult {
+  mesh: MeshioMesh; numCells: number; numHexahedra: number; numWedges: number; numPyramids: number; numTetrahedra: number;
+  numQuads: number; numTriangles: number; numFlipped: number; minScaledJacobian: number; warnings: string[];
+}
+
 export interface MeshioModule {
   checkQuality(
     mesh: MeshioMesh,
@@ -238,6 +244,35 @@ export interface MeshioModule {
    * leaves or all-hexahedra by the octree dual.
    */
   octreeMesh(mesh: MeshioMesh, options?: OctreeMeshOptions): OctreeMeshResult;
+
+  /**
+   * meshio++ >= 17.23.0 derived-mesh kernels. Every one takes a named-option
+   * object the kernel validates itself (an unknown key or a bad range throws
+   * with its own message), so the option types are open records; the result
+   * fields are the ones the summaries read.
+   */
+  extrude(mesh: MeshioMesh, options?: Record<string, unknown>): KernelSweepResult;
+  revolve(mesh: MeshioMesh, options?: Record<string, unknown>): KernelSweepResult & { numOnAxis: number; full: boolean };
+  mirror(mesh: MeshioMesh, options?: Record<string, unknown>): {
+    mesh: MeshioMesh; numFlippedCells: number; numPointsOnPlane: number; numDroppedCells: number; numDroppedSides: number; warnings: string[];
+  };
+  boundaryLayer(mesh: MeshioMesh, options: Record<string, unknown>): {
+    mesh: MeshioMesh; numCells: number; numWedges: number; numHexahedra: number; numPyramids: number; numTetrahedra: number;
+    numShrunk: number; numCollapsed: number; numNotVisible: number; numFewerLayers: number; numFrontCrossings: number;
+    minScaledJacobian: number; minThickness: number; maxThickness: number; capClosed: boolean; warnings: string[];
+  };
+  tetrahedralize(mesh: MeshioMesh, options?: Record<string, unknown>): {
+    mesh: MeshioMesh; numTetrahedra: number; numPoints: number; numNewPoints: number; numRegions: number; numBoundaryTriangles: number;
+    boundaryPreserved: boolean; hausdorffToSurface: number; minDihedralDeg: number; maxDihedralDeg: number; volume: number; backend: string; warnings: string[];
+  };
+  errorSize(mesh: MeshioMesh, options: Record<string, unknown>): { mesh: MeshioMesh; numCells: number; numSkipped: number; numClamped: number; warnings: string[] } & Record<string, unknown>;
+  checkConformity(mesh: MeshioMesh, options?: Record<string, unknown>): {
+    mesh: MeshioMesh; dimension: number; numHangingNodes: number; numTJunctions: number; numPartialOverlaps: number; numUnweldedFacets: number;
+    numBoundaryFacets: number; numNonManifoldFacets: number; conforming: boolean; interfaceMode: string; warnings: string[];
+  };
+  /** Whether the Netgen / MMG backends are linked into this artifact (17.23.0). `tetrahedralize` falls back to the native octree without Netgen. */
+  hasNetgen(): boolean;
+  hasMmg(): boolean;
 
   /**
    * The older adaptive octree around a skin (17.8.0), positional arguments as
@@ -968,7 +1003,8 @@ export interface MeshioModule {
     sign?: string,
     attachOccupancy?: boolean,
     maxCells?: number,
-    watertightCheck?: string
+    watertightCheck?: string,
+    plane?: string
   ): { mesh: MeshioMesh; dims: number[]; origin: number[]; spacing: number[]; numOccupied: number };
 
   computeSdf(

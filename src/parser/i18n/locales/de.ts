@@ -577,6 +577,7 @@ export const de: Catalogue = {
   "Simplify surface…": "Oberfläche vereinfachen…",
   "Sample to grid…": "Auf Gitter abtasten…",
   "Octree volume mesh…": "Octree-Volumennetz…",
+  "Sweep, mirror and layers…": "Sweep, Spiegeln und Schichten…",
   "Mesh CAD faces…": "CAD-Flächen vernetzen…",
   "Generate mesh…": "Netz erzeugen…",
   "Properties editor…": "Eigenschafts-Editor…",

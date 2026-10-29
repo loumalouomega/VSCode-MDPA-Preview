@@ -191,6 +191,7 @@ export const MENU_ACTION_COMMANDS: Readonly<Record<string, string>> = {
   tessellateCurved: "kratos.mesh.exportTessellated",
   sampleGrid: "kratos.mesh.exportGrid",
   octreeMesh: "kratos.mesh.exportOctree",
+  kernelOp: "kratos.mesh.exportKernelOp",
   cadSurface: "kratos.mesh.exportCadSurface",
   generateMesh: "kratos.mesh.generate",
   nodeIds: "kratos.mdpa.toggleNodeIds",
@@ -229,6 +230,7 @@ export const ADVANCED_MENU_HTML = `<div id="advanced-popup" class="hidden" role=
         <button type="button" class="file-menu-item" data-action="tessellateCurved" role="menuitem" title="Write a LINEAR copy of the curved (quadratic) cells, tessellated through their own shape functions; every cell carries SOURCE_ENTITY_ID. The open mesh keeps its curved cells">${ic("quadratic")}<span>Tessellate curved cells…</span></button>
         <button type="button" class="file-menu-item" data-action="sampleGrid" role="menuitem" title="Write a voxel occupancy or a signed-distance volume of the surface on a regular lattice (.vti keeps the sdf header)">${ic("grid")}<span>Sample to grid…</span></button>
         <button type="button" class="file-menu-item" data-action="octreeMesh" role="menuitem" title="Write a tetrahedral or hexahedral volume mesh of the inside of the surface, graded on an octree (meshio++ octreeMesh)">${ic("remesh")}<span>Octree volume mesh…</span></button>
+        <button type="button" class="file-menu-item" data-action="kernelOp" role="menuitem" title="Write a new mesh by extruding or revolving the open one, mirroring it, growing boundary layers, tetrahedralizing a skin, deriving an error-based size field or checking conformity (meshio++ 17.23.0)">${ic("remesh")}<span>Sweep, mirror and layers…</span></button>
         <button type="button" class="file-menu-item" data-action="cadSurface" role="menuitem" title="Triangulate the faces of the open CAD B-rep (.cad.json, STEP/IGES) into one conforming surface mesh, one SubModelPart per CAD face">${ic("remesh")}<span>Mesh CAD faces…</span></button>
         <button type="button" class="file-menu-item" data-action="generateMesh" role="menuitem" title="Write a procedural mesh from nothing: rectangle, box, disk, sphere, cylinder, annulus, L-shape, plate with a hole, honeycomb or reference cells">${ic("grid")}<span>Generate mesh…</span></button>
         <div class="file-menu-sep"></div>
