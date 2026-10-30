@@ -24,6 +24,10 @@ import type { FeatureEdgeOptions, PeriodicOptions } from "./parser/analysisOps";
 import { flowBalance } from "./parser/flowBalance";
 import type { FlowBalanceSpec } from "./parser/flowBalance";
 import type { MdpaModel } from "./parser/types";
+import { markSingleOperationThread } from "./parser/meshio";
+
+// One analysis per worker thread, which then ends (see markSingleOperationThread).
+markSingleOperationThread();
 
 /** The analyses that run here, with the (structured-cloned) parameters each takes. */
 export interface AnalysisParams {

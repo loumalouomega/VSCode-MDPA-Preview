@@ -28,6 +28,8 @@ import {
   countConstraints,
   formatConstraintRow,
   undefinedConstraintIds,
+  constraintHeaderVariables,
+  groupRowsByMasterCount,
 } from "../constraintsParser";
 import { formatPropertyTable, formatPropertyValue } from "../propertiesParser";
 import { num } from "./writerCommon";
@@ -99,12 +101,21 @@ function extractBlocks(sourceText: string, types: string[]): string[] {
  */
 function writeConstraints(model: MdpaModel, lines: string[]): void {
   for (const block of model.constraints ?? []) {
-    const header = ["Begin Constraints", block.name, ...block.variables]
-      .filter((t) => t.length > 0)
-      .join(" ");
-    lines.push(header);
-    for (const row of block.rows) lines.push(`  ${formatConstraintRow(row)}`);
-    lines.push("End Constraints", "");
+    // Kratos fixes the master-dof count from the header and needs every row to
+    // match, so a block mixing master counts is split, repeating the one variable.
+    const groups = groupRowsByMasterCount(block.rows);
+    const sameVar = block.variables.length > 0 && block.variables.every((v) => v === block.variables[0]);
+    for (const g of groups) {
+      const vars =
+        groups.length > 1 && g.masters !== undefined && sameVar
+          ? constraintHeaderVariables(block.variables[0], g.masters)
+          : block.variables;
+      const header = ["Begin Constraints", block.name, ...vars].filter((t) => t.length > 0).join(" ");
+      lines.push(header);
+      for (const row of g.rows) lines.push(`  ${formatConstraintRow(row)}`);
+      lines.push("End Constraints", "");
+    }
+    if (groups.length === 0) lines.push(["Begin Constraints", block.name, ...block.variables].filter((t) => t).join(" "), "End Constraints", "");
   }
 }
 

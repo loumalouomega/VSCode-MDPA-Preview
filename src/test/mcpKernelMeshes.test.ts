@@ -12,9 +12,12 @@ import * as path from "node:path";
 
 import { meshConvert, meshDerive, meshInfo, meshTransform, meshCapabilities } from "../mcp/tools";
 import { generateMesh } from "../parser/kernelMeshes";
+import { fieldCalcModel } from "../parser/fieldCalc";
 import { extractSkinModel } from "../parser/extractSkin";
 import { simplexifyModel } from "../parser/simplexify";
 import { writeMdpa } from "../parser/writers/mdpaWriter";
+import { parseMdpa } from "../parser/mdpaParser";
+import { countConstraints } from "../parser/constraintsParser";
 import { icosphere } from "./fixtures/shapes";
 
 const tmpDir = () => fs.mkdtempSync(path.join(os.tmpdir(), "mcp-kernel-"));
@@ -53,6 +56,31 @@ test("mesh_derive octreeMesh and octree mesh the inside of a closed surface", as
   assert.match(o.summary ?? "", /Octree/);
 });
 
+test("mesh_derive octreeMesh with hangingConstraints writes a re-readable constraint set that reproduces a linear field", async () => {
+  const dir = tmpDir();
+  const sphere = path.join(dir, "sphere.mdpa");
+  fs.writeFileSync(sphere, writeMdpa(icosphere(1, 2)));
+  const out = path.join(dir, "hex.mdpa");
+  const r = (await meshDerive({ path: sphere, kind: "octreeMesh", options: { output: "castellated", maxSize: 2, minSize: 0.15 }, hangingConstraints: true, outputPath: out })) as { summary?: string };
+  // The kernel counts its own hanging nodes; the geometric recovery must find the same ones.
+  const kernel = /(\d+) hanging node\(s\)\. Tied (\d+) hanging/.exec(r.summary ?? "");
+  assert.ok(kernel && Number(kernel[1]) > 0 && kernel[1] === kernel[2], `kernel and recovery agree: ${r.summary}`);
+  const model = parseMdpa(fs.readFileSync(out, "utf8"));
+  const lin = countConstraints(model.constraints).linear;
+  assert.ok(lin > 0 && lin % 3 === 0, "three displacement components per hanging node");
+  assert.equal(countConstraints(model.constraints).raw, 0);
+  // Every row ties a node to masters whose weights sum to 1 and reproduces a linear field.
+  const at = new Map<number, number[]>();
+  for (let i = 0; i < model.nodeCount; i++) at.set(model.nodeIds[i], [model.coords[i * 3], model.coords[i * 3 + 1], model.coords[i * 3 + 2]]);
+  const f = (id: number) => { const p = at.get(id)!; return 2 * p[0] - 3 * p[1] + 0.7 * p[2] + 1; };
+  for (const b of model.constraints ?? []) for (const row of b.rows) {
+    if (row.kind !== "linear") continue;
+    assert.ok(Math.abs(row.weights.reduce((a, c) => a + c, 0) - 1) < 1e-6);
+    const tied = row.masterIds.reduce((sum, m, j) => sum + row.weights[j] * f(m), 0);
+    assert.ok(Math.abs(tied - f(row.slaveIds[0])) < 1e-4, "linear field reproduced");
+  }
+});
+
 test("mesh_derive cadSurface triangulates the B-rep of a fitted .cad.json, one SubModelPart per face", async () => {
   const dir = tmpDir();
   const cube = await writeCubeSkin(dir);
@@ -69,6 +97,70 @@ test("mesh_derive cadSurface triangulates the B-rep of a fitted .cad.json, one S
 
   await assert.rejects(meshDerive({ path: cad, kind: "cadSurface", outputPath: out }), /needs a `targetSize`/);
   await assert.rejects(meshDerive({ path: cube, kind: "cadSurface", targetSize: 0.2, outputPath: out }), /no B-rep side channel/);
+});
+
+async function cubeCad(dir: string): Promise<string> {
+  const cube = await writeCubeSkin(dir);
+  await meshConvert({ path: cube, outputPath: path.join(dir, "box.step") });
+  return path.join(dir, "box.cad.json");
+}
+
+type CadReply = { summary?: string; blocks: { name: string; count: number }[]; cadSurface?: { triangles: number; refinementPoints: number; smoothed: number; angleHistogram: number[]; angleDeg: { min: number }; angleBound?: { requested: number; belowBound: boolean } } };
+const derive = (args: object) => meshDerive(args as Parameters<typeof meshDerive>[0]) as Promise<CadReply>;
+
+test("mesh_derive cadSurface: minAngle refines and smoothing moves points, reported in cadSurface and the summary", async () => {
+  const dir = tmpDir();
+  const cad = await cubeCad(dir);
+  const plain = await derive({ path: cad, kind: "cadSurface", targetSize: 0.4, outputPath: path.join(dir, "plain.vtu") });
+  const refined = await derive({ path: cad, kind: "cadSurface", targetSize: 0.4, cadOptions: { minAngle: 30, smoothIterations: 2 }, outputPath: path.join(dir, "refined.vtu") });
+  assert.equal(plain.cadSurface?.refinementPoints, 0);
+  assert.ok((refined.cadSurface?.refinementPoints ?? 0) > 0, JSON.stringify(refined.cadSurface));
+  assert.ok((refined.cadSurface?.smoothed ?? 0) > 0);
+  assert.ok((refined.cadSurface?.triangles ?? 0) > (plain.cadSurface?.triangles ?? 0));
+  assert.equal(refined.cadSurface?.angleHistogram.length, 18);
+  assert.ok((refined.cadSurface?.angleDeg.min ?? 0) >= 30, "the bound is met on a cube");
+  assert.equal(refined.cadSurface?.angleBound?.requested, 30);
+  assert.match(refined.summary ?? "", /Angle bound 30°.*met/);
+});
+
+test("mesh_derive cadSurface: order 2 gives quadratic triangles and lines, order 3 is refused by name", async () => {
+  const dir = tmpDir();
+  const cad = await cubeCad(dir);
+  const out = path.join(dir, "curved.vtu");
+  const r = await derive({ path: cad, kind: "cadSurface", targetSize: 0.4, cadOptions: { order: 2 }, outputPath: out });
+  assert.match(r.summary ?? "", /Quadratic output/);
+  assert.deepEqual(r.blocks.map((b) => b.name).sort(), ["line3", "triangle6"], "quadratic surface and edge cells, named for their type like the linear result");
+  const back = (await meshInfo({ path: out })) as { blocks?: { name: string }[] };
+  assert.deepEqual((back.blocks ?? []).map((b) => b.name).sort(), ["VtkCell_21", "VtkCell_22"], "the written .vtu re-reads with VTK quadratic edge (21) and quadratic triangle (22) cells");
+  await assert.rejects(derive({ path: cad, kind: "cadSurface", targetSize: 0.4, cadOptions: { order: 3 }, outputPath: out }), /triangle10 \/ line4/);
+});
+
+test("mesh_derive cadSurface: faceSizes refine one face, a face that is not in the B-rep is named, unknown options are refused", async () => {
+  const dir = tmpDir();
+  const cad = await cubeCad(dir);
+  const out = path.join(dir, "sized.vtu");
+  const plain = await derive({ path: cad, kind: "cadSurface", targetSize: 0.4, outputPath: out });
+  const fine = await derive({ path: cad, kind: "cadSurface", targetSize: 0.4, cadOptions: { faceSizes: { 0: 0.1 } }, outputPath: out });
+  assert.ok((fine.cadSurface?.triangles ?? 0) > (plain.cadSurface?.triangles ?? 0) * 2, `${fine.cadSurface?.triangles} vs ${plain.cadSurface?.triangles}`);
+  await assert.rejects(derive({ path: cad, kind: "cadSurface", targetSize: 0.4, cadOptions: { faceSizes: { 99: 0.1 } }, outputPath: out }), /face 99 is not a face of the B-rep/);
+  await assert.rejects(derive({ path: cad, kind: "cadSurface", targetSize: 0.4, cadOptions: { minAngel: 30 } as never, outputPath: out }), /Unknown CAD meshing option/);
+  await assert.rejects(derive({ path: cad, kind: "cadSurface", targetSize: 0.4, cadOptions: { reparamConditionNumber: 5, order: 2 }, outputPath: out }), /order 1 only/);
+});
+
+test("mesh_derive cadSurface: a background mesh supplies the size field and is not copied into the recorded recipe", async () => {
+  const dir = tmpDir();
+  const cad = await cubeCad(dir);
+  const box = await generateMesh({ kind: "generate", shape: "box", params: { dims: [4, 4, 4] } });
+  const sized = fieldCalcModel(box.model, { expr: "0.12", location: "Nodal", output: "SIZE" }).model;
+  const bg = path.join(dir, "size.mdpa");
+  fs.writeFileSync(bg, writeMdpa(sized));
+  const out = path.join(dir, "bg.vtu");
+  const plain = await derive({ path: cad, kind: "cadSurface", targetSize: 0.4, outputPath: path.join(dir, "p.vtu") });
+  const r = (await derive({ path: cad, kind: "cadSurface", targetSize: 0.4, cadOptions: { backgroundPath: bg, backgroundArray: "SIZE" }, outputPath: out, provenance: "sidecar" })) as CadReply;
+  assert.ok((r.cadSurface?.triangles ?? 0) > (plain.cadSurface?.triangles ?? 0), "the finer background size takes effect");
+  const sidecar = fs.readFileSync(out + ".kratosexport.json", "utf8");
+  assert.ok(sidecar.includes("size.mdpa") && !sidecar.includes("coords"), "the recipe names the file, not the mesh");
+  await assert.rejects(derive({ path: cad, kind: "cadSurface", targetSize: 0.4, cadOptions: { backgroundPath: bg, backgroundArray: "NOPE" }, outputPath: out }), /no one-component Nodal field "NOPE" \(it has: SIZE\)/);
 });
 
 test("mesh_convert .step accepts the 17.13.0 freeform fit options", async () => {
@@ -101,4 +193,21 @@ test("mesh_capabilities names the new operations as available", async () => {
     assert.ok(caps.operations.available.includes(name), name);
     assert.ok(!caps.operations.unavailable.some((u) => u.name.startsWith(name)), `${name} is not also unavailable`);
   }
+});
+
+test("mesh_derive runs the 17.23.0 sweep, mirror and layer kernels from a file", async () => {
+  const dir = tmpDir();
+  const sphere = path.join(dir, "sphere.mdpa");
+  fs.writeFileSync(sphere, writeMdpa(icosphere(1, 1)));
+  const layers = path.join(dir, "layers.vtu");
+  const b = (await meshDerive({ path: sphere, kind: "boundaryLayer", options: { firstHeight: 0.02, numLayers: 2 }, outputPath: layers })) as { summary?: string };
+  assert.ok(fs.existsSync(layers));
+  assert.match(b.summary ?? "", /Boundary layer/);
+  const box = await generateMesh({ kind: "generate", shape: "box", params: { dims: [2, 2, 2] } });
+  const boxPath = path.join(dir, "box.mdpa");
+  fs.writeFileSync(boxPath, writeMdpa(box.model));
+  const mirrored = path.join(dir, "mirrored.vtu");
+  const m = (await meshDerive({ path: boxPath, kind: "mirror", options: { normal: [1, 0, 0], keepOriginal: true }, outputPath: mirrored })) as { summary?: string };
+  assert.match(m.summary ?? "", /Mirrored/);
+  await assert.rejects(meshDerive({ path: boxPath, kind: "extrude", options: { bogus: 1 }, outputPath: path.join(dir, "x.vtu") }), /bogus|unknown/i);
 });

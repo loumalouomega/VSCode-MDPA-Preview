@@ -35,9 +35,12 @@ import {
 import { extractSubModelPart } from "./parser/subModelPartExtract";
 import { restrictToCells } from "./parser/selectCells";
 import { extractSkinModel } from "./parser/extractSkin";
-import { deriveMesh, DeriveSpec, DeriveResult, DERIVE_KINDS } from "./parser/deriveMesh";
+import { deriveMesh, DeriveSpec, DeriveResult, DERIVE_KINDS, recordedDeriveParameters } from "./parser/deriveMesh";
+import { isCurvedCellType, TESSELLATE_MAX_LEVELS } from "./parser/tessellate";
 import { estimateGrid, describeGridEstimate, triangleSurfaceOf, GRID_MAX_CELLS, GRID_CONFIRM_CELLS } from "./parser/gridSample";
-import { GENERATOR_SHAPES, GENERATOR_EXAMPLES, GeneratorShape, estimateGeneratedCells, GENERATE_MAX_CELLS } from "./parser/kernelMeshes";
+import { GENERATOR_SHAPES, GENERATOR_EXAMPLES, GeneratorShape, estimateGeneratedCells, GENERATE_MAX_CELLS, CadSurfaceSpec, cadSurfaceOptionsFrom, validateCadSurfaceSpec } from "./parser/kernelMeshes";
+import { KERNEL_OP_KINDS, KernelOpKind } from "./parser/kernelOps";
+import { parseMeshFile } from "./parser/meshFileParser";
 import { exportReportHtml } from "./parser/exportReportHtml";
 import { writeRawMeshioBytes, meshioFullInstalled } from "./parser/meshio";
 import { partitionParts, partitionManifest } from "./parser/partitionExport";
@@ -104,8 +107,10 @@ export interface MenuMessage {
     | "menuExportPartitions"
     | "menuSplitMesh"
     | "menuExportSimplified"
+    | "menuExportTessellated"
     | "menuExportGrid"
     | "menuExportOctree"
+    | "menuExportKernelOp"
     | "menuExportCadSurface"
     | "menuGenerateMesh"
     | "menuExportTable"
@@ -186,8 +191,10 @@ export async function runMenu(
   else if (msg.type === "menuExportPartitions") await exportPartitions(ctx);
   else if (msg.type === "menuSplitMesh") await splitMesh(ctx);
   else if (msg.type === "menuExportSimplified") await exportSimplified(ctx, msg.format, msg.outputFormat);
+  else if (msg.type === "menuExportTessellated") await exportTessellated(ctx, msg.format, msg.outputFormat);
   else if (msg.type === "menuExportGrid") await exportGrid(ctx);
   else if (msg.type === "menuExportOctree") await exportOctreeMesh(ctx);
+  else if (msg.type === "menuExportKernelOp") await exportKernelOp(ctx);
   else if (msg.type === "menuExportCadSurface") await exportCadSurface(ctx);
   else if (msg.type === "menuGenerateMesh") await exportGenerated(ctx);
   else if (msg.type === "menuExportTable")
@@ -488,6 +495,7 @@ export const MESH_PICK_TARGETS: Record<string, { title: string; multi: boolean }
   sdfDistance: { title: "Select Surface Mesh", multi: false },
   transferField: { title: "Select Source Mesh", multi: false },
   shrinkwrap: { title: "Select Target Surface", multi: false },
+  projectToCad: { title: "Select CAD B-rep (.cad.json)", multi: false },
   compareField: { title: "Select Mesh to Compare With", multi: false },
   // The Variables panel's own "distance to file" method — a separate target
   // from `sdfDistance` because that one is a single fixed form (one file
@@ -941,7 +949,7 @@ export async function exportDerived(
   // A trace is of the frame on screen (edits applied); the export says which file it came from.
   if (spec.kind === "streamlines" && !spec.frame) spec = { ...spec, frame: `${path.basename(ctx.fsPath)}, frame on screen` };
   let derived: DeriveResult;
-  const deriveOps = [...(ctx.ops ?? []), { op: `derive:${spec.kind}`, parameters: spec }];
+  const deriveOps = [...(ctx.ops ?? []), { op: `derive:${spec.kind}`, parameters: recordedDeriveParameters(spec) }];
   try {
     derived = await vscode.window.withProgress(
       { location: vscode.ProgressLocation.Notification, title: `Computing ${spec.kind}…`, cancellable: true },
@@ -1072,6 +1080,31 @@ export async function exportGrid(ctx: ExportContext): Promise<void> {
 }
 
 /**
+ * Advanced ▸ Tessellate curved cells…: asks the number of levels, then exports
+ * a LINEAR copy of the mesh's quadratic cells through the derived-mesh path.
+ * Never an edit of the open mesh (the sidebar's Tessellate operation is the
+ * in-place, undoable counterpart); the copy tags each cell with its source.
+ */
+export async function exportTessellated(ctx: ExportContext, targetExt?: string, outputFormat?: string): Promise<void> {
+  const curved = ctx.model.blocks.filter((b) => isCurvedCellType(b.vtkCellType)).reduce((s, b) => s + b.count, 0);
+  if (curved === 0) {
+    void vscode.window.showInformationMessage("The mesh has no curved cells to tessellate (6-node triangles, 8/9-node quads, 10-node tetrahedra, 27-node hexahedra).");
+    return;
+  }
+  const answer = await vscode.window.showInputBox({
+    title: "Tessellate curved cells — levels",
+    prompt: `Levels (0-${TESSELLATE_MAX_LEVELS}) for ${curved} curved cell(s): divisions per axis for quads/hexahedra, 2^levels per edge for triangles/tetrahedra.`,
+    value: "2",
+    validateInput: (v) => {
+      const n = Number(v);
+      return Number.isInteger(n) && n >= 0 && n <= TESSELLATE_MAX_LEVELS ? undefined : `An integer from 0 to ${TESSELLATE_MAX_LEVELS}.`;
+    },
+  });
+  if (answer === undefined) return;
+  await exportDerived(ctx, { kind: "tessellate", levels: Number(answer) }, targetExt, outputFormat);
+}
+
+/**
  * Advanced ▸ Simplify surface…: asks how much of the surface to KEEP, then
  * exports a decimated copy through the derived-mesh path. Never an edit of the
  * open mesh — decimation is lossy by intent.
@@ -1136,7 +1169,9 @@ export async function exportOctreeMesh(ctx: ExportContext): Promise<void> {
 /**
  * File ▸ Mesh CAD faces…: triangulates the faces of the open B-rep (a
  * `.cad.json`, or a STEP/IGES read) into one conforming surface mesh. The
- * B-rep side channel exists only while the model is unedited.
+ * B-rep side channel exists only while the model is unedited. Two prompts: the
+ * edge length, then an optional JSON object of the meshio++ 17.19.0–17.21.0
+ * controls (angle bound, order 1–2, size fields, per-face sizes, …).
  */
 export async function exportCadSurface(ctx: ExportContext): Promise<void> {
   if (!ctx.model.nurbs) {
@@ -1154,7 +1189,83 @@ export async function exportCadSurface(ctx: ExportContext): Promise<void> {
     validateInput: (v) => (Number.isFinite(Number(v)) && Number(v) > 0 ? undefined : "A positive number."),
   });
   if (answer === undefined) return;
-  await exportDerived(ctx, { kind: "cadSurface", targetSize: Number(answer) });
+  const optionsAnswer = await vscode.window.showInputBox({
+    title: "Mesh CAD faces — options (JSON, optional)",
+    prompt:
+      'Leave {} for the plain mesh. Any of: minAngle (degrees, under 60), smoothIterations, smoothMethod, order (1 or 2), curvatureDeviation, cellsAcrossGaps, grading, faceSizes {"0": 0.1}, edgeSizes, backgroundPath + backgroundArray (a size field in another mesh), metric, virtualEdges, virtualFaces, modelTolerances, reparamConditionNumber, lopCorners, poleRings, strict, …',
+    value: "{}",
+    validateInput: (v) => {
+      try {
+        const o = cadSurfaceOptionsFrom(JSON.parse(v));
+        const { backgroundPath: _bg, metricBackgroundPath: _mbg, ...rest } = o;
+        return validateCadSurfaceSpec({ kind: "cadSurface", targetSize: Number(answer), ...rest });
+      } catch (e) {
+        return e instanceof SyntaxError ? "Not valid JSON." : e instanceof Error ? e.message : String(e);
+      }
+    },
+  });
+  if (optionsAnswer === undefined) return;
+  const { backgroundPath, metricBackgroundPath, ...options } = cadSurfaceOptionsFrom(JSON.parse(optionsAnswer));
+  let background: Pick<CadSurfaceSpec, "backgroundModel" | "backgroundLabel" | "metricBackgroundModel" | "metricBackgroundLabel"> = {};
+  for (const [file, modelKey, labelKey] of [
+    [backgroundPath, "backgroundModel", "backgroundLabel"],
+    [metricBackgroundPath, "metricBackgroundModel", "metricBackgroundLabel"],
+  ] as const) {
+    if (!file) continue;
+    // Relative to the mesh's folder, like the command line's file arguments.
+    const resolved = resolveCommandPath(file, path.dirname(ctx.fsPath));
+    if (!resolved.ok) {
+      vscode.window.showWarningMessage(`Mesh CAD faces: ${resolved.reason}`);
+      return;
+    }
+    try {
+      background = { ...background, [modelKey]: await parseMeshFile(resolved.path), [labelKey]: path.basename(resolved.path) };
+    } catch (e) {
+      vscode.window.showWarningMessage(`Mesh CAD faces: could not read the background mesh ${resolved.path}: ${e instanceof Error ? e.message : String(e)}`);
+      return;
+    }
+  }
+  await exportDerived(ctx, { kind: "cadSurface", targetSize: Number(answer), ...options, ...background });
+}
+
+/** Prefilled option JSON for the sweep / layer / volume kernels (meshio++ 17.23.0). */
+const KERNEL_OP_EXAMPLES: Record<KernelOpKind, { description: string; options: Record<string, unknown> }> = {
+  extrude: { description: "sweep a line or surface mesh along a direction into layers of cells", options: { direction: [0, 0, 1], numLayers: 4 } },
+  revolve: { description: "sweep a mesh about an axis through an angle (360 closes the turn)", options: { axis: [0, 1, 0], axisPoint: [0, 0, 0], angle: 90, numLayers: 8 } },
+  mirror: { description: "reflect the mesh in a plane (keepOriginal: true keeps the original beside its image, welded on the plane)", options: { origin: [0, 0, 0], normal: [1, 0, 0], keepOriginal: true } },
+  boundaryLayer: { description: "grow prism/hex layers from a closed triangle skin (a solid uses its skin)", options: { firstHeight: 0.01, numLayers: 5, growth: 1.2 } },
+  tetrahedralize: { description: "fill a closed triangle skin with tetrahedra", options: { maxSize: 0.2 } },
+  errorSize: { description: "turn an error array into a target size field", options: { targetError: 0.01, errorArray: "ERROR_INDICATOR" } },
+  checkConformity: { description: "report hanging nodes, T-junctions and overlaps; writes per-cell flags", options: {} },
+};
+
+/**
+ * Advanced ▸ Sweep, mirror & layers…: one of the meshio++ 17.23.0 kernels run
+ * on the open mesh and written as a new mesh. The kernel is picked from a list
+ * and its options are edited as JSON; the kernel validates keys and ranges.
+ */
+export async function exportKernelOp(ctx: ExportContext): Promise<void> {
+  const pick = await vscode.window.showQuickPick(
+    KERNEL_OP_KINDS.map((kind) => ({ label: kind, description: KERNEL_OP_EXAMPLES[kind].description })),
+    { title: "Sweep, mirror & layers — operation", placeHolder: "Derived mesh" }
+  );
+  if (!pick) return;
+  const kind = pick.label as KernelOpKind;
+  const answer = await vscode.window.showInputBox({
+    title: `${kind} — options (JSON)`,
+    prompt: "The kernel's options by name; {} takes the defaults.",
+    value: JSON.stringify(KERNEL_OP_EXAMPLES[kind].options),
+    validateInput: (v) => {
+      try {
+        const p = JSON.parse(v);
+        return typeof p !== "object" || p === null || Array.isArray(p) ? "A JSON object." : undefined;
+      } catch {
+        return "Not valid JSON.";
+      }
+    },
+  });
+  if (answer === undefined) return;
+  await exportDerived(ctx, { kind, options: JSON.parse(answer) });
 }
 
 /**

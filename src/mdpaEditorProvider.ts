@@ -858,8 +858,10 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
         msg?.type === "menuExportPartitions" ||
         msg?.type === "menuSplitMesh" ||
         msg?.type === "menuExportSimplified" ||
+        msg?.type === "menuExportTessellated" ||
         msg?.type === "menuExportGrid" ||
         msg?.type === "menuExportOctree" ||
+        msg?.type === "menuExportKernelOp" ||
         msg?.type === "menuExportCadSurface" ||
         msg?.type === "menuGenerateMesh" ||
         msg?.type === "menuExportTable" ||

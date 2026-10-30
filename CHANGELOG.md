@@ -4,6 +4,77 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.27.0] - 2026-10-30
+
+### Added
+
+- meshio++ is now `^17.23.0` (from `^17.21.0`). The delta is additive: nine new kernel functions, 21 new procedural generators, new `voxelize` and `meshCadSurface` controls, and one new format key, `medit_sol` (lean 82 readers / 83 writers, full 84 / 83), which is left unrouted because a Medit solution file carries values only and no geometry. `transientAudit` and the format tables pass unedited. Neither artifact links Netgen or MMG (`hasNetgen()` / `hasMmg()` are false).
+- **Advanced ▸ Sweep, mirror and layers…** (`kratos.mesh.exportKernelOp`) and `mesh_derive` kinds `extrude`, `revolve`, `mirror`, `boundaryLayer`, `tetrahedralize`, `errorSize` and `checkConformity` write a new mesh from the open one through the matching meshio++ kernel, with the kernel's own options as JSON (`options` in MCP). Without Netgen, `tetrahedralize` runs the native octree backend and says the boundary is fitted within a reported distance rather than kept exactly. `projectToCad` is not routed (it needs a mesh and a B-rep from two sources).
+- **Generate mesh…** gains 21 shapes: `line`, `circle`, `helix`, `spherePoints`, `boxPoints`, `tetraSphere`, `octaSphere`, `cubeSphere`, `geoSphere`, `torus`, `moebius`, `tube`, `cone`, `capsule`, `boxSurface`, `platonic`, `ball`, `sphericalShell`, `pipe`, `fichera` and `solidTorus`, and a `complete` parameter on every shape with side regions that adds each region the generator can name.
+- **Mesh CAD faces…** (`cadOptions`) gains `untangle`, `quads` (`none`/`dominant`/`all`), `quadPairs` and an anisotropic size metric read from another mesh (`metricBackgroundPath` + `metricArray` + `metricError`). `voxelize` takes a `plane` for planar surfaces.
+
+- **Project onto CAD…** (`projectToCad` in the Mesh Modification sidebar, `mesh_transform` and the command line) moves the nodes of a CAD-tagged surface mesh back onto the B-rep of a `.cad.json` (or a STEP/IGES file on the full build). It reads the `CAD_FACE` (and optional `CAD_EDGE`) field that Mesh CAD faces… writes, changes only coordinates (ids, SubModelParts and fields are untouched), takes `maxDistance`, `movePart` and `pinPart`, and reports nodes too far, ambiguous, failed or outside a face's trim loops, plus any cell it folds over. A mesh with no `CAD_FACE` field is refused by name.
+
+### Changed
+
+- Wedge and pyramid blocks read from a kernel result are named `Element3D6N` / `Element3D5N` instead of `Element_13` / `Element_14`, so boundary-layer meshes are legal Kratos input.
+
+### Fixed
+
+- **Linux CI ran out of memory mid-suite** (run 40533717580, where the hosted runner was shut down during `node --test out/test/`). Every threaded meshio++ instance started eight worker threads that nothing released, so each in-process read kept about 75 MB and eight threads alive; the full suite peaked at 12.5 GB on a 16 GB machine. The threaded build is now instantiated only by a worker thread that runs one operation and then ends (the read, write, oracle, derived and analysis workers). The host thread and the workers that read many meshes use the sequential build, which the garbage collector reclaims.
+- **A mesh load cancelled while its file was being sized could hang.** An abort that landed during the file-size read left the load pending forever and raised an uncaught error; the load now rejects with `cancelled`.
+
+## [5.26.0] - 2026-10-27
+
+### Added
+
+- **Curved cells can be exported as a linear copy (roadmap item 10).** Advanced ▸ **Tessellate curved cells…** (`kratos.mesh.exportTessellated`) and `mesh_derive` with `kind: "tessellate"` and `levels` (0–5) write a copy of the mesh in which every 6-node triangle, 8/9-node quad, 10-node tetrahedron and 27-node hexahedron is tessellated through its own shape functions into linear triangles/tetrahedra. Unlike the sidebar's in-place Tessellate operation, the open mesh keeps its curved cells; the copy tags every Element and Condition with `SOURCE_ENTITY_ID`, the id of the cell it came from. A mesh with no curved cells is refused by name. New tests also pin that two adjacent quadratic tetrahedra weld into a watertight display surface and that the curved-display subdivision is imported by nothing but the display geometry builder, so it can never reach a writer.
+- **Original polyhedra are remembered on read and written back to `.vtu` (roadmap item 10).** A `VTK_POLYHEDRON` cell in a `.vtu`, or a polyhedron block meshio++ hands over (CGNS `NFACE_n`, MED, OpenFOAM, …), is still drawn as the tetrahedra it is decomposed into, but the file's faces, the tetrahedra each polyhedron became and the nodes the decomposition invented are kept as a side channel (`MdpaModel.polyhedra`). The native `.vtu` writer emits the real polyhedron instead of its fan and leaves out the invented nodes; every other format still writes tetrahedra. Inspect names the polyhedron a picked tetrahedron belongs to, and `mesh_info` reports a `polyhedra` section. Any edit that can change a node or cell id drops the channel (only unscoped translate/scale/rotate and field-only operations keep it).
+- **Staged-distribution check for the MCP server** (`npm run check:staged`, own CI job). It copies `dist/` outside the checkout, runs the shipped `mcpServer.js` from there over stdio and asserts kernel identity, that nothing resolves into the repository, a small-fixture matrix through the read, write, oracle, derived and MMG workers, agreement with the in-process core, cancellation of a running remesh and detection of each removable artifact. Skipped runtimes report UNVERIFIED rather than passing.
+- **`mesh_capabilities.runtime`** reports how the server process was wired: where the meshio++ tree was resolved (`node_modules` or the bundled copy), whether each of the MMG, oracle, derived, read and write runners is a worker or fell back in-process, and where the MMG wasm came from.
+
+### Fixed
+
+- A `VTK_POLYHEDRON` whose `faces` entry is missing or truncated no longer shifts the Elemental cell data of every cell after it: the skipped cell now counts as a source cell that staged nothing.
+
+## [5.25.0] - 2026-10-27
+
+### Changed
+
+- **Hanging-node constraints follow Kratos' constraint-block layout.** Kratos reads the number of master dofs from the `Begin Constraints` header (the slave variable followed by one variable per master) and needs every row of a block to match it. Constraint blocks now repeat the variable once for the slave and once per master, and rows are grouped so each block links the same number of dofs (an edge node has 2 masters, a face node 4). The writer also splits an older block that mixed master counts when it saves, and `createConstraint` writes the repeated header.
+- **Any dof variable can be tied, not only `DISPLACEMENT`.** `addHangingNodeConstraints` (sidebar, command line, `mesh_transform`) and `mesh_derive` with `kind: "octreeMesh"` and `hangingConstraints` accept scalars such as `TEMPERATURE` or `PRESSURE` as they are, and expand a vector name (`DISPLACEMENT`, `VELOCITY`, `MESH_DISPLACEMENT`, or a nodal vector field of the mesh) to `_X`, `_Y` and, on a 3D mesh, `_Z`. The default is `DISPLACEMENT`. The Data table and Inspect show each variable name once.
+
+### Added
+
+- Inspecting a node that a multi-point constraint names now also highlights the nodes it is tied to, and `scripts/screenshots/check-constraint-view.mjs` checks the Constraint links overlay, the Data table **Constraints** kind and Inspect's constraint lines in Chromium against the new `hanging_two_level.mdpa` fixture.
+
+## [5.24.0] - 2026-10-27
+
+### Added
+
+- **Hanging-node constraints (roadmap item 23).** A hexahedral or quadrilateral mesh with non-conforming nodes (a hexahedral octree, a refined patch) can now tie each hanging node to the end nodes of the coarse edge or face it sits on, with a `LinearMasterSlaveConstraint` per node and variable (default `DISPLACEMENT_X/Y/Z`), listed in a `HangingNodes` SubModelPart. The parents are recovered from the geometry, chains resolve to end masters, and a linear field is reproduced exactly at every hanging node. Reach it from the sidebar (**Tie hanging nodes**), the command line (`addHangingNodeConstraints`), `mesh_transform`, or `mesh_derive` with `kind: "octreeMesh"` and `hangingConstraints`. `createConstraint` and `deleteConstraint` edit single constraints. View ▸ **Constraint links** draws the slave→master segments, Inspect lists the constraints naming the picked node, the Data table has a **Constraints** kind (also `mesh_export_table`), and preflight warns about a constraint naming a node no cell uses or a slave that a constraint-list condition also fixes.
+
+### Changed
+
+- **The packaged plotting acceptance matrix grew (roadmap item 19).** The installed-VSIX harnesses now cover `plot_run_resolve` (verified, unverified with or without a receipt, unresolved), a changed companion and changed or missing PVD→PVTU→VTU pieces, the Field panel's **Plot distribution**, Plots **Show on mesh**, the `volumeTotal` and `sectionComparison` presets, the whole-mesh exterior-boundary integral, the opt-in persistent cache, and a million-row table cancelled, superseded in flight and disposed mid-collection. Fixtures, commands and observed values are recorded in `doc/plotting-library.md`. The budgets themselves stay Node-level: no real desktop VS Code, Remote-SSH or KKSS session was available here, so the extension-host, remote-filesystem and webview-delivery measurements remain explicitly unverified rather than passed.
+
+### Fixed
+
+- **An OpenFOAM case no longer re-discovers itself when the preview saves its view state.** Opening a `.foam` case persists `case.kratosview.json` beside the marker, and that format's timeline watcher (`{*,*/*}`) matched the sidecar as a mesh change: the debounced reload could start while **Show in mesh** was still loading the owning frame, and the navigation guard then refused the handoff with "Preview changed, is edited/resampled/busy, or navigation was superseded; no sample was selected." The extension's own `*.kratosview.json` sidecar is no longer treated as a mesh change, so an owning preview keeps the navigation it was asked for.
+
+## [5.23.0] - 2026-10-26
+
+### Added
+
+- meshio++ is now `^17.21.0` (from `^17.13.0`). The whole functional delta is `meshCadSurface`; the other 136 kernel functions and every reader/writer key are identical (lean 81 readers / 82 writers, full 83 / 82), so `transientAudit` and the format tables pass unedited. All of it is adopted. Packaged `.vsix`: 54.75 MB (54.11 MB before).
+- **Mesh CAD faces…** (and `mesh_derive` `kind: "cadSurface"`) gains the 17.19.0–17.21.0 controls: `minAngle` refinement with `smoothIterations`/`smoothMethod`, `lopCorners` and `poleRings`; curved `order: 2` (`triangle6`/`line3`) output; sizing by `curvatureDeviation`, `cellsAcrossGaps` and `grading`, per-face / per-edge sizes (`faceSizes`, `edgeSizes`) and a size field read from another mesh (`backgroundPath` + `backgroundArray`); `metric`, `virtualEdges`, `virtualFaces`, `modelTolerances` and `reparamConditionNumber`. The File-menu command asks for the edge length and then an optional JSON object of these controls; MCP takes them as `cadOptions`.
+- The CAD surface report: the summary states the refinement and smoothing counts, whether the angle bound was met or which corners and poles force smaller angles, the edges limiting the size, curved elements kept straight, virtual edges, reparametrised and merged faces, accepted tolerances and lopped corners, and `mesh_derive` returns the same as a structured `cadSurface` object with the angle histogram.
+
+### Changed
+
+- `order: 3` (`triangle10`/`line4`) is refused by name for CAD surface meshes: the extension's cell model and renderer carry linear and quadratic cells only.
+- A `cadSurface` background mesh is recorded in recipes and export provenance by file name, never as the mesh itself. The File-menu options prompt is compile-checked only (no VS Code integration harness).
+
 ## [5.22.0] - 2026-10-26
 
 ### Added
@@ -1358,7 +1429,10 @@ Four silent-correctness fixes. None of them threw, and none was visible in the m
 
 - Initial release: custom editor preview for `.mdpa` files.
 
-[Unreleased]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.15.0...HEAD
+[Unreleased]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.27.0...HEAD
+[5.27.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.26.0...v5.27.0
+[5.25.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.24.0...v5.25.0
+[5.24.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.22.0...v5.24.0
 [5.15.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.14.0...v5.15.0
 [4.20.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.19.0...v4.20.0
 [4.19.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.18.0...v4.19.0

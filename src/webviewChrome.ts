@@ -188,8 +188,10 @@ export const MENU_ACTION_COMMANDS: Readonly<Record<string, string>> = {
   exportPartitions: "kratos.mesh.exportPartitions",
   splitMesh: "kratos.mesh.splitMesh",
   simplify: "kratos.mesh.exportSimplified",
+  tessellateCurved: "kratos.mesh.exportTessellated",
   sampleGrid: "kratos.mesh.exportGrid",
   octreeMesh: "kratos.mesh.exportOctree",
+  kernelOp: "kratos.mesh.exportKernelOp",
   cadSurface: "kratos.mesh.exportCadSurface",
   generateMesh: "kratos.mesh.generate",
   nodeIds: "kratos.mdpa.toggleNodeIds",
@@ -198,31 +200,43 @@ export const MENU_ACTION_COMMANDS: Readonly<Record<string, string>> = {
 };
 
 export const ADVANCED_MENU_HTML = `<div id="advanced-popup" class="hidden" role="menu">
-        <button type="button" class="file-menu-item" data-action="meshSize" role="menuitem" title="Mesh size (nodal / element) + box-whisker">${ic("meshSize")}<span>Mesh Size</span></button>
+        <div class="file-menu-group-label" role="presentation">Special entities</div>
         <button type="button" class="file-menu-item" data-action="spheres" role="menuitem" title="Render one-node (particle) elements as spheres sized by RADIUS">${ic("spheres")}<span>Spheres…</span></button>
         <button type="button" class="file-menu-item" data-action="beams" role="menuitem" title="Render line (1D) elements as tubes sized by their CROSS_AREA section">${ic("beam")}<span>Beams…</span></button>
         <button type="button" class="file-menu-item" data-action="volume" role="menuitem" title="Show a regular lattice (.vti, sampled grids) as a volume, slices or iso surfaces">${ic("fieldContour")}<span>Volume view…</span></button>
+        <div class="file-menu-sep"></div>
+        <div class="file-menu-group-label" role="presentation">Analysis</div>
+        <button type="button" class="file-menu-item" data-action="meshSize" role="menuitem" title="Mesh size (nodal / element) + box-whisker">${ic("meshSize")}<span>Mesh Size</span></button>
         <button type="button" class="file-menu-item" data-action="normals" role="menuitem" title="Draw face normals — an inverted element points its arrow against its neighbours">${ic("normals")}<span>Face normals</span></button>
         <button type="button" class="file-menu-item" data-action="integrals" role="menuitem" title="Cell-measure-weighted total and mean of every cell field, per mesh and per region">${ic("average")}<span>Field integrals…</span></button>
         <button type="button" class="file-menu-item" data-action="streamlines" role="menuitem" title="Trace steady streamlines of a nodal vector field from seed points, a line, a plane or a SubModelPart, and export them as line cells">${ic("fieldQuiver")}<span>Streamlines…</span></button>
         <button type="button" class="file-menu-item" data-action="flowBalance" role="menuitem" title="Signed flux and area-weighted pressure through named SubModelPart boundaries: net flux, imbalance and pressure drop">${ic("average")}<span>Flow balance…</span></button>
+        <div class="file-menu-sep"></div>
+        <div class="file-menu-group-label" role="presentation">Special problemtypes</div>
         <button type="button" class="file-menu-item" data-action="optimizationProgress" role="menuitem" title="Follow an optimization run: objective and constraints per iteration, read from the optimizer's summary file">${ic("results")}<span>Optimization progress…</span></button>
         <button type="button" class="file-menu-item" data-action="windTunnel" role="menuitem" title="A few steps from a body surface to a wind-tunnel mesh and a prepared fluid case: tunnel box, refinement, carved body, boundary layer, wake and force coefficients">${ic("fieldQuiver")}<span>Virtual wind tunnel…</span></button>
-        <button type="button" class="file-menu-item" data-action="linkPreviews" role="menuitem" title="Link this preview with another open mesh or run so their camera, field, colour range, clip plane and physical time follow each other">${ic("merge")}<span>Link previews…</span></button>
-        <button type="button" class="file-menu-item" data-action="compareSplit" role="menuitem" title="Show a second mesh file in one split pane next to this one, coloured by the same field where it has it — a read-only reference, never edited">${ic("grid")}<span>Compare in split…</span></button>
+        <div class="file-menu-sep"></div>
+        <div class="file-menu-group-label" role="presentation">Data</div>
         <button type="button" class="file-menu-item" data-action="exportReport" role="menuitem" title="Inspect the latest export's fidelity and provenance">${ic("info")}<span>Export report…</span></button>
         <button type="button" class="file-menu-item" data-action="dataTable" role="menuitem" title="Browse every node/element value as a table, and export it as CSV or XLSX">${ic("info")}<span>Data table…</span></button>
         <button type="button" class="file-menu-item" data-action="plots" role="menuitem" title="Build scientific plots from mesh fields, histories, line probes and CSV/TSV tables">${ic("info")}<span>Plot builder…</span></button>
+        <button type="button" class="file-menu-item" data-action="propertiesEditor" role="menuitem" title="Browse and edit the Begin Properties sets: values, assign to a SubModelPart, clone or delete — beams' CROSS_AREA is one of these">${ic("edit")}<span>Properties editor…</span></button>
+        <div class="file-menu-sep"></div>
+        <div class="file-menu-group-label" role="presentation">Mesh</div>
         <button type="button" class="file-menu-item" data-action="exportSkin" role="menuitem" title="Export the boundary skin of the volume cells as an independent mesh file">${ic("crop")}<span>Export skin…</span></button>
         <button type="button" class="file-menu-item" data-action="exportPartitions" role="menuitem" title="Split the mesh into N per-part files (with optional ghost layers) and a manifest, for a distributed run — each part keeps the source's ids">${ic("partition")}<span>Export partitions…</span></button>
         <button type="button" class="file-menu-item" data-action="splitMesh" role="menuitem" title="Write one file per connected body, element type or field value">${ic("crop")}<span>Split mesh…</span></button>
         <button type="button" class="file-menu-item" data-action="simplify" role="menuitem" title="Write a simplified COPY of a triangle surface (quadric-error edge collapse): survivors keep their ids and boundary/creases are pinned">${ic("remesh")}<span>Simplify surface…</span></button>
+        <button type="button" class="file-menu-item" data-action="tessellateCurved" role="menuitem" title="Write a LINEAR copy of the curved (quadratic) cells, tessellated through their own shape functions; every cell carries SOURCE_ENTITY_ID. The open mesh keeps its curved cells">${ic("quadratic")}<span>Tessellate curved cells…</span></button>
         <button type="button" class="file-menu-item" data-action="sampleGrid" role="menuitem" title="Write a voxel occupancy or a signed-distance volume of the surface on a regular lattice (.vti keeps the sdf header)">${ic("grid")}<span>Sample to grid…</span></button>
         <button type="button" class="file-menu-item" data-action="octreeMesh" role="menuitem" title="Write a tetrahedral or hexahedral volume mesh of the inside of the surface, graded on an octree (meshio++ octreeMesh)">${ic("remesh")}<span>Octree volume mesh…</span></button>
+        <button type="button" class="file-menu-item" data-action="kernelOp" role="menuitem" title="Write a new mesh by extruding or revolving the open one, mirroring it, growing boundary layers, tetrahedralizing a skin, deriving an error-based size field or checking conformity (meshio++ 17.23.0)">${ic("remesh")}<span>Sweep, mirror and layers…</span></button>
         <button type="button" class="file-menu-item" data-action="cadSurface" role="menuitem" title="Triangulate the faces of the open CAD B-rep (.cad.json, STEP/IGES) into one conforming surface mesh, one SubModelPart per CAD face">${ic("remesh")}<span>Mesh CAD faces…</span></button>
         <button type="button" class="file-menu-item" data-action="generateMesh" role="menuitem" title="Write a procedural mesh from nothing: rectangle, box, disk, sphere, cylinder, annulus, L-shape, plate with a hole, honeycomb or reference cells">${ic("grid")}<span>Generate mesh…</span></button>
         <div class="file-menu-sep"></div>
-        <button type="button" class="file-menu-item" data-action="propertiesEditor" role="menuitem" title="Browse and edit the Begin Properties sets: values, assign to a SubModelPart, clone or delete — beams' CROSS_AREA is one of these">${ic("edit")}<span>Properties editor…</span></button>
+        <div class="file-menu-group-label" role="presentation">View and compare</div>
+        <button type="button" class="file-menu-item" data-action="linkPreviews" role="menuitem" title="Link this preview with another open mesh or run so their camera, field, colour range, clip plane and physical time follow each other">${ic("merge")}<span>Link previews…</span></button>
+        <button type="button" class="file-menu-item" data-action="compareSplit" role="menuitem" title="Show a second mesh file in one split pane next to this one, coloured by the same field where it has it — a read-only reference, never edited">${ic("grid")}<span>Compare in split…</span></button>
         <button type="button" class="file-menu-item" data-action="lighting" role="menuitem" title="Specular / ambient / diffuse + backface culling">${ic("lighting")}<span>Lighting…</span></button>
         <button type="button" class="file-menu-item" data-action="bookmarks" role="menuitem" title="Save and restore named camera views">${ic("bookmark")}<span>Camera Bookmarks…</span></button>
       </div>`;
@@ -243,6 +257,7 @@ export const VIEW_MENU_HTML = `<div id="view-popup" class="hidden" role="menu">
         <button type="button" class="file-menu-item" data-action="grid" role="menuitemcheckbox" title="Toggle background grid">${ic("grid")}<span>Grid</span></button>
         <button type="button" class="file-menu-item active" data-action="edges" role="menuitemcheckbox" title="Toggle mesh edge lines — off so a transparent mesh reads as surfaces">${ic("wireframe")}<span>Edges</span></button>
         <button type="button" class="file-menu-item" data-action="lod" role="menuitemcheckbox" title="Draw a decimated surface in place of the full layers — for navigating a big mesh. The mesh itself is untouched; picking is off while it shows">${ic("wireframe")}<span>Level of detail</span></button>
+        <button type="button" class="file-menu-item" data-action="constraintLinks" role="menuitemcheckbox" title="Draw a line from every slave node to its masters for the multi-point constraints (hanging nodes, tied dofs)">${ic("normals")}<span>Constraint links</span></button>
         <button type="button" class="file-menu-item" data-action="curved" role="menuitemcheckbox" title="Draw quadratic cells with their mid-side nodes (curved edges and faces). Display only: the stored cells and every export are unchanged">${ic("wireframe")}<span>Curved quadratic cells</span></button>
         <button type="button" class="file-menu-item" data-action="flatParts" role="menuitemcheckbox" title="List every SubModelPart as one flat row labelled with its full path, instead of the nested tree. View-only: layers, visibility and the mesh are untouched">${ic("tree")}<span>Flat SubModelPart list</span></button>
         <div class="file-menu-sep"></div>
@@ -839,6 +854,31 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
                   <div class="edit-progress-msg"></div>
                 </div>
               </div>
+              <div class="edit-form collapsed" id="pcad-form">
+                <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("sdf")}<span>Project onto CAD…</span></button>
+                <div class="edit-form-row">
+                  <label class="edit-field edit-field-grow"><span>CAD file</span><input type="text" id="pcad-path" class="edit-text" placeholder="Choose a .cad.json…" readonly></label>
+                  <button type="button" id="pcad-browse" class="panel-icon-btn" title="Choose the CAD B-rep (.cad.json, or a STEP/IGES file on the full build) to project onto">${ic("open")}</button>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field" title="The Elemental/Conditional field naming each surface cell's CAD face (Mesh CAD faces… writes CAD_FACE)."><span>face field</span><input type="text" id="pcad-face" class="edit-text" value="CAD_FACE"></label>
+                  <label class="edit-field" title="The field naming each line's CAD edge. Optional."><span>edge field</span><input type="text" id="pcad-edge" class="edit-text" value="CAD_EDGE"></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field" title="Nodes farther than this from the CAD stay where they are. 0 = unlimited."><span>max dist</span><input type="number" id="pcad-maxdist" class="edit-num edit-num-wide" value="0" min="0" step="any"></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field edit-field-grow" title="Only the nodes of this SubModelPart (and its subtree) may move."><span>move only</span><select id="pcad-move" class="edit-sel edit-sel-grow"><option value="">— all nodes —</option></select></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field edit-field-grow" title="The nodes of this SubModelPart (and its subtree) are held in place."><span>keep fixed</span><select id="pcad-pin" class="edit-sel edit-sel-grow"><option value="">— none —</option></select></label>
+                  <button type="button" class="edit-apply edit-apply-mmg" data-op="projectToCad" title="Move the nodes onto the CAD faces they are tagged with; the message reports nodes too far, ambiguous or outside a face's trims, and any cell it folds over" data-run-title="Project the nodes onto the CAD"><span class="apply-play">${ic("play")}</span><span class="apply-stop">${ic("stop")}</span></button>
+                </div>
+                <div class="edit-progress hidden" id="pcad-progress">
+                  <div class="edit-progress-track"><div class="edit-progress-bar"></div></div>
+                  <div class="edit-progress-msg"></div>
+                </div>
+              </div>
               <div class="edit-form collapsed" id="sob-form">
                 <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("smooth")}<span>Sobolev deformation</span></button>
                 <div class="edit-form-row">
@@ -885,6 +925,13 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
                   </select></label>
                   <label class="edit-field"><span>from</span><input type="number" id="renumber-start" class="edit-num" value="1" min="1" step="1"></label>
                   <button type="button" class="edit-apply" data-op="renumber" title="Compact ids into a gapless run — each entity kind numbered independently, as Kratos does">${ic("check")}</button>
+                </div>
+              </div>
+              <div class="edit-form collapsed">
+                <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("check")}<span>Tie hanging nodes</span></button>
+                <div class="edit-form-row">
+                  <label class="edit-field"><span>variables</span><input type="text" id="hang-vars" class="edit-text" value="DISPLACEMENT" title="Dof variables to tie. A vector (DISPLACEMENT, VELOCITY, …) is expanded to its X/Y(/Z) components; a scalar (TEMPERATURE, PRESSURE) is tied as is" spellcheck="false"></label>
+                  <button type="button" class="edit-apply" data-op="addHangingNodeConstraints" title="Find the nodes that sit in the middle of a coarse hexahedron or quadrilateral edge/face (an octree, a refined patch) and tie each to its masters with a linear constraint — a linear field is reproduced exactly">${ic("check")}</button>
                 </div>
               </div>
               <div class="edit-form collapsed">

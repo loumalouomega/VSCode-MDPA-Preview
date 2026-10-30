@@ -90,6 +90,29 @@ export interface ConstraintBlock {
   rows: ConstraintRow[];
 }
 
+/**
+ * Kratos' `ReadConstraintsBlock` fixes the number of master dofs from the header
+ * (slave variable followed by one variable per master) and requires every row of
+ * the block to match it, so a block must hold rows linking the same number of
+ * dofs. This is the header for `masterCount` masters of one variable.
+ */
+export function constraintHeaderVariables(variable: string, masterCount: number): string[] {
+  return Array.from({ length: 1 + masterCount }, () => variable);
+}
+
+/** Splits rows into runs of equal master count (ascending), raw rows last. */
+export function groupRowsByMasterCount(rows: readonly ConstraintRow[]): { masters: number | undefined; rows: ConstraintRow[] }[] {
+  const byCount = new Map<number, ConstraintRow[]>();
+  const raw: ConstraintRow[] = [];
+  for (const r of rows) {
+    if (r.kind === "raw") raw.push(r);
+    else (byCount.get(r.masterIds.length) ?? byCount.set(r.masterIds.length, []).get(r.masterIds.length)!).push(r);
+  }
+  const out = [...byCount.entries()].sort((a, b) => a[0] - b[0]).map(([masters, rs]) => ({ masters: masters as number | undefined, rows: rs }));
+  if (raw.length) out.push({ masters: undefined, rows: raw });
+  return out;
+}
+
 // --- formatting -------------------------------------------------------------
 
 /**

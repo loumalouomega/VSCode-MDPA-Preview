@@ -577,6 +577,7 @@ export const es: Catalogue = {
   "Simplify surface…": "Simplificar superficie…",
   "Sample to grid…": "Muestrear a rejilla…",
   "Octree volume mesh…": "Malla de volumen octree…",
+  "Sweep, mirror and layers…": "Barrido, simetría y capas…",
   "Mesh CAD faces…": "Mallar caras CAD…",
   "Generate mesh…": "Generar malla…",
   "Properties editor…": "Editor de propiedades…",
@@ -652,4 +653,9 @@ export const es: Catalogue = {
   "Enter three numbers: x, y, z": "Introduzca tres números: x, y, z",
   "Quantity of {v} over {part}": "Magnitud de {v} sobre {part}",
   "Quantity of {v} over the whole mesh": "Magnitud de {v} sobre toda la malla",
+  "Special entities": "Entidades especiales",
+  "Special problemtypes": "Problemtypes especiales",
+  "Data": "Datos",
+  "Mesh": "Malla",
+  "View and compare": "Vista y comparación",
 };

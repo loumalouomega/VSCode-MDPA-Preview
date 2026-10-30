@@ -6,6 +6,7 @@ import * as path from "node:path";
 import { ADOPTING_OPS } from "../parser/adoptingOps";
 import { flowDuct, icosphere, tetBar } from "./fixtures/shapes";
 import { writeMdpa } from "../parser/writers/mdpaWriter";
+import { linearToQuadratic } from "../parser/linearToQuadratic";
 import { PLOT_CAPABILITIES } from "../parser/plot/recipe";
 
 import {
@@ -1331,6 +1332,21 @@ test("mesh_derive igaSample/igaRefine run the NURBS side channel; a plain mesh i
   );
 });
 
+test("mesh_capabilities reports how this process was wired (workers, kernel tree)", async () => {
+  const caps = (await meshCapabilities()) as {
+    runtime: {
+      workers: Record<string, string>;
+      mmgWasm: string;
+      meshio: { dir: string; source: string } | null;
+    };
+  };
+  // In-process tests install no worker, which is exactly what must be visible.
+  assert.deepEqual(Object.keys(caps.runtime.workers).sort(), ["derived", "meshioRead", "meshioWrite", "mmg", "oracle"]);
+  for (const mode of Object.values(caps.runtime.workers)) assert.match(mode, /^(worker|in-process)$/);
+  assert.match(caps.runtime.mmgWasm, /^(bundled|package)$/);
+  assert.ok(caps.runtime.meshio && /^(node_modules|bundled)$/.test(caps.runtime.meshio.source));
+});
+
 test("mesh_capabilities reports the live build next to the routing tables", async () => {
   // The headless query roadmap Tier 1 item 1 asks for: readers/writers from
   // the live artifact, per-reader options-awareness, and the extension's own
@@ -1367,7 +1383,7 @@ test("mesh_capabilities reports the live build next to the routing tables", asyn
       adoptingOperations: string[];
     };
   };
-  assert.equal(caps.packageVersion, "17.13.0");
+  assert.equal(caps.packageVersion, "17.23.0");
   assert.ok(caps.backend.length > 0);
   assert.equal(caps.hasCgnslib, true);
   // 15.x bump (roadmap item 3) added vtkhdf/pvd/pvtu/pvtp/pcd/xyz/lsdyna/frd/
@@ -1407,8 +1423,8 @@ test("mesh_capabilities reports the live build next to the routing tables", asyn
   // unrouted (see meshCapabilities' operations.unavailable), the last adopted
   // by the .step export (faceDeviation: the fitted solid is measured against
   // the skin it came from).
-  assert.equal(caps.live.readers.length, 81);
-  assert.equal(caps.live.writers.length, 82);
+  assert.equal(caps.live.readers.length, 82);
+  assert.equal(caps.live.writers.length, 83);
   // 17.2.0 ships a FULL artifact beside the lean one; mesh_capabilities
   // reports both, live (see meshCapabilities.ts's `full`). The lean build is
   // what `live`/`readers` describe; `build` names its flavour, and the full
@@ -1429,8 +1445,8 @@ test("mesh_capabilities reports the live build next to the routing tables", asyn
   assert.equal(caps.full.build?.lz4, true);
   assert.equal(caps.full.build?.bzip2, true);
   assert.equal((caps.full.build as { kahip?: boolean } | undefined)?.kahip, true, "KaHIP is linked into the full build");
-  assert.equal(caps.full.build?.readers.length, 83);
-  assert.equal(caps.full.build?.writers.length, 82);
+  assert.equal(caps.full.build?.readers.length, 84);
+  assert.equal(caps.full.build?.writers.length, 83);
   assert.ok(caps.full.build?.readers.includes("step"));
   assert.ok(caps.full.build?.readers.includes("iges"));
   assert.ok(caps.live.readers.includes("vtm"));
@@ -3055,6 +3071,20 @@ test("mesh_derive decimate writes a simplified copy that keeps entity ids, and r
   assert.ok(back.blocks.every((b) => [...b.entityIds].every((id) => srcIds.has(id))), "survivors keep their source entity ids");
   await assert.rejects(meshDerive({ path: sphere, kind: "decimate", outputPath: path.join(dir, "x.mdpa") }), /exactly one/);
   await assert.rejects(meshDerive({ path: writeFixture(dir), kind: "decimate", ratio: 0.5, outputPath: path.join(dir, "y.mdpa") }), /volume cells|quadrilateral|Export skin|Simplexify/);
+});
+
+test("mesh_derive tessellate writes a linear copy with source ids, and refuses a mesh with no curved cells", async () => {
+  const dir = tmpDir();
+  fs.writeFileSync(path.join(dir, "quad.mdpa"), writeMdpa(linearToQuadratic(tetBar(2)).model));
+  const out = path.join(dir, "linear.mdpa");
+  const r = (await meshDerive({ path: path.join(dir, "quad.mdpa"), kind: "tessellate", levels: 1, outputPath: out })) as { summary: string };
+  assert.match(r.summary, /Tessellated 14 curved cell\(s\) at 1 level/);
+  const back = parseMdpa(fs.readFileSync(out, "utf8"));
+  assert.equal(back.blocks.filter((b) => b.kind === "Elements").reduce((s, b) => s + b.count, 0), 96);
+  assert.ok(back.fields.some((f) => f.variable === "SOURCE_ENTITY_ID" && f.kind === "Elemental"));
+  const lin = path.join(dir, "linear_in.mdpa");
+  fs.writeFileSync(lin, writeMdpa(tetBar(2)));
+  await assert.rejects(meshDerive({ path: lin, kind: "tessellate", outputPath: path.join(dir, "x.mdpa") }), /No curved cells/);
 });
 
 test("mesh_transform chains surfaceRemesh, volumeMesh and optimizeVolume, each adopted in place with its identity policy", async () => {

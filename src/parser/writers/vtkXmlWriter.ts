@@ -7,6 +7,7 @@
  */
 
 import { FieldData, MdpaDiagnostic, MdpaModel } from "../types";
+import { foldPolyhedra } from "./polyhedralLayout";
 import {
   buildCellLayout,
   CellLayout,
@@ -48,20 +49,28 @@ function dataArray(
   ];
 }
 
-function pointsBlock(model: MdpaModel, indent: string): string[] {
+/** Keeps the entries of a per-node array (`comps` values per node) whose node is not dropped. */
+function keepNodes(values: ArrayLike<number>, comps: number, keep: Uint8Array | undefined): ArrayLike<number> {
+  if (!keep) return values;
+  const out: number[] = [];
+  for (let i = 0; i < keep.length; i++) if (keep[i]) for (let k = 0; k < comps; k++) out.push(values[i * comps + k]);
+  return out;
+}
+
+function pointsBlock(model: MdpaModel, indent: string, keep?: Uint8Array): string[] {
   return [
     `${indent}<Points>`,
-    ...dataArray(null, "Float32", model.coords, 3, indent + "  "),
+    ...dataArray(null, "Float32", keepNodes(model.coords, 3, keep), 3, indent + "  "),
     `${indent}</Points>`,
   ];
 }
 
-function pointDataBlock(model: MdpaModel, indent: string): string[] {
+function pointDataBlock(model: MdpaModel, indent: string, keep?: Uint8Array): string[] {
   const nodal = model.fields.filter((f) => f.kind === "Nodal");
   if (nodal.length === 0 || model.nodeCount === 0) return [];
   const out = [`${indent}<PointData>`];
   for (const f of nodal) {
-    out.push(...dataArray(f.variable, f.numericType === "integer" ? "Int64" : "Float64", pointFieldArray(f, model), f.components, indent + "  ", f.numericType ?? "unknown"));
+    out.push(...dataArray(f.variable, f.numericType === "integer" ? "Int64" : "Float64", keepNodes(pointFieldArray(f, model), f.components, keep), f.components, indent + "  ", f.numericType ?? "unknown"));
   }
   out.push(`${indent}</PointData>`);
   return out;
@@ -82,29 +91,67 @@ function cellDataBlock(fields: FieldData[], layout: CellLayout, indent: string):
 
 export function writeVtu(model: MdpaModel): string {
   const diagnostics: MdpaDiagnostic[] = [];
-  const layout = buildCellLayout(model, diagnostics);
+  // A model that kept its original polyhedra (MdpaModel.polyhedra) writes them as
+  // VTK_POLYHEDRON cells instead of the tetrahedra they were decomposed into, and
+  // leaves out the apex nodes the decomposition invented (unless a remaining
+  // cell still uses one).
+  const folded = foldPolyhedra(model, buildCellLayout(model, diagnostics));
+  const layout = folded.layout;
+
+  let keep: Uint8Array | undefined;
+  let newIndex: Int32Array | undefined;
+  if (folded.folded > 0 && model.polyhedra && model.polyhedra.apexNodeIds.length > 0) {
+    const used = new Uint8Array(model.nodeCount);
+    for (const cell of layout.cells) for (const n of cell.nodes) used[n] = 1;
+    const apex = new Set<number>(model.polyhedra.apexNodeIds);
+    keep = new Uint8Array(model.nodeCount).fill(1);
+    newIndex = new Int32Array(model.nodeCount);
+    let next = 0;
+    for (let i = 0; i < model.nodeCount; i++) {
+      if (apex.has(model.nodeIds[i]) && !used[i]) keep[i] = 0;
+      else newIndex[i] = next++;
+    }
+    if (next === model.nodeCount) keep = newIndex = undefined;
+  }
+  const at = (n: number): number => (newIndex ? newIndex[n] : n);
+  const nodeTotal = keep ? keep.reduce((s, k) => s + k, 0) : model.nodeCount;
 
   const connectivity: number[] = [];
   const offsets: number[] = [];
   const types: number[] = [];
-  for (const cell of layout.cells) {
-    for (const n of cell.nodes) connectivity.push(n);
+  const faces: number[] = [];
+  const faceOffsets: number[] = [];
+  for (let c = 0; c < layout.cells.length; c++) {
+    const cell = layout.cells[c];
+    for (const n of cell.nodes) connectivity.push(at(n));
     offsets.push(connectivity.length);
     types.push(cell.type);
+    const cellFaces = folded.faces.get(c);
+    if (cellFaces) {
+      faces.push(cellFaces.length);
+      for (const face of cellFaces) {
+        faces.push(face.length);
+        for (const n of face) faces.push(at(n));
+      }
+    }
+    faceOffsets.push(cellFaces ? faces.length : -1);
   }
 
   const lines: string[] = [
     `<?xml version="1.0"?>`,
     `<VTKFile type="UnstructuredGrid" version="1.0" byte_order="LittleEndian">`,
     `  <UnstructuredGrid>`,
-    `    <Piece NumberOfPoints="${model.nodeCount}" NumberOfCells="${layout.cells.length}">`,
-    ...pointsBlock(model, "      "),
+    `    <Piece NumberOfPoints="${nodeTotal}" NumberOfCells="${layout.cells.length}">`,
+    ...pointsBlock(model, "      ", keep),
     `      <Cells>`,
     ...dataArray("connectivity", "Int32", connectivity, 1, "        "),
     ...dataArray("offsets", "Int32", offsets, 1, "        "),
     ...dataArray("types", "UInt8", types, 1, "        "),
+    ...(folded.faces.size > 0
+      ? [...dataArray("faces", "Int32", faces, 1, "        "), ...dataArray("faceoffsets", "Int32", faceOffsets, 1, "        ")]
+      : []),
     `      </Cells>`,
-    ...pointDataBlock(model, "      "),
+    ...pointDataBlock(model, "      ", keep),
     ...cellDataBlock(model.fields, layout, "      "),
     `    </Piece>`,
     `  </UnstructuredGrid>`,

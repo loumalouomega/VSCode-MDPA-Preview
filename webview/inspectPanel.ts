@@ -18,6 +18,8 @@ export interface InspectEntityInfo {
   kind: "Element" | "Condition" | "Geometry";
   id: number;
   blockName?: string;
+  /** Set when this Element is one of the tetrahedra a read polyhedron was decomposed into. */
+  polyhedron?: { index: number; children: number };
   smpPaths: string[];
   fields: InspectFieldValue[];
 }
@@ -27,6 +29,8 @@ export interface InspectNodeInfo {
   coords: [number, number, number];
   smpPaths: string[];
   fields: InspectFieldValue[];
+  /** One line per multi-point constraint that names this node. */
+  constraints?: string[];
 }
 
 export interface InspectSelection {
@@ -251,6 +255,7 @@ export function renderInspectPanel(
     const e = sel.entity;
     container.appendChild(section(`${e.kind} ${e.id}`));
     if (e.blockName) container.appendChild(row("Block", e.blockName));
+    if (e.polyhedron) container.appendChild(row(t("Polyhedron"), t("#{n} (decomposed into {k} tetrahedra)", { n: String(e.polyhedron.index + 1), k: String(e.polyhedron.children) })));
     container.appendChild(smpList(e.smpPaths,state.canPlotSeries?handlers.onSaveRegionMonitor:undefined));
     container.appendChild(fieldsTable(e.fields,state.canPlotSeries?variable=>handlers.onPlotOverTime?.("entity",variable):undefined,state.canPlotSeries&&handlers.onSaveMonitor?variable=>handlers.onSaveMonitor?.("entity",variable):undefined));
     const btn = plotBtn("entity", e.fields.length);
@@ -262,6 +267,7 @@ export function renderInspectPanel(
     container.appendChild(section(`Nearest node ${n.id}`));
     container.appendChild(row("Coords", fmtValue(n.coords)));
     container.appendChild(smpList(n.smpPaths,state.canPlotSeries?handlers.onSaveRegionMonitor:undefined));
+    for (const line of n.constraints ?? []) container.appendChild(row(t("Constraint"), line));
     container.appendChild(fieldsTable(n.fields,state.canPlotSeries?variable=>handlers.onPlotOverTime?.("node",variable):undefined,state.canPlotSeries&&handlers.onSaveMonitor?variable=>handlers.onSaveMonitor?.("node",variable):undefined,state.canPlotSeries&&handlers.onSavePointMonitor?variable=>handlers.onSavePointMonitor?.(variable):undefined));
     const btn = plotBtn("node", n.fields.length);
     if (btn) container.appendChild(btn);

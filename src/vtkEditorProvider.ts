@@ -624,7 +624,11 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
      * instead). 500 ms matches the MDPA provider's file watcher.
      */
     let rediscoverDebounce: ReturnType<typeof setTimeout> | undefined;
-    const scheduleRediscover = (): void => {
+    const scheduleRediscover = (uri?: vscode.Uri): void => {
+      // The extension's own view sidecar lives beside the mesh and `.foam`'s
+      // watcher glob ({*,*/*}) includes it. It never changes mesh content, so
+      // it must not queue a reload that supersedes an in-flight navigation.
+      if (uri?.path.toLowerCase().endsWith(".kratosview.json")) return;
       frameCache.clear(); // the directory changed: no cached frame is trusted
       if (captureLocked) {
         captureSourceChanged = true;
@@ -1166,8 +1170,10 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
         msg?.type === "menuExportPartitions" ||
         msg?.type === "menuSplitMesh" ||
         msg?.type === "menuExportSimplified" ||
+        msg?.type === "menuExportTessellated" ||
         msg?.type === "menuExportGrid" ||
         msg?.type === "menuExportOctree" ||
+        msg?.type === "menuExportKernelOp" ||
         msg?.type === "menuExportCadSurface" ||
         msg?.type === "menuGenerateMesh" ||
         msg?.type === "menuExportTable" ||

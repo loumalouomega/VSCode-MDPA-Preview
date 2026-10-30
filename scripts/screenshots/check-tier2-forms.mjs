@@ -104,6 +104,13 @@ assert.equal("lo" in m, false, "standardize sends no range");
 assert.equal(m.mode, "standardize");
 assert.equal(await page.evaluate(() => document.getElementById("cond-lo-field").classList.contains("hidden")), true, "lo/hi hide for standardize");
 
+// --- Tie hanging nodes ----------------------------------------------------------------
+m = await fillAndClick({ "hang-vars": "DISPLACEMENT_X, TEMPERATURE" }, '[data-op="addHangingNodeConstraints"]');
+assert.deepEqual(m, { type: "applyOp", op: "addHangingNodeConstraints", variables: ["DISPLACEMENT_X", "TEMPERATURE"] });
+m = await fillAndClick({ "hang-vars": "" }, '[data-op="addHangingNodeConstraints"]');
+assert.deepEqual(m, { type: "applyOp", op: "addHangingNodeConstraints" });
+assert.equal(await fillAndClick({ "hang-vars": "1BAD" }, '[data-op="addHangingNodeConstraints"]'), undefined, "an illegal variable name posts nothing");
+
 // --- Kinematic pressure -> Pa ---------------------------------------------------------
 m = await fillAndClick({ "cvt-field": fieldOption, "cvt-density": 1.2, "cvt-reference": "gauge", "cvt-output": "P_PA" }, '[data-op="convertFieldUnits"]');
 assert.deepEqual(m, { type: "applyOp", op: "convertFieldUnits", kind, variable, density: 1.2, reference: "gauge", output: "P_PA" });

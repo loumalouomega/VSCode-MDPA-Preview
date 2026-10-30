@@ -4,6 +4,8 @@ import { buildDisplayGeometry, prepareNodes } from "../parser/render/displayGeom
 import { VtkCellType } from "../parser/geometryMap";
 import { quadraticFaces, tessellateEdge, tessellateFace } from "../parser/render/curvedDisplay";
 import type { MdpaModel } from "../parser/types";
+import * as fs from "node:fs";
+import * as path from "node:path";
 
 function prep(pts: number[][]) {
   const coords = new Float32Array(pts.flat());
@@ -84,4 +86,58 @@ test("face tables reference valid local nodes", () => {
     for (const f of quadraticFaces(k as keyof typeof sizes)) for (const i of f) assert.ok(i >= 0 && i < n);
   }
   assert.equal(tessellateEdge([1, 2], 1), null);
+});
+
+test("two tet10 sharing a face weld: the shared face disappears and the boundary stays watertight", () => {
+  // Cell B shares corners 0,1,2 (and their three mid-edge nodes) with cell A.
+  const pts: number[][] = [];
+  const keyed = new Map<string, number>();
+  const node = (p: number[], key: string): number => {
+    const known = keyed.get(key);
+    if (known !== undefined) return known;
+    pts.push(p);
+    keyed.set(key, pts.length);
+    return pts.length;
+  };
+  const corner = (i: number, p: number[]) => node(p, `c${i}`);
+  const mid = (a: number[], b: number[], ia: number, ib: number) => node(a.map((v, i) => (v + b[i]) / 2), `m${Math.min(ia, ib)}-${Math.max(ia, ib)}`);
+  const cell = (cs: number[][], ids: number[]): number[] => {
+    const n = cs.map((c, i) => corner(ids[i], c));
+    const edges = [[0, 1], [1, 2], [2, 0], [0, 3], [1, 3], [2, 3]];
+    return [...n, ...edges.map(([a, b]) => mid(cs[a], cs[b], ids[a], ids[b]))];
+  };
+  const A = cell([[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]], [0, 1, 2, 3]);
+  const B = cell([[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, -1]], [0, 1, 2, 4]);
+  assert.equal(pts.length, 14, "10 + 10 nodes, 6 shared");
+  const g = buildDisplayGeometry(
+    prep(pts),
+    [{ cellType: VtkCellType.QUADRATIC_TETRA, nodeIds: A }, { cellType: VtkCellType.QUADRATIC_TETRA, nodeIds: B }],
+    undefined,
+    { curved: { level: 2 } }
+  )!;
+  const polys = g.geometry.polys!;
+  assert.equal(polys.length / 4, 6 * 16, "six outer faces of 16 triangles each; the shared face is interior");
+  const edges = new Map<string, number>();
+  for (let i = 0; i < polys.length; i += 4) {
+    for (let k = 0; k < 3; k++) {
+      const a = polys[i + 1 + k], b = polys[i + 1 + ((k + 1) % 3)];
+      const key = a < b ? `${a}-${b}` : `${b}-${a}`;
+      edges.set(key, (edges.get(key) ?? 0) + 1);
+    }
+  }
+  for (const n of edges.values()) assert.equal(n, 2, "every edge of the welded surface is shared by exactly two triangles");
+});
+
+test("display subdivision can never reach a writer: only the display geometry builder imports it", () => {
+  const root = path.resolve(__dirname, "..", "..", "src");
+  const importers: string[] = [];
+  const walk = (dir: string) => {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) { if (e.name !== "test") walk(p); }
+      else if (e.name.endsWith(".ts") && /from\s+["'][^"']*curvedDisplay["']/.test(fs.readFileSync(p, "utf8"))) importers.push(path.relative(root, p).split(path.sep).join("/"));
+    }
+  };
+  walk(root);
+  assert.deepEqual(importers, ["parser/render/displayGeometry.ts"], "writers, exporters and the MCP layer must stay on the stored (high-order) cells");
 });

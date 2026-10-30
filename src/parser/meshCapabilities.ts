@@ -49,7 +49,12 @@ export interface MeshCapabilities {
   packageVersion?: string;
   namedWriters: string[];
   operations: { available: string[]; unavailable: { name: string; reason: string }[] };
-  /** Sequential or threaded build actually instantiated (`parallelBackend`). */
+  /**
+   * The build this process instantiated for its own in-process calls
+   * (`parallelBackend`). The host thread always gets the sequential build: the
+   * threaded one is used only inside the single-operation worker threads (see
+   * `markSingleOperationThread` in parser/meshio.ts).
+   */
   backend: string;
   /**
    * The LIVE build's flavour ("lean" here) and the optional native libraries
@@ -188,6 +193,7 @@ const UNROUTED_READER_REASONS: Record<string, string> = {
   vtp: "parsed AND written natively (vtkXmlWriter/vtmWriter); meshio++'s vtp writer is not routed",
   vtu: "parsed natively (VTK XML, incl. appended data and multiple pieces); ours stays authoritative",
   vtm: "read/written natively by vtkMultiblock/vtmWriter; a multi-file index the single-path contract cannot express",
+  medit_sol: "a Medit solution file (SolAtVertices values only, 17.23.0): no geometry, so it opens as nothing and a write would drop the mesh; it pairs with a .mesh, which the medit key already reads and writes",
   pvd: "read natively instead (pvdIndex.ts, roadmap item 3): each step is an ordinary .vtu/.vtp, already owned by our own readers",
   // The four name-matched result readers (16.14.0). Upstream finds these by
   // FILE NAME, not by extension, so no extension this extension offers can
@@ -281,7 +287,7 @@ export async function getMeshCapabilities(): Promise<MeshCapabilities> {
     unroutedReaders,
     writers: { ...MESHIO_WRITE_FORMAT },
     namedWriters: [...MESHIO_WRITER_KEYS],
-    operations: { available: ["featureEdges", "hausdorff", "qualityGate", "periodicNodes", "regionAlgebra", "resampleSequence", "segment", "refinePatches", "octree", "octreeMesh", "meshCadSurface", "generators (rectangle, box, disk, uvSphere, icosaSphere, cylinder, referenceCells, referenceTriangle, ngon, annulus, lshape, plateWithHole, honeycomb)"], unavailable: [
+    operations: { available: ["featureEdges", "hausdorff", "qualityGate", "periodicNodes", "regionAlgebra", "resampleSequence", "segment", "refinePatches", "octree", "octreeMesh", "meshCadSurface", "projectToCad", "extrude", "revolve", "mirror", "boundaryLayer", "tetrahedralize", "errorSize", "checkConformity", "generators (rectangle, box, disk, uvSphere, icosaSphere, cylinder, referenceCells, referenceTriangle, ngon, annulus, lshape, plateWithHole, honeycomb, line, circle, helix, spherePoints, boxPoints, tetraSphere, octaSphere, cubeSphere, geoSphere, torus, moebius, tube, cone, capsule, boxSurface, platonic, ball, sphericalShell, pipe, fichera, solidTorus)"], unavailable: [
       { name: "agglomerate", reason: "Polyhedral output cannot be preserved by the editable model." },
       { name: "fitPrimitives", reason: "Fits a primitive to each patch of a segmented surface and only labels it (fit:* data); the .step export's fitCad does the fitting itself, and no Kratos entity carries a fitted primitive." },
       { name: "retagRegions", reason: "SubModelParts do not retain native region tags or side selectors." }

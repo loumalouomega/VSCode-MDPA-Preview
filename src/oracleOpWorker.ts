@@ -18,6 +18,10 @@ import { parentPort } from "node:worker_threads";
 import { applyOracleOp } from "./parser/operations";
 import type { OpRecord } from "./parser/operations";
 import type { MdpaModel } from "./parser/types";
+import { markSingleOperationThread } from "./parser/meshio";
+
+// One operation per worker thread, which then ends (see markSingleOperationThread).
+markSingleOperationThread();
 
 export interface OracleWorkRequest {
   model: MdpaModel;

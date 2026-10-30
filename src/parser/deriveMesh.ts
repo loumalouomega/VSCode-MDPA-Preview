@@ -24,8 +24,10 @@ import { thresholdCells, ThresholdRule } from "./thresholdCells";
 import { restrictToElements, elementMeasures } from "./selectCells";
 import { extractSkinModel } from "./extractSkin";
 import { decimateModel, DecimateParams } from "./decimate";
+import { tessellateModel, withTessellateSourceFields, TessellateParams, TESSELLATE_MAX_LEVELS } from "./tessellate";
 import { sampleGrid, GridSampleSpec } from "./gridSample";
-import { generateMesh, octreeMeshModel, octreeModel, cadSurfaceModel, GenerateSpec, OctreeMeshSpec, OctreeSpec, CadSurfaceSpec } from "./kernelMeshes";
+import { kernelOpModel, KernelOpSpec } from "./kernelOps";
+import { generateMesh, octreeMeshModel, octreeModel, cadSurfaceModel, GenerateSpec, OctreeMeshSpec, OctreeSpec, CadSurfaceSpec, CadSurfaceReport } from "./kernelMeshes";
 import { describeStreamlines, streamlinesToModel, traceStreamlines, StreamlineParams, StreamlineResult } from "./streamlines";
 import type { StreamlineOptions } from "./streamlines";
 import type { MeshioMesh as RawMeshioMesh } from "./meshioConvert";
@@ -77,14 +79,22 @@ export interface ThresholdSpec {
 export type DecimateSpec = { kind: "decimate" } & DecimateParams;
 
 /**
+ * A LINEAR copy of the open mesh's curved cells (6-node triangles, 8/9-node
+ * quads, 10-node tetrahedra, 27-node hexahedra) tessellated through their own
+ * shape functions (see tessellate.ts). The open mesh keeps its high-order cells;
+ * the copy tags every cell with the entity it came from (`SOURCE_ENTITY_ID`).
+ */
+export type TessellateSpec = { kind: "tessellate" } & TessellateParams;
+
+/**
  * Steady streamlines of a Nodal vector field, as line cells (see streamlines.ts).
  * `frame` names the frame the field came from — a file (and step) the caller
  * knows and this module does not — and is repeated in the summary.
  */
 export type StreamlineSpec = { kind: "streamlines"; frame?: string } & StreamlineParams;
 
-export type DeriveSpec = ({ kind: "featureEdges" } & FeatureEdgeOptions) | SliceSpec | IsosurfaceSpec | ThresholdSpec | DecimateSpec | GridSampleSpec | StreamlineSpec | IgaRefineSpec | IgaSampleSpec | GenerateSpec | OctreeMeshSpec | OctreeSpec | CadSurfaceSpec;
-export const DERIVE_KINDS = ["featureEdges", "slice", "isosurface", "threshold", "decimate", "grid", "voxelize", "sdfVolume", "streamlines", "igaRefine", "igaSample", "generate", "octreeMesh", "octree", "cadSurface"] as const;
+export type DeriveSpec = ({ kind: "featureEdges" } & FeatureEdgeOptions) | SliceSpec | IsosurfaceSpec | ThresholdSpec | DecimateSpec | TessellateSpec | GridSampleSpec | StreamlineSpec | IgaRefineSpec | IgaSampleSpec | GenerateSpec | OctreeMeshSpec | OctreeSpec | CadSurfaceSpec | KernelOpSpec;
+export const DERIVE_KINDS = ["featureEdges", "slice", "isosurface", "threshold", "decimate", "tessellate", "grid", "voxelize", "sdfVolume", "streamlines", "igaRefine", "igaSample", "generate", "octreeMesh", "octree", "cadSurface", "extrude", "revolve", "mirror", "boundaryLayer", "tetrahedralize", "errorSize", "checkConformity"] as const;
 /** Kinds that need no input mesh at all (a grid is made from nothing). */
 export const DERIVE_STANDALONE_KINDS: readonly string[] = ["grid", "generate"];
 
@@ -131,10 +141,29 @@ export interface DeriveResult {
   denseLattice?: boolean;
   /** Present for `streamlines`: how each line ended and which seeds gave none. */
   streamlines?: Pick<StreamlineResult, "seeds" | "terminationCounts" | "rejected" | "cancelled" | "truncated">;
+  /** Present for `cadSurface`: the structured meshing report behind the summary. */
+  cadSurface?: CadSurfaceReport;
   /** One or two sentences: what was cut, and how much of the source it covers. */
   summary: string;
   /** Appended to the source stem for a default filename. */
   suffix: string;
+}
+
+/**
+ * The spec as it is written into a recipe / provenance block: a `cadSurface`
+ * background mesh is a whole parsed model, so it is replaced by the label of
+ * the file it came from.
+ */
+export function recordedDeriveParameters(spec: DeriveSpec): Record<string, unknown> {
+  if (spec.kind === "cadSurface" && (spec.backgroundModel || spec.metricBackgroundModel)) {
+    const { backgroundModel: _model, metricBackgroundModel: _metric, ...rest } = spec;
+    return {
+      ...rest,
+      ...(spec.backgroundModel ? { backgroundLabel: spec.backgroundLabel ?? "(a mesh)" } : {}),
+      ...(spec.metricBackgroundModel ? { metricBackgroundLabel: spec.metricBackgroundLabel ?? "(a mesh)" } : {}),
+    };
+  }
+  return { ...spec };
 }
 
 const finite3 = (v: unknown): v is Vec3 => Array.isArray(v) && v.length === 3 && v.every((x) => typeof x === "number" && Number.isFinite(x));
@@ -277,6 +306,19 @@ export async function deriveMesh(
         suffix: "decimated",
       };
     }
+    case "tessellate": {
+      if (signal?.aborted) throw new Error("cancelled");
+      const levels = spec.levels ?? 2;
+      if (!Number.isInteger(levels) || levels < 0 || levels > TESSELLATE_MAX_LEVELS) throw new Error(`Tessellation levels must be an integer from 0 to ${TESSELLATE_MAX_LEVELS}.`);
+      const r = await tessellateModel(model, { levels }, diagnostics);
+      if (signal?.aborted) throw new Error("cancelled");
+      if (!r.changed) throw new Error(r.message);
+      return {
+        model: withTessellateSourceFields(r.model, r.parents),
+        summary: `${r.message} Each Element/Condition carries SOURCE_ENTITY_ID, the id of the cell it was tessellated from. The open mesh keeps its curved cells.`,
+        suffix: "tessellated",
+      };
+    }
     case "generate":
     case "octreeMesh":
     case "octree":
@@ -287,6 +329,18 @@ export async function deriveMesh(
         : spec.kind === "octreeMesh" ? await octreeMeshModel(model, spec, diagnostics)
         : spec.kind === "octree" ? await octreeModel(model, spec, diagnostics)
         : await cadSurfaceModel(model, spec, diagnostics);
+      if (signal?.aborted) throw new Error("cancelled");
+      return r;
+    }
+    case "extrude":
+    case "revolve":
+    case "mirror":
+    case "boundaryLayer":
+    case "tetrahedralize":
+    case "errorSize":
+    case "checkConformity": {
+      if (signal?.aborted) throw new Error("cancelled");
+      const r = await kernelOpModel(model, spec, diagnostics);
       if (signal?.aborted) throw new Error("cancelled");
       return r;
     }

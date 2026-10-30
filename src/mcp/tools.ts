@@ -58,8 +58,9 @@ import { surfaceDefects } from "../parser/surfaceDefects";
 import { curvatureModel, gaussBonnetResidual } from "../parser/curvature";
 import { compareMeshes, compareFieldModel } from "../parser/meshCompare";
 import { fieldUnitLabel } from "../parser/fieldDimensions";
-import { DeriveSpec, DERIVE_KINDS, DERIVE_STANDALONE_KINDS } from "../parser/deriveMesh";
-import { GENERATOR_SHAPES, GeneratorShape } from "../parser/kernelMeshes";
+import { DeriveSpec, DERIVE_KINDS, DERIVE_STANDALONE_KINDS, recordedDeriveParameters } from "../parser/deriveMesh";
+import { GENERATOR_SHAPES, GeneratorShape, cadSurfaceOptionsFrom, CadSurfaceOptionsInput } from "../parser/kernelMeshes";
+import { KERNEL_OP_KINDS, KernelOpKind } from "../parser/kernelOps";
 import type { StreamSeeds } from "../parser/streamlines";
 import { writeRawMeshioBytes } from "../parser/meshio";
 import { probeAlongPath, probeToCsv } from "../parser/pathProbe";
@@ -113,7 +114,7 @@ import {
   verifyReport,
 } from "../parser/exportReport";
 import { isNativeExportExtension } from "../parser/writers/exportFormats";
-import { meshioPackageVersion } from "../parser/meshio";
+import { meshioPackageSource, meshioPackageVersion } from "../parser/meshio";
 import {
   EXPORTABLE_EXTENSIONS,
   isExportableExtension,
@@ -135,6 +136,7 @@ import {
 import { packPvdSeries, PackPvdResult, pvdOutputClash, pvdPieceDir } from "../parser/packPvd";
 import { buildMembershipIndex } from "../parser/smpMembership";
 import { getMeshCapabilities } from "../parser/meshCapabilities";
+import { getRuntimeWiring } from "../parser/runtimeWiring";
 import { writeXlsx } from "../parser/writers/xlsxWriter";
 import { computeMeshQuality } from "../parser/meshQuality";
 import { SelectionSeed, resolveSeed } from "../parser/selectionCore";
@@ -724,6 +726,20 @@ export async function meshInfo(args: {
             radiusMin: spheres.radiusMin,
             radiusMax: spheres.radiusMax,
             suggestedRadius: defaultSphereRadius(model),
+          },
+        }
+      : {}),
+    // Reported only for a file whose polyhedra were decomposed on read and are
+    // still intact (see MdpaModel.polyhedra): counts only, never the arrays.
+    // The `.vtu` writer emits these as VTK_POLYHEDRON cells; every other format
+    // writes the tetrahedra, and any edit that changes the mesh drops the channel.
+    ...(model.polyhedra
+      ? {
+          polyhedra: {
+            count: model.polyhedra.count,
+            tetrahedra: model.polyhedra.childIds.length,
+            apexNodes: model.polyhedra.apexNodeIds.length,
+            preservedOn: [".vtu"],
           },
         }
       : {}),
@@ -1755,6 +1771,7 @@ export async function meshDerive(args: {
     | "isosurface"
     | "threshold"
     | "decimate"
+    | "tessellate"
     | "grid"
     | "voxelize"
     | "sdfVolume"
@@ -1764,7 +1781,14 @@ export async function meshDerive(args: {
     | "generate"
     | "octreeMesh"
     | "octree"
-    | "cadSurface";
+    | "cadSurface"
+    | "extrude"
+    | "revolve"
+    | "mirror"
+    | "boundaryLayer"
+    | "tetrahedralize"
+    | "errorSize"
+    | "checkConformity";
   outputPath: string;
   outputFormat?: string;
   /** Read this step of a multi-step file instead of the first (the frame every kind works on). */
@@ -1802,6 +1826,8 @@ export async function meshDerive(args: {
   nonManifold?: boolean;
   inconsistent?: boolean;
   frozenPart?: string;
+  /** tessellate: divisions per axis / recursive splits (0-5, default 2). */
+  levels?: number;
   dims?: number[];
   spacing?: number[];
   resolution?: number[];
@@ -1812,6 +1838,8 @@ export async function meshDerive(args: {
   fill?: "all" | "surface" | "inside";
   sign?: "pseudonormal" | "winding-number" | "unsigned";
   attachOccupancy?: boolean;
+  /** voxelize: the plane of a planar surface, auto (default) | xy | xz | yz. */
+  plane?: "auto" | "xy" | "xz" | "yz";
   structure?: "voxel" | "octree";
   location?: "corner" | "center";
   band?: number;
@@ -1831,6 +1859,8 @@ export async function meshDerive(args: {
   /** generate: which procedural mesh, and its arguments by name (see GENERATORS in kernelMeshes.ts). */
   shape?: string;
   params?: Record<string, unknown>;
+  /** octreeMesh: tie the hexahedral leaves' hanging nodes with LinearMasterSlaveConstraints (true, or the variables). */
+  hangingConstraints?: boolean | string[];
   /** octreeMesh: upstream's OctreeMeshOptions verbatim (the kernel validates keys and ranges). */
   options?: Record<string, unknown>;
   /** octree (17.8.0): the root lattice, level range and balance rule. */
@@ -1845,6 +1875,8 @@ export async function meshDerive(args: {
   tolerance?: number;
   recordFaceIds?: boolean;
   strict?: boolean;
+  /** cadSurface (17.19.0–17.21.0): angle bound, order, size controls and the rest; `backgroundPath` names a mesh file read as the size field. */
+  cadOptions?: CadSurfaceOptionsInput;
 }, execution: PlotExecution = {}): Promise<object> {
   if (!args.path && !DERIVE_STANDALONE_KINDS.includes(args.kind)) throw new Error(`kind "${args.kind}" needs a \`path\`.`);
   const src = args.path
@@ -1893,6 +1925,8 @@ export async function meshDerive(args: {
       featureAngle: args.featureAngle,
       frozenPart: args.frozenPart,
     };
+  } else if (args.kind === "tessellate") {
+    spec = { kind: "tessellate", levels: args.levels };
   } else if (args.kind === "grid") {
     spec = {
       kind: "grid",
@@ -1911,7 +1945,7 @@ export async function meshDerive(args: {
     };
     spec =
       args.kind === "voxelize"
-        ? { kind: "voxelize", ...lattice, fill: args.fill, attachOccupancy: args.attachOccupancy }
+        ? { kind: "voxelize", ...lattice, fill: args.fill, attachOccupancy: args.attachOccupancy, plane: args.plane }
         : { kind: "sdfVolume", ...lattice, structure: args.structure, location: args.location, band: args.band, rootResolution: args.rootResolution, maxDepth: args.maxDepth };
   } else if (args.kind === "streamlines") {
     if (!args.variable) throw new Error("Streamlines need a `variable` (a Nodal vector field).");
@@ -1940,8 +1974,10 @@ export async function meshDerive(args: {
     if (!args.shape) throw new Error(`generate needs a \`shape\` (${GENERATOR_SHAPES.join(", ")}).`);
     if (!(GENERATOR_SHAPES as string[]).includes(args.shape)) throw new Error(`shape must be one of ${GENERATOR_SHAPES.join(", ")}.`);
     spec = { kind: "generate", shape: args.shape as GeneratorShape, params: args.params };
+  } else if (KERNEL_OP_KINDS.includes(args.kind as KernelOpKind)) {
+    spec = { kind: args.kind as KernelOpKind, options: args.options };
   } else if (args.kind === "octreeMesh") {
-    spec = { kind: "octreeMesh", options: args.options };
+    spec = { kind: "octreeMesh", options: args.options, hangingConstraints: args.hangingConstraints };
   } else if (args.kind === "octree") {
     spec = {
       kind: "octree",
@@ -1957,15 +1993,28 @@ export async function meshDerive(args: {
     };
   } else if (args.kind === "cadSurface") {
     if (args.targetSize === undefined) throw new Error("cadSurface needs a `targetSize` (the edge length to mesh to).");
+    const { backgroundPath, metricBackgroundPath, ...cad } = cadSurfaceOptionsFrom(args.cadOptions);
+    let backgroundModel: MdpaModel | undefined;
+    if (backgroundPath) backgroundModel = (await loadMesh(backgroundPath, undefined, undefined, undefined, undefined, undefined, execution.signal)).model;
+    let metricBackgroundModel: MdpaModel | undefined;
+    if (metricBackgroundPath) metricBackgroundModel = (await loadMesh(metricBackgroundPath, undefined, undefined, undefined, undefined, undefined, execution.signal)).model;
     spec = {
+      ...cad,
+      // The flat arguments predate `cadOptions` and win when both name a control.
+      ...Object.fromEntries(
+        Object.entries({
+          maxChordalDeviation: args.maxChordalDeviation,
+          minPointsPerEdge: args.minPointsPerEdge,
+          tolerance: args.tolerance,
+          recordFaceIds: args.recordFaceIds,
+          edges: args.edges,
+          strict: args.strict,
+        }).filter(([, v]) => v !== undefined)
+      ),
       kind: "cadSurface",
       targetSize: args.targetSize,
-      maxChordalDeviation: args.maxChordalDeviation,
-      minPointsPerEdge: args.minPointsPerEdge,
-      tolerance: args.tolerance,
-      recordFaceIds: args.recordFaceIds,
-      edges: args.edges,
-      strict: args.strict,
+      ...(backgroundModel ? { backgroundModel, backgroundLabel: path.basename(backgroundPath as string) } : {}),
+      ...(metricBackgroundModel ? { metricBackgroundModel, metricBackgroundLabel: path.basename(metricBackgroundPath as string) } : {}),
     };
   } else if (args.kind === "igaRefine" || args.kind === "igaSample") {
     // Both run on the model's NURBS side channel (model.nurbs); a mesh
@@ -2015,7 +2064,7 @@ export async function meshDerive(args: {
   const warnings: string[] = [];
   let written: string;
   let report: ExportReport | undefined;
-  const deriveOps = [{ op: `derive:${spec.kind}`, parameters: spec }];
+  const deriveOps = [{ op: `derive:${spec.kind}`, parameters: recordedDeriveParameters(spec) }];
   if (meshExtname(path.resolve(args.outputPath)) === ".vti") {
     // The one container our unstructured writers cannot produce: a dense lattice, written straight from meshio++'s own mesh.
     if (!derived.raw || !derived.denseLattice) {
@@ -2063,6 +2112,7 @@ export async function meshDerive(args: {
     blocks: derived.model.blocks.map(blockSummary),
     fields: derived.model.fields.map((f) => ({ kind: f.kind, variable: f.variable, components: f.components, count: f.ids.length })),
     ...(derived.streamlines ? { streamlines: derived.streamlines } : {}),
+    ...(derived.cadSurface ? { cadSurface: derived.cadSurface } : {}),
     warnings,
     diagnostics: diagnosticsBlock(derived.model),
   };
@@ -2701,6 +2751,10 @@ export async function meshSelect(args: {
 export async function meshCapabilities(): Promise<object> {
   return {
     ...await getMeshCapabilities(),
+    // What this process actually wired (workers found beside the bundle, the
+    // kernel tree's location): a packaged distribution that lost a file falls
+    // back silently, and this is where that becomes visible.
+    runtime: { ...getRuntimeWiring(), meshio: meshioPackageSource() ?? null },
     plotting: PLOT_CAPABILITIES,
     windTunnel: {
       tools: ["wind_tunnel_plan", "wind_tunnel_generate"],

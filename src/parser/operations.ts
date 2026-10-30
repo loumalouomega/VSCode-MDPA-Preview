@@ -81,6 +81,7 @@ import {
 import { repairSurfaceModel, RepairSurfaceParams } from "./repairSurface";
 import { tessellateModel, TessellateParams, TESSELLATE_MAX_LEVELS } from "./tessellate";
 import { curvatureModel, gaussBonnetResidual, CurvatureParams, CURVATURE_DUAL_AREAS, CurvatureDualArea } from "./curvature";
+import { projectToCadModel, describeProjectToCad, ProjectToCadParams } from "./projectCad";
 import { shrinkwrapModel, sobolevDeformModel, describeInverted, ShrinkwrapParams, SobolevParams } from "./deform";
 import { compareFieldModel, CompareFieldParams, CORRESPONDENCES, Correspondence } from "./meshCompare";
 import { markComponentsModel, MarkComponentsParams } from "./splitComponents";
@@ -94,6 +95,8 @@ import {
   SURFACE_REMESH_METRICS,
 } from "./meshing";
 import { mergeManyModels, MergeMeshParams, MergeSource } from "./mergeMesh";
+import { addHangingNodeConstraints } from "./hangingNodes";
+import { createConstraintModel, deleteConstraintsModel } from "./constraintOps";
 import { renumberModel, RenumberParams, RENUMBER_TARGETS, RenumberTarget } from "./renumberMesh";
 import {
   gradientFieldModel,
@@ -313,6 +316,8 @@ export type OpRecord =
   // mesh, or its own skin — exactly one.
   | ({ op: "shrinkwrap"; path?: string; part?: string; skin?: boolean } & ShrinkwrapParams)
   | ({ op: "sobolevDeform" } & SobolevParams)
+  // Moves CAD-tagged surface nodes back onto the B-rep of `path` (a .cad.json or STEP/IGES file); see projectCad.ts.
+  | ({ op: "projectToCad"; path: string } & ProjectToCadParams)
   // Compares one of THIS mesh's fields with the same field of another file and
   // writes <base>_DIFF/_ABS/_REL (see meshCompare.ts). Async: it reads the file.
   | ({ op: "compareField"; path: string } & CompareFieldParams)
@@ -333,6 +338,11 @@ export type OpRecord =
   | ({ op: "sdfDistance"; path?: string; part?: string; skin?: boolean } & SdfParams)
   | ({ op: "transferField"; path: string } & TransferFieldParams)
   | ({ op: "renumber" } & RenumberParams)
+  // Multi-point constraints (roadmap item 23). `addHangingNodeConstraints` ties every
+  // hanging node of a hexahedral/quad mesh to its edge or face masters.
+  | { op: "addHangingNodeConstraints"; variables?: string[] }
+  | { op: "createConstraint"; slave: number; masters: number[]; weights: number[]; variable: string; constant?: number; part?: string }
+  | { op: "deleteConstraint"; ids: number[] }
   // `path` is the pre-N-ary spelling, kept optional so an old recipe still
   // type-checks on its way through parseOpsJson; mergeSourcePaths resolves both.
   | ({ op: "mergeMesh"; paths?: string[]; path?: string } & MergeMeshParams)
@@ -398,6 +408,7 @@ const ASYNC_OPS = new Set<OpName>([
   "curvature",
   "shrinkwrap",
   "sobolevDeform",
+  "projectToCad",
   "compareField",
   "remesh",
   "levelset",
@@ -496,6 +507,7 @@ const ORACLE_OPS: ReadonlySet<OpName> = new Set<OpName>([
   "curvature",
   "shrinkwrap",
   "sobolevDeform",
+  "projectToCad",
   "compareField",
   "smooth",
   "reorder",
@@ -984,6 +996,24 @@ export function applyOp(model: MdpaModel, rec: OpRecord): OpOutcome {
         message: `Split ${r.splitCells} cell(s) into ${r.producedSimplices} simplices.`,
       };
     }
+    case "addHangingNodeConstraints": {
+      const r = addHangingNodeConstraints(model, { variables: rec.variables });
+      if (r.hanging === 0 && r.replaced === 0) {
+        return { model, noop: true, message: "No hanging nodes found (hexahedra and quadrilaterals are examined) — nothing to tie." };
+      }
+      const chain = r.chained > 0 ? `, ${r.chained} resolved through another hanging node` : "";
+      const again = r.replaced > 0 ? ` Replaced ${r.replaced} constraint(s) of an earlier run.` : "";
+      return { model: r.model, message: `Tied ${r.hanging} hanging node(s) with ${r.constraints} constraint(s) in SubModelPart "HangingNodes"${chain}.${again}` };
+    }
+    case "createConstraint": {
+      const r = createConstraintModel(model, rec);
+      return { model: r.model, message: `Created constraint ${r.id} on ${rec.variable}: node ${rec.slave} ← ${rec.masters.length} master(s).` };
+    }
+    case "deleteConstraint": {
+      const r = deleteConstraintsModel(model, rec.ids);
+      if (r.deleted === 0) return { model, noop: true, message: "None of those constraint ids is defined." };
+      return { model: r.model, message: `Deleted ${r.deleted} constraint(s).` };
+    }
     case "renumber": {
       const r = renumberModel(model, rec);
       const parts: string[] = [];
@@ -1135,6 +1165,7 @@ export function applyOp(model: MdpaModel, rec: OpRecord): OpOutcome {
     case "curvature":
     case "shrinkwrap":
     case "sobolevDeform":
+    case "projectToCad":
     case "compareField":
     case "smooth":
     case "reorder":
@@ -1206,7 +1237,29 @@ export async function applyOpAsync(
   if (out.model.nurbs && !isOracleOp(rec.op) && !out.noop) {
     delete out.model.nurbs;
   }
+  // The polyhedra side channel (`model.polyhedra`) names the tetrahedra a read
+  // polyhedron was decomposed into and the nodes it invented; it is only valid
+  // while those cells and nodes are exactly as read. Unlike the NURBS channel
+  // the oracle ops do NOT keep it (several of them adopt a new topology), so
+  // it survives only the ops that cannot change a cell id, a node id or a
+  // connectivity row.
+  if (out.model.polyhedra && !out.noop && !preservesPolyhedra(rec)) {
+    delete out.model.polyhedra;
+  }
   return out;
+}
+
+/** Ops that leave every cell, node id and connectivity row alone (and move nodes rigidly or not at all). */
+const POLYHEDRA_PRESERVING_OPS: ReadonlySet<string> = new Set([
+  "fieldCalc", "averageField", "renameField", "keepFields", "dropFields", "conditionField",
+  "convertFieldUnits", "reduceField", "writeMeshSizeFields", "setProperty", "createProperty", "cloneProperty",
+]);
+const POLYHEDRA_TRANSFORM_OPS: ReadonlySet<string> = new Set(["translate", "scale", "rotate"]);
+
+function preservesPolyhedra(rec: OpRecord): boolean {
+  if (POLYHEDRA_PRESERVING_OPS.has(rec.op)) return true;
+  // A scoped transform moves only some nodes, so a polyhedron straddling the scope would tear.
+  return POLYHEDRA_TRANSFORM_OPS.has(rec.op) && !(rec as { part?: string }).part;
 }
 
 /**
@@ -1413,6 +1466,28 @@ async function applyAsyncOpInProcess(
       if (r.message) parts.push(r.message);
       parts.push(`Wrote ${r.written.map((w) => w.replace(/^[A-Za-z]+:/, "")).join(", ")}.`);
       return { model: r.model, message: parts.join(" ") };
+    }
+    case "projectToCad": {
+      let brepModel: MdpaModel;
+      try {
+        brepModel = await parseMergeSource(rec.path);
+      } catch (err) {
+        const why = err instanceof Error ? err.message : String(err);
+        return { model, noop: true, message: `Could not read "${rec.path}" (${why}).` };
+      }
+      if (!brepModel.nurbs || brepModel.nurbs.format !== "cad_json") {
+        return {
+          model,
+          noop: true,
+          message: `"${rec.path}" carries no CAD B-rep (it must be a .cad.json, or a STEP/IGES file read on the full build).`,
+        };
+      }
+      const r = await projectToCadModel(model, { info: brepModel.nurbs.info }, rec);
+      if (r.message) return { model, noop: true, message: r.message };
+      if (r.numProjected === 0) {
+        return { model, noop: true, message: `No node was projected (${r.numTooFar} too far, ${r.numFailed} failed, ${r.numHeld} not selected to move).` };
+      }
+      return { model: r.model, message: describeProjectToCad(r, `"${rec.path}"`) };
     }
     case "sobolevDeform": {
       const r = await sobolevDeformModel(model, rec);
@@ -1666,6 +1741,9 @@ const KNOWN_OPS = new Set<OpName>([
   "smooth",
   "reorder",
   "renumber",
+  "addHangingNodeConstraints",
+  "createConstraint",
+  "deleteConstraint",
   "partition",
   "segment",
   "refinePatches",
@@ -1689,6 +1767,7 @@ const KNOWN_OPS = new Set<OpName>([
   "curvature",
   "shrinkwrap",
   "sobolevDeform",
+  "projectToCad",
   "compareField",
   "reduceField",
   "fieldGradient",
@@ -2128,6 +2207,26 @@ export function opRecordFromMessage(
         const v = Number(msg[k]);
         if (!Number.isFinite(v) || v < 0) return undefined;
         rec[k] = v;
+      }
+      return rec;
+    }
+    case "projectToCad": {
+      const path = typeof msg.path === "string" ? msg.path.trim() : "";
+      if (!path) return undefined;
+      const rec: Extract<OpRecord, { op: "projectToCad" }> = { op, path };
+      for (const k of ["faceField", "edgeField", "movePart", "pinPart"] as const) {
+        const v = msg[k];
+        if (typeof v === "string" && v.trim().length > 0) rec[k] = v.trim();
+      }
+      if (msg.maxDistance !== undefined && msg.maxDistance !== "") {
+        const v = Number(msg.maxDistance);
+        if (!Number.isFinite(v) || v < 0) return undefined;
+        rec.maxDistance = v;
+      }
+      if (msg.trimSamples !== undefined && msg.trimSamples !== "") {
+        const v = Number(msg.trimSamples);
+        if (!Number.isInteger(v) || v < 1) return undefined;
+        rec.trimSamples = v;
       }
       return rec;
     }
@@ -2688,6 +2787,43 @@ export function opRecordFromMessage(
           : defaultGlobalName(variable, reduction as GlobalReduction);
       return { op, variable, kind, reduction: reduction as GlobalReduction, output };
     }
+    case "addHangingNodeConstraints": {
+      const rec: Extract<OpRecord, { op: "addHangingNodeConstraints" }> = { op };
+      if (msg.variables !== undefined && msg.variables !== "") {
+        const list = Array.isArray(msg.variables) ? msg.variables : String(msg.variables).split(/[\s,]+/);
+        const vars = list.map((v) => String(v).trim()).filter(Boolean);
+        if (vars.some((v) => !/^[A-Za-z_][A-Za-z0-9_]*$/.test(v))) return undefined;
+        if (vars.length) rec.variables = vars;
+      }
+      return rec;
+    }
+    case "createConstraint": {
+      const nums = (v: unknown): number[] | undefined => {
+        const raw = Array.isArray(v) ? v : typeof v === "string" ? v.split(/[\s,]+/).filter(Boolean) : undefined;
+        if (!raw) return undefined;
+        const out = raw.map(Number);
+        return out.every(Number.isFinite) ? out : undefined;
+      };
+      const slave = Number(msg.slave);
+      const masters = nums(msg.masters);
+      const weights = nums(msg.weights);
+      const variable = typeof msg.variable === "string" ? msg.variable.trim() : "";
+      if (!Number.isInteger(slave) || !masters || !weights || !variable) return undefined;
+      const rec: Extract<OpRecord, { op: "createConstraint" }> = { op, slave, masters, weights, variable };
+      if (msg.constant !== undefined && msg.constant !== "") {
+        const c = Number(msg.constant);
+        if (!Number.isFinite(c)) return undefined;
+        rec.constant = c;
+      }
+      if (typeof msg.part === "string" && msg.part.trim()) rec.part = msg.part.trim();
+      return rec;
+    }
+    case "deleteConstraint": {
+      const raw = Array.isArray(msg.ids) ? msg.ids : typeof msg.ids === "string" ? msg.ids.split(/[\s,]+/).filter(Boolean) : undefined;
+      const ids = raw?.map(Number);
+      if (!ids || ids.length === 0 || !ids.every((v) => Number.isInteger(v) && v > 0)) return undefined;
+      return { op, ids };
+    }
     case "renumber": {
       const rec: Extract<OpRecord, { op: "renumber" }> = { op };
       const target = msg.target;
@@ -3151,6 +3287,15 @@ function validateParams(rec: OpRecord, warnings: string[]): boolean {
       }
       return true;
     }
+    case "projectToCad": {
+      if (typeof rec.path !== "string" || rec.path.length === 0) return bad("missing path");
+      for (const k of ["faceField", "edgeField"] as const) {
+        if (rec[k] !== undefined && (typeof rec[k] !== "string" || !isValidFieldName(rec[k] as string))) return bad(`invalid ${k}`);
+      }
+      if (rec.maxDistance !== undefined && !(Number.isFinite(rec.maxDistance) && rec.maxDistance >= 0)) return bad("invalid maxDistance");
+      if (rec.trimSamples !== undefined && !(Number.isInteger(rec.trimSamples) && rec.trimSamples >= 1)) return bad("invalid trimSamples");
+      return true;
+    }
     case "sobolevDeform": {
       if (typeof rec.variable !== "string" || rec.variable.length === 0) return bad("missing variable");
       if (!(typeof rec.lengthScale === "number" && Number.isFinite(rec.lengthScale) && rec.lengthScale >= 0)) {
@@ -3400,6 +3545,20 @@ function validateParams(rec: OpRecord, warnings: string[]): boolean {
       return rec.onConflict === undefined || TRANSFER_CONFLICTS.includes(rec.onConflict)
         ? true
         : bad("invalid onConflict");
+    }
+    case "addHangingNodeConstraints": {
+      return rec.variables === undefined || (Array.isArray(rec.variables) && rec.variables.every((v) => typeof v === "string" && /^[A-Za-z_][A-Za-z0-9_]*$/.test(v)))
+        ? true
+        : bad("invalid variables");
+    }
+    case "createConstraint": {
+      if (!Number.isInteger(rec.slave)) return bad("missing/invalid slave");
+      if (!Array.isArray(rec.masters) || rec.masters.length === 0 || !rec.masters.every(Number.isFinite)) return bad("missing/invalid masters");
+      if (!Array.isArray(rec.weights) || rec.weights.length !== rec.masters.length || !rec.weights.every(Number.isFinite)) return bad("one weight per master is required");
+      return typeof rec.variable === "string" && rec.variable.length > 0 ? true : bad("missing variable");
+    }
+    case "deleteConstraint": {
+      return Array.isArray(rec.ids) && rec.ids.length > 0 && rec.ids.every((v) => Number.isInteger(v) && v > 0) ? true : bad("missing/invalid ids");
     }
     case "renumber": {
       if (rec.target !== undefined && !RENUMBER_TARGETS.has(rec.target)) return bad("invalid target");

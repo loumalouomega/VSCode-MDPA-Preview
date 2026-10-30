@@ -150,3 +150,28 @@ jobs:
 
       - name: Prepare and verify the VTK-wasm runtime
         run: npm run vtkwasm:prepare
+
+  # Roadmap item 7 (KKSS embedded artifact matrix): the shipped MCP server and its
+  # workers/wasm run from a staged copy of dist/ OUTSIDE the checkout, so a
+  # packaged distribution that lost a file (or quietly leaned on node_modules)
+  # fails here. Node only; linux only because it spawns processes and loads the
+  # wasm several times.
+  staged-artifacts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '20'
+
+      - run: npm ci
+
+      - name: Bundle
+        run: npm run compile
+
+      - name: Build tests
+        run: npm run build:tests
+
+      - name: Check the staged distribution
+        run: npm run check:staged

@@ -46,6 +46,9 @@ export const OP_LABELS: Record<OpName, string> = {
   // genuinely different things, so both labels say which one they are.
   reorder: "Reorder nodes (storage order)",
   renumber: "Renumber (compact ids)",
+  addHangingNodeConstraints: "Tie hanging nodes (constraints)",
+  createConstraint: "Create constraint",
+  deleteConstraint: "Delete constraints",
   partition: "Partition",
   segment: "Segment surface patches",
   refinePatches: "Refine patches",
@@ -69,6 +72,7 @@ export const OP_LABELS: Record<OpName, string> = {
   curvature: "Surface curvature (mean / Gaussian / principal)",
   shrinkwrap: "Shrinkwrap onto a surface",
   sobolevDeform: "Sobolev deformation (smoothed displacement)",
+  projectToCad: "Project nodes onto the CAD B-rep",
   compareField: "Compare a field with another mesh",
   reduceField: "Global reduction (min/max/mean/…)",
   fieldGradient: "Field gradient / divergence / curl",

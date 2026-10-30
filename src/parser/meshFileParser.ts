@@ -70,17 +70,19 @@ export async function readFileWithProgress(
   let bytesRead = 0;
 
   return new Promise<Buffer>((resolve, reject) => {
+    // An abort that landed while stat() was pending: nothing is open yet, so
+    // there is no stream to tear down, and this promise has to settle here.
+    // Destroying an unobserved stream instead raised an uncaught error and
+    // left the caller waiting forever.
+    if (signal?.aborted) {
+      reject(new Error("cancelled"));
+      return;
+    }
     const stream = fs.createReadStream(fsPath);
     const onAbort = (): void => {
       stream.destroy(new Error("cancelled"));
     };
-    if (signal) {
-      if (signal.aborted) {
-        stream.destroy(new Error("cancelled"));
-        return;
-      }
-      signal.addEventListener("abort", onAbort, { once: true });
-    }
+    signal?.addEventListener("abort", onAbort, { once: true });
     stream.on("data", (chunk) => {
       if (signal?.aborted) {
         stream.destroy(new Error("cancelled"));

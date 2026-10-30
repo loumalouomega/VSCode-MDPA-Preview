@@ -53,11 +53,18 @@ import type {
  *           function="a" error: function import requires a callable)
  * — an error that names neither the file nor the variant.  meshio.test.ts pins
  * this so a refactor cannot quietly reintroduce a fixed path.
+ *
+ * Which build an instance gets is decided here, not by upstream's `auto`: the
+ * threaded build only in a worker thread that runs one operation and then ends
+ * (`markSingleOperationThread`), the sequential build everywhere else.  The
+ * threaded build's pthread pool outlives the instance, so an in-process caller
+ * leaks it.
  */
 
 import * as fs from "fs";
 import * as path from "path";
 import { pathToFileURL } from "url";
+import { isMainThread } from "node:worker_threads";
 
 import {
   MeshioMedInfo,
@@ -166,6 +173,12 @@ export interface XdmfTimeSeriesWriter {
   close(): void;
 }
 
+/** Shared result of `extrude` / `revolve` (meshio++ 17.23.0). */
+export interface KernelSweepResult {
+  mesh: MeshioMesh; numCells: number; numHexahedra: number; numWedges: number; numPyramids: number; numTetrahedra: number;
+  numQuads: number; numTriangles: number; numFlipped: number; minScaledJacobian: number; warnings: string[];
+}
+
 export interface MeshioModule {
   checkQuality(
     mesh: MeshioMesh,
@@ -231,6 +244,44 @@ export interface MeshioModule {
    * leaves or all-hexahedra by the octree dual.
    */
   octreeMesh(mesh: MeshioMesh, options?: OctreeMeshOptions): OctreeMeshResult;
+
+  /**
+   * meshio++ >= 17.23.0 derived-mesh kernels. Every one takes a named-option
+   * object the kernel validates itself (an unknown key or a bad range throws
+   * with its own message), so the option types are open records; the result
+   * fields are the ones the summaries read.
+   */
+  extrude(mesh: MeshioMesh, options?: Record<string, unknown>): KernelSweepResult;
+  revolve(mesh: MeshioMesh, options?: Record<string, unknown>): KernelSweepResult & { numOnAxis: number; full: boolean };
+  mirror(mesh: MeshioMesh, options?: Record<string, unknown>): {
+    mesh: MeshioMesh; numFlippedCells: number; numPointsOnPlane: number; numDroppedCells: number; numDroppedSides: number; warnings: string[];
+  };
+  boundaryLayer(mesh: MeshioMesh, options: Record<string, unknown>): {
+    mesh: MeshioMesh; numCells: number; numWedges: number; numHexahedra: number; numPyramids: number; numTetrahedra: number;
+    numShrunk: number; numCollapsed: number; numNotVisible: number; numFewerLayers: number; numFrontCrossings: number;
+    minScaledJacobian: number; minThickness: number; maxThickness: number; capClosed: boolean; warnings: string[];
+  };
+  tetrahedralize(mesh: MeshioMesh, options?: Record<string, unknown>): {
+    mesh: MeshioMesh; numTetrahedra: number; numPoints: number; numNewPoints: number; numRegions: number; numBoundaryTriangles: number;
+    boundaryPreserved: boolean; hausdorffToSurface: number; minDihedralDeg: number; maxDihedralDeg: number; volume: number; backend: string; warnings: string[];
+  };
+  errorSize(mesh: MeshioMesh, options: Record<string, unknown>): { mesh: MeshioMesh; numCells: number; numSkipped: number; numClamped: number; warnings: string[] } & Record<string, unknown>;
+  checkConformity(mesh: MeshioMesh, options?: Record<string, unknown>): {
+    mesh: MeshioMesh; dimension: number; numHangingNodes: number; numTJunctions: number; numPartialOverlaps: number; numUnweldedFacets: number;
+    numBoundaryFacets: number; numNonManifoldFacets: number; conforming: boolean; interfaceMode: string; warnings: string[];
+  };
+  /**
+   * Move a CAD-tagged surface mesh onto its B-rep (meshio++ >= 17.23.0): `info` is a
+   * `CadJsonInfo`, the mesh names each cell's CAD face (`cad:face`) and each line's edge
+   * (`cad:edge`). Only point coordinates change; the point count and order are kept.
+   */
+  projectToCad(mesh: MeshioMesh, info: object, options?: Record<string, unknown>): {
+    mesh: MeshioMesh; numProjected: number; numOnEdges: number; numOnCurves: number; numCorners: number; numAmbiguous: number;
+    numTooFar: number; numFailed: number; numOutsideTrim: number; maxMove: number; outsideTrim: number[]; warnings: string[];
+  };
+  /** Whether the Netgen / MMG backends are linked into this artifact (17.23.0). `tetrahedralize` falls back to the native octree without Netgen. */
+  hasNetgen(): boolean;
+  hasMmg(): boolean;
 
   /**
    * The older adaptive octree around a skin (17.8.0), positional arguments as
@@ -961,7 +1012,8 @@ export interface MeshioModule {
     sign?: string,
     attachOccupancy?: boolean,
     maxCells?: number,
-    watertightCheck?: string
+    watertightCheck?: string,
+    plane?: string
   ): { mesh: MeshioMesh; dims: number[]; origin: number[]; spacing: number[]; numOccupied: number };
 
   computeSdf(
@@ -1215,6 +1267,30 @@ function packageDir(): string {
 }
 
 /**
+ * Where the kernel tree is read from, reported (never decided) here: the same
+ * two-step resolution `packageDir()` performs, without loading anything.
+ * `source` is the fact a staged-distribution check needs — a packaged server
+ * that silently resolved `node_modules` is running against the checkout, not
+ * against what it ships. `undefined` when neither layout carries the module.
+ */
+export function meshioPackageSource():
+  | { dir: string; source: "node_modules" | "bundled" }
+  | undefined {
+  try {
+    return {
+      dir: path.dirname(require.resolve("@meshioplusplus/wasm/package.json")),
+      source: "node_modules",
+    };
+  } catch {
+    /* packaged layout below */
+  }
+  const bundled = path.join(__dirname, "meshio");
+  return fs.existsSync(path.join(bundled, "src", "index.mjs"))
+    ? { dir: bundled, source: "bundled" }
+    : undefined;
+}
+
+/**
  * The installed `@meshioplusplus/wasm` version, or undefined when no
  * package.json is found in either layout. Reads the same two locations
  * `packageDir()` resolves (dev node_modules, then the packaged dist/meshio
@@ -1284,11 +1360,12 @@ function namespace(): Promise<MeshioNamespace> {
  *
  * Deliberately NOT memoized: the build sets ALLOW_MEMORY_GROWTH=1, so a
  * long-lived instance would pin the high-water mark of the largest mesh ever
- * opened for the lifetime of the extension host.  Dropping the instance lets
- * the whole WebAssembly.Memory go at GC — the same reasoning that gives MMG a
- * worker per run.  It also means no MEMFS bookkeeping: a throwing read leaves
- * no debris behind.  Only the ES-module namespace is cached (expensive to
- * resolve, holds no heap).
+ * opened.  Dropping an instance lets its WebAssembly.Memory go at GC — which
+ * only the SEQUENTIAL build can rely on: the threaded build's pthread pool keeps
+ * its memory alive, so it is handed out only to a worker thread that ends after
+ * one operation (`markSingleOperationThread`).  It also means no MEMFS
+ * bookkeeping: a throwing read leaves no debris behind.  Only the ES-module
+ * namespace is cached (expensive to resolve, holds no heap).
  */
 export function loadMeshio(): Promise<MeshioModule> {
   // Reported to the status bar's engine line (engineActivity.ts): the one place
@@ -1351,7 +1428,12 @@ async function loadMeshioFlavour(full: boolean): Promise<MeshioModule> {
     ...extraOverrides,
   };
   const flavour = full ? { full: true as const } : {};
-  if (forceSequential) return ns.loadMeshioPlusPlus(overrides, { ...flavour, variant: "seq" });
+  // The threaded build only in a single-operation worker thread (see
+  // `markSingleOperationThread`); the sequential build everywhere else.
+  const threaded = singleOperationThread && !isMainThread;
+  if (forceSequential || !threaded) {
+    return ns.loadMeshioPlusPlus(overrides, { ...flavour, variant: "seq" });
+  }
   try {
     return await ns.loadMeshioPlusPlus(overrides, full ? { full: true } : undefined);
   } catch (e) {
@@ -1394,6 +1476,30 @@ function loadMeshioForRead(ext: string, candidates: readonly string[]): Promise<
 
 /** Set once if the auto-selected (threaded) build fails to instantiate. */
 let forceSequential = false;
+
+/** Set by `markSingleOperationThread`; see there for why. */
+let singleOperationThread = false;
+
+/**
+ * Lets THIS worker thread instantiate the threaded build. Call it at the top of
+ * a worker entry point that runs exactly one operation and is then terminated
+ * (the read, write, oracle, derived and analysis workers). Nothing else calls it.
+ *
+ * Measured on Node 20, which has no `navigator` global, so the threaded glue
+ * falls back to an eight-thread pool: each threaded instance started eight
+ * worker threads, and no later GC released them or the shared memory they hold.
+ * Sixty instances held 491 threads and 4.4 GB. The sequential build is reclaimed
+ * at GC. Terminating the thread that instantiated the threaded build releases
+ * all of it (52 threads back to 11), which is why a worker that ends after one
+ * operation may use it. A worker that reads many meshes, and the host thread,
+ * must not: their instances would accumulate until the process exits. The test
+ * suite runs every in-process read in the host thread, which took it to 12.5 GB
+ * on a 16 GB machine and got the hosted Linux runner shut down (CI run
+ * 40533717580).
+ */
+export function markSingleOperationThread(): void {
+  singleOperationThread = true;
+}
 
 /** A file to place in the virtual filesystem before reading. */
 export interface MeshioInputFile {

@@ -94,6 +94,8 @@ export interface VoxelizeSpec extends LatticeSpec {
   sign?: "pseudonormal" | "winding-number" | "unsigned";
   /** Attach the 0/1 occupancy as VOXEL_OCCUPANCY (default true). */
   attachOccupancy?: boolean;
+  /** For a planar (2-D) surface: the plane to voxelize in, "auto" (default), "xy", "xz" or "yz" (meshio++ 17.23.0). */
+  plane?: "auto" | "xy" | "xz" | "yz";
 }
 
 export interface SdfVolumeSpec extends LatticeSpec {
@@ -190,7 +192,7 @@ export async function sampleGrid(model: MdpaModel, spec: GridSampleSpec, diagnos
 
   if (spec.kind === "voxelize") {
     const fill = spec.fill ?? "inside";
-    const r = m.voxelize(mesh, spec.resolution ?? null, spec.cellSize ?? 0, spec.bounds ?? null, spec.padding ?? 0, spec.paddingRelative ?? 0, fill, spec.sign ?? "pseudonormal", spec.attachOccupancy ?? true, GRID_MAX_CELLS, "warn");
+    const r = m.voxelize(mesh, spec.resolution ?? null, spec.cellSize ?? 0, spec.bounds ?? null, spec.padding ?? 0, spec.paddingRelative ?? 0, fill, spec.sign ?? "pseudonormal", spec.attachOccupancy ?? true, GRID_MAX_CELLS, "warn", spec.plane ?? "auto");
     if (r.numOccupied === 0) throw new Error("No voxel is occupied: the cell size may be too coarse for the shape, or the surface is not closed.");
     return {
       model: toModel(r.mesh, diagnostics),

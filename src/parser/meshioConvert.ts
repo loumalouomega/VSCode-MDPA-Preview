@@ -6,6 +6,7 @@
  * the wasm and calls in here.
  */
 
+import { PolyhedraCollector } from "./polyhedraTopology";
 import { buildBlocksFromOffsets, expandCellField, fieldFromTuples, finalizeModel } from "./modelBuilder";
 import {
   EXODUS_ATTRIBUTE_PREFIX,
@@ -457,6 +458,9 @@ export function meshioToModel(
    * after buildBlocksFromOffsets.
    */
   const flatPerRow: number[] = [];
+  /** The original polyhedra, for the `MdpaModel.polyhedra` side channel. */
+  const polyhedra = new PolyhedraCollector();
+  polyhedra.addApex(sourceNodeCount, addedParents.length);
 
   for (let bi = 0; bi < mesh.cells.length; bi++) {
     const cb = mesh.cells[bi];
@@ -508,6 +512,22 @@ export function meshioToModel(
       }
       const perRow = new Array<number>(rows).fill(0);
       for (let t = 0; t < d.tetRow.length; t++) perRow[d.tetRow[t]]++;
+      // The tetrahedra of one row are contiguous (the decomposer walks rows in
+      // order), starting after every flat cell staged so far.
+      const flatBase = types.length;
+      let flatAt = flatBase;
+      for (let row = 0; row < rows; row++) {
+        const tets = perRow[row];
+        if (tets > 0) {
+          const faceStart = cb.cellOffsets[row];
+          const faceEnd = cb.cellOffsets[row + 1];
+          const first = cb.faceOffsets[faceStart];
+          const rel: number[] = [];
+          for (let f = faceStart; f <= faceEnd; f++) rel.push(cb.faceOffsets[f] - first);
+          polyhedra.add(cb.data.subarray(first, cb.faceOffsets[faceEnd]), rel, flatAt, tets);
+        }
+        flatAt += tets;
+      }
       for (let t = 0; t < d.tetRow.length; t++) {
         conn.push(d.tets[t * 4], d.tets[t * 4 + 1], d.tets[t * 4 + 2], d.tets[t * 4 + 3]);
         offsets.push(conn.length);
@@ -522,7 +542,8 @@ export function meshioToModel(
           `Polyhedral "${cb.type}" cell block: ${rows} cell(s) decomposed into ` +
           `${d.tetRow.length} tetrahedra (${d.addedParents.length} apex node(s) added)` +
           (d.skippedRows > 0 ? `; ${d.skippedRows} cell(s) skipped as not closed` : "") +
-          `. The original polyhedra are not preserved on export.`,
+          `. The original polyhedra are kept as a side channel (the .vtu writer emits them; ` +
+          `other formats write the tetrahedra, and any edit that changes the mesh drops them).`,
       });
       continue;
     }
@@ -717,6 +738,8 @@ export function meshioToModel(
     diagnostics,
     subModelParts,
   });
+  const polyhedralTopology = polyhedra.build(flatExpansion);
+  if (polyhedralTopology) model.polyhedra = polyhedralTopology;
   // Read-path fidelity win: `mesh.propertySets` -> `model.properties`,
   // unconditionally (not gated on carriers) — a format that genuinely
   // declares mesh-level Properties (MDPA-through-meshio, or a carry result)

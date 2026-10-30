@@ -3,7 +3,12 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { parseMeshFile, xdmfDataFiles, pvtuPieceFiles } from "../parser/meshFileParser";
+import {
+  parseMeshFile,
+  readFileWithProgress,
+  xdmfDataFiles,
+  pvtuPieceFiles,
+} from "../parser/meshFileParser";
 import {
   SUPPORTED_MESH_EXTENSIONS,
   TIMELINE_EXTENSIONS,
@@ -43,6 +48,17 @@ test("progress callback fires for .vtk", async () => {
   let calls = 0;
   await parseMeshFile(p, () => calls++);
   assert.ok(calls > 0);
+});
+
+test("an abort that lands while the file is being stat'ed rejects, and does not hang", { timeout: 10_000 }, async () => {
+  // Synchronous abort right after the call: the signal is aborted before the
+  // stream is opened, which used to leave the promise pending forever and
+  // throw an uncaught error from a stream nobody was listening to.
+  const p = tmpFile("mesh.vtk", ASCII_VTK);
+  const controller = new AbortController();
+  const read = readFileWithProgress(p, undefined, controller.signal);
+  controller.abort();
+  await assert.rejects(read, /cancelled/);
 });
 
 test("unknown extension rejects with a descriptive error", async () => {

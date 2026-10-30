@@ -2,7 +2,8 @@
  * New meshes made by meshio++ kernels that need no input beyond a skin or a
  * B-rep: procedural generators (17.9.0 / 17.11.0), the octree (17.8.0) and
  * octree-mesh (17.13.0) volume meshers, and the B-rep surface mesher
- * `meshCadSurface` (17.13.0).
+ * `meshCadSurface` (17.13.0; its angle-bound, curved-element, size-control and
+ * report options arrived with 17.19.0–17.21.0).
  *
  * Every one is a DERIVED mesh (a new file, never an edit of the open mesh), so
  * `deriveMesh.ts` dispatches here and the UI export and MCP `mesh_derive`
@@ -14,8 +15,9 @@
  * Pure module (no vscode / DOM): the wasm is loaded through `loadMeshio`.
  */
 
+import { addHangingNodeConstraints } from "./hangingNodes";
 import type { MdpaDiagnostic, MdpaModel } from "./types";
-import { meshioToModel, modelToMeshio } from "./meshioConvert";
+import { meshioToModel, modelToMeshio, sanitizeVariable } from "./meshioConvert";
 import { loadMeshio } from "./meshio";
 import { triangleSurfaceOf } from "./gridSample";
 import { defaultBlockName } from "./cellInheritance";
@@ -92,7 +94,73 @@ export const GENERATORS = {
   referenceCells: [
     { name: "types", type: "strs" }, { name: "pairs", type: "bool" },
   ],
+  line: [
+    { name: "n", type: "int" }, { name: "start", type: "nums" }, { name: "end", type: "nums" }, { name: "order", type: "int" }
+  ],
+  circle: [
+    { name: "radius", type: "num" }, { name: "n", type: "int" }, { name: "center", type: "nums" }, { name: "order", type: "int" }
+  ],
+  helix: [
+    { name: "radius", type: "num" }, { name: "pitch", type: "num" }, { name: "turns", type: "num" }, { name: "n", type: "int" }, { name: "center", type: "nums" }, { name: "order", type: "int" }
+  ],
+  spherePoints: [
+    { name: "n", type: "int" }, { name: "radius", type: "num" }, { name: "center", type: "nums" }
+  ],
+  boxPoints: [
+    { name: "n", type: "int" }, { name: "size", type: "nums" }, { name: "origin", type: "nums" }, { name: "seed", type: "int" }
+  ],
+  tetraSphere: [
+    { name: "radius", type: "num" }, { name: "subdivisions", type: "int" }, { name: "center", type: "nums" }, { name: "order", type: "int" }
+  ],
+  octaSphere: [
+    { name: "radius", type: "num" }, { name: "subdivisions", type: "int" }, { name: "center", type: "nums" }, { name: "order", type: "int" }
+  ],
+  cubeSphere: [
+    { name: "radius", type: "num" }, { name: "n", type: "int" }, { name: "center", type: "nums" }, { name: "cellType", type: "str" }, { name: "order", type: "int" }
+  ],
+  geoSphere: [
+    { name: "radius", type: "num" }, { name: "n", type: "int" }, { name: "center", type: "nums" }, { name: "order", type: "int" }
+  ],
+  torus: [
+    { name: "majorRadius", type: "num" }, { name: "minorRadius", type: "num" }, { name: "nu", type: "int" }, { name: "nv", type: "int" }, { name: "center", type: "nums" }, { name: "cellType", type: "str" }, { name: "order", type: "int" }
+  ],
+  moebius: [
+    { name: "radius", type: "num" }, { name: "width", type: "num" }, { name: "nu", type: "int" }, { name: "nv", type: "int" }, { name: "numTwists", type: "int" }, { name: "center", type: "nums" }, { name: "cellType", type: "str" }, { name: "order", type: "int" }
+  ],
+  tube: [
+    { name: "radius", type: "num" }, { name: "height", type: "num" }, { name: "ntheta", type: "int" }, { name: "nz", type: "int" }, { name: "center", type: "nums" }, { name: "cellType", type: "str" }, { name: "order", type: "int" }
+  ],
+  cone: [
+    { name: "radius", type: "num" }, { name: "height", type: "num" }, { name: "ntheta", type: "int" }, { name: "nz", type: "int" }, { name: "center", type: "nums" }, { name: "cellType", type: "str" }, { name: "order", type: "int" }
+  ],
+  capsule: [
+    { name: "radius", type: "num" }, { name: "height", type: "num" }, { name: "ntheta", type: "int" }, { name: "nz", type: "int" }, { name: "ncap", type: "int" }, { name: "center", type: "nums" }, { name: "cellType", type: "str" }, { name: "order", type: "int" }
+  ],
+  boxSurface: [
+    { name: "dims", type: "ints" }, { name: "size", type: "nums" }, { name: "origin", type: "nums" }, { name: "cellType", type: "str" }, { name: "order", type: "int" }
+  ],
+  platonic: [
+    { name: "name", type: "str" }, { name: "radius", type: "num" }, { name: "center", type: "nums" }
+  ],
+  ball: [
+    { name: "radius", type: "num" }, { name: "n", type: "int" }, { name: "center", type: "nums" }, { name: "cellType", type: "str" }, { name: "order", type: "int" }
+  ],
+  sphericalShell: [
+    { name: "innerRadius", type: "num" }, { name: "outerRadius", type: "num" }, { name: "n", type: "int" }, { name: "nr", type: "int" }, { name: "ratio", type: "num" }, { name: "center", type: "nums" }, { name: "order", type: "int" }
+  ],
+  pipe: [
+    { name: "innerRadius", type: "num" }, { name: "outerRadius", type: "num" }, { name: "height", type: "num" }, { name: "ntheta", type: "int" }, { name: "nr", type: "int" }, { name: "nz", type: "int" }, { name: "ratio", type: "num" }, { name: "center", type: "nums" }, { name: "order", type: "int" }
+  ],
+  fichera: [
+    { name: "n", type: "int" }, { name: "size", type: "num" }, { name: "center", type: "nums" }, { name: "cellType", type: "str" }, { name: "order", type: "int" }
+  ],
+  solidTorus: [
+    { name: "majorRadius", type: "num" }, { name: "minorRadius", type: "num" }, { name: "n", type: "int" }, { name: "nu", type: "int" }, { name: "center", type: "nums" }, { name: "order", type: "int" }
+  ],
 } as const satisfies Record<string, readonly ArgSpec[]>;
+
+/** Generators with no trailing `complete` flag (point clouds, the Platonic catalogue, the planar tilings). */
+const NO_COMPLETE: ReadonlySet<string> = new Set(["honeycomb", "referenceCells", "spherePoints", "boxPoints", "platonic"]);
 
 export type GeneratorShape = keyof typeof GENERATORS;
 export const GENERATOR_SHAPES = Object.keys(GENERATORS) as GeneratorShape[];
@@ -112,6 +180,27 @@ export const GENERATOR_EXAMPLES: Record<GeneratorShape, { description: string; p
   plateWithHole: { description: "square plate around a circular hole", params: { radius: 0.25, size: 1, nt: 8, nr: 8 } },
   honeycomb: { description: "pointy-top hexagon tiling (one polygon block)", params: { dims: [6, 6], edge: 1 } },
   referenceCells: { description: "one cell of every meshio type in reference coordinates", params: {} },
+  line: { description: "polyline of n segments between two points", params: { n: 10, start: [0, 0, 0], end: [1, 0, 0] } },
+  circle: { description: "closed ring of line segments", params: { radius: 1, n: 32 } },
+  helix: { description: "helical polyline", params: { radius: 1, pitch: 1, turns: 3, n: 96 } },
+  spherePoints: { description: "point cloud on a sphere (Fibonacci)", params: { n: 500, radius: 1 } },
+  boxPoints: { description: "seeded random point cloud in a box", params: { n: 500, size: [1, 1, 1], seed: 1 } },
+  tetraSphere: { description: "sphere surface refined from a tetrahedron", params: { radius: 1, subdivisions: 3 } },
+  octaSphere: { description: "sphere surface refined from an octahedron", params: { radius: 1, subdivisions: 3 } },
+  cubeSphere: { description: "sphere surface from a projected cube (quads)", params: { radius: 1, n: 8 } },
+  geoSphere: { description: "geodesic sphere surface of triangles", params: { radius: 1, n: 6 } },
+  torus: { description: "torus surface", params: { majorRadius: 1, minorRadius: 0.25, nu: 48, nv: 16 } },
+  moebius: { description: "Moebius strip surface", params: { radius: 1, width: 0.5, nu: 48, nv: 6 } },
+  tube: { description: "open cylindrical surface along z", params: { radius: 0.5, height: 2, ntheta: 24, nz: 12 } },
+  cone: { description: "cone surface with its base", params: { radius: 0.5, height: 1, ntheta: 24, nz: 8 } },
+  capsule: { description: "cylinder with hemispherical caps (surface)", params: { radius: 0.5, height: 1, ntheta: 24, nz: 8, ncap: 6 } },
+  boxSurface: { description: "boundary surface of a box only", params: { dims: [8, 8, 8], size: [1, 1, 1] } },
+  platonic: { description: "a Platonic solid surface by name", params: { name: "icosahedron", radius: 1 } },
+  ball: { description: "solid ball of hexahedra", params: { radius: 1, n: 6 } },
+  sphericalShell: { description: "solid spherical shell of hexahedra", params: { innerRadius: 0.5, outerRadius: 1, n: 6, nr: 3 } },
+  pipe: { description: "solid pipe (hollow cylinder) of hexahedra", params: { innerRadius: 0.5, outerRadius: 1, height: 2, ntheta: 24, nr: 3, nz: 8 } },
+  fichera: { description: "Fichera corner (cube minus an octant)", params: { n: 3, size: 2 } },
+  solidTorus: { description: "solid torus of hexahedra", params: { majorRadius: 1, minorRadius: 0.25, n: 4, nu: 32 } },
 };
 
 export interface GenerateSpec {
@@ -156,7 +245,7 @@ function coerceArg(shape: string, a: ArgSpec, v: unknown): unknown {
  * that were read as Elements are the mesh's boundary faces — Conditions in
  * Kratos — so they move to their own id space first (the FLAC3D face rule).
  */
-function withKratosBlockNames(model: MdpaModel): MdpaModel {
+export function withKratosBlockNames(model: MdpaModel): MdpaModel {
   const hasVolume = model.blocks.some((b) => b.count > 0 && cellCategory(b.vtkCellType) === "volume");
   const base = hasVolume ? reclassifyFlac3dFaces(model) : model;
   return {
@@ -169,7 +258,7 @@ function withKratosBlockNames(model: MdpaModel): MdpaModel {
 }
 
 /** Upper-cases the Kratos-style names of upstream's arrays (`meshioToModel` already turned `sdf:distance` into `sdf_distance`). */
-function legalFields(model: MdpaModel, rename: Record<string, string> = {}): MdpaModel {
+export function legalFields(model: MdpaModel, rename: Record<string, string> = {}): MdpaModel {
   return { ...model, fields: model.fields.map((f) => (rename[f.variable] ? { ...f, variable: rename[f.variable] } : f)) };
 }
 
@@ -177,6 +266,8 @@ export interface KernelMeshResult {
   model: MdpaModel;
   summary: string;
   suffix: string;
+  /** Present for `cadSurface`: the structured report behind the summary. */
+  cadSurface?: CadSurfaceReport;
 }
 
 /** Cells a generator will produce, estimated from the sizes alone, so a runaway request is refused before the wasm runs. */
@@ -197,6 +288,27 @@ export function estimateGeneratedCells(shape: GeneratorShape, p: Record<string, 
     case "plateWithHole": return 4 * num(p.nt, 8) * num(p.nr, 8) * 2;
     case "honeycomb": return prod(p.dims, [1, 1]);
     case "referenceCells": return 1;
+    case "line": return num(p.n, 8);
+    case "circle": return num(p.n, 16);
+    case "helix": return num(p.n, 32);
+    case "spherePoints": return num(p.n, 100);
+    case "boxPoints": return num(p.n, 100);
+    case "tetraSphere": return 4 * 4 ** Math.max(0, num(p.subdivisions, 3));
+    case "octaSphere": return 8 * 4 ** Math.max(0, num(p.subdivisions, 2));
+    case "cubeSphere": return 6 * num(p.n, 4) ** 2 * (p.cellType === "triangle" ? 2 : 1);
+    case "geoSphere": return 20 * num(p.n, 4) ** 2;
+    case "torus": return num(p.nu, 32) * num(p.nv, 16) * 2;
+    case "moebius": return num(p.nu, 32) * num(p.nv, 4) * 2;
+    case "tube": return num(p.ntheta, 16) * num(p.nz, 4) * 2;
+    case "cone": return num(p.ntheta, 16) * (num(p.nz, 4) + 1) * 2;
+    case "capsule": return num(p.ntheta, 16) * (num(p.nz, 4) + 2 * num(p.ncap, 4)) * 2;
+    case "boxSurface": { const d = (Array.isArray(p.dims) ? p.dims : [1, 1, 1]).map(Number); const [a, b, c] = [d[0] ?? 1, d[1] ?? 1, d[2] ?? 1]; return 4 * (a * b + b * c + a * c); }
+    case "platonic": return 100;
+    case "ball": return 6 * num(p.n, 4) ** 3;
+    case "sphericalShell": return 6 * num(p.n, 4) ** 2 * num(p.nr, 2) * 2;
+    case "pipe": return num(p.ntheta, 16) * num(p.nr, 2) * num(p.nz, 4) * 6;
+    case "fichera": return 7 * num(p.n, 2) ** 3 * (p.cellType === "tetra" ? 6 : 1);
+    case "solidTorus": return num(p.n, 4) ** 2 * num(p.nu, 32) * 2;
   }
 }
 
@@ -205,7 +317,11 @@ export async function generateMesh(spec: GenerateSpec, diagnostics: MdpaDiagnost
   const args = GENERATORS[spec.shape] as readonly ArgSpec[] | undefined;
   if (!args) throw new Error(`shape must be one of ${GENERATOR_SHAPES.join(", ")}.`);
   const params = spec.params ?? {};
+  // 17.23.0: every shape with an `order` slot also takes `complete` (after maxCells): carry the
+  // full set of side regions the generator can name.
+  const takesComplete = !NO_COMPLETE.has(spec.shape);
   const known = new Set(args.map((a) => a.name));
+  if (takesComplete) known.add("complete");
   for (const k of Object.keys(params)) {
     if (!known.has(k)) throw new Error(`${spec.shape} has no parameter "${k}" (it takes ${[...known].join(", ")}).`);
   }
@@ -217,8 +333,10 @@ export async function generateMesh(spec: GenerateSpec, diagnostics: MdpaDiagnost
   const m = await loadMeshio();
   // referenceCells and honeycomb differ in arity: only the shapes with a maxCells slot get one.
   const withMax = spec.shape !== "referenceCells";
+  if (takesComplete && params.complete !== undefined && typeof params.complete !== "boolean") throw new Error(`${spec.shape}: "complete" must be true or false.`);
+  const tail: unknown[] = takesComplete ? [GENERATE_MAX_CELLS, params.complete === true] : [GENERATE_MAX_CELLS];
   const call = (m as unknown as Record<string, (...a: unknown[]) => unknown>)[spec.shape];
-  const mesh = (withMax ? call.call(m, ...positional, GENERATE_MAX_CELLS) : call.call(m, ...positional)) as Parameters<typeof meshioToModel>[0];
+  const mesh = (withMax ? call.call(m, ...positional, ...tail) : call.call(m, ...positional)) as Parameters<typeof meshioToModel>[0];
   // referenceCells is a catalogue of one cell per meshio type: keep the type names.
   const read = meshioToModel(mesh, diagnostics);
   const model = spec.shape === "referenceCells" ? read : withKratosBlockNames(read);
@@ -236,6 +354,12 @@ export async function generateMesh(spec: GenerateSpec, diagnostics: MdpaDiagnost
 export interface OctreeMeshSpec {
   kind: "octreeMesh";
   options?: Record<string, unknown>;
+  /**
+   * Tie the hanging nodes of the hexahedral leaves with LinearMasterSlaveConstraints
+   * (`true` = DISPLACEMENT_X/Y/Z, or the variables to tie). The kernel reports only a
+   * count, so the parents are recovered from the geometry — see `hangingNodes.ts`.
+   */
+  hangingConstraints?: boolean | string[];
 }
 
 const defined = (o: Record<string, unknown>) => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined && v !== null));
@@ -259,7 +383,17 @@ export async function octreeMeshModel(model: MdpaModel, spec: OctreeMeshSpec, di
   }
   if (r.output === "castellated") parts.push(`${r.numSurrogateFaces.toLocaleString("en-US")} surrogate boundary face(s), ${r.numHanging.toLocaleString("en-US")} hanging node(s).`);
   if (r.warnings.length) parts.push(r.warnings.join(" "));
-  return { model: read, summary: parts.join(" "), suffix: `octree_${r.output}` };
+  let out = read;
+  if (spec.hangingConstraints) {
+    const tied = addHangingNodeConstraints(read, { variables: Array.isArray(spec.hangingConstraints) ? spec.hangingConstraints : undefined });
+    out = tied.model;
+    parts.push(
+      tied.hanging > 0
+        ? `Tied ${tied.hanging} hanging node(s) with ${tied.constraints} constraint(s) (SubModelPart "HangingNodes").`
+        : "No hanging node to tie in this output."
+    );
+  }
+  return { model: out, summary: parts.join(" "), suffix: `octree_${r.output}` };
 }
 
 /** Options of the older `octree` (17.8.0); positional in the kernel, named here. */
@@ -310,7 +444,7 @@ export async function octreeModel(model: MdpaModel, spec: OctreeSpec, diagnostic
   };
 }
 
-/** Options of `meshCadSurface` (17.13.0). */
+/** Options of `meshCadSurface` (17.13.0; the angle, order, size and report controls 17.19.0–17.21.0). */
 export interface CadSurfaceSpec {
   kind: "cadSurface";
   /** The target edge length (required, > 0). */
@@ -323,7 +457,171 @@ export interface CadSurfaceSpec {
   matchUnreferencedTrims?: boolean;
   strict?: boolean;
   maxPoints?: number;
+  /** Refine until every surface triangle's smallest angle is at least this (degrees, under 60); 0 keeps the unrefined mesh. */
+  minAngle?: number;
+  /** Passes of guarded smoothing. */
+  smoothIterations?: number;
+  smoothMethod?: "laplacian" | "odt";
+  /** 1 (linear) or 2 (`triangle6` / `line3` on the surfaces); 3 is refused, see `validateCadSurfaceSpec`. */
+  order?: number;
+  /** Largest growth of the size, `|grad h| <= grading - 1` (0 = upstream's 1.5); only with the two size controls below. */
+  grading?: number;
+  /** Size each region so a chord sits at most this far from the surface (0 = off). */
+  curvatureDeviation?: number;
+  /** Size each region so at least this many elements span its local feature size (0 = off). */
+  cellsAcrossGaps?: number;
+  /** Rings of points seeded around each pole (0 to 8). */
+  poleRings?: number;
+  /** Sizes per B-rep face, `{faceIndex: size}` (0-based). */
+  faceSizes?: Record<number, number>;
+  /** The same per B-rep edge. */
+  edgeSizes?: Record<number, number>;
+  /**
+   * A mesh whose Nodal scalar `backgroundArray` is the size at its points,
+   * read at the nearest surface point. A parsed model rather than a path so the
+   * spec stays plain data (it crosses to the derived-mesh worker); the caller
+   * reads the file.
+   */
+  backgroundModel?: MdpaModel;
+  /** Where `backgroundModel` was read from (a label for the recorded recipe and provenance; the kernel never sees it). */
+  backgroundLabel?: string;
+  /** The Nodal scalar of `backgroundModel` that carries the size (default "size"). */
+  backgroundArray?: string;
+  metric?: "mean" | "varying";
+  virtualEdges?: boolean;
+  /** Mesh a face whose metric's condition number passes this in a flattening (0 = off, otherwise above 1; order 1 only). */
+  reparamConditionNumber?: number;
+  modelTolerances?: boolean;
+  virtualFaces?: boolean;
+  /** Lop acute corners in place of concentric shells; effective only with `minAngle` above 0. */
+  lopCorners?: boolean;
+  /** With order 2 or 3, move a face's own high-order nodes on the surface to untangle a folded curved element (17.22.0). */
+  untangle?: boolean;
+  /** Recombine triangles into quads: "none" (default), "dominant" or "all" (quads only; no `virtualEdges`) (17.22.0). */
+  quads?: "none" | "dominant" | "all";
+  /** How triangles pair into quads: "matching" (default) or "greedy". */
+  quadPairs?: "matching" | "greedy";
+  /**
+   * An anisotropic metric from another mesh: its 9-component Nodal `metricArray` is a field's Hessian
+   * (or its 1-component one is the field, whose Hessian is taken), with target interpolation error
+   * `metricError`. A parsed model for the same reason as `backgroundModel`.
+   */
+  metricBackgroundModel?: MdpaModel;
+  metricBackgroundLabel?: string;
+  metricArray?: string;
+  metricError?: number;
 }
+
+const CAD_SURFACE_ORDER_MESSAGE =
+  "order 3 gives triangle10 / line4 elements, which this extension cannot hold or draw (it carries linear and quadratic cells); use order 1 or 2.";
+
+/** The list caps of a `CadSurfaceReport`; every list reports its full length beside the kept entries. */
+const CAD_REPORT_LIST_LIMIT = 50;
+
+const isIndexMap = (v: unknown): v is Record<string, number> => typeof v === "object" && v !== null && !Array.isArray(v);
+
+/**
+ * Refuses by name, before the wasm runs, a `CadSurfaceSpec` the editable model
+ * cannot take or that is plainly malformed. The kernel validates ranges itself
+ * (and its messages are kept); this adds the order-3 refusal, which the kernel
+ * accepts, and the readable errors for the shapes callers get wrong.
+ * Returns `undefined` when fine, otherwise the message.
+ */
+export function validateCadSurfaceSpec(spec: CadSurfaceSpec): string | undefined {
+  if (!isNum(spec.targetSize) || !(spec.targetSize > 0)) return "targetSize must be a positive number.";
+  if (spec.order !== undefined && spec.order !== 1 && spec.order !== 2) {
+    return spec.order === 3 ? CAD_SURFACE_ORDER_MESSAGE : `order must be 1 or 2 (got ${String(spec.order)}).`;
+  }
+  const inRange = (name: string, v: number | undefined, lo: number, hi: number, integer = false): string | undefined =>
+    v === undefined ? undefined : !isNum(v) || v < lo || v >= hi || (integer && !Number.isInteger(v)) ? `${name} must be ${integer ? "an integer" : "a number"} in [${lo}, ${hi}).` : undefined;
+  const bad =
+    inRange("minAngle", spec.minAngle, 0, 60) ??
+    inRange("smoothIterations", spec.smoothIterations, 0, Infinity, true) ??
+    inRange("poleRings", spec.poleRings, 0, 9, true) ??
+    inRange("grading", spec.grading, 0, Infinity) ??
+    inRange("curvatureDeviation", spec.curvatureDeviation, 0, Infinity) ??
+    inRange("cellsAcrossGaps", spec.cellsAcrossGaps, 0, Infinity);
+  if (bad) return bad;
+  if (spec.smoothMethod !== undefined && spec.smoothMethod !== "laplacian" && spec.smoothMethod !== "odt") return 'smoothMethod must be "laplacian" or "odt".';
+  if (spec.metric !== undefined && spec.metric !== "mean" && spec.metric !== "varying") return 'metric must be "mean" or "varying".';
+  if (spec.reparamConditionNumber !== undefined) {
+    const c = spec.reparamConditionNumber;
+    if (!isNum(c) || (c !== 0 && c <= 1)) return "reparamConditionNumber must be 0 (off) or above 1.";
+    if (c !== 0 && (spec.order ?? 1) !== 1) return "reparamConditionNumber is order 1 only.";
+  }
+  for (const [what, map] of [["faceSizes", spec.faceSizes], ["edgeSizes", spec.edgeSizes]] as const) {
+    if (map === undefined) continue;
+    if (!isIndexMap(map)) return `${what} must be an object {index: size}.`;
+    for (const [k, v] of Object.entries(map)) {
+      if (!/^\d+$/.test(k)) return `${what}: "${k}" is not a 0-based index.`;
+      if (!isNum(v) || !(v > 0)) return `${what}: the size of ${k} must be a positive number.`;
+    }
+  }
+  if (spec.quads !== undefined && !["none", "dominant", "all"].includes(spec.quads)) return 'quads must be "none", "dominant" or "all".';
+  if (spec.quadPairs !== undefined && spec.quadPairs !== "matching" && spec.quadPairs !== "greedy") return 'quadPairs must be "matching" or "greedy".';
+  if (spec.metricBackgroundModel !== undefined) {
+    if (!spec.metricArray) return "metricBackground needs metricArray, the Nodal field of that mesh (a Hessian or a scalar) to take the metric from.";
+    if (!isNum(spec.metricError) || !(spec.metricError > 0)) return "metricError must be a positive number when a metric background is given.";
+  } else if (spec.metricArray !== undefined || spec.metricError !== undefined) return "metricArray / metricError need a metric background mesh, which was not given.";
+  if (spec.backgroundModel === undefined && spec.backgroundArray !== undefined) return "backgroundArray names a field of the background mesh, which was not given.";
+  return undefined;
+}
+
+/** The controls a caller may set beside `targetSize`; `backgroundPath` stands in for `backgroundModel` until the caller reads the file. */
+export type CadSurfaceOptionsInput = Partial<Omit<CadSurfaceSpec, "kind" | "targetSize" | "backgroundModel" | "metricBackgroundModel">> & { backgroundPath?: string; metricBackgroundPath?: string };
+
+export const CAD_SURFACE_OPTION_KEYS: readonly string[] = [
+  "maxChordalDeviation", "minPointsPerEdge", "tolerance", "recordFaceIds", "edges", "matchUnreferencedTrims", "strict", "maxPoints",
+  "minAngle", "smoothIterations", "smoothMethod", "order", "grading", "curvatureDeviation", "cellsAcrossGaps", "poleRings",
+  "faceSizes", "edgeSizes", "backgroundPath", "backgroundArray", "metric", "virtualEdges", "reparamConditionNumber",
+  "modelTolerances", "virtualFaces", "lopCorners",
+  "untangle", "quads", "quadPairs", "metricBackgroundPath", "metricArray", "metricError",
+];
+
+/**
+ * Reads a caller-supplied options object (the JSON of the File-menu prompt, an
+ * MCP `cadOptions`) into the options of a spec, refusing a key it does not know
+ * by name (a typo would otherwise be silently ignored by the kernel's option
+ * reader) and a non-object. Values are validated later by `validateCadSurfaceSpec`.
+ */
+export function cadSurfaceOptionsFrom(raw: unknown): CadSurfaceOptionsInput {
+  if (raw === undefined || raw === null) return {};
+  if (typeof raw !== "object" || Array.isArray(raw)) throw new Error("The CAD meshing options must be an object, e.g. {\"minAngle\": 25, \"order\": 2}.");
+  const unknown = Object.keys(raw).filter((k) => !CAD_SURFACE_OPTION_KEYS.includes(k));
+  if (unknown.length) throw new Error(`Unknown CAD meshing option(s): ${unknown.join(", ")}. Known: ${CAD_SURFACE_OPTION_KEYS.join(", ")}.`);
+  return defined(raw as Record<string, unknown>) as CadSurfaceOptionsInput;
+}
+
+/** The structured report behind a `cadSurface` summary (lists capped at 50; `*Count` is the full length). */
+export interface CadSurfaceReport {
+  faces: number;
+  triangles: number;
+  points: number;
+  failedFaces: { face: number; status: string; reason?: string }[];
+  edges: { total: number; open: number; nonManifold: number; misoriented: number; maxGap: number };
+  edgeLength: { min: number; max: number };
+  angleDeg: { min: number; max: number };
+  /** Every angle of every triangle, in 18 bins of 10 degrees. */
+  angleHistogram: number[];
+  refinementPoints: number;
+  smoothed: number;
+  curvedStraightened: number;
+  /** Whether the angle bound was asked for and what the input allows. */
+  angleBound: { requested: number; minInputAngleDeg: number; belowBound: boolean; boundDeg: number; facesBelowBound: number } | undefined;
+  corners: unknown[];
+  cornersCount: number;
+  limitedByEdges: number[];
+  limitedByEdgesCount: number;
+  virtualEdges: number[][];
+  virtualEdgesCount: number;
+  reparametrised: unknown[];
+  mergedFaces: unknown[];
+  toleranceUses: unknown[];
+  loppedCorners: unknown[];
+  warnings: string[];
+}
+
+const cap = <T>(list: T[] | undefined): T[] => (list ?? []).slice(0, CAD_REPORT_LIST_LIMIT);
 
 /** The faces of the model's B-rep (its NURBS side channel) triangulated into one conforming surface. */
 export async function cadSurfaceModel(model: MdpaModel, spec: CadSurfaceSpec, diagnostics: MdpaDiagnostic[] = []): Promise<KernelMeshResult> {
@@ -334,23 +632,129 @@ export async function cadSurfaceModel(model: MdpaModel, spec: CadSurfaceSpec, di
         "Open a .cad.json (or a .step/.igs read, which runs on the full artifact) — and only while the model is unedited, because any edit invalidates the channel."
     );
   }
-  if (!isNum(spec.targetSize) || !(spec.targetSize > 0)) throw new Error("targetSize must be a positive number.");
+  const problem = validateCadSurfaceSpec(spec);
+  if (problem) throw new Error(problem);
   if (channel.format !== "cad_json") {
     throw new Error(`The side channel is ${channel.format}; a CAD surface mesh needs a B-rep (a .cad.json, or a STEP/IGES read).`);
   }
-  const { kind: _kind, ...options } = spec;
+  const { kind: _kind, backgroundModel, backgroundArray, backgroundLabel: _label, metricBackgroundModel, metricBackgroundLabel: _mlabel, ...options } = spec;
+  const kernelOptions: Record<string, unknown> = { ...options };
+  if (backgroundModel) {
+    const name = backgroundArray ?? "size";
+    const mesh = modelToMeshio(backgroundModel, diagnostics, { dim: 3 });
+    const sizes = (mesh.point_data ?? {})[name] ?? (mesh.point_data ?? {})[sanitizeVariable(name)];
+    const width = (mesh.point_data_components ?? {})[name] ?? 1;
+    if (!sizes || width !== 1) {
+      const scalars = backgroundModel.fields.filter((f) => f.kind === "Nodal" && f.components === 1).map((f) => f.variable);
+      throw new Error(
+        `The background mesh has no one-component Nodal field "${name}"` +
+          (scalars.length ? ` (it has: ${scalars.join(", ")}).` : " (it has no scalar Nodal field).")
+      );
+    }
+    kernelOptions.background = { ...mesh, point_data: { [name]: sizes }, point_data_components: undefined, cell_data: {}, cell_data_components: undefined };
+    kernelOptions.backgroundArray = name;
+  }
+  if (metricBackgroundModel) {
+    const mesh = modelToMeshio(metricBackgroundModel, diagnostics, { dim: 3 });
+    const name = spec.metricArray as string;
+    if (!(mesh.point_data ?? {})[name] && !(mesh.point_data ?? {})[sanitizeVariable(name)]) {
+      throw new Error(`The metric background mesh has no Nodal field "${name}" (it has: ${metricBackgroundModel.fields.filter((f) => f.kind === "Nodal").map((f) => f.variable).join(", ") || "none"}).`);
+    }
+    kernelOptions.metricBackground = { ...mesh, cell_data: {}, cell_data_components: undefined };
+  }
   const m = await loadMeshio();
-  const r = m.meshCadSurface(channel.info as Parameters<typeof m.meshCadSurface>[0], defined(options) as unknown as Parameters<typeof m.meshCadSurface>[1]);
+  const r = m.meshCadSurface(channel.info as Parameters<typeof m.meshCadSurface>[0], defined(kernelOptions) as unknown as Parameters<typeof m.meshCadSurface>[1]);
   const read = legalFields(withKratosBlockNames(meshioToModel(r.mesh as Parameters<typeof meshioToModel>[0], diagnostics)), { cad_face: "CAD_FACE", cad_edge: "CAD_EDGE" });
   const failed = r.faces.filter((f) => f.status !== "ok");
+  // The bound, corner and edge-limit facts are per face; the report states them for the whole surface.
+  const recs = r.faces;
+  const corners = recs.flatMap((x) => x.corners ?? []);
+  const limitedByEdges = [...new Set(recs.flatMap((x) => x.limitedByEdges ?? []))].sort((a, b) => a - b);
+  const report: CadSurfaceReport = {
+    faces: r.numFaces,
+    triangles: r.numTriangles,
+    points: r.numPoints,
+    failedFaces: failed.slice(0, CAD_REPORT_LIST_LIMIT).map((x) => ({ face: x.face, status: x.status, reason: x.reason })),
+    edges: { total: r.numEdges, open: r.numOpenEdges, nonManifold: r.numNonManifoldEdges, misoriented: r.numMisorientedEdges, maxGap: r.maxEdgeGap },
+    edgeLength: { min: r.minEdge, max: r.maxEdge },
+    angleDeg: { min: r.minAngleDeg, max: r.maxAngleDeg },
+    angleHistogram: r.angleHistogram ?? [],
+    refinementPoints: r.numRefinementPoints ?? 0,
+    smoothed: r.numSmoothed ?? 0,
+    curvedStraightened: r.numCurvedStraightened ?? 0,
+    angleBound:
+      spec.minAngle !== undefined && spec.minAngle > 0
+        ? {
+            requested: spec.minAngle,
+            minInputAngleDeg: Math.min(180, ...recs.map((x) => x.minInputAngleDeg ?? 180)),
+            belowBound: recs.some((x) => x.belowBound),
+            // The smallest angle of the triangles no corner forces, over every face.
+            boundDeg: Math.min(...recs.map((x) => x.boundDeg ?? 180)),
+            facesBelowBound: r.numFacesBelowBound ?? 0,
+          }
+        : undefined,
+    corners: cap(corners),
+    cornersCount: corners.length,
+    limitedByEdges: limitedByEdges.slice(0, CAD_REPORT_LIST_LIMIT),
+    limitedByEdgesCount: limitedByEdges.length,
+    virtualEdges: cap(r.virtualEdges),
+    virtualEdgesCount: r.virtualEdges?.length ?? 0,
+    reparametrised: cap(r.reparametrised),
+    mergedFaces: cap(r.mergedFaces),
+    toleranceUses: cap(r.toleranceUses),
+    loppedCorners: cap(r.loppedCorners),
+    warnings: r.warnings ?? [],
+  };
+  return { model: read, summary: describeCadSurface(report, spec), suffix: "cad_surface", cadSurface: report };
+}
+
+/** The one or two paragraphs a `cadSurface` run reports: what was meshed, and what each option did. */
+export function describeCadSurface(r: CadSurfaceReport, spec: Pick<CadSurfaceSpec, "minAngle" | "order" | "lopCorners">): string {
   const f = (x: number) => (Number.isFinite(x) ? +x.toPrecision(3) : "n/a");
+  const n = (x: number) => x.toLocaleString("en-US");
   const parts = [
-    `B-rep surface mesh of ${r.numFaces} face(s): ${r.numTriangles.toLocaleString("en-US")} triangle(s), ${r.numPoints.toLocaleString("en-US")} point(s), edge length ${f(r.minEdge)}–${f(r.maxEdge)}, angles ${f(r.minAngleDeg)}°–${f(r.maxAngleDeg)}°.`,
-    `Edges: ${r.numEdges} (${r.numOpenEdges} open, ${r.numNonManifoldEdges} non-manifold, ${r.numMisorientedEdges} misoriented), largest gap between faces ${f(r.maxEdgeGap)}.`,
+    `B-rep surface mesh of ${r.faces} face(s): ${n(r.triangles)} triangle(s), ${n(r.points)} point(s), edge length ${f(r.edgeLength.min)}–${f(r.edgeLength.max)}, angles ${f(r.angleDeg.min)}°–${f(r.angleDeg.max)}°.`,
+    `Edges: ${r.edges.total} (${r.edges.open} open, ${r.edges.nonManifold} non-manifold, ${r.edges.misoriented} misoriented), largest gap between faces ${f(r.edges.maxGap)}.`,
   ];
-  if (failed.length > 0) {
-    parts.push(`${failed.length} face(s) NOT meshed: ${failed.slice(0, 5).map((x) => `#${x.face} ${x.status}${x.reason ? ` (${x.reason})` : ""}`).join("; ")}${failed.length > 5 ? "; …" : ""}.`);
+  if (spec.order === 2) {
+    parts.push(
+      `Quadratic output (triangle6 / line3 on the surfaces)` +
+        (r.curvedStraightened > 0 ? `; ${r.curvedStraightened} element(s) whose Jacobian was not positive everywhere were kept straight-sided.` : ".")
+    );
+  }
+  if (r.angleBound) {
+    const b = r.angleBound;
+    parts.push(
+      `Angle bound ${f(b.requested)}°: ${r.refinementPoints} refinement point(s)` +
+        (r.smoothed > 0 ? `, ${r.smoothed} smoothed` : "") +
+        (b.belowBound
+          ? `; ${r.cornersCount} corner/pole(s) on ${b.facesBelowBound} face(s) force triangles under it` +
+            (b.minInputAngleDeg < 180 ? ` (the sharpest input corner is ${f(b.minInputAngleDeg)}°)` : "") +
+            `, every other triangle is at least ${f(b.boundDeg)}°.`
+          : `; met (smallest angle ${f(b.boundDeg)}°).`)
+    );
+  } else if (r.smoothed > 0 || r.refinementPoints > 0) {
+    parts.push(`${r.refinementPoints} refinement point(s), ${r.smoothed} smoothed.`);
+  }
+  if (spec.lopCorners && !(spec.minAngle && spec.minAngle > 0)) parts.push("lopCorners has no effect without minAngle above 0.");
+  if (r.loppedCorners.length > 0) {
+    const bad = (r.loppedCorners as { guaranteed?: boolean }[]).filter((c) => c.guaranteed === false).length;
+    parts.push(`${r.loppedCorners.length} corner(s) lopped${bad ? `, ${bad} without the guarantee (see the report)` : ", every bound guaranteed"}.`);
+  }
+  if (r.limitedByEdgesCount > 0) parts.push(`Edge sizes limit the mesh at ${r.limitedByEdgesCount} edge(s): ${r.limitedByEdges.slice(0, 8).join(", ")}${r.limitedByEdgesCount > 8 ? ", …" : ""}.`);
+  if (r.virtualEdgesCount > 0) parts.push(`${r.virtualEdgesCount} virtual edge chain(s) sampled as one.`);
+  if (r.reparametrised.length > 0) {
+    const taken = (r.reparametrised as { taken?: boolean }[]).filter((x) => x.taken).length;
+    parts.push(`${r.reparametrised.length} face(s) over the reparametrisation condition number, ${taken} flattened.`);
+  }
+  if (r.mergedFaces.length > 0) {
+    const merged = (r.mergedFaces as { merged?: boolean }[]).filter((x) => x.merged).length;
+    parts.push(`${r.mergedFaces.length} sliver face(s) found, ${merged} meshed with a neighbour.`);
+  }
+  if (r.toleranceUses.length > 0) parts.push(`Declared tolerances accepted ${r.toleranceUses.length} gap(s).`);
+  if (r.failedFaces.length > 0) {
+    parts.push(`${r.failedFaces.length} face(s) NOT meshed: ${r.failedFaces.slice(0, 5).map((x) => `#${x.face} ${x.status}${x.reason ? ` (${x.reason})` : ""}`).join("; ")}${r.failedFaces.length > 5 ? "; …" : ""}.`);
   }
   if (r.warnings.length) parts.push(r.warnings.join(" "));
-  return { model: read, summary: parts.join(" "), suffix: "cad_surface" };
+  return parts.join(" ");
 }

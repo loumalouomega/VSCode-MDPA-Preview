@@ -279,11 +279,17 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("kratos.mesh.exportSimplified", () =>
       dispatchMenu({ type: "menuExportSimplified" })
     ),
+    vscode.commands.registerCommand("kratos.mesh.exportTessellated", () =>
+      dispatchMenu({ type: "menuExportTessellated" })
+    ),
     vscode.commands.registerCommand("kratos.mesh.exportGrid", () =>
       dispatchMenu({ type: "menuExportGrid" })
     ),
     vscode.commands.registerCommand("kratos.mesh.exportOctree", () =>
       dispatchMenu({ type: "menuExportOctree" })
+    ),
+    vscode.commands.registerCommand("kratos.mesh.exportKernelOp", () =>
+      dispatchMenu({ type: "menuExportKernelOp" })
     ),
     vscode.commands.registerCommand("kratos.mesh.exportCadSurface", () =>
       dispatchMenu({ type: "menuExportCadSurface" })

@@ -577,6 +577,7 @@ export const fr: Catalogue = {
   "Simplify surface…": "Simplifier la surface…",
   "Sample to grid…": "Échantillonner sur une grille…",
   "Octree volume mesh…": "Maillage volumique octree…",
+  "Sweep, mirror and layers…": "Balayage, symétrie et couches…",
   "Mesh CAD faces…": "Mailler les faces CAO…",
   "Generate mesh…": "Générer un maillage…",
   "Properties editor…": "Éditeur de propriétés…",
@@ -652,4 +653,9 @@ export const fr: Catalogue = {
   "Enter three numbers: x, y, z": "Saisissez trois nombres : x, y, z",
   "Quantity of {v} over {part}": "Grandeur de {v} sur {part}",
   "Quantity of {v} over the whole mesh": "Grandeur de {v} sur tout le maillage",
+  "Special entities": "Entités spéciales",
+  "Special problemtypes": "Problemtypes spéciaux",
+  "Data": "Données",
+  "Mesh": "Maillage",
+  "View and compare": "Vue et comparaison",
 };
