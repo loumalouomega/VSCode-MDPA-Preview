@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- **Recommended wall element size.** For fluid problemtypes with a reference velocity and a fluid material, `case_validate` returns `sizeAdvice`: the first-cell height for a target y⁺ of 30 (flat-plate friction law, over the mesh's longest side), the number of boundary-layer layers, and every input it used. Problemtypes without a defensible rule, and cases missing an input, report nothing.
 - **Polar plots.** The Plots workspace gains a **Polar** family: the X column is the angle (degrees or radians, chosen explicitly in the recipe's `angleUnit`, never inferred) and the Y column the radius. Recipes without it are unchanged; `plot_dataset` accepts the family.
 - **Revolved measure-weighted totals in plots.** A region source with the measure-integral operation accepts `revolveAbout: "x" | "y"`: element measures gain the 2π r factor, so an r-z result integrates to the true volumetric total (a revolved rectangle measures πR²H). Explicit, planar meshes only, noted in the series diagnostics.
 - **Revolved measures (first increment).** `mesh_info` accepts `revolveAbout: "x" | "y"` for a planar xy mesh: part lengths become swept areas and areas become volumes (Pappus, per triangle/segment), and `measure.revolvedAbout` says so beside the value. A revolved unit rectangle of radius R and height H measures πR²H. The axis is always named by the caller; a 3D mesh or an out-of-plane axis is refused. Integrals, flow balance and plots do not take the option yet.

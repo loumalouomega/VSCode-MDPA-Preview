@@ -170,6 +170,7 @@ import { probeKratosApplications } from "../problemtype/kratosAppProbe";
 import { describeMissingApplications } from "../problemtype/applications";
 import { defaultCaseState, flattenValues } from "../problemtype/api";
 import { adviseLinearSolver } from "../problemtype/solverAdvice";
+import { adviseElementSize } from "../problemtype/sizeAdvice";
 import { planCaseMesh } from "../problemtype/caseMesh";
 import {
   BUILTIN_PRESETS,
@@ -3050,6 +3051,11 @@ export async function caseValidate(args: {
     advisories: report.findings.filter((f) => f.severity !== "error").map((f) => f.message),
     counts: report.counts,
     findings: report.findings,
+    // Recommended element size and the inputs it came from; absent when the problemtype has no defensible rule.
+    ...(() => {
+      const a = adviseElementSize(runtime.decl.id, flattenValues(runtime.decl, state), state.materials, model.bounds.min, model.bounds.max);
+      return a ? { sizeAdvice: a } : {};
+    })(),
     // Per assignment: every property of its law, marked provided / preset /
     // defaulted / missing, from the same rulebook generation uses.
     materialContents: state.materials.flatMap((m) => {
