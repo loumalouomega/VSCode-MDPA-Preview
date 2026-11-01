@@ -4,6 +4,12 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Auto deformation scale.** The Deformed-shape mode now starts on **Auto scale**: the largest displacement is drawn at about 10 % of the model's bounding-box diagonal, rounded down to a 1/2/5 × 10ⁿ factor and shown as "Auto (×N)". It is computed once when the mode is turned on (or the deform field changes) and held while the timeline is scrubbed; moving the slider turns it off. Saved in the view sidecar (`deformAuto`, `deformAutoScale`); a sidecar written before this keeps its typed factor. Display only.
+
 ## [5.27.0] - 2026-10-30
 
 ### Added

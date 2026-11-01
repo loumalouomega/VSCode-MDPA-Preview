@@ -54,6 +54,8 @@ export interface FieldPanelState {
   /** The vector field driving the deformation (own selector, may differ from the coloring field). */
   deformKey: string;
   deformScale: number;
+  /** Auto deformation scale is driving `deformScale` (vector displacement only). */
+  deformAuto: boolean;
   hasVolume: boolean; // mesh has volume cells (isosurface produces surfaces, else iso-lines)
   /** [lo,hi] window of cells to show; undefined = the full effective range (everything passes). */
   thresholdRange?: [number, number];
@@ -90,6 +92,7 @@ export interface FieldPanelHandlers {
   onScale(v: number): void;
   onSelectDeformField(key: string): void;
   onDeformScale(v: number): void;
+  onDeformAuto(on: boolean): void;
   onThresholdRange(range: [number, number] | undefined): void;
   onThresholdRule(rule: ThresholdRule): void;
   /** Push this pane's whole field setup onto every other pane. */
@@ -710,17 +713,29 @@ function buildDeformControls(state: FieldPanelState, handlers: FieldPanelHandler
   slider.max = "1000";
   slider.step = "0.1";
   slider.title = t("Display-only multiplier for the displacement field (0–1000×)");
-  slider.value = String(state.deformScale);
+  slider.value = String(Math.min(1000, state.deformScale));
   const valEl = document.createElement("span");
   valEl.className = "field-slider-value";
-  valEl.textContent = `${state.deformScale.toFixed(1)}×`;
+  const fmt = (v: number): string => (v >= 100 ? v.toFixed(0) : v.toFixed(1));
+  valEl.textContent = state.deformAuto ? t("Auto (×{n})", { n: fmt(state.deformScale) }) : `${fmt(state.deformScale)}×`;
   slider.addEventListener("input", () => {
-    valEl.textContent = `${Number(slider.value).toFixed(1)}×`;
+    valEl.textContent = `${fmt(Number(slider.value))}×`;
     handlers.onDeformScale(Number(slider.value));
   });
   row.appendChild(slider);
   row.appendChild(valEl);
   wrap.appendChild(row);
+
+  const autoRow = document.createElement("label");
+  autoRow.className = "field-check";
+  const auto = document.createElement("input");
+  auto.type = "checkbox";
+  auto.checked = state.deformAuto;
+  auto.title = t("Draw the largest displacement at about 10 % of the model size");
+  auto.addEventListener("change", () => handlers.onDeformAuto(auto.checked));
+  autoRow.appendChild(auto);
+  autoRow.appendChild(document.createTextNode(" " + t("Auto scale")));
+  wrap.appendChild(autoRow);
   return wrap;
 }
 

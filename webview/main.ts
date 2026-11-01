@@ -146,7 +146,7 @@ import {
   ScalarStyle,
 } from "./fieldRender";
 import { COLORMAPS, DEFAULT_COLORMAP, colorAt, getColormap } from "./colormaps";
-import { FieldComponent, effectiveRange, spacedIsoValues, transformStops } from "../src/parser/fieldScalars";
+import { FieldComponent, autoDeformScale, computeFieldRange, effectiveRange, spacedIsoValues, transformStops } from "../src/parser/fieldScalars";
 import { LegendSpec } from "./screenshotLegend";
 import { buildCapturePlan, captureBackground, captureFieldLabel, captureStepLabel, CaptureSettings, DEFAULT_CAPTURE_SETTINGS } from "../src/parser/capturePlan";
 import { composeCaptureOverlays, CaptureOverlay } from "./captureCompositor";
@@ -5874,7 +5874,8 @@ function renderFieldPanelUI(): void {
     isoValues: fs.isoValues,
     scale: fs.scale,
     deformKey: fs.deformKey,
-    deformScale: fs.deformScale,
+    deformScale: effectiveDeformScale(pane),
+    deformAuto: fs.deformAuto && !!selectedDeformInfo(pane)?.isVector,
     hasVolume: modelHasVolume(scopeModel(pane)),
     thresholdRange: fs.thresholdRange,
     thresholdRule: fs.thresholdRule,
@@ -5897,7 +5898,10 @@ function renderFieldPanelUI(): void {
     },
     onToggleMode: (mode) => {
       if (fs.modes.has(mode)) fs.modes.delete(mode);
-      else fs.modes.add(mode);
+      else {
+        fs.modes.add(mode);
+        if (mode === "deformed") fs.deformAutoScale = undefined; // Auto is taken from the frame on screen now
+      }
       renderFieldPanelUI();
       rebuild();
     },
@@ -5972,10 +5976,19 @@ function renderFieldPanelUI(): void {
     },
     onSelectDeformField: (key) => {
       fs.deformKey = key;
+      fs.deformAutoScale = undefined;
       rebuild();
     },
     onDeformScale: (v) => {
       fs.deformScale = v;
+      fs.deformAuto = false; // a typed factor turns Auto off
+      renderFieldPanelUI();
+      rebuild();
+    },
+    onDeformAuto: (on) => {
+      fs.deformAuto = on;
+      fs.deformAutoScale = undefined; // recompute from the frame on screen
+      renderFieldPanelUI();
       rebuild();
     },
     onThresholdRange: (range) => {
@@ -6194,6 +6207,23 @@ function selectedDeformInfo(pane: Pane): FieldInfo | undefined {
   return scopeInfos(pane).find((i) => i.key === pane.field.deformKey && isDeformable(i));
 }
 
+// The factor the warp uses. Auto (vector displacement only; a scalar relief has
+// no natural length) is computed once from the frame on screen and then held,
+// so scrubbing the timeline does not change the picture's scale.
+function effectiveDeformScale(pane: Pane): number {
+  const fs = pane.field;
+  if (!fs.deformAuto) return fs.deformScale;
+  const info = selectedDeformInfo(pane);
+  if (!info || !info.isVector) return fs.deformScale;
+  if (fs.deformAutoScale === undefined) {
+    const [, maxMag] = computeFieldRange(info.field, "mag");
+    const b = scopeModel(pane)?.bounds;
+    const diag = b ? Math.hypot(b.max[0] - b.min[0], b.max[1] - b.min[1], b.max[2] - b.min[2]) : 0;
+    fs.deformAutoScale = autoDeformScale(maxMag, diag);
+  }
+  return fs.deformAutoScale;
+}
+
 // When deformed shape is active, produce a warped copy of the geometry
 // (coords += deformScale · displacement). Everything else (topology, fields) is
 // shared by reference so all field layers render on the deformed geometry.
@@ -6204,7 +6234,7 @@ function computeWarpedGeometry(pane: Pane): { prepared: PreparedNodes; model: Md
   const info = selectedDeformInfo(pane);
   if (!info) return null;
   const coords = new Float32Array(scopePrep.coords); // copy (never mutate the reference)
-  const scale = pane.field.deformScale;
+  const scale = effectiveDeformScale(pane);
   for (let i = 0; i < scope.nodeCount; i++) {
     if (!info.isVector) {
       // Relief: a nodal scalar lifts the point along +Z.

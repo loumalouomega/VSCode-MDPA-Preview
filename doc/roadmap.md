@@ -365,12 +365,6 @@ Admission criterion: closes a gap between a generated case and how its results a
 
 **Acceptance:** a uniform temperature field with 1e-13 noise renders in a single colour and states its value; a symmetric range on a signed stress field puts zero at the colormap's centre; with a manual range narrower than the data the legend still prints the true extremes and the markers sit on the entities `mesh_field_series`/`mesh_info` report as extreme. **MCP:** none for the view; the extremes and their entity ids join `mesh_info`'s field summary if not already there.
 
-### 37. Automatic deformation scale — S
-
-**Pending — added 2026-10-31 (ElmerStudio review, second pass).** The deformed-shape mode starts at a scale of 1, so a structural result usually looks undeformed until the user types a factor. Add **Auto**: the largest displacement magnitude is drawn at about 10 % of the bounding-box diagonal, rounded down to a 1/2/5 × 10ⁿ factor so it reads as a number a person would choose, shown as "Auto (×2000)". It is computed once when the mode is turned on (from the frame on screen) and then held while the timeline is scrubbed, so the picture does not change scale under the user; a typed factor turns Auto off and is remembered in the view sidecar like the other Field settings. Display only, as today.
-
-**Acceptance:** on the KKSS cantilever tutorial result Auto chooses a factor within a power of ten of the 1000× the tutorial uses, holds it across frames, and a manual factor survives a reload. **MCP:** none (display).
-
 ### 38. Contours and isosurfaces that follow quadratic cells — M
 
 **Pending — added 2026-10-31 (ElmerStudio review, second pass).** `isoSurface.ts` decomposes each volume cell into tetrahedra over its corner nodes only, so on tet10/hex20/hex27 results the mid-side nodal values, which the solver computed, play no part in where an isosurface or contour lies. Run marching tetrahedra over a level-1 subdivision of quadratic cells, built in memory with the same parent→child rules as the shipped `tessellate` derive (item 10) and never written, and the surface iso-lines over `curvedDisplay.ts`'s subdivided faces; linear meshes keep today's path byte for byte. A second increment adds contour level labels spaced along each line (ElmerStudio prints one label per level at one vertex, which is the part not worth copying).

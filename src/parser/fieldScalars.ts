@@ -75,6 +75,29 @@ export function computeFieldRange(
   return [min, max];
 }
 
+/** Largest 1/2/5 x 10^n value that is <= v (v > 0 and finite). */
+export function floorNice125(v: number): number {
+  const e = Math.floor(Math.log10(v));
+  const base = Math.pow(10, e);
+  const m = v / base;
+  const nice = m >= 5 ? 5 : m >= 2 ? 2 : 1;
+  return nice * base;
+}
+
+/**
+ * Automatic deformation scale: draws the largest displacement at about 10 % of
+ * the bounding-box diagonal, rounded DOWN to a 1/2/5 x 10^n factor a person
+ * would type. Returns 1 when either input is zero or not finite (nothing to
+ * scale against). Display only.
+ */
+export function autoDeformScale(maxMagnitude: number, bboxDiagonal: number): number {
+  if (!(maxMagnitude > 0) || !(bboxDiagonal > 0)) return 1;
+  if (!Number.isFinite(maxMagnitude) || !Number.isFinite(bboxDiagonal)) return 1;
+  const raw = (0.1 * bboxDiagonal) / maxMagnitude;
+  if (!Number.isFinite(raw) || raw <= 0) return 1;
+  return floorNice125(raw);
+}
+
 /**
  * The range the colormap actually spans: a user override wins over the data
  * range. The override is normalized (lo ≤ hi) so swapped inputs cannot

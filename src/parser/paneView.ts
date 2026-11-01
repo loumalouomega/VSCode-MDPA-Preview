@@ -62,6 +62,9 @@ export interface PaneFieldState {
   /** The vector field driving the deformation (may differ from the coloring field). */
   deformKey: string;
   deformScale: number;
+  /** Auto deformation scale (default on); the held factor is `deformAutoScale`. */
+  deformAuto: boolean;
+  deformAutoScale?: number;
   /** [lo,hi] window of cells to show; undefined = everything passes. */
   thresholdRange?: [number, number];
   thresholdRule: ThresholdRule;
@@ -105,6 +108,8 @@ export function defaultPaneFieldState(colormap: string): PaneFieldState {
     scale: 1,
     deformKey: "",
     deformScale: 1,
+    deformAuto: true,
+    deformAutoScale: undefined,
     thresholdRange: undefined,
     thresholdRule: "all",
   };
