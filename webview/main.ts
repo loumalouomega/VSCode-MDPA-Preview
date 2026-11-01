@@ -146,7 +146,7 @@ import {
   ScalarStyle,
 } from "./fieldRender";
 import { COLORMAPS, DEFAULT_COLORMAP, colorAt, getColormap, isDivergingColormap } from "./colormaps";
-import { FieldComponent, autoDeformScale, computeFieldRange, effectiveRange, resolveColorRange, spacedIsoValues, transformStops } from "../src/parser/fieldScalars";
+import { FieldComponent, autoDeformScale, computeFieldRange, effectiveRange, fieldExtremes, resolveColorRange, spacedIsoValues, transformStops } from "../src/parser/fieldScalars";
 import { LegendSpec } from "./screenshotLegend";
 import { buildCapturePlan, captureBackground, captureFieldLabel, captureStepLabel, CaptureSettings, DEFAULT_CAPTURE_SETTINGS } from "../src/parser/capturePlan";
 import { composeCaptureOverlays, CaptureOverlay } from "./captureCompositor";
@@ -1582,6 +1582,8 @@ let propertiesVisible = false;
 const FIELD_CONTOUR_ID = "field:contour";
 const FIELD_QUIVER_ID = "field:quiver";
 const FIELD_THRESHOLD_ID = "field:threshold";
+// Min/max markers: one tiny point overlay per extreme ("field:extremes:min"/"…:max").
+const FIELD_EXTREMES_PREFIX = "field:extremes:";
 // Multiple simultaneous iso values (Phase 1.5) each get their own layer id
 // under this prefix rather than a single fixed id.
 const FIELD_ISO_PREFIX = "field:iso:";
@@ -1590,7 +1592,8 @@ function isFieldLayerId(id: string): boolean {
     id === FIELD_CONTOUR_ID ||
     id === FIELD_QUIVER_ID ||
     id === FIELD_THRESHOLD_ID ||
-    id.startsWith(FIELD_ISO_PREFIX)
+    id.startsWith(FIELD_ISO_PREFIX) ||
+    id.startsWith(FIELD_EXTREMES_PREFIX)
   );
 }
 let fieldInfos: FieldInfo[] = [];
@@ -5877,6 +5880,7 @@ function renderFieldPanelUI(): void {
     deformScale: effectiveDeformScale(pane),
     symmetric: fs.symmetric,
     showExtremes: fs.showExtremes,
+    extremes: fieldExtremeRows(pane),
     deformAuto: fs.deformAuto && !!selectedDeformInfo(pane)?.isVector,
     hasVolume: modelHasVolume(scopeModel(pane)),
     thresholdRange: fs.thresholdRange,
@@ -5913,6 +5917,7 @@ function renderFieldPanelUI(): void {
       renderFieldPanelUI();
       rebuild();
     },
+    onGoToExtreme: (which) => goToExtreme(which),
     onShowExtremes: (on) => {
       fs.showExtremes = on;
       renderFieldPanelUI();
@@ -6405,6 +6410,7 @@ function applyFieldMode(pane: Pane): void {
   if (info?.isVector && fs.modes.has("quiver")) buildQuiverLayer(pane, info, prep);
   if (info && !info.isVector && fs.modes.has("iso")) buildIsoLayer(pane, info, useModel);
   if (info && wantThreshold) buildThresholdLayer(pane, info, prep, wantContour);
+  if (info && fs.showExtremes) buildExtremesLayer(pane, info, prep);
 
   syncPaneDimming();
   applyScalarBar(pane, info);
@@ -6527,6 +6533,110 @@ function buildThresholdLayer(
     prop.setStyle({ color: [0.8, 0.82, 0.88] }); // same neutral as the uncolored deformed surface
   }
   registerPaneOverlay(pane, FIELD_THRESHOLD_ID, prop);
+}
+
+/** Where a field's extreme sits: the node itself, or the cell's centroid. */
+function extremePosition(
+  pane: Pane,
+  info: FieldInfo,
+  prep: PreparedNodes,
+  id: number
+): [number, number, number] | undefined {
+  if (info.field.kind === "Nodal") return coordOfPrep(prep, id);
+  const maps = scopeCellMaps(pane);
+  const cell =
+    info.field.kind === "Conditional" ? maps.conditionById.get(id) : maps.elementById.get(id);
+  if (!cell) return undefined;
+  const sum: [number, number, number] = [0, 0, 0];
+  let n = 0;
+  for (let k = 0; k < cell.nodeIds.length; k++) {
+    const c = coordOfPrep(prep, cell.nodeIds[k]);
+    if (!c) continue;
+    sum[0] += c[0];
+    sum[1] += c[1];
+    sum[2] += c[2];
+    n++;
+  }
+  return n > 0 ? [sum[0] / n, sum[1] / n, sum[2] / n] : undefined;
+}
+
+// Two big points at the entities holding the TRUE minimum (blue) and maximum
+// (red) of the shown field — node or cell values, not interpolated.
+function buildExtremesLayer(pane: Pane, info: FieldInfo, prep: PreparedNodes): void {
+  const ex = fieldExtremes(info.field, info.isVector ? currentComponent(pane) : "mag");
+  if (!ex) return;
+  for (const [which, e, color] of [
+    ["min", ex.min, [0.2, 0.45, 1]],
+    ["max", ex.max, [1, 0.15, 0.1]],
+  ] as const) {
+    const pos = extremePosition(pane, info, prep, e.id);
+    if (!pos) continue;
+    const prop = backend.createProp();
+    prop.setGeometry(
+      backend.createGeometry({
+        points: Float32Array.from(pos),
+        verts: Uint32Array.from([1, 0]),
+      })
+    );
+    prop.setStyle({ color: [color[0], color[1], color[2]], pointSize: 14, edgeVisible: false });
+    registerPaneOverlay(pane, FIELD_EXTREMES_PREFIX + which, prop);
+  }
+}
+
+/** Field panel "Go to": centre the focused pane on an extreme and open Inspect on it. */
+function fieldExtremeRows(pane: Pane): { min: { value: number; id: number }; max: { value: number; id: number } } | undefined {
+  const info = selectedFieldInfo(pane);
+  if (!info || !pane.field.showExtremes) return undefined;
+  const ex = fieldExtremes(info.field, info.isVector ? currentComponent(pane) : "mag");
+  if (!ex) return undefined;
+  const sc = paneDisplayScale(pane, info);
+  return { min: { value: ex.min.value / sc, id: ex.min.id }, max: { value: ex.max.value / sc, id: ex.max.id } };
+}
+
+function goToExtreme(which: "min" | "max"): void {
+  const pane = focusedPane();
+  const info = selectedFieldInfo(pane);
+  const prep = scopePrepared(pane);
+  if (!info || !prep) return;
+  if (isComparePane(pane)) {
+    toast(t("Go to works on the primary mesh only."));
+    return;
+  }
+  const ex = fieldExtremes(info.field, info.isVector ? currentComponent(pane) : "mag");
+  if (!ex) return;
+  const e = ex[which];
+  const pos = extremePosition(pane, info, prep, e.id);
+  if (!pos) return;
+  const b = model?.bounds;
+  const diag = b ? Math.hypot(b.max[0] - b.min[0], b.max[1] - b.min[1], b.max[2] - b.min[2]) : 1;
+  const r = Math.max(diag * 0.05, 1e-9);
+  pane.view.resetCamera([pos[0] - r, pos[0] + r, pos[1] - r, pos[1] + r, pos[2] - r, pos[2] + r]);
+  // Inspect card for the entity (or node) holding the extreme.
+  const kind = info.field.kind;
+  const selection: InspectSelection = {};
+  if (kind === "Nodal") {
+    selection.node = {
+      id: e.id,
+      coords: pos,
+      smpPaths: getMembershipIndex().nodes.get(e.id) ?? [],
+      fields: fieldValuesForEntity("Nodal", e.id),
+      constraints: constraintLinesFor(e.id),
+    };
+  } else {
+    const idx = getMembershipIndex();
+    const isCond = kind === "Conditional";
+    selection.entity = {
+      kind: isCond ? "Condition" : "Element",
+      id: e.id,
+      smpPaths: (isCond ? idx.conditions : idx.elements).get(e.id) ?? [],
+      fields: fieldValuesForEntity(kind, e.id),
+    };
+  }
+  inspectSelection = selection;
+  if (!inspectMode) toggleInspectMode();
+  renderInspectUI();
+  render();
+  if (showNodeIds) requestLabelUpdate();
 }
 
 // Anchor points (node coords or cell centroids), vectors and magnitudes.

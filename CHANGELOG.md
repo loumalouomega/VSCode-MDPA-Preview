@@ -8,7 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
-- **Honest colour ranges.** A field constant within round-off draws in one colour, the Field panel gains **Symmetric range** (on by default for diverging colormaps until touched) and its legend always prints the true data min and max beside the mapping range. A **Show extremes** option is stored in the view sidecar; the in-scene markers are not drawn yet.
+- **Honest colour ranges.** A field constant within round-off draws in one colour, the Field panel gains **Symmetric range** (on by default for diverging colormaps until touched) and its legend always prints the true data min and max beside the mapping range. **Show extremes** marks the entities holding the true minimum (blue) and maximum (red) in the scene, with a **Go to** button for each that frames it and opens Inspect on it. `mesh_info` now reports each field's `min`/`max` value and entity id.
 - **Auto deformation scale.** The Deformed-shape mode now starts on **Auto scale**: the largest displacement is drawn at about 10 % of the model's bounding-box diagonal, rounded down to a 1/2/5 × 10ⁿ factor and shown as "Auto (×N)". It is computed once when the mode is turned on (or the deform field changes) and held while the timeline is scrubbed; moving the slider turns it off. Saved in the view sidecar (`deformAuto`, `deformAutoScale`); a sidecar written before this keeps its typed factor. Display only.
 
 ## [5.27.0] - 2026-10-30

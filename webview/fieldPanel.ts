@@ -60,6 +60,7 @@ export interface FieldPanelState {
   deformAuto: boolean;
   symmetric?: boolean;
   showExtremes?: boolean;
+  extremes?: { min: { value: number; id: number }; max: { value: number; id: number } };
   hasVolume: boolean; // mesh has volume cells (isosurface produces surfaces, else iso-lines)
   /** [lo,hi] window of cells to show; undefined = the full effective range (everything passes). */
   thresholdRange?: [number, number];
@@ -99,6 +100,7 @@ export interface FieldPanelHandlers {
   onDeformAuto(on: boolean): void;
   onSymmetric(on: boolean): void;
   onShowExtremes(on: boolean): void;
+  onGoToExtreme(which: "min" | "max"): void;
   onThresholdRange(range: [number, number] | undefined): void;
   onThresholdRule(rule: ThresholdRule): void;
   /** Push this pane's whole field setup onto every other pane. */
@@ -538,6 +540,24 @@ function buildRangeControls(
   extLabel.appendChild(extCk);
   extLabel.appendChild(document.createTextNode(t("Show extremes")));
   wrap.appendChild(extLabel);
+  if (state.showExtremes && state.extremes) {
+    for (const which of ["min", "max"] as const) {
+      const e = state.extremes[which];
+      const row = document.createElement("div");
+      row.className = "field-row field-extreme-row";
+      const txt = document.createElement("span");
+      txt.className = "field-extreme-text";
+      txt.textContent = `${which === "min" ? t("Min") : t("Max")} ${e.value} (id ${e.id})`;
+      txt.title = t("Node/cell value, not interpolated");
+      const go = document.createElement("button");
+      go.className = "panel-btn field-extreme-go";
+      go.textContent = t("Go to");
+      go.addEventListener("click", () => handlers.onGoToExtreme(which));
+      row.appendChild(txt);
+      row.appendChild(go);
+      wrap.appendChild(row);
+    }
+  }
 
   // --- in-scene scalar bar ---
   const barLabel = document.createElement("label");

@@ -215,6 +215,18 @@ function structuralState(): CaseState {
   return state;
 }
 
+test("mesh_info reports each field's true extremes and the entity ids holding them", async () => {
+  const dir = tmpDir();
+  const src = writeFixture(dir);
+  fs.appendFileSync(src, "\nBegin NodalData TEMP\n1 0 5.0\n2 0 -3.0\n3 0 9.5\n4 0 0.0\nEnd NodalData\n");
+  const info = (await meshInfo({ path: src })) as {
+    fields: { variable: string; min?: { value: number; id: number }; max?: { value: number; id: number } }[];
+  };
+  const f = info.fields.find((x) => x.variable === "TEMP")!;
+  assert.deepEqual(f.min, { value: -3, id: 2 });
+  assert.deepEqual(f.max, { value: 9.5, id: 3 });
+});
+
 test("mesh_info summarizes counts, blocks, SMP tree and fields", async () => {
   const dir = tmpDir();
   const info = (await meshInfo({ path: writeFixture(dir) })) as {

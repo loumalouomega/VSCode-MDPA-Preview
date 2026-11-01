@@ -1,3 +1,4 @@
+import { fieldExtremes } from "../parser/fieldScalars";
 import { computePartMeasures, measureName, PartMeasures } from "../parser/partMeasures";
 import { discoverOutputs } from '../problemtype/outputDiscovery';
 import { exportCaseResults, normalizeExportFormats } from "../problemtype/resultExport";
@@ -653,15 +654,20 @@ export async function meshInfo(args: {
           },
         }
       : {}),
-    fields: model.fields.map((f) => ({
+    fields: model.fields.map((f) => {
+      // True extremes (magnitude for vectors) and the entity ids holding them.
+      const ex = fieldExtremes(f, "mag");
+      return {
       variable: f.variable,
       kind: f.kind,
       components: f.components,
       count: f.ids.length,
+      ...(ex ? { min: { value: ex.min.value, id: ex.min.id }, max: { value: ex.max.value, id: ex.max.id } } : {}),
       // Only when the source stated them (an OpenFOAM `dimensions [..]`); absent = UNKNOWN,
       // never dimensionless (former roadmap item 12).
       ...(f.dimensions ? { dimensions: f.dimensions, unit: fieldUnitLabel(f) } : {}),
-    })),
+      };
+    }),
     // Global (scalar) variable SPECS with their live values, recomputed from
     // the current fields (see globalReduce.ts) — conditional like `fields`,
     // so a mesh with none reports nothing new.
