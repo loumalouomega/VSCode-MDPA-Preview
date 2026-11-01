@@ -25,6 +25,7 @@ import {
   meshCurvature,
   meshFitPrimitives,
   meshAleQuality,
+  meshRecoverFlux,
   meshCompare,
   meshDerive,
   windTunnelPlanTool,
@@ -434,6 +435,22 @@ export function registerAllTools(server: McpServer): void {
       },
     },
     runCancellable(meshCurvature)
+  );
+
+  server.registerTool(
+    "mesh_recover_flux",
+    {
+      description:
+        "See where a support or wall carries its load. Kratos reports reactions (REACTION, REACTION_FLUX) as nodal LOADS, which can be summed but not seen as a per-area field. This recovers a traction / flux field on the surface Conditions of a SubModelPart (3/6-node triangles consistently, 4-node quadrilaterals lumped) by the consistent boundary-mass projection M t = F, solved per component by Jacobi-preconditioned CG. Dividing by a lumped area would show spots on a quadratic face (the corner loads of a uniform traction are zero); this does not. The integral of the recovered field over the whole part equals the reaction sum (reported as integralError). Over a subset of the faces it is that subset's integral, which equals that subset's reactions only where the cut does not split a node's load. The result is a DERIVED field (default <variable>_RECOVERED), labelled as recovered, never written into the source data; outputPath writes the mesh carrying it.",
+      inputSchema: {
+        path: meshPath,
+        part: z.string().describe("SubModelPart path whose surface Conditions are the faces"),
+        variable: z.string().describe("Nodal field of nodal loads (scalar or vector), e.g. REACTION or REACTION_FLUX"),
+        output: z.string().optional().describe("Output field name (default <variable>_RECOVERED)"),
+        outputPath: z.string().optional().describe("Write the mesh carrying the recovered field here"),
+      },
+    },
+    runCancellable(meshRecoverFlux)
   );
 
   server.registerTool(

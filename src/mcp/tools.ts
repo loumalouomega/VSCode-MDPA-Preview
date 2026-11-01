@@ -59,6 +59,7 @@ import { surfaceDefects } from "../parser/surfaceDefects";
 import { curvatureModel, gaussBonnetResidual } from "../parser/curvature";
 import { fitPrimitivesReport } from "../parser/primitiveReport";
 import { aleQualitySeries } from "../parser/aleQuality";
+import { recoverBoundaryFlux } from "../parser/boundaryFlux";
 import { segmentModel, SEGMENT_VARIABLE } from "../parser/segmentMesh";
 import { compareMeshes, compareFieldModel } from "../parser/meshCompare";
 import { fieldUnitLabel } from "../parser/fieldDimensions";
@@ -932,6 +933,48 @@ export async function meshFlowBalance(args: {
     steps: series.rows.map((r) => ({ label: r.label, ...(r.result ? { summary: describeFlowBalance(r.result), sections: r.result.sections, netFlux: r.result.netFlux, imbalance: r.result.imbalance, pressureDrop: r.result.pressureDrop, warnings: r.result.warnings } : { error: r.error }) })),
     outputPath: written,
   };
+}
+
+/**
+ * mesh_recover_flux (roadmap item 45): a per-area traction / heat flux on the
+ * faces of a SubModelPart recovered from nodal reactions by a consistent
+ * boundary-mass projection, with its integral and the reaction sum.
+ */
+export async function meshRecoverFlux(args: {
+  path: string;
+  part: string;
+  variable: string;
+  output?: string;
+  outputPath?: string;
+  provenance?: ProvenanceMode;
+  verify?: boolean;
+}, execution: PlotExecution = {}): Promise<object> {
+  const loaded = await loadMesh(args.path, undefined, undefined, undefined, undefined, undefined, execution.signal);
+  const r = recoverBoundaryFlux(loaded.model, { part: args.part, variable: args.variable, output: args.output });
+  const out: Record<string, unknown> = {
+    path: args.path,
+    output: r.output,
+    recovered: true,
+    faces: r.faces,
+    nodes: r.nodes,
+    area: r.area,
+    reactionSum: r.reactionSum,
+    integral: r.integral,
+    integralError: r.integralError,
+    iterations: r.iterations,
+    residual: r.residual,
+    range: r.range,
+    nodesWithoutLoad: r.nodesWithoutLoad,
+    message: r.message,
+  };
+  if (args.outputPath) {
+    const warnings: string[] = [];
+    const written = await writeModelReported(r.model, args.outputPath, loaded.sourceText, undefined, warnings, { sourceFile: args.path, ops: [{ op: "recoverBoundaryFlux" }], provenance: args.provenance, verify: args.verify });
+    out.outputPath = written.path;
+    out.report = written.report;
+    out.warnings = warnings;
+  }
+  return out;
 }
 
 /**
