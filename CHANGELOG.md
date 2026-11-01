@@ -4,7 +4,7 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [5.28.0] - 2026-11-01
 
 ### Added
 
@@ -1455,7 +1455,8 @@ Four silent-correctness fixes. None of them threw, and none was visible in the m
 
 - Initial release: custom editor preview for `.mdpa` files.
 
-[Unreleased]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.27.0...HEAD
+[Unreleased]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.28.0...HEAD
+[5.28.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.27.0...v5.28.0
 [5.27.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.26.0...v5.27.0
 [5.25.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.24.0...v5.25.0
 [5.24.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.22.0...v5.24.0
