@@ -17,7 +17,7 @@ function sliceInk(fill: string, fg: string, bg: string): string {
   return contrast(bgL) > contrast(fgL) ? bg : fg;
 }
 export function plotFigure(dataset: PlotDataset, theme: { fg: string; bg: string; font: string; palette: string[] }) {
-  const p = dataset.recipe.presentation, family = p.family, circular = family === "pie" || family === "doughnut";
+  const p = dataset.recipe.presentation, family = p.family, polar = family === "polar", circular = family === "pie" || family === "doughnut";
   const specFor = (s: PlotSeriesData) => dataset.recipe.series.find(r => r.id === s.id || s.id.startsWith(`${r.id}:`)) as PlotSeriesSpec | undefined;
   const panelFor = (s: PlotSeriesData) => specFor(s)?.panel ?? 0;
   const categoryColors = new Map<string, string>();
@@ -35,6 +35,11 @@ export function plotFigure(dataset: PlotDataset, theme: { fg: string; bg: string
       const y1 = 1 - (Math.floor(panel / panelCols) + Math.floor(at / cols) / rows) / panelRows, y0 = y1 - 1 / rows / panelRows;
       const slices = points.filter(v => v.x !== null && v.y !== null && v.y > 0);
       traces.push({ name: common.name, visible: common.visible, type: "pie", hole: family === "doughnut" ? .55 : 0, sort: false, direction: "clockwise", labels: slices.map(v => escape(String(v.x))), values: slices.map(v => v.y), customdata: slices, text: slices.map(v => v.share === null || v.share === undefined ? "unknown share" : `${(v.share * 100).toPrecision(3)}%`), insidetextfont: { color: slices.map(v => sliceInk(categoryColors.get(String(v.x))!, theme.fg, theme.bg)) }, outsidetextfont: { color: theme.fg }, marker: { colors: slices.map(v => categoryColors.get(String(v.x))), line: { color: theme.bg, width: 1 } }, domain: { x: [x0 + .025, x1 - .025], y: [y0 + .04, y1 - .04] }, title: { text: `${common.name}<br>${label(s.yColumn)}`, font: { size: 11, color } }, textinfo: "label+text", hovertemplate: "%{label}<br>%{value} (%{text})<extra>%{fullData.name}</extra>" });
+      continue;
+    }
+    if (polar) {
+      // Angle (X) and radius (Y) from the supplied columns; the unit is the recipe's explicit choice.
+      traces.push({ ...common, type: "scatterpolar", subplot: "polar", mode: p.lineMode ?? "lines+markers", theta: points.map(v => v.x), r: points.map(v => v.y), thetaunit: p.angleUnit === "rad" ? "radians" : "degrees", hovertemplate: `θ %{theta}<br>r %{r}<extra>%{fullData.name}</extra>` });
       continue;
     }
     if (family === "heatmap" || family === "contour") { traces.push({ ...common, type: family, x: s.grid?.x, y: s.grid?.y, z: s.grid?.z, hoverongaps: false, colorscale: "Viridis", colorbar: { title: { text: s.zColumn ? label(s.zColumn) : "Value" } } }); continue; }
@@ -55,7 +60,11 @@ export function plotFigure(dataset: PlotDataset, theme: { fg: string; bg: string
     } else traces.push(trace);
   }
   const layout: any = { title: { text: escape(p.title) }, paper_bgcolor: theme.bg, plot_bgcolor: theme.bg, font: { color: theme.fg, family: theme.font, size: 12 }, colorway: theme.palette, margin: { l: circular ? 25 : 65, r: 30, t: 55, b: circular ? 60 : 100 }, showlegend: true, legend: { orientation: "h", y: circular ? -.08 : -.3, yanchor: "top", x: 0, ...(circular ? { itemclick: false, itemdoubleclick: false } : {}) }, barmode: p.barMode === "stack" ? "relative" : "group", hovermode: "closest", annotations: circular ? [] : (p.annotations ?? []).map(a => ({ ...a, text: escape(a.text), showarrow: true })), ...(circular ? {} : { grid: { rows: (p.panels ?? 1) > 1 ? 2 : 1, columns: p.panels === 4 ? 2 : 1, pattern: "independent" } }), uirevision: JSON.stringify([family, p.xScale, p.yScale, p.panels, p.barOrientation, p.barMode]) };
-  if (!circular) for (let i = 0; i < (p.panels ?? 1); i++) {
+  if (polar) {
+    for (const k of ["xaxis", "yaxis", "grid"]) delete layout[k];
+    layout.polar = { bgcolor: theme.bg, angularaxis: { thetaunit: p.angleUnit === "rad" ? "radians" : "degrees", color: theme.fg }, radialaxis: { color: theme.fg, type: p.yScale ?? "linear", ...(p.yRange ? { range: p.yRange } : {}) } };
+  }
+  if (!circular && !polar) for (let i = 0; i < (p.panels ?? 1); i++) {
     const suffix = i ? String(i + 1) : "", s = dataset.series.find(d => panelFor(d) === i), horizontal = family === "bar" && p.barOrientation === "h";
     const category = { title: { text: p.xLabel ? escape(p.xLabel) : s ? label(s.xColumn) : "X" }, type: family === "bar" || family === "box" || s?.xColumn.type === "text" ? "category" : p.xScale ?? "linear", ...(p.xRange ? { range: p.xRange.map(v => p.xScale === "log" ? Math.log10(v) : v) } : {}) };
     const value = { title: { text: p.yLabel ? escape(p.yLabel) : s ? label(s.yColumn) : "Y" }, type: p.yScale ?? "linear", ...(p.yRange ? { range: p.yRange.map(v => p.yScale === "log" ? Math.log10(v) : v) } : {}) };

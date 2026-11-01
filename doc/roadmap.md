@@ -319,7 +319,7 @@ Admission criterion: closes a gap between a generated case and how its results a
 
 ### 30. Polar plots and plots against a case parameter — S
 
-**Pending — added 2026-10-31 (ElmerStudio review).** Two plotting gaps: a `polar` family in `PLOT_FAMILIES` (angle and radius from table columns or from a revolved probe circle; confirm first that the bundled `plotly.js-strict-dist-min` build carries `scatterpolar`, otherwise record the gap and stop), and an x axis bound to a recorded case parameter across isolated runs, so item 25's per-run quantity can be drawn as a curve. Both reuse the recipe format with an additive key and the existing worker; no new numerical backend.
+**Polar family delivered 2026-11-01** (`scatterpolar` is in the bundled plotly build; `presentation.angleUnit`; Plots family picker; no revolved-probe-circle helper yet). **Still pending:** the x axis bound to a recorded case parameter across runs (needs item 25's per-run view). Original text: Two plotting gaps: a `polar` family in `PLOT_FAMILIES` (angle and radius from table columns or from a revolved probe circle; confirm first that the bundled `plotly.js-strict-dist-min` build carries `scatterpolar`, otherwise record the gap and stop), and an x axis bound to a recorded case parameter across isolated runs, so item 25's per-run quantity can be drawn as a curve. Both reuse the recipe format with an additive key and the existing worker; no new numerical backend.
 
 **Acceptance:** a polar recipe round-trips through save/load and renders the analytic cos θ of a field linear in x within display precision; a three-run sweep draws one point per run against its parameter. **MCP:** `plot_dataset` accepts the new family and axis binding.
 

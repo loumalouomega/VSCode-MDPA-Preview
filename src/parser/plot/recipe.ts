@@ -116,6 +116,7 @@ export function validatePlotRecipe(value: unknown): PlotRecipe {
   const p = value.presentation;
   requireValue(p.lineMode === undefined || ["lines", "lines+markers"].includes(p.lineMode), "Choose lines or lines with markers.");
   requireValue(p.barMode === undefined || ["group", "stack"].includes(p.barMode), "Choose grouped or stacked bars.");
+  requireValue(p.angleUnit === undefined || ["deg", "rad"].includes(p.angleUnit), "Choose degrees or radians for the polar angle.");
   requireValue(p.barOrientation === undefined || ["v", "h"].includes(p.barOrientation), "Choose vertical or horizontal bars.");
   for (const k of ["xLabel","yLabel"]) requireValue(p[k] === undefined || typeof p[k] === "string", "Invalid axis label.");
   for (const k of ["xScale", "yScale"]) requireValue(p[k] === undefined || ["linear", "log"].includes(p[k]), "Invalid axis scale.");

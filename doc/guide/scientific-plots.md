@@ -123,7 +123,7 @@ Changing the timeline, rank or resampling configuration pauses following and kee
 
 ## Families and analysis
 
-The visual picker exposes twelve families. “Graphs” here means ordinary data charts, not a node-and-edge network editor. X and Y can represent any appropriate relationship, including force–displacement. A series can be split by a grouping column; multiple sources/series support histories or file comparisons.
+The visual picker exposes thirteen families, including **Polar** (X column is the angle in the unit you choose explicitly, Y column the radius). “Graphs” here means ordinary data charts, not a node-and-edge network editor. X and Y can represent any appropriate relationship, including force–displacement. A series can be split by a grouping column; multiple sources/series support histories or file comparisons.
 
 | View | Controls and meaning |
 | --- | --- |

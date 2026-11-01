@@ -104,8 +104,8 @@ export type PlotTransform =
   | { op: "integral" }
   | { op: "normalize"; divisor: number }
   | { op: "convert"; factor: number; unit: string; dimensions?: number[] };
-export type PlotFamily = "line" | "step" | "area" | "scatter" | "bubble" | "histogram" | "box" | "bar" | "pie" | "doughnut" | "heatmap" | "contour";
-export const PLOT_FAMILIES: PlotFamily[] = ["line", "step", "area", "scatter", "bubble", "bar", "pie", "doughnut", "histogram", "box", "heatmap", "contour"];
+export type PlotFamily = "line" | "step" | "area" | "scatter" | "bubble" | "histogram" | "box" | "bar" | "pie" | "doughnut" | "heatmap" | "contour" | "polar";
+export const PLOT_FAMILIES: PlotFamily[] = ["line", "step", "area", "scatter", "bubble", "bar", "pie", "doughnut", "histogram", "box", "heatmap", "contour", "polar"];
 export interface PlotSeriesSpec {
   id: string;
   source: string;
@@ -149,6 +149,8 @@ export interface PlotRecipe {
     lineMode?: "lines" | "lines+markers";
     barMode?: "group" | "stack";
     barOrientation?: "v" | "h";
+    /** Polar family only: unit of the X (angle) column. Absent = degrees. Never inferred from the column. */
+    angleUnit?: "deg" | "rad";
     annotations?: { x: number; y: number; text: string }[];
   };
 }
