@@ -123,6 +123,27 @@ await deliver({ type: "ptPreflight", active: true, counts: { error: 1, warning: 
 await page.click("button.pt-preflight-row");
 await page.waitForTimeout(200);
 
+// --- item 35: every target is actionable ------------------------------------------------
+const targeted = [
+  { severity: "warning", code: "x-entities", message: "Bad cells.", target: { entityKind: "Elements", entityIds: [1, 2, 3] } },
+  { severity: "warning", code: "x-property", message: "Property 0 unused.", target: { propertyId: 0 } },
+  { severity: "warning", code: "x-condition", message: "Condition card.", target: { conditionId: "displacement" } },
+  { severity: "info", code: "x-plain", message: "No target." },
+];
+await deliver({ type: "ptPreflight", active: true, counts: { error: 0, warning: 3, info: 1 }, findings: targeted });
+view = await card();
+assert.deepEqual(view.rows.map((r) => r.tag), ["BUTTON", "BUTTON", "BUTTON", "DIV"], "targeted rows are buttons, a plain one is not");
+await page.evaluate(() => window.SENT_MESSAGES && (window.SENT_MESSAGES.length = 0));
+await page.click(".pt-preflight-row:nth-child(1)");
+await page.waitForTimeout(400);
+assert.equal(await page.evaluate(() => getComputedStyle(document.getElementById("selection-panel")).display !== "none"), true, "entity ids open the Selection panel");
+assert.match(await page.evaluate(() => document.getElementById("selection-panel").innerText), /Preflight/, "the ids land in a set named Preflight");
+await page.click(".pt-preflight-row:nth-child(2)");
+await page.waitForTimeout(400);
+assert.equal(await page.evaluate(() => getComputedStyle(document.getElementById("properties-panel")).display !== "none"), true, "a Properties id opens the Properties editor");
+await page.click(".pt-preflight-row:nth-child(3)"); // no such card in this scene: must not raise
+await page.waitForTimeout(200);
+
 await page.screenshot({ path: path.join(ROOT, "out", "screenshot-harness", "preflight.png"), clip: { x: 0, y: 0, width: 420, height: 1000 } });
 await browser.close();
 assert.deepEqual(errors, [], `page errors: ${errors.join(" | ")}`);

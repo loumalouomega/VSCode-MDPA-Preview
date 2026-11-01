@@ -301,6 +301,7 @@ import {
   setProblemtypeModel,
   setProblemtypePreflight,
   setPreflightFrameHandler,
+  setPreflightTargetHandler,
   setProblemtypeStatus,
   setProblemtypeEstimate,
   setProblemtypeCapability,
@@ -3903,6 +3904,22 @@ initOpQueue((msg) => vscode.postMessage(msg));
 initVariablesPanel((msg) => vscode.postMessage(msg));
 initProblemtype((msg) => vscode.postMessage(msg));
 setPreflightFrameHandler((smpPath) => frameLayer(`smp:${smpPath}`));
+// Entity ids -> a transient-looking selection set ("Preflight"); a Properties id
+// -> the Properties editor scrolled to that set. Neither is an OpRecord.
+setPreflightTargetHandler((target) => {
+  if (target.entityKind && target.entityIds && target.entityIds.length > 0) {
+    applySelectionSeed({ name: "Preflight", kinds: { [target.entityKind]: target.entityIds } });
+  }
+  if (target.propertyId !== undefined) {
+    if (!propertiesVisible) showPropertiesPanel();
+    const card = document.querySelector<HTMLElement>(`[data-prop-set="${target.propertyId}"]`);
+    if (card) {
+      card.scrollIntoView({ block: "center" });
+      card.classList.add("pt-flash");
+      window.setTimeout(() => card.classList.remove("pt-flash"), 1200);
+    }
+  }
+});
 
 // --- Embedded Flowgraph editor pane -------------------------------------
 const flowgraphOrientation =

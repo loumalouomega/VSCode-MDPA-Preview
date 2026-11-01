@@ -353,12 +353,6 @@ Admission criterion: closes a gap between a generated case and how its results a
 
 **Acceptance:** `T / avg(Body, T)` has a mean of 1 over `Body`; a formula seed `VON_MISES > 0.9 * max(Body, VON_MISES)` selects the same cells as a threshold at the computed value; a recipe with the formula replays identically. **MCP:** `mesh_transform` `fieldCalc` and `mesh_select` formula seeds accept the functions.
 
-### 35. Preflight findings that point at what they name — S
-
-**Pending — added 2026-10-31 (ElmerStudio review).** `FindingTarget` already carries `conditionId`, `lawId`, `propertyId`, `entityKind` and a bounded `entityIds` sample, but the webview's `PreflightFinding` only reads `smpPath` (a part-bearing row frames that part). Make every target actionable: `entityIds` highlight the entities through the selection overlay (as a transient set, never an OpRecord), `conditionId`/`lawId` scroll the case form to that card, and `propertyId` opens the Properties editor on that set.
-
-**Acceptance:** each finding kind with a target is clickable and lands on the right card or entities; a finding without a target stays a plain row. **MCP:** none (the targets are already in `case_validate`'s output); UI-only.
-
 ### 38. Contours and isosurfaces that follow quadratic cells — M
 
 **Pending — added 2026-10-31 (ElmerStudio review, second pass).** `isoSurface.ts` decomposes each volume cell into tetrahedra over its corner nodes only, so on tet10/hex20/hex27 results the mid-side nodal values, which the solver computed, play no part in where an isosurface or contour lies. Run marching tetrahedra over a level-1 subdivision of quadratic cells, built in memory with the same parent→child rules as the shipped `tessellate` derive (item 10) and never written, and the surface iso-lines over `curvedDisplay.ts`'s subdivided faces; linear meshes keep today's path byte for byte. A second increment adds contour level labels spaced along each line (ElmerStudio prints one label per level at one vertex, which is the part not worth copying).

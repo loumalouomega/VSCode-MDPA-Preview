@@ -47,6 +47,7 @@ function headerRow(container: HTMLElement, title: string, onClose: () => void): 
 function setRow(model: PropertySet, handlers: PropertyPanelHandlers, partPaths: string[], hasAnyBlock: boolean): HTMLElement {
   const card = document.createElement("div");
   card.className = "prop-set";
+  card.dataset.propSet = String(model.id);
 
   const head = document.createElement("div");
   head.className = "prop-set-head";

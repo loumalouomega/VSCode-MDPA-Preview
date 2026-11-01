@@ -4814,3 +4814,8 @@ button.pt-preflight-row:hover,
   color: var(--vscode-descriptionForeground);
   margin-top: 4px;
 }
+
+.pt-flash {
+  outline: 2px solid var(--vscode-focusBorder);
+  outline-offset: 1px;
+}
