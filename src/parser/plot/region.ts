@@ -48,7 +48,7 @@ export function sampleRegion(model: MdpaModel, spec: PlotRegionSource): RegionSa
   if (spec.operation === "measureIntegral") {
     if (spec.kind !== "Elemental") throw new Error("Measure-weighted totals need an Elemental field; a Nodal field has no per-cell value (convert it explicitly with Average field).");
     if (field.components !== 1) throw new Error("Measure-weighted totals need a scalar Elemental field; choose or compute one component.");
-    const { measure, dimension } = elementMeasures(model);
+    const { measure, dimension } = elementMeasures(model, spec.revolveAbout);
     if (dimension === 0) throw new Error("The mesh has no Elements with a length, area or volume.");
     let total = 0, covered = 0, coveredMeasure = 0, noValue = 0, noMeasure = 0;
     for (const id of ids) {
@@ -58,6 +58,7 @@ export function sampleRegion(model: MdpaModel, spec: PlotRegionSource): RegionSa
       if (!tuple) { noValue++; continue; }
       total += tuple[0] * m; coveredMeasure += m; covered++;
     }
+    if (spec.revolveAbout) diagnostics.push(`Revolved about ${spec.revolveAbout} (2π r weights per piece, planar mesh assumed); the r-z integral is the same operation without revolveAbout.`);
     diagnostics.push(`${covered}/${ids.size} unique Elements covered; measure is ${dimension === 3 ? "volume" : dimension === 2 ? "area" : "length"} in source coordinates (per-unit-depth for 2D), subtree memberships are deduplicated.`);
     if (noValue) diagnostics.push(`${noValue} Elements have no value and are excluded, never counted as zero.`);
     if (noMeasure) diagnostics.push(`${noMeasure} Elements have no measure of dimension ${dimension} (lower-dimension or undecodable cells) and are excluded.`);

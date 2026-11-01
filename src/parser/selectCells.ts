@@ -139,7 +139,13 @@ export function deleteEntities(
 }
 
 /** Measure (length / area / volume) of every Element of the mesh's top dimension, by id. */
-export function elementMeasures(model: MdpaModel): { measure: Map<number, number>; dimension: 1 | 2 | 3 | 0 } {
+export function elementMeasures(
+  model: MdpaModel,
+  revolveAbout?: "x" | "y"
+): { measure: Map<number, number>; dimension: 1 | 2 | 3 | 0 } {
+  // Explicit revolution (roadmap item 44): Pappus per piece, measure x 2 pi x centroid radius.
+  const radius = (pts: number[][]): number =>
+    Math.abs(pts.reduce((sum, q) => sum + (revolveAbout === "x" ? q[1] : q[0]), 0) / pts.length);
   const measure = new Map<number, number>();
   const idx = new Map<number, number>();
   for (let i = 0; i < model.nodeCount; i++) idx.set(model.nodeIds[i], i);
@@ -151,6 +157,7 @@ export function elementMeasures(model: MdpaModel): { measure: Map<number, number
   for (const b of model.blocks) {
     if (b.kind !== "Elements") continue;
     const cat = cellCategory(b.vtkCellType);
+    if (revolveAbout && cat === "volume") throw new Error("Revolved measures need a planar mesh of line or surface Elements; a volume cannot be revolved.");
     dimension = Math.max(dimension, cat === "volume" ? 3 : cat === "surface" ? 2 : cat === "line" ? 1 : 0) as 0 | 1 | 2 | 3;
   }
   for (const b of model.blocks) {
@@ -176,15 +183,17 @@ export function elementMeasures(model: MdpaModel): { measure: Map<number, number
           const [a, bb, cc] = t.map((k) => p(ids[k]));
           const u = [bb[0] - a[0], bb[1] - a[1], bb[2] - a[2]];
           const v = [cc[0] - a[0], cc[1] - a[1], cc[2] - a[2]];
-          m += 0.5 * Math.hypot(u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]);
+          const area = 0.5 * Math.hypot(u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]);
+          m += revolveAbout ? area * 2 * Math.PI * radius([a, bb, cc]) : area;
         }
       } else if (d === 1) {
         const a = p(ids[0]);
         const bb = p(ids[1]);
         m = Math.hypot(bb[0] - a[0], bb[1] - a[1], bb[2] - a[2]);
+        if (revolveAbout) m *= 2 * Math.PI * radius([a, bb]);
       }
       measure.set(b.entityIds[c], m);
     }
   }
-  return { measure, dimension };
+  return { measure, dimension: revolveAbout && dimension > 0 ? ((dimension + 1) as 1 | 2 | 3) : dimension };
 }

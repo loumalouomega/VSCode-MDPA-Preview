@@ -88,6 +88,8 @@ export interface PlotRegionSource {
   /** 2D boundary thickness in the supplied coordinate unit; absent = per depth. */
   thickness?: number;
   pressureOffset?: number;
+  /** measureIntegral only: revolve a planar xy mesh about this in-plane axis (explicit, never inferred; roadmap item 44). */
+  revolveAbout?: "x" | "y";
   /** kg/m³, only for a field explicitly recording SI kinematic pressure. */
   pressureDensity?: number;
   times?: number[];

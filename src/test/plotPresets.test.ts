@@ -9,6 +9,7 @@ import { sampleRegion } from "../parser/plot/region";
 import { collectPlot } from "../parser/plot/sources";
 import { plotPreset } from "../mcp/tools";
 import { removeScratchDir } from "./scratchCleanup";
+import { parseMdpa } from "../parser/mdpaParser";
 import { flowDuct } from "./fixtures/shapes";
 import type { PlotRegionSource } from "../parser/plot/types";
 
@@ -233,4 +234,29 @@ test("field distribution preset histograms a displayed field and counts uncovere
     assert.throws(() => fieldDistributionPreset({ path: file, variable: "X", bins: 0 }), /bins/);
     assert.ok(PLOT_PRESETS.some(p => p.id === "fieldDistribution"));
   } finally { await removeScratchDir(dir); }
+});
+
+test("measureIntegral revolveAbout turns an r-z rectangle into pi R^2 H and weights a field by volume (item 44)", () => {
+  const rect = parseMdpa(`Begin Nodes
+1 0 0 0
+2 2 0 0
+3 2 3 0
+4 0 3 0
+End Nodes
+Begin Elements Element2D3N
+1 1 1 2 3
+2 1 1 3 4
+End Elements
+Begin ElementalData DENS
+1 5.0
+2 5.0
+End ElementalData
+`);
+  const r = total(rect as never, { revolveAbout: "y" });
+  assert.ok(Math.abs(r.measure - Math.PI * 12) < 1e-6);
+  assert.ok(Math.abs(r.values[0]! - 5 * Math.PI * 12) < 1e-6);
+  assert.ok(r.diagnostics.some(d => /Revolved about y/.test(d)));
+  const plain = total(rect as never);
+  assert.ok(Math.abs(plain.measure - 6) < 1e-9);
+  assert.throws(() => validatePlotRecipe({ revolveAbout: "z" } as never));
 });
