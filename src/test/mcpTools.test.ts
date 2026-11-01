@@ -4724,3 +4724,17 @@ test("mesh_info's fields reads only the named arrays where the reader supports i
 test("mesh_info's fields is refused for a format with its own parser", async () => {
   await assert.rejects(() => meshInfo({ path: path.resolve(__dirname, "../../src/test/fixtures/mdpa/beam_frame.mdpa"), fields: ["X"] }), /fields is only accepted/);
 });
+
+test("mesh_info revolveAbout reports revolved measures and refuses a 3D mesh (roadmap item 44)", async () => {
+  const dir = tmpDir();
+  const file = path.join(dir, "rect.mdpa");
+  fs.writeFileSync(file, "Begin Nodes\n1 0 0 0\n2 2 0 0\n3 2 3 0\n4 0 3 0\nEnd Nodes\nBegin Elements Element2D3N\n1 1 1 2 3\n2 1 1 3 4\nEnd Elements\n");
+  const info = (await meshInfo({ path: file, revolveAbout: "y" })) as { measure: { kind: string; value: number; revolvedAbout: string } };
+  assert.equal(info.measure.kind, "volume");
+  assert.equal(info.measure.revolvedAbout, "y");
+  assert.ok(Math.abs(info.measure.value - Math.PI * 12) < 1e-6);
+  const plain = (await meshInfo({ path: file })) as { measure: { kind: string; revolvedAbout?: string } };
+  assert.equal(plain.measure.kind, "area");
+  assert.equal(plain.measure.revolvedAbout, undefined);
+  await assert.rejects(meshInfo({ path: writeFixture(tmpDir()), revolveAbout: "y" }), /planar/);
+});

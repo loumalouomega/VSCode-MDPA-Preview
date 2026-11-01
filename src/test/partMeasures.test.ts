@@ -68,3 +68,50 @@ test("measureKey changes with the geometry and formatMeasure labels the dimensio
   assert.match(formatMeasure({ value: 0.5, dimension: 2 }), /²/);
   assert.match(formatMeasure({ value: 2, dimension: 3 }), /³/);
 });
+
+// --- revolved measures (roadmap item 44) ------------------------------------------
+
+// A 2 x 3 rectangle in the xy plane: radius R = 2 along x, height H = 3 along y, axis y at x = 0.
+const RECT = `Begin Nodes
+1 0 0 0
+2 2 0 0
+3 2 3 0
+4 0 3 0
+End Nodes
+Begin Elements Element2D3N
+1 1 1 2 3
+2 1 1 3 4
+End Elements
+Begin Conditions LineCondition2D2N
+1 1 2 3
+End Conditions
+Begin SubModelPart Wall
+  Begin SubModelPartConditions
+  1
+  End SubModelPartConditions
+End SubModelPart
+`;
+
+test("a rectangle revolved about y measures pi R^2 H, and its outer edge 2 pi R H", () => {
+  const model = parseMdpa(RECT);
+  const plain = computePartMeasures(model);
+  assert.equal(plain.total!.dimension, 2);
+  assert.ok(Math.abs(plain.total!.value - 6) < 1e-9);
+  assert.equal(plain.revolvedAbout, undefined);
+  const r = computePartMeasures(model, { revolveAbout: "y" });
+  assert.equal(r.revolvedAbout, "y");
+  assert.equal(r.total!.dimension, 3);
+  assert.ok(Math.abs(r.total!.value - Math.PI * 4 * 3) < 1e-9);
+  assert.equal(r.parts.Wall!.dimension, 2);
+  assert.ok(Math.abs(r.parts.Wall!.value - 2 * Math.PI * 2 * 3) < 1e-9);
+});
+
+test("revolving about x uses |y| as the radius", () => {
+  const r = computePartMeasures(parseMdpa(RECT), { revolveAbout: "x" });
+  assert.ok(Math.abs(r.total!.value - Math.PI * 9 * 2) < 1e-9);
+});
+
+test("revolved measures refuse a 3D mesh and an unsupported axis", () => {
+  assert.throws(() => computePartMeasures(parseMdpa(SRC), { revolveAbout: "y" }), /planar/);
+  assert.throws(() => computePartMeasures(parseMdpa(RECT), { revolveAbout: "z" as "x" }), /in-plane axis/);
+});

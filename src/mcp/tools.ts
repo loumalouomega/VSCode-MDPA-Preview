@@ -526,6 +526,12 @@ export async function meshHeaderInfo(fsPath: string, inputFormat?: string): Prom
 export async function meshInfo(args: {
   path: string;
   inputFormat?: string;
+  /**
+   * Revolve the (planar, xy) part measures about this in-plane axis: lengths
+   * become swept areas and areas become volumes (roadmap item 44). Explicit,
+   * never inferred; the reply says "revolvedAbout" beside the value.
+   */
+  revolveAbout?: "x" | "y";
   /** Selects a step of a multi-step mesh (Exodus, MED, GiD postprocess, CGNS/Tecplot, XDMF, OpenFOAM time directories). */
   timeStep?: number;
   /**
@@ -629,7 +635,7 @@ export async function meshInfo(args: {
   // cells in question, so every other report is unchanged.
   const spheres = sphereStats(model);
   const beams = beamStats(model);
-  const measures = computePartMeasures(model);
+  const measures = computePartMeasures(model, args.revolveAbout ? { revolveAbout: args.revolveAbout } : {});
   // Nodes referenced by no cell connectivity (connectivity-only: a node listed
   // in a SubModelPart but in no block still counts — see isolatedNodes.ts).
   // Reported only when non-empty, like `spheres`/`beams` below. Ids are capped
@@ -652,6 +658,7 @@ export async function meshInfo(args: {
           measure: {
             kind: measureName(measures.total.dimension).toLowerCase(),
             value: measures.total.value,
+            ...(measures.revolvedAbout ? { revolvedAbout: measures.revolvedAbout } : {}),
             ...(measures.boundary ? { boundaryArea: measures.boundary.value } : {}),
           },
         }

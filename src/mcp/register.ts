@@ -331,7 +331,7 @@ export function registerAllTools(server: McpServer): void {
         "`spheres` (one-node/particle cells: how many, whether they carry a RADIUS, and a suggested one if not), and " +
         "`beams` (line cells: `sectioned` counts those resolving a CROSS_AREA, while the stricter `elementsSectioned` counts only Elements — a mesh where the two differ sharply is usually a 2D boundary skin sharing a structural part's properties, not a frame), and " +
         "`isolatedNodes` (nodes referenced by no cell connectivity — connectivity-only, so a node listed in a SubModelPart but in no block still counts: `count` plus the `ids`, capped at 1000 with `truncated: true` when capped). Pass `summary: true` to report the file shape WITHOUT parsing it, for every supported format, with an explicit `cost` saying what that took.",
-      inputSchema: { path: meshPath, inputFormat, timeStep, metadataOnly, summary, piece, dropGhosts, region, fields },
+      inputSchema: { path: meshPath, inputFormat, timeStep, metadataOnly, summary, piece, dropGhosts, region, fields, revolveAbout: z.enum(["x", "y"]).optional().describe("Revolve the part measures of a planar xy mesh about this in-plane axis (an axisymmetric result): lengths become swept areas, areas become volumes (measure x 2*pi x centroid radius). Explicit; never inferred. The reply carries measure.revolvedAbout.") },
     },
     runCancellable(meshInfo)
   );
