@@ -18,6 +18,7 @@
 
 import { EntityKind, MdpaModel } from "./types";
 import { parsePredicate } from "./sizeExpr";
+import { expandRegionalScalars, mayHaveRegionalScalars } from "./regionalScalars";
 import { scopeVariables, valueMaps } from "./fieldCalc";
 import { globalScopeValues } from "./globalReduce";
 
@@ -40,7 +41,7 @@ export function formulaVariables(model: MdpaModel): string[] {
 /** `undefined` when `expr` is a valid predicate for `model`, else the error text. */
 export function validateFormula(model: MdpaModel, expr: string): string | undefined {
   try {
-    parsePredicate(expr, formulaVariables(model));
+    parsePredicate(mayHaveRegionalScalars(expr) ? expandRegionalScalars(model, expr).expr : expr, formulaVariables(model));
     return undefined;
   } catch (err) {
     return err instanceof Error ? err.message : String(err);
@@ -56,7 +57,10 @@ export function formulaCells(model: MdpaModel, expr: string, rule: FormulaRule =
   if (!expr.trim()) return empty("The formula is empty.");
   let compiled;
   try {
-    compiled = parsePredicate(expr, formulaVariables(model));
+    compiled = parsePredicate(
+      mayHaveRegionalScalars(expr) ? expandRegionalScalars(model, expr).expr : expr,
+      formulaVariables(model)
+    );
   } catch (err) {
     return empty(err instanceof Error ? err.message : String(err));
   }
