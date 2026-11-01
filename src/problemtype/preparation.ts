@@ -33,6 +33,11 @@ export interface PreparationReport {
    */
   applications?: string[];
   /**
+   * Total-force loads and the undeformed length/area each was divided by
+   * (roadmap item 42). Absent when no load used the mode.
+   */
+  loadMeasures?: import("./totalLoad").LoadMeasure[];
+  /**
    * Which run of which study produced this case, when it was prepared inside an
    * isolated run workspace. `runId` is the execution receipt's `requestId` (no
    * second registry); `clonedFrom` names the earlier run whose settings this one
@@ -153,6 +158,7 @@ export function writePreparedCase(options: {
     problemtype: runtime.decl.id, sourceMesh: mesh(options.sourcePath), solverMesh: mesh(options.solverMeshPath),
     primaryDocument: generated.primaryDocumentName, driverScript: generated.driverScriptName,
     ...(generated.applications ? { applications: [...generated.applications] } : {}),
+    ...(generated.loadMeasures ? { loadMeasures: generated.loadMeasures.map((m) => ({ ...m })) } : {}),
     ...(options.run ? { run: { ...options.run } } : {}),
     ...(options.handoff ? { handoff: { ...options.handoff } } : {}),
     settings: structuredClone(state), settingsRevision: hash(JSON.stringify(state)),

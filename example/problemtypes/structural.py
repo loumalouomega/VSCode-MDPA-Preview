@@ -494,7 +494,8 @@ CONDITIONS = [
               help="A load travelling along the part's line entities (bridge traffic): the lines are re-emitted as MovingLoadCondition blocks in a sibling part.", category="loads", icon="ptLoad", emit={"sibling":"MovingLoad","source":"lines","family":"moving"}),
     condition("lineLoad", "Line load", list="loads_process_list", target="surface",
               fields=[field("modulus", "Modulus [N/m]", "number", default=0),
-                      field("direction", "Direction", "vector3", default=[0, 0, -1])],
+                      field("direction", "Direction", "vector3", default=[0, 0, -1]),
+                      field("loadMode", "Modulus is", "enum", default="distributed", options=[{"value": "distributed", "label": "Distributed [N/m]"}, {"value": "total", "label": "Total force [N]"}])],
               process_template={
                   "python_module": "assign_vector_by_direction_to_condition_process",
                   "kratos_module": "KratosMultiphysics",
@@ -510,7 +511,8 @@ CONDITIONS = [
               category="loads", icon="ptLoad"),
     condition("surfaceLoad", "Surface load", list="loads_process_list", target="surface",
               fields=[field("modulus", "Modulus [N/m²]", "number", default=0),
-                      field("direction", "Direction", "vector3", default=[0, 0, -1])],
+                      field("direction", "Direction", "vector3", default=[0, 0, -1]),
+                      field("loadMode", "Modulus is", "enum", default="distributed", options=[{"value": "distributed", "label": "Distributed [N/m²]"}, {"value": "total", "label": "Total force [N]"}])],
               process_template={
                   "python_module": "assign_vector_by_direction_to_condition_process",
                   "kratos_module": "KratosMultiphysics",

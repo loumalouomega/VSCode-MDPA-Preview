@@ -187,7 +187,7 @@ export function vectorByDirection(variable: string, o: ConditionBase & { unit?: 
 }
 
 /** `AssignVectorByDirectionToConditionProcess`: a vector load on Conditions (point/line/surface loads). */
-export function vectorLoadOnConditions(variable: string, o: ConditionBase & { unit?: string; dflt?: number; direction?: number[] }): ConditionSpec {
+export function vectorLoadOnConditions(variable: string, o: ConditionBase & { unit?: string; dflt?: number; direction?: number[]; totalMode?: boolean }): ConditionSpec {
   return {
     id: o.id,
     label: o.label,
@@ -200,6 +200,20 @@ export function vectorLoadOnConditions(variable: string, o: ConditionBase & { un
     fields: [
       { id: "modulus", label: `Modulus${o.unit ? ` [${o.unit}]` : ""}`, type: "number", default: o.dflt ?? 0 },
       { id: "direction", label: "Direction", type: "vector3", default: o.direction ?? [0, 0, -1] },
+      ...(o.totalMode
+        ? [
+            {
+              id: "loadMode",
+              label: "Modulus is",
+              type: "enum" as const,
+              default: "distributed",
+              options: [
+                { value: "distributed", label: `Distributed${o.unit ? ` [${o.unit}]` : ""}` },
+                { value: "total", label: "Total force [N]" },
+              ],
+            },
+          ]
+        : []),
     ],
     processTemplate: {
       python_module: "assign_vector_by_direction_to_condition_process",

@@ -74,7 +74,7 @@ Source review of [ElmerStudio](https://github.com/loumalouomega/ElmerStudio) at 
 | `core/study_runner.py`: initial values from another study (refused with a reason when the mesh differs) and "reuse solution from previous sweep step" through restart files | No problemtype writes or reads a Kratos restart; KKSS's sweep warm start needs this half. Item 29. |
 | `ui/plots.py`: Polar plot group, Radiation Pattern and Directivity; Global plots against the swept parameter | `PLOT_FAMILIES` has no polar family, and a plot cannot take a case parameter as its x axis across runs. Item 30. |
 | `core/meshing.py: SIZE_PRESETS`, flow halving, `acoustics.acoustic_hmax` = c_min/(5·f_max) | Problemtypes know the physics and `timeStepEstimate.ts` already estimates from mesh and case; nothing hands a recommended element size to the CAD mesher. Item 33 (CAD-Preview owns the presets). |
-| `Solution._operator_funcs`: `aveop`/`intop`/`maxop` usable inside any result expression | `fieldCalc` formulas and formula seeds see x, y, z and fields but no regional scalar; `region.ts` already computes those reductions for plots and monitors. Item 34. |
+| `Solution._operator_funcs`: `aveop`/`intop`/`maxop` usable inside any result expression | `fieldCalc` formulas and formula seeds see x, y, z and fields but no regional scalar; `region.ts` already computes those reductions for plots and monitors. Delivered (item 34, 2026-11-01). |
 | `MessagesPane.add(node=)`: every message about a node is a link to it | Preflight findings carry `conditionId`, `lawId`, `propertyId` and `entityIds` targets (`src/problemtype/preflight.ts`), but the webview only acts on `smpPath` (`webview/problemtype.ts`). Item 35. |
 | `docs/.../known-limitations.adoc`: one explicit page of what is not available or only partly supported | The equivalent statements are spread over guide pages and `CLAUDE.md`; the new Non-goals section below collects this file's standing exclusions, and KKSS tracks the user-facing page. |
 
@@ -88,7 +88,7 @@ Source review of [ElmerStudio](https://github.com/loumalouomega/ElmerStudio) at 
 | `graphics.py: candidates_at`, `cycle_candidate`: Up/Down steps through every face the view ray crosses ("k of n under the cursor"); hover is red where a click adds, green where it removes | A pick always takes the front-most entity; reaching one behind it means hiding or clipping. Item 39 (CAD-Preview tracks the same interaction). |
 | `plots.annotation_text`: `eval(expr, unit)` inside an annotation is evaluated at its point and printed in the unit | Screenshot titles and captions are fixed text (`capturePlan.ts`), apart from the step label. Item 40. |
 | `sif.py: _merge` records the owner of every keyword per entity and fails when two features set it differently, naming both | Preflight reports the same condition twice on one part (`assignment-duplicate`) but not two different conditions fixing the same variable on shared nodes. Item 41. |
-| `physics.py: _solid_bload`: a *Total force* is divided by the boundary's measured area at generation time | Structural surface and line loads take N/m² and N/m only. Item 42. |
+| `physics.py: _solid_bload`: a *Total force* is divided by the boundary's measured area at generation time | Structural surface and line loads take N/m² and N/m only. Delivered (item 42, 2026-11-01). |
 | `sif.py: solver_settings`: direct below a DOF threshold, iterative above, always direct for eigen, with the reason recorded | `linearSolverSettings` (`builtins/common.ts`) omits `linear_solver_settings` for *automatic*, so Kratos picks its own default and nothing tells the user what that is for a large 3D case. Item 43. |
 
 Not carried over from the second pass: its reaction-load flux reconstruction (regional `sum` and `reactionMoment` already ship in `plot/region.ts`), its random-node streamline seeding (seeded traces already ship) and its camera persistence (`keepCamera` already ships).
@@ -347,23 +347,11 @@ Admission criterion: closes a gap between a generated case and how its results a
 
 **Acceptance:** the RANS tutorial's recorded y⁺ ≈ 33 wall row is reproduced from the case's own inputs within 20 %; a problemtype with no rule publishes nothing rather than a guess. **MCP:** `case_validate` reports the recommendation and its inputs.
 
-### 34. Regional scalars inside field formulas — S–M
-
-**Pending — added 2026-10-31 (ElmerStudio review).** Allow `avg(PART, F)`, `int(PART, F)`, `max(PART, F)` and `min(PART, F)` inside `fieldCalc` formulas and formula selection seeds, each evaluated once per apply from the `region.ts` reductions plots and monitors already use (so the same conventions: measure-weighted for cells, the documented exterior-boundary rule, uncovered entities excluded and reported). Typical uses are normalising a field by its average and selecting cells above a fraction of a part's maximum. The grammar stays `sizeExpr.ts`'s own parser with no `eval`; an unknown part or field is rejected before anything applies, like any other bad formula.
-
-**Acceptance:** `T / avg(Body, T)` has a mean of 1 over `Body`; a formula seed `VON_MISES > 0.9 * max(Body, VON_MISES)` selects the same cells as a threshold at the computed value; a recipe with the formula replays identically. **MCP:** `mesh_transform` `fieldCalc` and `mesh_select` formula seeds accept the functions.
-
 ### 38. Contours and isosurfaces that follow quadratic cells — M
 
 **Pending — added 2026-10-31 (ElmerStudio review, second pass).** `isoSurface.ts` decomposes each volume cell into tetrahedra over its corner nodes only, so on tet10/hex20/hex27 results the mid-side nodal values, which the solver computed, play no part in where an isosurface or contour lies. Run marching tetrahedra over a level-1 subdivision of quadratic cells, built in memory with the same parent→child rules as the shipped `tessellate` derive (item 10) and never written, and the surface iso-lines over `curvedDisplay.ts`'s subdivided faces; linear meshes keep today's path byte for byte. A second increment adds contour level labels spaced along each line (ElmerStudio prints one label per level at one vertex, which is the part not worth copying).
 
 **Acceptance:** on a quadratic tetrahedral mesh carrying a field quadratic in x, the isosurface at a level lies within 1 % of the analytic plane where the corner-only surface does not; a linear mesh produces an identical surface to today's. **MCP:** `mesh_derive` `isosurface` takes the same quadratic path, so the exported surface and the drawn one agree.
-
-### 42. Total force on a surface or line — S
-
-**Pending — added 2026-10-31 (ElmerStudio review, second pass).** Structural surface loads are entered in N/m² and line loads in N/m, so a user with a known total force divides by an area they have to measure first. Add a **Total force (N)** mode to those conditions: at generation the force is divided by the part's area or length measured from the mesh (`partMeasures.ts` already computes both), the preparation report records the measure used, a zero measure is refused by name, and the case file keeps the total so a re-mesh recomputes the distributed value. As in ElmerStudio, the measure is the undeformed one; a follower load is out of scope.
-
-**Acceptance:** a 1000 N total on a 10 mm × 10 mm face writes 10 N/mm² (in the case's unit system) and the reaction sum on the support (`reactionMoment`/`sum` region ops) returns 1000 N within solver tolerance; re-meshing the face changes no total. **MCP:** `case_generate` accepts the mode; `problemtype_describe` lists it.
 
 ### 44. Revolved integrals and measures for axisymmetric results — S–M
 
