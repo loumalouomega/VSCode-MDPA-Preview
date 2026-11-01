@@ -9,6 +9,7 @@ import { readOptimization } from "../problemtype/optimization/summaryLogFile";
 import { buildOptimizedCad } from "../problemtype/optimization/cadExport";
 import { romStatus } from "../problemtype/rom/romResults";
 import { isRomCase, readRomResults } from "../problemtype/rom/romResultsFile";
+import { runQuantity, runQuantityToCsv } from '../problemtype/runQuantity';
 import { MonitorDefinition, monitorsToCsv, upsertMonitor, validateMonitor } from '../problemtype/monitors';
 import { evaluateMonitors, readMonitors, writeMonitors } from '../problemtype/monitorsFile';
 import { runPlotWorker } from "../plotWorkerClient";
@@ -4250,6 +4251,34 @@ export async function caseCompare(args: {
       ? "Artifacts compare by run-relative name and frozen revision; settings by the recorded case state."
       : "Not comparable until both sides are terminal isolated runs with readable receipts.",
   };
+}
+
+/**
+ * case_run_quantity (roadmap item 25): one monitor evaluated once per isolated
+ * run, one row per run with the case parameters that differ between the runs as
+ * columns. The value is the monitor's last evaluated frame.
+ */
+export async function caseRunQuantity(args: {
+  runs: string[];
+  monitor: unknown;
+  outputPath?: string;
+}, execution: PlotExecution = {}): Promise<object> {
+  if (!Array.isArray(args.runs) || args.runs.length === 0) throw new Error("Give at least one run directory.");
+  if (args.outputPath && path.extname(args.outputPath).toLowerCase() !== ".csv") throw new Error("outputPath must end in .csv.");
+  const { monitor, problem } = validateMonitor(args.monitor);
+  if (!monitor) throw new Error(problem);
+  const dirs = args.runs.map((r) => {
+    const abs = path.resolve(r);
+    return path.basename(abs) === EXECUTION_FILE ? path.dirname(abs) : abs;
+  });
+  const q = await runQuantity(dirs, monitor, { signal: execution.signal });
+  throwIfCancelled(execution.signal);
+  let written: string | undefined;
+  if (args.outputPath) {
+    written = path.resolve(args.outputPath);
+    fs.writeFileSync(written, runQuantityToCsv(q), "utf8");
+  }
+  return { ...q, ...(written ? { csv: written } : {}), note: "Each value is the monitor's last evaluated frame of a terminal run; a run still going, or without a receipt, has a row with a reason and no value." };
 }
 
 function briefConvergence(parsed: Parameters<typeof summarizeConvergence>[0], status?: string): object {

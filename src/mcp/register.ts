@@ -54,6 +54,7 @@ import {
   caseRun,
   caseStatus,
   caseCompare,
+  caseRunQuantity,
   caseConvergence,
   caseExportResults,
   caseOptimization,
@@ -1271,6 +1272,20 @@ export function registerAllTools(server: McpServer): void {
       },
     },
     run(caseStatus)
+  );
+
+  server.registerTool(
+    "case_run_quantity",
+    {
+      description:
+        "A parameter sweep as a table: one saved-monitor definition (a history entity monitor, a point, or a region reduction — the same JSON case_monitors takes) evaluated once per isolated run, one row per run with the case settings that DIFFER between the runs as columns (read from each run's kkss-preparation-v1.json, like case_compare). The value is the monitor's last evaluated frame. A run that is not terminal, has no receipt or wrote no frame is a row with a reason and no value. Read-only; .csv outputPath writes the table with the parameter columns first.",
+      inputSchema: {
+        runs: z.array(z.string()).min(1).describe("Run directories (or their .kkss-execution.json files)"),
+        monitor: z.any().describe("A monitor definition: {id, name?, source:{type:'history'|'point'|'region', ...}}"),
+        outputPath: z.string().optional().describe("Write the table as .csv"),
+      },
+    },
+    runCancellable(caseRunQuantity)
   );
 
   server.registerTool(
