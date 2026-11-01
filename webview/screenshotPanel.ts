@@ -60,5 +60,8 @@ export function renderCaptureControls(root: HTMLElement, settings: CaptureSettin
   input("Title", "title", "text");
   const caption = document.createElement("textarea"); caption.dataset.setting = "caption"; caption.value = settings.caption;
   caption.onchange = () => set("caption", caption.value); row("Caption", caption);
+  const tokenHelp = document.createElement("div"); tokenHelp.className = "panel-hint";
+  tokenHelp.textContent = t("Tokens: {max(F[,unit])} {min(F[,unit])} {avg(Part,F[,unit])} {time} {step}");
+  row("", tokenHelp);
   select("Caption placement", "captionPosition", [["bottom", "Bottom"], ["top", "Top"]]);
 }

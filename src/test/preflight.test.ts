@@ -358,3 +358,9 @@ test("two conditions fixing the same variable on shared nodes are reported (item
   report = await preflightCase(structural, model, state, "beam");
   assert.equal(codes(report.findings, "condition-shared-nodes").length, 0);
 });
+
+test("the linear solver choice is reported as an info finding", async () => {
+  const report = await preflightCase(structural, parseMdpa(MDPA), goodState(), "beam");
+  assert.ok(codes(report.findings, "solver-choice").length <= 1);
+  for (const f of codes(report.findings, "solver-choice")) assert.equal(f.severity, "info");
+});

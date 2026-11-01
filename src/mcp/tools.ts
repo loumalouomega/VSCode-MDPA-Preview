@@ -168,7 +168,8 @@ import { planRunWorkspace, snapshotRunInputs } from "../problemtype/runWorkspace
 import { compareRuns } from "../problemtype/runCompare";
 import { probeKratosApplications } from "../problemtype/kratosAppProbe";
 import { describeMissingApplications } from "../problemtype/applications";
-import { defaultCaseState } from "../problemtype/api";
+import { defaultCaseState, flattenValues } from "../problemtype/api";
+import { adviseLinearSolver } from "../problemtype/solverAdvice";
 import { planCaseMesh } from "../problemtype/caseMesh";
 import {
   BUILTIN_PRESETS,
@@ -3025,11 +3026,15 @@ export async function caseValidate(args: {
       ...(probe.missing.length > 0 ? { message: describeMissingApplications(probe.missing) } : {}),
     };
   }
+  const solverInfo = adviseLinearSolver(runtime.decl.id, flattenValues(runtime.decl, state), model.nodeIds.length, model.is3D);
   return {
     ok: report.ok,
     problemtype: ptId,
     source: from,
     warnings,
+    ...(solverInfo
+      ? { solver: { resolved: solverInfo.kind === "automatic" ? "automatic" : solverInfo.name, dofs: solverInfo.dofs ?? null, why: solverInfo.why } }
+      : {}),
     ...(report.applications ? { applications: report.applications } : {}),
     ...(install ? { install } : {}),
     // Errors only: a case with none generates. Warnings and info are advisories.

@@ -150,6 +150,8 @@ import { FieldComponent, autoDeformScale, computeFieldRange, effectiveRange, fie
 import { LegendSpec } from "./screenshotLegend";
 import { buildCapturePlan, captureBackground, captureFieldLabel, captureStepLabel, CaptureSettings, DEFAULT_CAPTURE_SETTINGS } from "../src/parser/capturePlan";
 import { composeCaptureOverlays, CaptureOverlay } from "./captureCompositor";
+import { evaluateCaption } from "../src/parser/captionTokens";
+import { cycleIndex, withinPickRadius, pickStackLabel, stepDirection, PICK_STACK_MAX } from "../src/parser/pickStack";
 import { renderScreenshotPanel } from "./screenshotPanel";
 import { thresholdCells } from "../src/parser/thresholdCells";
 import { blockCentroids } from "../src/parser/render/hardwareSelection";
@@ -6958,11 +6960,17 @@ function captureScene(settings: CaptureSettings): HTMLCanvasElement {
       legend: settings.legends ? legendSpecForPane(panes[p.index], true) ?? meshSizeLegendSpec() : undefined,
       label: step,
     }));
+    const capTime = currentStepKind === "time" && currentStepLabel !== undefined && Number.isFinite(Number(currentStepLabel)) ? Number(currentStepLabel) : undefined;
+    const capCtx = { model, step: timelineVisible ? currentStepLabel : undefined, time: capTime };
+    const capTitle = evaluateCaption(settings.title, capCtx);
+    const capCaption = evaluateCaption(settings.caption, capCtx);
     composeCaptureOverlays(ctx, overlays, {
       fontSize: settings.fontSize, corner: settings.corner,
       separators: settings.scope === "layout" && panes.length > 1,
-      title: settings.title, caption: settings.caption, captionPosition: settings.captionPosition,
+      title: capTitle.text, caption: capCaption.text, captionPosition: settings.captionPosition,
     });
+    const capDiag = [...capTitle.diagnostics, ...capCaption.diagnostics];
+    if (capDiag.length) toast(`Caption: ${capDiag[0]}${capDiag.length > 1 ? ` (+${capDiag.length - 1} more)` : ""}`);
     return output;
   } finally {
     raw.width = 0; raw.height = 0;
@@ -9168,13 +9176,71 @@ interface PickResolution {
  * origin; the backend scales to its own pixels (the HiDPI fix lives there).
  * Undefined = nothing pickable there.
  */
+// --- Stepping through the entities under the cursor (roadmap item 39) ---------
+// Up/Down (or +/-) while hovering cycles the pick through every pickable layer
+// the view ray crosses, nearest first. The stack is built on demand by picking,
+// making each hit unpickable for the next pick, then restoring all of them; the
+// next click within a few pixels takes the stepped hit instead of the nearest.
+type StackHit = NonNullable<ReturnType<typeof backend.pick>>;
+let pickStack: { x: number; y: number; hits: StackHit[]; index: number } | undefined;
+let hoverPointer: { x: number; y: number } | undefined;
+
+function steppedHit(x: number, y: number): StackHit | undefined {
+  const st = pickStack;
+  if (!st || !withinPickRadius(st.x, st.y, x, y)) return undefined;
+  return st.hits[st.index];
+}
+
+function collectPickStack(x: number, y: number): StackHit[] {
+  const hits: StackHit[] = [];
+  try {
+    for (let i = 0; i < PICK_STACK_MAX; i++) {
+      const hit = backend.pick(focusedView(), x, y);
+      if (!hit) break;
+      hit.prop.setPickable(false);
+      hits.push(hit);
+    }
+  } finally {
+    for (const h of hits) h.prop.setPickable(true);
+  }
+  return hits.filter((h) => { const l = findLayerByProp(h.prop); return !!l && l.pickKind !== undefined && (l.visible ?? true); });
+}
+
+function stepPickStack(dir: 1 | -1): boolean {
+  if (!model || !hoverPointer || (!inspectMode && !selectionVisible)) return false;
+  if (comparePaneIndex() === focusedPaneIndex()) return false;
+  const { x, y } = hoverPointer;
+  if (!pickStack || !withinPickRadius(pickStack.x, pickStack.y, x, y)) {
+    const hits = collectPickStack(x, y);
+    pickStack = hits.length ? { x, y, hits, index: 0 } : undefined;
+    if (!pickStack) return false;
+  }
+  pickStack.index = cycleIndex(pickStack.index, pickStack.hits.length, dir);
+  const layer = findLayerByProp(pickStack.hits[pickStack.index].prop);
+  toast(`${pickStackLabel(pickStack.index, pickStack.hits.length)}${layer ? ` — ${layer.id}` : ""}`);
+  return true;
+}
+
+renderRoot.addEventListener("pointermove", (ev: PointerEvent) => {
+  const rect = renderRoot.getBoundingClientRect();
+  hoverPointer = { x: ev.clientX - rect.left, y: rect.height - (ev.clientY - rect.top) };
+  if (pickStack && !withinPickRadius(pickStack.x, pickStack.y, hoverPointer.x, hoverPointer.y)) pickStack = undefined;
+});
+renderRoot.addEventListener("pointerleave", () => { hoverPointer = undefined; pickStack = undefined; });
+document.addEventListener("keydown", (e) => {
+  const tag = (e.target as HTMLElement | null)?.tagName;
+  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || e.ctrlKey || e.metaKey || e.altKey) return;
+  const dir = stepDirection(e.key);
+  if (dir && stepPickStack(dir)) e.preventDefault();
+});
+
 function pickAt(displayX: number, displayY: number): PickResolution | undefined {
   if (!model || !prepared) return undefined;
   // The peer is a read-only reference: picks (Inspect, selection, measure,
   // probe, streamline seeds) resolve against the primary mesh only. Peer
   // layers are non-pickable too, so this is the backstop, not the mechanism.
   if (comparePaneIndex() === focusedPaneIndex()) return undefined;
-  const hit = backend.pick(focusedView(), displayX, displayY);
+  const hit = steppedHit(displayX, displayY) ?? backend.pick(focusedView(), displayX, displayY);
   if (!hit) return undefined;
   const layer = findLayerByProp(hit.prop);
   if (!layer || layer.pickKind === undefined || !layer.pointGlobalIds || !layer.cellEntityIds) return undefined;

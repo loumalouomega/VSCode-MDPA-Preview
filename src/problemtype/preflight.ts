@@ -27,7 +27,8 @@ import { surfaceDefects } from "../parser/surfaceDefects";
 import { constraintNodeIds } from "../parser/constraintsParser";
 import { subModelPartNodeIds } from "../parser/subModelPartExtract";
 import { CaseState, FieldRequirement, ProblemtypeRuntime } from "./types";
-import { fieldDefault } from "./api";
+import { fieldDefault, flattenValues } from "./api";
+import { adviseLinearSolver, solverFindings } from "./solverAdvice";
 import { isFieldVisible } from "./layout";
 import { planCaseMesh } from "./caseMesh";
 import { sharedNodeConflicts } from "./nodeConflicts";
@@ -430,6 +431,10 @@ export async function preflightCase(
   findings.push(...constraintFindings(model, state, decl.conditions));
   // --- 5c. Different conditions fixing the same variable on shared nodes (item 41). ---
   if (generatedParameters) findings.push(...sharedNodeConflicts(model, generatedParameters, state.assignments, decl.conditions));
+
+  // --- 5d. Linear solver visibility (item 43): advice only, the JSON is untouched. ---
+  const solverAdvice = adviseLinearSolver(decl.id, flattenValues(decl, state), model.nodeIds.length, model.is3D);
+  for (const f of solverFindings(solverAdvice, model.is3D)) add(f.severity, f.code, f.message);
 
   // --- 6. Mesh quality (mesh-wide; the metrics have no per-part split). ---
   if (opts.quality !== false) {
