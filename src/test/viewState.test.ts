@@ -297,3 +297,12 @@ test("deformation Auto and its held factor round-trip; bad values fall back with
   assert.equal(bad.view.panes[0].field.deformAutoScale, undefined);
   assert.equal(bad.warnings.length, 2);
 });
+
+test("symmetric/showExtremes round-trip; bad values warn", () => {
+  const ok = validateViewState({ panes: [{ field: { symmetric: true, showExtremes: true } }] });
+  assert.equal(ok.view.panes[0].field.symmetric, true);
+  assert.equal(ok.view.panes[0].field.showExtremes, true);
+  const bad = validateViewState({ panes: [{ field: { symmetric: "x" } }] });
+  assert.equal(bad.view.panes[0].field.symmetric, false);
+  assert.equal(bad.warnings.length, 1);
+});

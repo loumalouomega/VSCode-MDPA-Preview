@@ -189,3 +189,8 @@ export function gradientCssFromStops(stops: ColorStop[]): string {
 export function gradientCss(name: string): string {
   return gradientCssFromStops(getColormap(name).stops);
 }
+
+/** True for a colormap whose category is "diverging" (centred on a midpoint). */
+export function isDivergingColormap(name: string): boolean {
+  return COLORMAPS.find((c) => c.name === name)?.category === "diverging";
+}

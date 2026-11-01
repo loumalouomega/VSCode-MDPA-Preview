@@ -4808,3 +4808,9 @@ button.pt-preflight-row:hover,
   cursor: crosshair;
   touch-action: none;
 }
+
+.field-legend-note {
+  font-size: var(--ui-fs-sm);
+  color: var(--vscode-descriptionForeground);
+  margin-top: 4px;
+}

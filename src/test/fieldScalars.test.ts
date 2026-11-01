@@ -3,6 +3,10 @@ import assert from "node:assert";
 import {
   ColorStop,
   autoDeformScale,
+  fieldExtremes,
+  isConstantRange,
+  resolveColorRange,
+  symmetricRange,
   floorNice125,
   canLogScale,
   componentLabel,
@@ -250,4 +254,27 @@ test("autoDeformScale falls back to 1 when there is nothing to scale against", (
   assert.strictEqual(autoDeformScale(1, 0), 1);
   assert.strictEqual(autoDeformScale(NaN, 1), 1);
   assert.strictEqual(autoDeformScale(Infinity, 1), 1);
+});
+
+test("constant fields are detected within relative 1e-9 and drawn in one colour", () => {
+  assert.ok(isConstantRange(300, 300 + 1e-13));
+  assert.ok(!isConstantRange(300, 301));
+  const r = resolveColorRange([300, 300 + 1e-13]);
+  assert.ok(r.constant);
+  assert.ok(r.range[0] < 300 && r.range[1] > 300);
+  assert.ok(!resolveColorRange([300, 300], [0, 1000]).constant);
+});
+
+test("symmetric range centres zero; manual override wins", () => {
+  assert.deepStrictEqual(symmetricRange(-2, 5), [-5, 5]);
+  assert.deepStrictEqual(resolveColorRange([-2, 5], undefined, true).range, [-5, 5]);
+  assert.deepStrictEqual(resolveColorRange([-2, 5], [0, 1], true).range, [0, 1]);
+});
+
+test("fieldExtremes reports the entity holding min and max, skipping NaN", () => {
+  const f = scalarField([3, NaN, -4, 9]);
+  const e = fieldExtremes(f)!;
+  assert.strictEqual(e.min.value, -4);
+  assert.strictEqual(e.max.value, 9);
+  assert.strictEqual(e.max.id, f.ids[3]);
 });

@@ -21,6 +21,8 @@ import {
   clampComponent,
   fieldComponents,
   effectiveRange,
+  resolveColorRange,
+  isConstantRange,
   legendTicks,
   transformStops,
 } from "../src/parser/fieldScalars";
@@ -56,6 +58,8 @@ export interface FieldPanelState {
   deformScale: number;
   /** Auto deformation scale is driving `deformScale` (vector displacement only). */
   deformAuto: boolean;
+  symmetric?: boolean;
+  showExtremes?: boolean;
   hasVolume: boolean; // mesh has volume cells (isosurface produces surfaces, else iso-lines)
   /** [lo,hi] window of cells to show; undefined = the full effective range (everything passes). */
   thresholdRange?: [number, number];
@@ -93,6 +97,8 @@ export interface FieldPanelHandlers {
   onSelectDeformField(key: string): void;
   onDeformScale(v: number): void;
   onDeformAuto(on: boolean): void;
+  onSymmetric(on: boolean): void;
+  onShowExtremes(on: boolean): void;
   onThresholdRange(range: [number, number] | undefined): void;
   onThresholdRule(rule: ThresholdRule): void;
   /** Push this pane's whole field setup onto every other pane. */
@@ -140,9 +146,16 @@ export function activeComponent(state: Pick<FieldPanelState, "modes" | "componen
 /** The effective [min,max] the active coloring is stretched over, in display units. */
 export function effectiveFieldRange(state: FieldPanelState, info: FieldInfo): [number, number] {
   const dataRange = rangeForComponent(info, info.isVector ? activeComponent(state) : "mag");
-  const [lo, hi] = effectiveRange(dataRange, state.rangeOverride);
+  const { range: [lo, hi] } = resolveColorRange(dataRange, state.rangeOverride, !!state.symmetric);
   const scale = displayScaleFor(info.field, state.displayUnit);
   return [lo / scale, hi / scale];
+}
+
+/** The field's TRUE [min,max] in display units (never the mapping range). */
+function trueRange(state: FieldPanelState, info: FieldInfo): [number, number] {
+  const r = rangeForComponent(info, info.isVector ? activeComponent(state) : "mag");
+  const scale = displayScaleFor(info.field, state.displayUnit);
+  return [r[0] / scale, r[1] / scale];
 }
 
 export function renderFieldPanel(
@@ -503,7 +516,28 @@ function buildRangeControls(
   bandsSel.addEventListener("change", () => handlers.onBands(Number(bandsSel.value)));
   bandsLabel.appendChild(bandsSel);
   optsRow.appendChild(bandsLabel);
+  const symLabel = document.createElement("label");
+  symLabel.className = "edit-check";
+  const symCk = document.createElement("input");
+  symCk.type = "checkbox";
+  symCk.checked = !!state.symmetric;
+  symCk.disabled = state.log;
+  symCk.addEventListener("change", () => handlers.onSymmetric(symCk.checked));
+  symLabel.appendChild(symCk);
+  symLabel.appendChild(document.createTextNode(t("Symmetric range")));
+  symLabel.title = t("Map −max|value| … +max|value| so zero sits at the colormap centre");
+  optsRow.appendChild(symLabel);
   wrap.appendChild(optsRow);
+
+  const extLabel = document.createElement("label");
+  extLabel.className = "edit-check";
+  const extCk = document.createElement("input");
+  extCk.type = "checkbox";
+  extCk.checked = !!state.showExtremes;
+  extCk.addEventListener("change", () => handlers.onShowExtremes(extCk.checked));
+  extLabel.appendChild(extCk);
+  extLabel.appendChild(document.createTextNode(t("Show extremes")));
+  wrap.appendChild(extLabel);
 
   // --- in-scene scalar bar ---
   const barLabel = document.createElement("label");
@@ -553,7 +587,17 @@ function buildLegend(state: FieldPanelState, info: FieldInfo): HTMLElement {
     min,
     max,
   });
-  return legendFromStops(stops, legendTicks(min, max, useLog));
+  const legend = legendFromStops(stops, legendTicks(min, max, useLog));
+  const [tlo, thi] = trueRange(state, info);
+  const note = document.createElement("div");
+  note.className = "field-legend-note";
+  note.textContent = isConstantRange(tlo, thi)
+    ? t("constant: {v}", { v: String(tlo) })
+    : t("data: {lo} … {hi} (node/cell values)", { lo: String(tlo), hi: String(thi) });
+  const box = document.createElement("div");
+  box.appendChild(legend);
+  box.appendChild(note);
+  return box;
 }
 
 function buildIsoControls(

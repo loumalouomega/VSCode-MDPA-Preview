@@ -145,8 +145,8 @@ import {
   isoGeometry,
   ScalarStyle,
 } from "./fieldRender";
-import { COLORMAPS, DEFAULT_COLORMAP, colorAt, getColormap } from "./colormaps";
-import { FieldComponent, autoDeformScale, computeFieldRange, effectiveRange, spacedIsoValues, transformStops } from "../src/parser/fieldScalars";
+import { COLORMAPS, DEFAULT_COLORMAP, colorAt, getColormap, isDivergingColormap } from "./colormaps";
+import { FieldComponent, autoDeformScale, computeFieldRange, effectiveRange, resolveColorRange, spacedIsoValues, transformStops } from "../src/parser/fieldScalars";
 import { LegendSpec } from "./screenshotLegend";
 import { buildCapturePlan, captureBackground, captureFieldLabel, captureStepLabel, CaptureSettings, DEFAULT_CAPTURE_SETTINGS } from "../src/parser/capturePlan";
 import { composeCaptureOverlays, CaptureOverlay } from "./captureCompositor";
@@ -5875,6 +5875,8 @@ function renderFieldPanelUI(): void {
     scale: fs.scale,
     deformKey: fs.deformKey,
     deformScale: effectiveDeformScale(pane),
+    symmetric: fs.symmetric,
+    showExtremes: fs.showExtremes,
     deformAuto: fs.deformAuto && !!selectedDeformInfo(pane)?.isVector,
     hasVolume: modelHasVolume(scopeModel(pane)),
     thresholdRange: fs.thresholdRange,
@@ -5905,8 +5907,20 @@ function renderFieldPanelUI(): void {
       renderFieldPanelUI();
       rebuild();
     },
+    onSymmetric: (on) => {
+      fs.symmetric = on;
+      fs.symmetricTouched = true;
+      renderFieldPanelUI();
+      rebuild();
+    },
+    onShowExtremes: (on) => {
+      fs.showExtremes = on;
+      renderFieldPanelUI();
+      rebuild();
+    },
     onSelectColormap: (name) => {
       fs.colormap = name;
+      if (!fs.symmetricTouched) fs.symmetric = isDivergingColormap(name);
       renderFieldPanelUI();
       rebuild();
     },
@@ -6263,7 +6277,7 @@ function currentComponent(pane: Pane): FieldComponent {
 // stored value stays in field units, so switching units never rewrites samples.
 function effectiveScalarRange(pane: Pane, info: FieldInfo): [number, number] {
   const dataRange = rangeForComponent(info, info.isVector ? currentComponent(pane) : "mag");
-  const [lo, hi] = effectiveRange(dataRange, pane.field.rangeOverride);
+  const { range: [lo, hi] } = resolveColorRange(dataRange, pane.field.rangeOverride, pane.field.symmetric);
   const scale = displayScaleFor(info.field, pane.field.displayUnit);
   return [lo / scale, hi / scale];
 }
