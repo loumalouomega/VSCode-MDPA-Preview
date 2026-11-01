@@ -72,6 +72,7 @@ export function validatePlotRecipe(value: unknown): PlotRecipe {
       for (const key of ["thickness", "pressureDensity"]) requireValue(s[key] === undefined || (number(s[key]) && s[key] > 0), `${key} must be finite and positive.`);
       requireValue(s.pressureOffset === undefined || number(s.pressureOffset), "Pressure offset must be finite.");
       requireValue(s.pressureDensity === undefined || ["boundaryMean", "mean", "pressureForce", "pressureMoment"].includes(s.operation), "Pressure density applies only to pressure loads and mean values.");
+      requireValue(s.revolveAbout === undefined || (["measureIntegral", "boundaryMean", "boundaryIntegral", "flux"].includes(s.operation) && (s.revolveAbout === "x" || s.revolveAbout === "y")), "revolveAbout is \"x\" or \"y\" and applies to a measure-weighted total, a boundary mean/integral or a flux.");
       if (s.operation === "measureIntegral") {
         requireValue(s.kind === "Elemental", "Measure-weighted totals read an Elemental field.");
         for (const key of ["boundary", "orientation", "thickness", "pressureOffset", "pressureDensity", "referencePoint"]) requireValue(s[key] === undefined, `${key} does not apply to a measure-weighted total.`);
@@ -115,6 +116,7 @@ export function validatePlotRecipe(value: unknown): PlotRecipe {
   const p = value.presentation;
   requireValue(p.lineMode === undefined || ["lines", "lines+markers"].includes(p.lineMode), "Choose lines or lines with markers.");
   requireValue(p.barMode === undefined || ["group", "stack"].includes(p.barMode), "Choose grouped or stacked bars.");
+  requireValue(p.angleUnit === undefined || ["deg", "rad"].includes(p.angleUnit), "Choose degrees or radians for the polar angle.");
   requireValue(p.barOrientation === undefined || ["v", "h"].includes(p.barOrientation), "Choose vertical or horizontal bars.");
   for (const k of ["xLabel","yLabel"]) requireValue(p[k] === undefined || typeof p[k] === "string", "Invalid axis label.");
   for (const k of ["xScale", "yScale"]) requireValue(p[k] === undefined || ["linear", "log"].includes(p[k]), "Invalid axis scale.");

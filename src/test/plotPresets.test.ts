@@ -9,6 +9,7 @@ import { sampleRegion } from "../parser/plot/region";
 import { collectPlot } from "../parser/plot/sources";
 import { plotPreset } from "../mcp/tools";
 import { removeScratchDir } from "./scratchCleanup";
+import { parseMdpa } from "../parser/mdpaParser";
 import { flowDuct } from "./fixtures/shapes";
 import type { PlotRegionSource } from "../parser/plot/types";
 
@@ -233,4 +234,63 @@ test("field distribution preset histograms a displayed field and counts uncovere
     assert.throws(() => fieldDistributionPreset({ path: file, variable: "X", bins: 0 }), /bins/);
     assert.ok(PLOT_PRESETS.some(p => p.id === "fieldDistribution"));
   } finally { await removeScratchDir(dir); }
+});
+
+test("measureIntegral revolveAbout turns an r-z rectangle into pi R^2 H and weights a field by volume (item 44)", () => {
+  const rect = parseMdpa(`Begin Nodes
+1 0 0 0
+2 2 0 0
+3 2 3 0
+4 0 3 0
+End Nodes
+Begin Elements Element2D3N
+1 1 1 2 3
+2 1 1 3 4
+End Elements
+Begin ElementalData DENS
+1 5.0
+2 5.0
+End ElementalData
+`);
+  const r = total(rect as never, { revolveAbout: "y" });
+  assert.ok(Math.abs(r.measure - Math.PI * 12) < 1e-6);
+  assert.ok(Math.abs(r.values[0]! - 5 * Math.PI * 12) < 1e-6);
+  assert.ok(r.diagnostics.some(d => /Revolved about y/.test(d)));
+  const plain = total(rect as never);
+  assert.ok(Math.abs(plain.measure - 6) < 1e-9);
+  assert.throws(() => validatePlotRecipe({ revolveAbout: "z" } as never));
+});
+
+test("boundaryIntegral with revolveAbout measures the surface of revolution of a line boundary (item 44)", () => {
+  const m = parseMdpa(`Begin Nodes
+1 2 0 0
+2 2 3 0
+3 0 0 0
+4 0 3 0
+End Nodes
+Begin Elements Element2D3N
+1 0 3 1 2
+2 0 3 2 4
+End Elements
+Begin Conditions LineCondition2D2N
+1 0 1 2
+End Conditions
+Begin SubModelPart Wall
+Begin SubModelPartConditions
+1
+End SubModelPartConditions
+End SubModelPart
+Begin NodalData Q
+1 1.0
+2 1.0
+3 1.0
+4 1.0
+End NodalData
+`);
+  const spec = { id: "b", type: "region", path: "m.mdpa", kind: "Nodal", variable: "Q", submodelpart: "Wall", scope: "current", operation: "boundaryIntegral" } as PlotRegionSource;
+  const rev = sampleRegion(m as never, { ...spec, revolveAbout: "y" });
+  assert.ok(Math.abs(rev.values[0]! - 2 * Math.PI * 2 * 3) < 1e-6, `got ${rev.values[0]}`); // 2 pi R H for a unit field
+  const plain = sampleRegion(m as never, spec);
+  assert.ok(Math.abs(plain.values[0]! - 3) < 1e-9);
+  assert.throws(() => sampleRegion(m as never, { ...spec, operation: "pressureForce", revolveAbout: "y", referencePoint: [0, 0, 0] } as never), /revolveAbout applies/);
 });

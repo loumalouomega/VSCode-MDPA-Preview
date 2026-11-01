@@ -9,6 +9,7 @@ import { readOptimization } from "../problemtype/optimization/summaryLogFile";
 import { buildOptimizedCad } from "../problemtype/optimization/cadExport";
 import { romStatus } from "../problemtype/rom/romResults";
 import { isRomCase, readRomResults } from "../problemtype/rom/romResultsFile";
+import { runQuantity, runQuantityToCsv } from '../problemtype/runQuantity';
 import { MonitorDefinition, monitorsToCsv, upsertMonitor, validateMonitor } from '../problemtype/monitors';
 import { evaluateMonitors, readMonitors, writeMonitors } from '../problemtype/monitorsFile';
 import { runPlotWorker } from "../plotWorkerClient";
@@ -57,6 +58,10 @@ import { MdpaModel, EntityBlock, SubModelPart, EntityKind } from "../parser/type
 import { parseMdpa } from "../parser/mdpaParser";
 import { surfaceDefects } from "../parser/surfaceDefects";
 import { curvatureModel, gaussBonnetResidual } from "../parser/curvature";
+import { fitPrimitivesReport } from "../parser/primitiveReport";
+import { aleQualitySeries } from "../parser/aleQuality";
+import { recoverBoundaryFlux } from "../parser/boundaryFlux";
+import { segmentModel, SEGMENT_VARIABLE } from "../parser/segmentMesh";
 import { compareMeshes, compareFieldModel } from "../parser/meshCompare";
 import { fieldUnitLabel } from "../parser/fieldDimensions";
 import { DeriveSpec, DERIVE_KINDS, DERIVE_STANDALONE_KINDS, recordedDeriveParameters } from "../parser/deriveMesh";
@@ -170,6 +175,7 @@ import { probeKratosApplications } from "../problemtype/kratosAppProbe";
 import { describeMissingApplications } from "../problemtype/applications";
 import { defaultCaseState, flattenValues } from "../problemtype/api";
 import { adviseLinearSolver } from "../problemtype/solverAdvice";
+import { adviseElementSize } from "../problemtype/sizeAdvice";
 import { planCaseMesh } from "../problemtype/caseMesh";
 import {
   BUILTIN_PRESETS,
@@ -181,6 +187,7 @@ import {
   serializePresetFile,
   snapshotOf,
   validateMaterialAssignment,
+  materialContents,
 } from "../problemtype/materialCatalog";
 import {
   DEFAULT_MATERIAL_LIBRARY_PATHS,
@@ -525,6 +532,12 @@ export async function meshHeaderInfo(fsPath: string, inputFormat?: string): Prom
 export async function meshInfo(args: {
   path: string;
   inputFormat?: string;
+  /**
+   * Revolve the (planar, xy) part measures about this in-plane axis: lengths
+   * become swept areas and areas become volumes (roadmap item 44). Explicit,
+   * never inferred; the reply says "revolvedAbout" beside the value.
+   */
+  revolveAbout?: "x" | "y";
   /** Selects a step of a multi-step mesh (Exodus, MED, GiD postprocess, CGNS/Tecplot, XDMF, OpenFOAM time directories). */
   timeStep?: number;
   /**
@@ -628,7 +641,7 @@ export async function meshInfo(args: {
   // cells in question, so every other report is unchanged.
   const spheres = sphereStats(model);
   const beams = beamStats(model);
-  const measures = computePartMeasures(model);
+  const measures = computePartMeasures(model, args.revolveAbout ? { revolveAbout: args.revolveAbout } : {});
   // Nodes referenced by no cell connectivity (connectivity-only: a node listed
   // in a SubModelPart but in no block still counts — see isolatedNodes.ts).
   // Reported only when non-empty, like `spheres`/`beams` below. Ids are capped
@@ -651,6 +664,7 @@ export async function meshInfo(args: {
           measure: {
             kind: measureName(measures.total.dimension).toLowerCase(),
             value: measures.total.value,
+            ...(measures.revolvedAbout ? { revolvedAbout: measures.revolvedAbout } : {}),
             ...(measures.boundary ? { boundaryArea: measures.boundary.value } : {}),
           },
         }
@@ -876,6 +890,7 @@ export async function meshFlowBalance(args: {
   pressureDrop?: { from: string; to: string };
   pressureDensity?: number;
   pressureReference?: "gauge" | "absolute";
+  revolveAbout?: "x" | "y";
   timeStep?: number;
   allSteps?: boolean;
   outputPath?: string;
@@ -889,6 +904,7 @@ export async function meshFlowBalance(args: {
     pressureDrop: args.pressureDrop,
     pressureDensity: args.pressureDensity,
     pressureReference: args.pressureReference,
+    ...(args.revolveAbout ? { revolveAbout: args.revolveAbout } : {}),
   };
   if (args.allSteps && args.timeStep !== undefined) throw new Error("Choose either allSteps or a single timeStep, not both.");
   let written: string | undefined;
@@ -918,6 +934,86 @@ export async function meshFlowBalance(args: {
     source,
     totalSteps: steps.length,
     steps: series.rows.map((r) => ({ label: r.label, ...(r.result ? { summary: describeFlowBalance(r.result), sections: r.result.sections, netFlux: r.result.netFlux, imbalance: r.result.imbalance, pressureDrop: r.result.pressureDrop, warnings: r.result.warnings } : { error: r.error }) })),
+    outputPath: written,
+  };
+}
+
+/**
+ * mesh_recover_flux (roadmap item 45): a per-area traction / heat flux on the
+ * faces of a SubModelPart recovered from nodal reactions by a consistent
+ * boundary-mass projection, with its integral and the reaction sum.
+ */
+export async function meshRecoverFlux(args: {
+  path: string;
+  part: string;
+  variable: string;
+  output?: string;
+  outputPath?: string;
+  provenance?: ProvenanceMode;
+  verify?: boolean;
+}, execution: PlotExecution = {}): Promise<object> {
+  const loaded = await loadMesh(args.path, undefined, undefined, undefined, undefined, undefined, execution.signal);
+  const r = recoverBoundaryFlux(loaded.model, { part: args.part, variable: args.variable, output: args.output });
+  const out: Record<string, unknown> = {
+    path: args.path,
+    output: r.output,
+    recovered: true,
+    faces: r.faces,
+    nodes: r.nodes,
+    area: r.area,
+    reactionSum: r.reactionSum,
+    integral: r.integral,
+    integralError: r.integralError,
+    iterations: r.iterations,
+    residual: r.residual,
+    range: r.range,
+    nodesWithoutLoad: r.nodesWithoutLoad,
+    message: r.message,
+  };
+  if (args.outputPath) {
+    const warnings: string[] = [];
+    const written = await writeModelReported(r.model, args.outputPath, loaded.sourceText, undefined, warnings, { sourceFile: args.path, ops: [{ op: "recoverBoundaryFlux" }], provenance: args.provenance, verify: args.verify });
+    out.outputPath = written.path;
+    out.report = written.report;
+    out.warnings = warnings;
+  }
+  return out;
+}
+
+/**
+ * mesh_ale_quality (roadmap item 46): per frame, the quality of every Element on
+ * its deformed coordinates (coords + the nodal displacement) relative to the same
+ * element at the first frame, the count of inverted elements and the worst frame.
+ */
+export async function meshAleQuality(args: {
+  path: string;
+  variable?: string;
+  outputPath?: string;
+}, execution: PlotExecution = {}): Promise<object> {
+  const abs = path.resolve(args.path);
+  if (!fs.existsSync(abs)) throw new Error(`File not found: ${abs}`);
+  if (args.outputPath && path.extname(args.outputPath).toLowerCase() !== ".csv") throw new Error("outputPath must end in .csv.");
+  const { steps, source } = await discoverSeriesSteps(abs, execution.signal);
+  const loadable = source === "single" ? steps.map((s) => ({ ...s, load: async () => (await loadMesh(abs, undefined, undefined, undefined, undefined, undefined, execution.signal)).model })) : steps;
+  const series = await aleQualitySeries(loadable, { variable: args.variable, signal: execution.signal });
+  throwIfCancelled(execution.signal);
+  let written: string | undefined;
+  if (args.outputPath) {
+    written = path.resolve(args.outputPath);
+    const rows = ["frame,label,elements,inverted,minMeasureRatio,minShapeRatio,worstElementId,error"];
+    for (const f of series.frames) rows.push([f.frameIndex, JSON.stringify(f.label), f.elements ?? "", f.inverted ?? "", f.minMeasureRatio ?? "", f.minShapeRatio ?? "", f.worstElementId ?? "", JSON.stringify(f.error ?? "")].join(","));
+    fs.writeFileSync(written, rows.join("\n") + "\n", "utf8");
+  }
+  const worst = series.worstFrame !== undefined ? series.frames[series.worstFrame] : undefined;
+  return {
+    path: abs,
+    source,
+    variable: series.variable,
+    referenceFrame: series.referenceLabel,
+    totalSteps: steps.length,
+    anyInverted: series.frames.some((f) => (f.inverted ?? 0) > 0),
+    ...(worst ? { worstFrame: { label: worst.label, frameIndex: worst.frameIndex, minShapeRatio: worst.minShapeRatio, minMeasureRatio: worst.minMeasureRatio, worstElementId: worst.worstElementId, inverted: worst.inverted } } : {}),
+    frames: series.frames,
     outputPath: written,
   };
 }
@@ -1045,6 +1141,51 @@ export async function meshCurvature(args: {
     watertight: r.quality,
     warnings: r.warnings,
   };
+}
+
+/**
+ * mesh_fit_primitives (roadmap item 31): segment a SURFACE mesh into smooth
+ * patches (unless it already carries SEGMENT_PATCH) and report, per patch, the
+ * plane/sphere/cylinder/cone/torus it matches, its parameters and the fit
+ * residual — "these four patches are cylinders of radius 5". With `outputPath`
+ * the mesh is written carrying the integer FIT_PRIMITIVE field.
+ */
+export async function meshFitPrimitives(args: {
+  path: string;
+  featureAngle?: number;
+  method?: "angle" | "primitive";
+  tolerance?: number;
+  relative?: boolean;
+  minInlierFraction?: number;
+  types?: ("plane" | "sphere" | "cylinder" | "cone" | "torus")[];
+  outputPath?: string;
+  provenance?: ProvenanceMode;
+  verify?: boolean;
+}, execution: PlotExecution = {}): Promise<object> {
+  const loaded = await loadMesh(args.path, undefined, undefined, undefined, undefined, undefined, execution.signal);
+  let model = loaded.model;
+  let segmented: { numPatches: number; labelled: number; details: string } | undefined;
+  if (!model.fields.some((f) => f.variable === SEGMENT_VARIABLE)) {
+    const seg = await segmentModel(model, { featureAngle: args.featureAngle, method: args.method });
+    model = seg.model;
+    segmented = { numPatches: seg.numPatches, labelled: seg.labelled, details: seg.details };
+  }
+  const r = await fitPrimitivesReport(model, {
+    tolerance: args.tolerance,
+    relative: args.relative,
+    minInlierFraction: args.minInlierFraction,
+    types: args.types,
+    writeField: args.outputPath !== undefined,
+  });
+  const out: Record<string, unknown> = { path: args.path, ...(segmented ? { segmented } : {}), counts: r.counts, patches: r.patches, message: r.message };
+  if (args.outputPath && r.patches.length > 0) {
+    const warnings: string[] = [];
+    const written = await writeModelReported(r.model, args.outputPath, loaded.sourceText, undefined, warnings, { sourceFile: args.path, ops: [{ op: "fitPrimitives" }], provenance: args.provenance, verify: args.verify });
+    out.outputPath = written.path;
+    out.report = written.report;
+    out.warnings = warnings;
+  }
+  return out;
 }
 
 /**
@@ -3042,6 +3183,17 @@ export async function caseValidate(args: {
     advisories: report.findings.filter((f) => f.severity !== "error").map((f) => f.message),
     counts: report.counts,
     findings: report.findings,
+    // Recommended element size and the inputs it came from; absent when the problemtype has no defensible rule.
+    ...(() => {
+      const a = adviseElementSize(runtime.decl.id, flattenValues(runtime.decl, state), state.materials, model.bounds.min, model.bounds.max);
+      return a ? { sizeAdvice: a } : {};
+    })(),
+    // Per assignment: every property of its law, marked provided / preset /
+    // defaulted / missing, from the same rulebook generation uses.
+    materialContents: state.materials.flatMap((m) => {
+      const law = runtime.decl.materialLaws.find((l) => l.id === m.lawId);
+      return law ? [{ smpPath: m.smpPath, lawId: m.lawId, law: law.name || law.id, rows: materialContents(law, m.values, m.preset) }] : [];
+    }),
     state,
   };
 }
@@ -4101,6 +4253,34 @@ export async function caseCompare(args: {
       ? "Artifacts compare by run-relative name and frozen revision; settings by the recorded case state."
       : "Not comparable until both sides are terminal isolated runs with readable receipts.",
   };
+}
+
+/**
+ * case_run_quantity (roadmap item 25): one monitor evaluated once per isolated
+ * run, one row per run with the case parameters that differ between the runs as
+ * columns. The value is the monitor's last evaluated frame.
+ */
+export async function caseRunQuantity(args: {
+  runs: string[];
+  monitor: unknown;
+  outputPath?: string;
+}, execution: PlotExecution = {}): Promise<object> {
+  if (!Array.isArray(args.runs) || args.runs.length === 0) throw new Error("Give at least one run directory.");
+  if (args.outputPath && path.extname(args.outputPath).toLowerCase() !== ".csv") throw new Error("outputPath must end in .csv.");
+  const { monitor, problem } = validateMonitor(args.monitor);
+  if (!monitor) throw new Error(problem);
+  const dirs = args.runs.map((r) => {
+    const abs = path.resolve(r);
+    return path.basename(abs) === EXECUTION_FILE ? path.dirname(abs) : abs;
+  });
+  const q = await runQuantity(dirs, monitor, { signal: execution.signal });
+  throwIfCancelled(execution.signal);
+  let written: string | undefined;
+  if (args.outputPath) {
+    written = path.resolve(args.outputPath);
+    fs.writeFileSync(written, runQuantityToCsv(q), "utf8");
+  }
+  return { ...q, ...(written ? { csv: written } : {}), note: "Each value is the monitor's last evaluated frame of a terminal run; a run still going, or without a receipt, has a row with a reason and no value." };
 }
 
 function briefConvergence(parsed: Parameters<typeof summarizeConvergence>[0], status?: string): object {

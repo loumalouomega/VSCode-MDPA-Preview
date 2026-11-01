@@ -4195,6 +4195,27 @@ input.outline-label-input {
   color: var(--vscode-errorForeground, #f48771);
   opacity: 1;
 }
+.pt-contents {
+  font-size: var(--ui-fs-label);
+}
+.pt-contents > summary {
+  cursor: pointer;
+  opacity: 0.8;
+}
+.pt-contents-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.pt-contents-table td {
+  padding: 1px var(--ui-s-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 0;
+  white-space: nowrap;
+}
+.pt-contents-table tr.error {
+  color: var(--vscode-errorForeground, #f48771);
+}
 .pt-status {
   margin: var(--ui-s-1) var(--ui-s-0);
   font-size: var(--ui-fs-label);

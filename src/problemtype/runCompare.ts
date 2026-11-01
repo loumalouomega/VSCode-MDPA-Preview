@@ -120,7 +120,7 @@ export function readRunEvidence(runDirectory: string): RunEvidence {
 }
 
 /** Dotted leaf paths of two JSON-like values; arrays compare whole. */
-function flatten(value: unknown, prefix: string, out: Map<string, unknown>): void {
+export function flatten(value: unknown, prefix: string, out: Map<string, unknown>): void {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     out.set(prefix, value);
     return;

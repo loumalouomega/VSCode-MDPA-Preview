@@ -36,6 +36,7 @@ import {
   problemtypeList,
   problemtypeDescribe,
   caseValidate,
+  meshAleQuality,
   caseEstimateTimestep,
   caseWriteState,
   caseMaterialAssign,
@@ -3429,6 +3430,9 @@ test("case_write_state + case_validate round-trip; bad paths become issues", asy
   const ok = (await caseValidate({ meshPath: src })) as { ok: boolean; issues: string[] };
   assert.deepEqual(ok.issues, []);
   assert.equal(ok.ok, true);
+  const contents = (ok as unknown as { materialContents: { smpPath: string; rows: { id: string; status: string }[] }[] }).materialContents;
+  assert.ok(contents.length >= 1);
+  assert.ok(contents[0].rows.some((r) => r.id === "YOUNG_MODULUS" && r.status === "provided"));
   const bad = structuralState();
   bad.assignments.push({ conditionId: "nope", smpPath: "Missing/Part", values: {} });
   const invalid = (await caseValidate({ meshPath: src, state: bad })) as {
@@ -4720,4 +4724,35 @@ test("mesh_info's fields reads only the named arrays where the reader supports i
 
 test("mesh_info's fields is refused for a format with its own parser", async () => {
   await assert.rejects(() => meshInfo({ path: path.resolve(__dirname, "../../src/test/fixtures/mdpa/beam_frame.mdpa"), fields: ["X"] }), /fields is only accepted/);
+});
+
+test("mesh_info revolveAbout reports revolved measures and refuses a 3D mesh (roadmap item 44)", async () => {
+  const dir = tmpDir();
+  const file = path.join(dir, "rect.mdpa");
+  fs.writeFileSync(file, "Begin Nodes\n1 0 0 0\n2 2 0 0\n3 2 3 0\n4 0 3 0\nEnd Nodes\nBegin Elements Element2D3N\n1 1 1 2 3\n2 1 1 3 4\nEnd Elements\n");
+  const info = (await meshInfo({ path: file, revolveAbout: "y" })) as { measure: { kind: string; value: number; revolvedAbout: string } };
+  assert.equal(info.measure.kind, "volume");
+  assert.equal(info.measure.revolvedAbout, "y");
+  assert.ok(Math.abs(info.measure.value - Math.PI * 12) < 1e-6);
+  const plain = (await meshInfo({ path: file })) as { measure: { kind: string; revolvedAbout?: string } };
+  assert.equal(plain.measure.kind, "area");
+  assert.equal(plain.measure.revolvedAbout, undefined);
+  await assert.rejects(meshInfo({ path: writeFixture(tmpDir()), revolveAbout: "y" }), /planar/);
+});
+
+test("mesh_ale_quality walks a committed series and reports a per-frame table (roadmap item 46)", async () => {
+  const series = path.resolve(__dirname, "../../example/VTK/Main_0_2.vtk");
+  const csv = path.join(tmpDir(), "ale.csv");
+  const r = (await meshAleQuality({ path: series, variable: "DISPLACEMENT", outputPath: csv })) as {
+    totalSteps: number;
+    frames: { label: string; inverted?: number; minShapeRatio?: number; error?: string }[];
+    worstFrame?: { label: string };
+  };
+  assert.equal(r.totalSteps, 3);
+  assert.equal(r.frames.length, 3);
+  assert.equal(r.frames[0].minShapeRatio, 1);
+  assert.ok(r.worstFrame);
+  assert.ok(fs.readFileSync(csv, "utf8").startsWith("frame,label,elements,inverted"));
+  const noField = (await meshAleQuality({ path: series })) as { frames: { error?: string }[] };
+  assert.match(noField.frames[0].error!, /MESH_DISPLACEMENT/);
 });

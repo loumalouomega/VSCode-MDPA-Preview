@@ -88,6 +88,12 @@ export interface FlowBalanceSpec {
   pressureDensity?: number;
   /** Gauge/absolute label for a converted pressure. Label only, never inferred. */
   pressureReference?: "gauge" | "absolute";
+  /**
+   * Revolve a 2D planar r-z result about this in-plane axis (roadmap item 44): every boundary
+   * line sweeps 2 pi r of area, so flux becomes a true volumetric flow rate and areas are surfaces
+   * of revolution. Explicit, never inferred; line Conditions of an xy mesh only.
+   */
+  revolveAbout?: "x" | "y";
 }
 
 export interface FlowSection {
@@ -139,6 +145,8 @@ export interface FlowBalance {
   orientation: FlowOrientation;
   /** What the flux number means, since a 2D value is per unit depth. */
   fluxUnit: string;
+  /** Set when the 2D result was revolved about this axis. */
+  revolvedAbout?: "x" | "y";
   /** Unit label of the pressure field (`Pa`, `m²/s²`, …); undefined when unknown or absent. */
   pressureUnit?: string;
   sections: FlowSection[];
@@ -330,7 +338,7 @@ const hasVolume = (model: MdpaModel): boolean => model.blocks.some((b) => b.kind
  * Linear triangles use a degree-two rule (moments multiply position by pressure).
  * Lines use two-point Gauss quadrature. Higher-order corners are disclosed.
  * Scalar means/integrals need no normal, so orientation can be omitted. */
-export function boundaryQuadrature(model: MdpaModel, partPath: string, orientation?: FlowOrientation): {
+export function boundaryQuadrature(model: MdpaModel, partPath: string, orientation?: FlowOrientation, revolveAbout?: RevolveAxis): {
   dimension: 2 | 3; measure: number; excludedMeasure: number; warnings: string[];
   incomplete: boolean;
   samples: { conditionId: number; nodeIds: number[]; shape: number[]; position: [number, number, number]; normal: [number, number, number]; weight: number }[];
@@ -344,10 +352,14 @@ export function boundaryQuadrature(model: MdpaModel, partPath: string, orientati
   const adj = orientation === "outward" ? adjacency(model, new Set(found.facets.map(f => facetKey(f.corners))), found.category, index) : undefined;
   const present=new Set(found.facets.map(f=>f.conditionId));
   const missing=[...requested].filter(id=>!present.has(id));
-  return quadratureFromFacets(model, found.facets, dimension, orientation, adj, found.higherOrder, missing.length);
+  if (revolveAbout && dimension !== 2) throw new Error("Revolved boundaries need line Conditions of a planar r-z mesh; a surface boundary cannot be revolved.");
+  return quadratureFromFacets(model, found.facets, dimension, orientation, adj, found.higherOrder, missing.length, revolveAbout);
 }
 
 type BoundaryQuadrature = ReturnType<typeof boundaryQuadrature>;
+
+/** In-plane axis of an explicit revolution (roadmap item 44). */
+export type RevolveAxis = "x" | "y";
 
 /**
  * True when the owner's corners (those not on the face) lie strictly on both sides of the face plane, so the
@@ -374,8 +386,11 @@ function ownerStraddles(model: MdpaModel, ownerCorners: number[], faceCorners: n
 /** The shared piece/normal/weight loop behind `boundaryQuadrature` and `exteriorQuadrature`. */
 function quadratureFromFacets(
   model: MdpaModel, facets: Facet[], dimension: 2 | 3, orientation: FlowOrientation | undefined,
-  adj: Map<string, Adjacency> | undefined, higherOrder: string[], missingCount: number
+  adj: Map<string, Adjacency> | undefined, higherOrder: string[], missingCount: number, revolveAbout?: RevolveAxis
 ): BoundaryQuadrature {
+  // Explicit revolution (roadmap item 44): each 2D piece sweeps 2 pi r of area; r is the distance from the named in-plane axis.
+  const radiusAt = (q: number[]): number => Math.abs(revolveAbout === "x" ? q[1] : q[0]);
+  const sweep = (q: number[]): number => (revolveAbout ? 2 * Math.PI * radiusAt(q) : 1);
   const found = { facets, higherOrder };
   const result: BoundaryQuadrature = { dimension, measure: 0, excludedMeasure: 0, warnings: [], samples: [], incomplete:missingCount>0 };
   if(missingCount)result.warnings.push(`${missingCount} requested Conditions are missing, unsupported or reference absent nodes; their measure cannot be computed.`);
@@ -392,7 +407,7 @@ function quadratureFromFacets(
       const c = p[2];
       const vector = c ? [.5*(dy*(c[2]-a[2])-dz*(c[1]-a[1])),.5*(dz*(c[0]-a[0])-dx*(c[2]-a[2])),.5*(dx*(c[1]-a[1])-dy*(c[0]-a[0]))] : [dy,-dx,0];
       const measure = Math.hypot(...vector); if (!(measure>0) || !Number.isFinite(measure)) { result.incomplete=true;result.warnings.push(`${name}: degenerate/nonfinite boundary piece excluded.`); continue; }
-      result.measure += measure;
+      result.measure += revolveAbout && piece.length === 2 ? measure * sweep([0, 1, 2].map((d) => (a[d] + b[d]) / 2)) : measure;
       let sign = 1;
       if (orientation === "outward") {
         const owner = adj?.get(facetKey(facet.corners));
@@ -405,7 +420,7 @@ function quadratureFromFacets(
       const normal = vector.map(v=>sign*v/measure) as [number,number,number];
       const g = 1/Math.sqrt(3);
       const rules = c ? [[2/3,1/6,1/6],[1/6,2/3,1/6],[1/6,1/6,2/3]] : [[(1-g)/2,(1+g)/2],[(1+g)/2,(1-g)/2]];
-      for (const shape of rules) result.samples.push({ conditionId:facet.conditionId,nodeIds:piece.map(i=>model.nodeIds[facet.corners[i]]),shape,position:[0,1,2].map(d=>p.reduce((sum,v,i)=>sum+v[d]*shape[i],0)) as [number,number,number],normal,weight:measure/rules.length });
+      for (const shape of rules) result.samples.push({ conditionId:facet.conditionId,nodeIds:piece.map(i=>model.nodeIds[facet.corners[i]]),shape,position:[0,1,2].map(d=>p.reduce((sum,v,i)=>sum+v[d]*shape[i],0)) as [number,number,number],normal,weight:measure/rules.length*(revolveAbout&&piece.length===2?sweep([0,1,2].map(d=>p.reduce((sum,v,i)=>sum+v[d]*shape[i],0))):1) });
     }
   }
   if (found.higherOrder.length) result.warnings.push(`Higher-order boundaries ${found.higherOrder.join(", ")} integrated as linear corner skeletons, not full high-order FEM quadrature.`);
@@ -566,6 +581,11 @@ export function flowBalance(model: MdpaModel, spec: FlowBalanceSpec): FlowBalanc
 
   const idToIndex = nodeIndexMap(model);
   const dimension: 2 | 3 = hasVolume(model) ? 3 : 2;
+  if (spec.revolveAbout) {
+    if (dimension === 3) throw new Error("Revolved flow balance needs a planar r-z (xy) mesh; this mesh has volume Elements.");
+    if (spec.revolveAbout !== "x" && spec.revolveAbout !== "y") throw new Error('The revolution axis must be "x" or "y" (an in-plane axis).');
+    if (Math.abs(model.bounds.max[2] - model.bounds.min[2]) > 1e-9 * Math.max(1, Math.hypot(model.bounds.max[0] - model.bounds.min[0], model.bounds.max[1] - model.bounds.min[1]))) throw new Error("Revolved flow balance needs a planar mesh in the xy plane.");
+  }
   const vLookup = makeLookup(model, vField);
   const pLookup = makeLookup(model, pField);
   const vBuf: number[] = [0, 0, 0];
@@ -636,12 +656,21 @@ export function flowBalance(model: MdpaModel, spec: FlowBalanceSpec): FlowBalanc
       const c = f.corners;
       const p0 = c[0] * 3;
       // Fan triangles (0, i, i+1); a 2-corner facet is one segment.
-      const pieces: { corners: number[]; area: [number, number, number] }[] = [];
+      const pieces: { corners: number[]; area: [number, number, number]; w?: number[] }[] = [];
       if (c.length === 2) {
         const dx = model.coords[c[1] * 3] - model.coords[p0];
         const dy = model.coords[c[1] * 3 + 1] - model.coords[p0 + 1];
         // Right-hand normal of a→b; outward for a counter-clockwise boundary.
-        pieces.push({ corners: c, area: [dy, -dx, 0] });
+        const piece: { corners: number[]; area: [number, number, number]; w?: number[] } = { corners: c, area: [dy, -dx, 0] };
+        if (spec.revolveAbout) {
+          // Two-point Gauss over r u: r and u are linear along the segment, so the revolved integral is exact.
+          const radius = (k: number): number => Math.abs(model.coords[k * 3 + (spec.revolveAbout === "x" ? 1 : 0)]);
+          const g = 1 / Math.sqrt(3), ts = [(1 - g) / 2, (1 + g) / 2];
+          const ra = radius(c[0]), rb = radius(c[1]);
+          const rAt = (t: number): number => ra + t * (rb - ra);
+          piece.w = [Math.PI * ts.reduce((acc, t) => acc + rAt(t) * (1 - t), 0), Math.PI * ts.reduce((acc, t) => acc + rAt(t) * t, 0)];
+        }
+        pieces.push(piece);
       } else {
         for (let i = 1; i + 1 < c.length; i++) {
           const a = c[i] * 3;
@@ -669,7 +698,7 @@ export function flowBalance(model: MdpaModel, spec: FlowBalanceSpec): FlowBalanc
       const total = Math.hypot(ax, ay, az);
       // Sum of piece MAGNITUDES is the true facet area for a non-planar quad.
       let facetArea = 0;
-      for (const pc of pieces) facetArea += Math.hypot(pc.area[0], pc.area[1], pc.area[2]);
+      for (const pc of pieces) facetArea += Math.hypot(pc.area[0], pc.area[1], pc.area[2]) * (pc.w ? pc.w[0] + pc.w[1] : 1);
       if (!(facetArea > 0)) {
         sec.degenerate++;
         continue;
@@ -708,12 +737,13 @@ export function flowBalance(model: MdpaModel, spec: FlowBalanceSpec): FlowBalanc
         let flux = 0;
         for (const pc of pieces) {
           const mean = [0, 0, 0];
-          for (const k of pc.corners) {
+          for (const [ci, k] of pc.corners.entries()) {
             if (!vLookup(k, vBuf)) {
               ok = false;
               break;
             }
-            for (let d = 0; d < vField!.components; d++) mean[d] += vBuf[d] / pc.corners.length;
+            const wk = pc.w ? pc.w[ci] : 1 / pc.corners.length;
+            for (let d = 0; d < vField!.components; d++) mean[d] += vBuf[d] * wk;
           }
           if (!ok) break;
           flux += mean[0] * pc.area[0] + mean[1] * pc.area[1] + mean[2] * pc.area[2];
@@ -728,12 +758,12 @@ export function flowBalance(model: MdpaModel, spec: FlowBalanceSpec): FlowBalanc
         let num = 0;
         for (const pc of pieces) {
           let mean = 0;
-          for (const k of pc.corners) {
+          for (const [ci, k] of pc.corners.entries()) {
             if (!pLookup(k, pBuf)) {
               ok = false;
               break;
             }
-            mean += pBuf[0] / pc.corners.length;
+            mean += pBuf[0] * (pc.w ? pc.w[ci] : 1 / pc.corners.length);
           }
           if (!ok) break;
           num += mean * Math.hypot(pc.area[0], pc.area[1], pc.area[2]);
@@ -778,7 +808,8 @@ export function flowBalance(model: MdpaModel, spec: FlowBalanceSpec): FlowBalanc
     pressure: pField ? pField.variable : null,
     ...(spec.density !== undefined ? { density: spec.density } : {}),
     orientation,
-    fluxUnit: dimension === 3 ? "velocity unit x mesh length^2" : "velocity unit x mesh length, per unit depth (2D)",
+    fluxUnit: dimension === 3 ? "velocity unit x mesh length^2" : spec.revolveAbout ? `velocity unit x mesh length^2 (revolved about ${spec.revolveAbout}: volumetric rate)` : "velocity unit x mesh length, per unit depth (2D)",
+    ...(spec.revolveAbout ? { revolvedAbout: spec.revolveAbout } : {}),
     ...(pField ? { pressureUnit: fieldUnitLabel(pField) } : {}),
     sections,
     inflow,
@@ -912,6 +943,6 @@ export function describeFlowBalance(r: FlowBalance): string {
   text += r.imbalance === null ? ` (imbalance unavailable — ${r.imbalanceNote})` : `, imbalance ${(100 * r.imbalance).toPrecision(3)}%`;
   if (r.pressureDrop) text += `; pressure drop ${r.pressureDrop.value === null ? "unavailable" : r.pressureDrop.value.toPrecision(5)}`;
   if (r.pressureConversion && r.pressureConversion.drop !== null) text += ` (${r.pressureConversion.drop.toPrecision(5)} Pa)`;
-  if (r.dimension === 2) text += ". 2D: per unit depth.";
+  if (r.dimension === 2) text += r.revolvedAbout ? `. Revolved about ${r.revolvedAbout}: volumetric rate.` : ". 2D: per unit depth.";
   return text;
 }

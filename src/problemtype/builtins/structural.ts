@@ -609,6 +609,7 @@ export const structural = defineProblemtype(
         unit: "N/m",
         target: "surface",
         icon: "ptLoad",
+        totalMode: true,
       }),
       vectorLoadOnConditions("SURFACE_LOAD", {
         id: "surfaceLoad",
@@ -617,6 +618,7 @@ export const structural = defineProblemtype(
         target: "surface",
         icon: "ptLoad",
         help: "3D only.",
+        totalMode: true,
       }),
       scalarOnConditions("POSITIVE_FACE_PRESSURE", {
         id: "surfacePressure",

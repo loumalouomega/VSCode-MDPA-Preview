@@ -86,7 +86,7 @@ The side channel has one sharp rule: **any applied edit drops it.** A mesh you t
 
 ## What is deliberately not here
 
-- **No interactive segmentation**: `fitCad` segments the skin itself; upstream's `segment`/`fitPrimitives` ops stay unexposed, and the fit controls are the export's.
+- **Segmentation is an op, the fit is a report**: `segment` and `refinePatches` are ordinary Mesh Modification operations that write a `SEGMENT_PATCH` field, and `mesh_fit_primitives` names what each patch is (plane, sphere, cylinder, cone, torus, with radius and axis). `fitCad` still segments the skin itself for the STEP export, and its fit controls are the export's.
 - **No segmentation refinement**: meshio++ 17.11.0 can refine the segmentation before fitting (`refineSegmentation`, and the standalone `refinePatches`). Measured on the shapes tried here, it changed nothing — 0 iterations, 0 splits, 0 merges — at about 30 % more time, so the export does not ask for it and the standalone op stays unexposed.
 - **No `igaEvaluate`**: patch-wise parametric evaluation is reachable later if a workflow asks for it; refine and sample cover the mesh workflows.
 - **No glTF writer routing**: the kernel has one, and an explicit `outputFormat: "gltf"` reaches it through `mesh_convert`, but no extension maps to it — nothing in this extension emits glTF yet.

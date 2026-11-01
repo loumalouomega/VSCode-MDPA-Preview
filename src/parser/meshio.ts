@@ -337,6 +337,16 @@ export interface MeshioModule {
 
   /** Variational refinement of the `segment:patch` labels (17.11.0). */
   refinePatches(mesh: MeshioMesh, options?: RefinePatchesOptions): RefinePatchesResult;
+  /** Fits a plane/sphere/cylinder/cone/torus to each labelled patch (17.9.0). Adds cell data `fit:*` and per-patch field data `fit:patch_*`. */
+  fitPrimitives(
+    mesh: MeshioMesh,
+    patchData?: string,
+    tolerance?: number,
+    relative?: boolean,
+    minInlierFraction?: number,
+    types?: string[],
+    maxIterations?: number
+  ): { mesh: MeshioMesh; numPatches: number; numPlane: number; numSphere: number; numCylinder: number; numCone: number; numTorus: number; numUnfitted: number };
 
   /** Procedural generators (17.9.0, planar-domain ones 17.11.0); `null` = default. */
   rectangle(dims?: number[] | null, size?: number[] | null, origin?: number[] | null, cellType?: string, split?: string, order?: number, maxCells?: number): MeshioMesh;

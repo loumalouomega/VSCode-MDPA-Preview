@@ -21,6 +21,7 @@
 import { FieldData, FieldBlockKind, MdpaModel } from "./types";
 import { parseSizeExpr } from "./sizeExpr";
 import { globalScopeValues } from "./globalReduce";
+import { expandRegionalScalars, mayHaveRegionalScalars } from "./regionalScalars";
 import { nodeIndexMap } from "./writers/writerCommon";
 
 /** Only Elements/Conditions carry cell data worth targeting here (Geometries have none in practice). */
@@ -150,7 +151,10 @@ export function fieldCalcModel(model: MdpaModel, params: FieldCalcParams): Field
   // Compiling before touching anything means a bad formula is rejected
   // outright — important since a saved recipe replays with no user around to
   // catch a typo.
-  const compiled = parseSizeExpr(params.expr, vars);
+  // Regional scalars (`avg(PART, F)` …) are evaluated once and substituted as
+  // literals, so the parser below stays the one grammar (roadmap item 34).
+  const expr = mayHaveRegionalScalars(params.expr) ? expandRegionalScalars(model, params.expr).expr : params.expr;
+  const compiled = parseSizeExpr(expr, vars);
   const values = valueMaps(existing);
   // Globals are location-independent constants: recomputed once from the
   // current fields (see globalReduce.ts — specs on the model, values derived

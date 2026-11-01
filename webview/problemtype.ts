@@ -57,6 +57,8 @@ import {
   resolvePresetValues,
   snapshotOf,
   validateMaterialAssignment,
+  materialContents,
+  MaterialContentRow,
 } from "../src/problemtype/materialCatalog";
 import { rowsToText, tableTextProblem, textToRows } from "../src/problemtype/materialTables";
 import { createTablePlot } from "./materialTablePlot";
@@ -379,6 +381,42 @@ function issueLine(issues: ReturnType<typeof validateMaterialAssignment>): HTMLE
     line.appendChild(row);
   }
   return line;
+}
+
+/**
+ * The per-assignment contents table (roadmap item 28): every property of the law,
+ * required rows first, each marked provided / from preset / defaulted / missing.
+ * Text only (`textContent`), read from the same rulebook generation uses.
+ */
+function contentsTable(rows: MaterialContentRow[]): HTMLElement {
+  const details = document.createElement("details");
+  details.className = "pt-contents";
+  const summary = document.createElement("summary");
+  const missing = rows.filter((r) => r.status === "missing").length;
+  summary.textContent = missing > 0 ? t("Contents ({n} missing)", { n: String(missing) }) : t("Contents");
+  details.appendChild(summary);
+  const table = document.createElement("table");
+  table.className = "pt-contents-table";
+  for (const r of rows) {
+    const tr = document.createElement("tr");
+    if (r.severity === "error" || r.status === "missing") tr.className = "error";
+    const origin =
+      r.status === "preset" ? `${t("preset")}: ${r.presetName ?? ""}` : r.status === "provided" ? t("provided") : r.status === "defaulted" ? t("default") : t("missing");
+    const cells = [
+      `${r.label}${r.required ? " *" : ""}`,
+      r.value === undefined ? "—" : `${typeof r.value === "object" ? JSON.stringify(r.value) : String(r.value)}${r.unit ? ` ${r.unit}` : ""}`,
+      origin,
+    ];
+    for (const text of cells) {
+      const td = document.createElement("td");
+      td.textContent = text;
+      if (r.issue) td.title = r.issue;
+      tr.appendChild(td);
+    }
+    table.appendChild(tr);
+  }
+  details.appendChild(table);
+  return details;
 }
 
 /** Refreshes the SubModelPart pickers from the current model's outline tree. */
@@ -1575,8 +1613,15 @@ function renderMaterials(decl: ProblemtypeDeclaration): void {
     // card and drop the focus the user is tabbing through.
     let badge: HTMLElement | undefined;
     let issues: HTMLElement | undefined;
+    let contents: HTMLElement | undefined;
     const refreshDerived = (): void => {
       if (!law || !row) return;
+      const wasOpen = contents instanceof HTMLDetailsElement && contents.open;
+      const nextContents = contentsTable(materialContents(law, m.values, m.preset));
+      if (wasOpen) (nextContents as HTMLDetailsElement).open = true;
+      if (contents) contents.replaceWith(nextContents);
+      else row.appendChild(nextContents);
+      contents = nextContents;
       const snapshotPreset = findPreset(presets, m.preset?.id ?? "");
       const nextBadge = presetBadge(m, law, () => {
         if (snapshotPreset) applyPresetTo(m, law, snapshotPreset);

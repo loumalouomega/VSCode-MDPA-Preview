@@ -326,3 +326,39 @@ test("a facet shared by three Elements is non-manifold: excluded, counted apart 
   assert.match(r.warnings.join("\n"), /non-manifold/);
   assert.match(flowBalanceToCsv(r).split("\n")[0], /non_manifold$/);
 });
+
+// --- revolved flow balance (roadmap item 44) -----------------------------------------
+
+test("axisymmetric Poiseuille pipe: the revolved inlet flow rate equals the analytic pi R^2 Umean", () => {
+  const R = 2, L = 3, n = 40;
+  // r-z mesh: x = r in [0, R], y = z in [0, L]; fields u_z = Umax (1 - (r/R)^2), Umax = 2 Umean.
+  const Umean = 1.5;
+  const nodes: string[] = [];
+  const idOf = (i: number, j: number): number => j * (n + 1) + i + 1;
+  for (let j = 0; j <= 1; j++) for (let i = 0; i <= n; i++) nodes.push(`${idOf(i, j)} ${(R * i) / n} ${j * L} 0`);
+  const els: string[] = [];
+  let e = 1;
+  for (let i = 0; i < n; i++) {
+    els.push(`${e++} 0 ${idOf(i, 0)} ${idOf(i + 1, 0)} ${idOf(i + 1, 1)}`);
+    els.push(`${e++} 0 ${idOf(i, 0)} ${idOf(i + 1, 1)} ${idOf(i, 1)}`);
+  }
+  const inlet: string[] = [];
+  for (let i = 0; i < n; i++) inlet.push(`${i + 1} 0 ${idOf(i + 1, 0)} ${idOf(i, 0)}`); // outward = -y at the bottom
+  const vel: string[] = [];
+  for (let j = 0; j <= 1; j++) for (let i = 0; i <= n; i++) vel.push(`${idOf(i, j)} (0, ${2 * Umean * (1 - ((R * i) / n / R) ** 2)}, 0)`);
+  const src = `Begin Nodes\n${nodes.join("\n")}\nEnd Nodes\nBegin Elements Element2D3N\n${els.join("\n")}\nEnd Elements\nBegin Conditions LineCondition2D2N\n${inlet.join("\n")}\nEnd Conditions\nBegin SubModelPart Inlet\nBegin SubModelPartConditions\n${inlet.map((_, k) => k + 1).join("\n")}\nEnd SubModelPartConditions\nEnd SubModelPart\nBegin NodalData VELOCITY\n${vel.join("\n")}\nEnd NodalData\n`;
+  const model = parseMdpa(src);
+  const rev = flowBalance(model, { sections: [{ name: "in", part: "Inlet" }], pressure: null, revolveAbout: "y" });
+  assert.equal(rev.revolvedAbout, "y");
+  const flow = rev.sections[0].flux as number;
+  // The sign is inward through the inlet (negative); the magnitude is the analytic rate.
+  assert.ok(Math.abs(Math.abs(flow) - Math.PI * R * R * Umean) / (Math.PI * R * R * Umean) < 2e-3, `flow ${flow}`);
+  assert.ok(Math.abs(rev.sections[0].area - Math.PI * R * R) / (Math.PI * R * R) < 1e-9);
+  const plain = flowBalance(model, { sections: [{ name: "in", part: "Inlet" }], pressure: null });
+  assert.equal(plain.revolvedAbout, undefined);
+  assert.ok(Math.abs(Math.abs(plain.sections[0].flux as number) - 2 * Umean * R * (2 / 3)) < 2e-3); // the r-z integral is still available
+});
+
+test("revolved flow balance refuses a 3D mesh", () => {
+  assert.throws(() => flowBalance(duct({ velocity: () => [1, 0, 0] }), { sections: [{ name: "in", part: "Inlet" }], revolveAbout: "y" }), /planar r-z/);
+});

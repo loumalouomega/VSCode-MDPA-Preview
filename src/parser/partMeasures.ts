@@ -27,7 +27,21 @@ export interface Measure {
   dimension: MeasureDim;
 }
 
+/** Axis of an explicit revolution (roadmap item 44): the in-plane axis of a planar xy mesh. */
+export type RevolveAxis = "x" | "y";
+
+export interface MeasureOptions {
+  /**
+   * Revolve a 2D planar result about this in-plane axis: every length becomes the
+   * area it sweeps and every area the volume (Pappus: measure × 2π × centroid radius,
+   * taken per triangle). Never inferred from the geometry; the caller names the axis.
+   */
+  revolveAbout?: RevolveAxis;
+}
+
 export interface PartMeasures {
+  /** Set when the measures were revolved: "revolved about y" belongs beside every value. */
+  revolvedAbout?: RevolveAxis;
   /** Top-dimension measure of the Elements (null when there are none). */
   total: Measure | null;
   /** Area of the surface Conditions of a volume mesh (the boundary), when present. */
@@ -56,7 +70,26 @@ export function formatMeasure(m: Measure): string {
   return `${v} (units${m.dimension === 3 ? "³" : m.dimension === 2 ? "²" : ""})`;
 }
 
-export function computePartMeasures(model: MdpaModel): PartMeasures {
+export function computePartMeasures(model: MdpaModel, options: MeasureOptions = {}): PartMeasures {
+  const axis = options.revolveAbout;
+  if (axis !== undefined) {
+    if (axis !== "x" && axis !== "y") throw new Error(`Revolved measures need an in-plane axis "x" or "y"; a tilted or out-of-plane axis is not supported (got "${String(axis)}").`);
+    const flat = Math.abs(model.bounds.max[2] - model.bounds.min[2]);
+    const diag = Math.hypot(
+      model.bounds.max[0] - model.bounds.min[0],
+      model.bounds.max[1] - model.bounds.min[1]
+    );
+    if (flat > 1e-9 * Math.max(diag, 1)) {
+      throw new Error("Revolved measures need a planar mesh in the xy plane (z constant); this mesh spans z.");
+    }
+  }
+  // Radius of a point set's centroid from the revolution axis (x axis: |y|, y axis: |x|).
+  const radiusOf = (pts: number[][]): number => {
+    let sum = 0;
+    for (const q of pts) sum += axis === "x" ? q[1] : q[0];
+    return Math.abs(sum / pts.length);
+  };
+  const TWO_PI = 2 * Math.PI;
   const idx = new Map<number, number>();
   for (let i = 0; i < model.nodeCount; i++) idx.set(model.nodeIds[i], i);
   const coords = model.coords;
@@ -97,6 +130,22 @@ export function computePartMeasures(model: MdpaModel): PartMeasures {
       }
       if (!ok) continue;
       let m = 0;
+      if (axis !== undefined && d === 3) continue; // a volume cannot be revolved
+      if (axis !== undefined && d === 2 && dec.tris) {
+        for (const t of dec.tris) {
+          const a = p(ids[t[0]]), bb = p(ids[t[1]]), cc = p(ids[t[2]]);
+          m += triArea(a, bb, cc) * TWO_PI * radiusOf([a, bb, cc]);
+        }
+        target.set(b.entityIds[c], { m, d: 3 });
+        continue;
+      }
+      if (axis !== undefined && d === 1) {
+        const a = p(ids[0]);
+        const e = p(ids[1]);
+        m = Math.hypot(e[0] - a[0], e[1] - a[1], e[2] - a[2]) * TWO_PI * radiusOf([a, e]);
+        target.set(b.entityIds[c], { m, d: 2 });
+        continue;
+      }
       if (d === 3 && dec.tets) {
         for (const t of dec.tets) m += tetVolume(p(ids[t[0]]), p(ids[t[1]]), p(ids[t[2]]), p(ids[t[3]]));
       } else if (d === 2 && dec.tris) {
@@ -160,7 +209,9 @@ export function computePartMeasures(model: MdpaModel): PartMeasures {
     }
   };
   walk(model.subModelParts);
-  return boundary ? { total, boundary, parts } : { total, parts };
+  const result: PartMeasures = boundary ? { total, boundary, parts } : { total, parts };
+  if (axis !== undefined) result.revolvedAbout = axis;
+  return result;
 }
 
 /**

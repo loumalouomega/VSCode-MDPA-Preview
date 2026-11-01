@@ -28,6 +28,9 @@ import { collectionProblems, resolveCollections } from "./collections";
 import { applicationCheckPy, requiredApplications } from "./applications";
 import { isFieldVisible } from "./layout";
 import { interfacePairProblems } from "./interfaceCheck";
+import { resolveStateExpressions } from "./caseExpressions";
+import { computePartMeasures } from "../parser/partMeasures";
+import { applyTotalLoad, isTotalLoad, LoadMeasure } from "./totalLoad";
 import { periodicPairProblems } from "./periodicCheck";
 
 /** Flattens the SubModelPart tree into slash-separated paths (depth-first). */
@@ -136,6 +139,8 @@ export function buildGenContext(
   if (decl.collections && decl.collections.length > 0) {
     ctx.collections = resolveCollections(decl, state, decl.modelPartName);
   }
+  // Measures are computed only when a load asks for a total force.
+  if (state.assignments.some(isTotalLoad)) ctx.partMeasures = computePartMeasures(model).parts;
   if (decl.domains && decl.domains.length > 0) {
     const domains: Record<string, DomainContext> = {};
     for (const d of decl.domains) {
@@ -151,6 +156,7 @@ export function buildGenContext(
         partsModelParts: own.filter((a) => a.conditionId === d.partsCondition).map((a) => dottedModelPart(d.modelPartName, a.smpPath)),
         skinModelParts: own.filter((a) => a.conditionId !== d.partsCondition).map((a) => dottedModelPart(d.modelPartName, a.smpPath)),
         subModelParts: paths,
+        ...(ctx.partMeasures ? { partMeasures: ctx.partMeasures } : {}),
       };
     }
     ctx.domains = domains;
@@ -292,7 +298,8 @@ export async function buildProcesses(
   runtime: ProblemtypeRuntime,
   ctx: GenContext,
   state: CaseState,
-  warnings: string[]
+  warnings: string[],
+  loadMeasures?: LoadMeasure[]
 ): Promise<Record<string, JsonValue[]>> {
   const decl = runtime.decl;
   // The three GiD-standard lists are always present; conditions may target
@@ -317,7 +324,13 @@ export async function buildProcesses(
     if (partIds.has(cond.id) || cond.noProcess) continue;
     // A coupled problemtype builds each condition against ITS domain's model part.
     const owner = domainOfCondition(decl, cond.id);
-    processes[cond.list].push(await runtime.buildProcess(cond, a, owner && ctx.domains ? { ...ctx.domains[owner.id], domains: ctx.domains } : ctx));
+    let process = await runtime.buildProcess(cond, a, owner && ctx.domains ? { ...ctx.domains[owner.id], domains: ctx.domains } : ctx);
+    if (isTotalLoad(a)) {
+      const applied = applyTotalLoad(process, a, ctx.partMeasures);
+      process = applied.process;
+      loadMeasures?.push(applied.record);
+    }
+    processes[cond.list].push(process);
   }
   return processes;
 }
@@ -364,9 +377,15 @@ export async function generateCase(
 ): Promise<GeneratedCase> {
   const warnings: string[] = [];
   const decl = runtime.decl;
+  // Unit-suffixed values and case parameters become plain numbers here, before any
+  // document is built; a mismatch is a warning, a bad expression a refusal.
+  const resolvedState = resolveStateExpressions(decl, state);
+  state = resolvedState.state;
+  warnings.push(...resolvedState.warnings);
   const ctx = buildGenContext(runtime, model, state, mdpaStem, warnings);
   const values = ctx.values;
-  const processes = await buildProcesses(runtime, ctx, state, warnings);
+  const loadMeasures: LoadMeasure[] = [];
+  const processes = await buildProcesses(runtime, ctx, state, warnings, loadMeasures);
   // Collection problems come first and gate the hook: a validate hook may then
   // assume every ref resolves and every entry has a known type.
   const collectionIssues = collectionProblems(decl, state, ctx.subModelParts).map((p) => p.message);
@@ -445,6 +464,7 @@ export async function generateCase(
     primaryDocumentName: decl.primaryDocumentName ?? DEFAULT_PRIMARY_DOCUMENT,
     driverScriptName: decl.driverScriptName ?? DEFAULT_DRIVER_SCRIPT,
     applications,
+    ...(loadMeasures.length > 0 ? { loadMeasures } : {}),
   };
 }
 

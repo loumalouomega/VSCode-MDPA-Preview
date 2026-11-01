@@ -79,7 +79,7 @@ export interface SegmentResult {
 }
 
 /** Number of cells of the model that are drawn from the surface (Elements/Conditions/Geometries alike). */
-function refuseVolume(model: MdpaModel, op: string): boolean {
+export function refuseVolume(model: MdpaModel, op: string): boolean {
   let surface = 0;
   for (const b of model.blocks) {
     if (b.count === 0) continue;
@@ -123,7 +123,7 @@ function patchParts(blocks: readonly EntityBlock[], labels: readonly number[]): 
 }
 
 /** Lays per-cell labels (meshio block order) back out as one field per id space and, optionally, as parts. */
-function withLabels(model: MdpaModel, blocks: readonly EntityBlock[], labels: readonly number[], createParts: boolean): MdpaModel {
+export function withLabels(model: MdpaModel, blocks: readonly EntityBlock[], labels: readonly number[], createParts: boolean, variable: string = SEGMENT_VARIABLE): MdpaModel {
   const el = { ids: [] as number[], values: [] as number[] };
   const co = { ids: [] as number[], values: [] as number[] };
   let cursor = 0;
@@ -135,9 +135,9 @@ function withLabels(model: MdpaModel, blocks: readonly EntityBlock[], labels: re
     }
   }
   const make = (kind: "Elemental" | "Conditional", t: typeof el): FieldData[] =>
-    t.ids.length === 0 ? [] : [{ kind, variable: SEGMENT_VARIABLE, components: 1, ids: Int32Array.from(t.ids), values: Float64Array.from(t.values) }];
+    t.ids.length === 0 ? [] : [{ kind, variable, components: 1, ids: Int32Array.from(t.ids), values: Float64Array.from(t.values) }];
   const fields = [
-    ...model.fields.filter((f) => !(f.variable === SEGMENT_VARIABLE && (f.kind === "Elemental" || f.kind === "Conditional"))),
+    ...model.fields.filter((f) => !(f.variable === variable && (f.kind === "Elemental" || f.kind === "Conditional"))),
     ...make("Elemental", el),
     ...make("Conditional", co),
   ];
@@ -146,7 +146,7 @@ function withLabels(model: MdpaModel, blocks: readonly EntityBlock[], labels: re
 }
 
 /** The labels a previous `segment` left, in meshio block order; -1 where a cell has none. */
-function storedLabels(model: MdpaModel, blocks: readonly EntityBlock[]): { labels: number[]; found: number } {
+export function storedLabels(model: MdpaModel, blocks: readonly EntityBlock[]): { labels: number[]; found: number } {
   const lookup = (kind: "Elemental" | "Conditional") => {
     const f = model.fields.find((x) => x.kind === kind && x.variable === SEGMENT_VARIABLE);
     const m = new Map<number, number>();
@@ -172,7 +172,7 @@ function storedLabels(model: MdpaModel, blocks: readonly EntityBlock[]): { label
 }
 
 /** The mesh as the kernel should see it: geometry and block regions only (no fields to collide with `segment:patch`). */
-function surfaceMesh(model: MdpaModel, diagnostics: MdpaDiagnostic[]) {
+export function surfaceMesh(model: MdpaModel, diagnostics: MdpaDiagnostic[]) {
   return modelToMeshio({ ...model, fields: [] }, diagnostics, { dim: 3 });
 }
 

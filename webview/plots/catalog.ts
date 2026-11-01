@@ -13,5 +13,6 @@ export const CHART_CHOICES: { family: PlotFamily; label: string; icon: UiGlyphId
   { family: "histogram", label: "Histogram", icon: "chartBar", hint: "Equal-width host-computed distribution bins" },
   { family: "box", label: "Box plot", icon: "chartBox", hint: "Quartiles and Tukey whiskers; not uncertainty" },
   { family: "heatmap", label: "Heatmap", icon: "grid3", hint: "XYZ surface with an explicit grid" },
+  { family: "polar", label: "Polar", icon: "chartScatter", hint: "Angle (X column) and radius (Y column); the angle unit is set explicitly" },
   { family: "contour", label: "Contour", icon: "chartContour", hint: "XYZ isolines with an explicit grid" },
 ];

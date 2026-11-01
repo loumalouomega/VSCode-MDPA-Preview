@@ -156,3 +156,64 @@ test("iso value outside the data range yields nothing", () => {
   assert.equal(r.triangles.length, 0);
   assert.equal(r.points.length, 0);
 });
+
+// --- quadratic cells (roadmap item 38) -------------------------------------------
+
+const TET10_NODES: [number, number, number, number][] = [
+  [1, 0, 0, 0], [2, 1, 0, 0], [3, 0, 1, 0], [4, 0, 0, 1],
+  [5, 0.5, 0, 0], [6, 0.5, 0.5, 0], [7, 0, 0.5, 0], [8, 0, 0, 0.5], [9, 0.5, 0, 0.5], [10, 0, 0.5, 0.5],
+];
+
+test("tet10 with a field quadratic in x: the isosurface lies on the analytic plane, the corner-only one does not", () => {
+  const values = new Map<number, number>();
+  for (const [id, x] of TET10_NODES) values.set(id, x * x);
+  const quad = model(TET10_NODES, VtkCellType.QUADRATIC_TETRA, [[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]], values);
+  const r = computeIsoSurface(quad, quad.fields[0], 0.25);
+  assert.ok(r.triangles.length >= 3);
+  for (let i = 0; i < r.points.length; i += 3) assert.ok(approx(r.points[i], 0.5, 5e-3), `x=${r.points[i]}`);
+
+  // The same cell treated as linear (corner nodes only) puts the plane at x = 0.25.
+  const linear = model(TET10_NODES.slice(0, 4), VtkCellType.TETRA, [[1, 2, 3, 4]], new Map([[1, 0], [2, 1], [3, 0], [4, 0]]));
+  const corner = computeIsoSurface(linear, linear.fields[0], 0.25);
+  for (let i = 0; i < corner.points.length; i += 3) assert.ok(Math.abs(corner.points[i] - 0.5) > 0.2);
+});
+
+test("tri6 iso-lines follow the mid-side values", () => {
+  const nodes: [number, number, number, number][] = [
+    [1, 0, 0, 0], [2, 1, 0, 0], [3, 0, 1, 0], [4, 0.5, 0, 0], [5, 0.5, 0.5, 0], [6, 0, 0.5, 0],
+  ];
+  const values = new Map<number, number>(nodes.map(([id, x]) => [id, x * x]));
+  const m = model(nodes, VtkCellType.QUADRATIC_TRIANGLE, [[1, 2, 3, 4, 5, 6]], values);
+  const r = computeIsoSurface(m, m.fields[0], 0.25);
+  assert.equal(r.is2D, true);
+  assert.ok(r.lines.length >= 2);
+  for (let i = 0; i < r.points.length; i += 3) assert.ok(approx(r.points[i], 0.5, 5e-3));
+});
+
+test("quad9 and hex27: iso-lines / isosurface follow a field quadratic in x", () => {
+  // Biquadratic quad on [0,2]x[0,2]: nodes in VTK order.
+  const q: [number, number, number, number][] = [
+    [1, 0, 0, 0], [2, 2, 0, 0], [3, 2, 2, 0], [4, 0, 2, 0],
+    [5, 1, 0, 0], [6, 2, 1, 0], [7, 1, 2, 0], [8, 0, 1, 0], [9, 1, 1, 0],
+  ];
+  const vals = new Map<number, number>(q.map(([id, x]) => [id, x * x]));
+  const m = model(q, VtkCellType.BIQUADRATIC_QUAD, [[1, 2, 3, 4, 5, 6, 7, 8, 9]], vals);
+  const r = computeIsoSurface(m, m.fields[0], 1); // x^2 = 1 -> x = 1
+  assert.equal(r.is2D, true);
+  assert.ok(r.lines.length >= 2);
+  for (let i = 0; i < r.points.length; i += 3) assert.ok(approx(r.points[i], 1, 1e-4), `x=${r.points[i]}`);
+
+  // Triquadratic hexahedron on [0,2]^3 built from the same parametric table.
+  const P = [[0, 0, 0], [2, 0, 0], [2, 2, 0], [0, 2, 0], [0, 0, 2], [2, 0, 2], [2, 2, 2], [0, 2, 2]];
+  const E = [[0, 1], [1, 2], [2, 3], [3, 0], [4, 5], [5, 6], [6, 7], [7, 4], [0, 4], [1, 5], [2, 6], [3, 7]];
+  const F = [[0, 4, 7, 3], [1, 2, 6, 5], [0, 1, 5, 4], [3, 7, 6, 2], [0, 3, 2, 1], [4, 5, 6, 7]];
+  const avg = (ids: number[]): number[] => [0, 1, 2].map((d) => ids.reduce((a, c) => a + P[c][d], 0) / ids.length);
+  const pts = [...P, ...E.map((e) => avg(e)), ...F.map((f) => avg(f)), [1, 1, 1]];
+  const nodes = pts.map((p, i) => [i + 1, p[0], p[1], p[2]] as [number, number, number, number]);
+  const hv = new Map<number, number>(nodes.map(([id, x]) => [id, x * x]));
+  const h = model(nodes, VtkCellType.TRIQUADRATIC_HEXAHEDRON, [nodes.map((n) => n[0])], hv);
+  const s = computeIsoSurface(h, h.fields[0], 1);
+  assert.equal(s.is2D, false);
+  assert.ok(s.triangles.length >= 3);
+  for (let i = 0; i < s.points.length; i += 3) assert.ok(approx(s.points[i], 1, 1e-4), `x=${s.points[i]}`);
+});

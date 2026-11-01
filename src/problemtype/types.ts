@@ -584,6 +584,12 @@ export interface CaseState {
   output: OutputState;
   /** collectionId → entries, for a problemtype that declares `collections`. */
   collections?: Record<string, CollectionEntry[]>;
+  /**
+   * Case parameters (`name = expression`), usable by name in any numeric field
+   * (roadmap item 27). A numeric field may hold an expression string such as
+   * `10[mm]` or `2*L`; generated documents only ever contain resolved numbers.
+   */
+  parameters?: { name: string; expr: string }[];
 }
 
 /**
@@ -621,6 +627,11 @@ export interface GenContext {
   domains?: Record<string, DomainContext>;
   /** collectionId → entries with defaults merged in; `{}` when none are declared. */
   collections?: Record<string, ResolvedCollectionEntry[]>;
+  /**
+   * SubModelPart path → undeformed length/area/volume of its cells, present only
+   * when an assignment asks for a total force (roadmap item 42).
+   */
+  partMeasures?: Record<string, import("../parser/partMeasures").Measure | null>;
 }
 
 /** A `GenContext` narrowed to one physics domain (no nesting). */
@@ -691,4 +702,6 @@ export interface GeneratedCase {
   driverScriptName: string;
   /** The Kratos applications the case needs (sorted); the driver checks them first. */
   applications: string[];
+  /** Total-force loads and the measure each was divided by (roadmap item 42); absent when none. */
+  loadMeasures?: import("./totalLoad").LoadMeasure[];
 }

@@ -14,8 +14,8 @@ function recipe(table: PlotTable, family: PlotFamily, spec: Partial<PlotSeriesSp
 }
 const weights = () => parsePlotTable("Category,Weight [N]\nA,1\nA,2\nB,3\nEmpty,NA\nZero,0\n");
 
-test("all twelve families and presentation mappings round-trip without changing legacy recipes", () => {
-  assert.equal(PLOT_FAMILIES.length, 12);
+test("all thirteen families and presentation mappings round-trip without changing legacy recipes", () => {
+  assert.equal(PLOT_FAMILIES.length, 13);
   for (const family of PLOT_FAMILIES) {
     const r = recipe(weights(), family, { size: "c1", sizeMax: 48, statistic: "sum" });
     r.presentation.lineMode = "lines"; r.presentation.barMode = "stack"; r.presentation.barOrientation = "h";
@@ -118,4 +118,18 @@ test("MCP returns the same circular aggregation, shares and bubble mapping as th
   assert.equal(result.series[0].categoryTotal, 6); assert.deepEqual(result.series[0].points.map((p: any) => p.share), [.5, .5, null, 0]);
   const b = parsePlotTable("X,Y,Size\n0,1,4\n1,2,9\n"), bubble = await plotDataset({ recipe: recipe(b, "bubble", { size: "c2" }), limit: 100 }) as any;
   assert.equal(bubble.series[0].sizeMaximum, 9); assert.deepEqual(bubble.series[0].points.map((p: any) => p.size), [4, 9]);
+});
+
+test("polar family: angle/radius traces carry the explicit angle unit and no cartesian axes (item 30)", () => {
+  const t = parsePlotTable("Angle [deg],R\n0,1\n90,2\n180,1\n");
+  const r = recipe(t, "polar");
+  r.presentation.angleUnit = "rad";
+  assert.equal(validatePlotRecipe(JSON.parse(JSON.stringify(r))).presentation.angleUnit, "rad");
+  assert.throws(() => validatePlotRecipe({ ...r, presentation: { ...r.presentation, angleUnit: "turns" } }));
+  const fig = plotFigure(evaluatePlot(r, { a: t }), theme);
+  assert.equal(fig.traces[0].type, "scatterpolar");
+  assert.deepEqual(fig.traces[0].theta, [0, 90, 180]);
+  assert.equal(fig.traces[0].thetaunit, "radians");
+  assert.equal(fig.layout.xaxis, undefined);
+  assert.equal(fig.layout.polar.angularaxis.thetaunit, "radians");
 });
