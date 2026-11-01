@@ -112,6 +112,14 @@ export function quantityOf(unit: string | undefined): Quantity | undefined {
   return undefined;
 }
 
+/** A unit's quantity and the factor converting one of it to the quantity's canonical unit (factors only; no offsets). */
+export function unitFactor(unit: string): { quantity: Quantity; factor: number; canonical: string } | undefined {
+  const key = normalizeUnit(unit);
+  const quantity = quantityOf(key);
+  if (quantity === undefined) return undefined;
+  return { quantity, factor: UNITS[quantity].factors[key], canonical: UNITS[quantity].canonical };
+}
+
 /** The unit one value of this quantity is written in. */
 export function canonicalUnit(quantity: Quantity): string {
   return UNITS[quantity].canonical;

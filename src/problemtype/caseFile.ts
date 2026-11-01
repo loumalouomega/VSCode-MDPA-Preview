@@ -185,6 +185,12 @@ export function parseCaseJson(text: string): { state?: CaseState; warnings: stri
       assignments: readAssignments(raw.assignments, warnings, "assignments"),
       materials: readMaterials(raw.materials, warnings),
       output: readOutput(raw.output),
+      ...(() => {
+        if (!Array.isArray(raw.parameters)) return {};
+        const parameters = raw.parameters.filter((p): p is { name: string; expr: string } => isRecord(p) && typeof p.name === "string" && typeof p.expr === "string");
+        if (parameters.length < raw.parameters.length) warnings.push("Some case parameters were malformed and ignored.");
+        return parameters.length > 0 ? { parameters } : {};
+      })(),
       ...(isRecord(raw.outputProcesses) ? { outputProcesses: raw.outputProcesses as import("./types").JsonObject } : {}),
       ...(() => {
         const collections = readCollections(raw.collections, warnings);

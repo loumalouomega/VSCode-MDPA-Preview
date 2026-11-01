@@ -28,6 +28,7 @@ import { collectionProblems, resolveCollections } from "./collections";
 import { applicationCheckPy, requiredApplications } from "./applications";
 import { isFieldVisible } from "./layout";
 import { interfacePairProblems } from "./interfaceCheck";
+import { resolveStateExpressions } from "./caseExpressions";
 import { computePartMeasures } from "../parser/partMeasures";
 import { applyTotalLoad, isTotalLoad, LoadMeasure } from "./totalLoad";
 import { periodicPairProblems } from "./periodicCheck";
@@ -376,6 +377,11 @@ export async function generateCase(
 ): Promise<GeneratedCase> {
   const warnings: string[] = [];
   const decl = runtime.decl;
+  // Unit-suffixed values and case parameters become plain numbers here, before any
+  // document is built; a mismatch is a warning, a bad expression a refusal.
+  const resolvedState = resolveStateExpressions(decl, state);
+  state = resolvedState.state;
+  warnings.push(...resolvedState.warnings);
   const ctx = buildGenContext(runtime, model, state, mdpaStem, warnings);
   const values = ctx.values;
   const loadMeasures: LoadMeasure[] = [];

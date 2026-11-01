@@ -584,6 +584,12 @@ export interface CaseState {
   output: OutputState;
   /** collectionId → entries, for a problemtype that declares `collections`. */
   collections?: Record<string, CollectionEntry[]>;
+  /**
+   * Case parameters (`name = expression`), usable by name in any numeric field
+   * (roadmap item 27). A numeric field may hold an expression string such as
+   * `10[mm]` or `2*L`; generated documents only ever contain resolved numbers.
+   */
+  parameters?: { name: string; expr: string }[];
 }
 
 /**
