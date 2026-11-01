@@ -391,6 +391,7 @@ export function registerAllTools(server: McpServer): void {
         pressureDrop: z.object({ from: z.string(), to: z.string() }).optional().describe("Section names: reports mean pressure(from) - mean pressure(to)"),
         pressureDensity: z.number().positive().optional().describe("Explicit density in kg/m³ to also report pressure means/drop scaled to Pa; only converts a kinematic-pressure field, otherwise reported unavailable"),
         pressureReference: z.enum(["gauge", "absolute"]).optional().describe("Label for a converted pressure; never inferred"),
+        revolveAbout: z.enum(["x", "y"]).optional().describe("Revolve a planar r-z (xy) axisymmetric mesh about this in-plane axis: flux becomes the true volumetric rate (2 pi r weights). Explicit; a 3D mesh is refused"),
         timeStep,
         allSteps: z.boolean().optional().describe("Repeat over every step of the time series (excludes timeStep)"),
         outputPath: z.string().optional().describe("Write the table as .csv"),

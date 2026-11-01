@@ -890,6 +890,7 @@ export async function meshFlowBalance(args: {
   pressureDrop?: { from: string; to: string };
   pressureDensity?: number;
   pressureReference?: "gauge" | "absolute";
+  revolveAbout?: "x" | "y";
   timeStep?: number;
   allSteps?: boolean;
   outputPath?: string;
@@ -903,6 +904,7 @@ export async function meshFlowBalance(args: {
     pressureDrop: args.pressureDrop,
     pressureDensity: args.pressureDensity,
     pressureReference: args.pressureReference,
+    ...(args.revolveAbout ? { revolveAbout: args.revolveAbout } : {}),
   };
   if (args.allSteps && args.timeStep !== undefined) throw new Error("Choose either allSteps or a single timeStep, not both.");
   let written: string | undefined;

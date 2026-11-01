@@ -20,6 +20,8 @@ export function regionEntityIds(model: MdpaModel, spec: Pick<PlotRegionSource,"k
   return ids;
 }
 
+const pressureOps = new Set<string>(["pressureForce", "pressureMoment"]);
+
 export function sampleRegion(model: MdpaModel, spec: PlotRegionSource): RegionSample {
   const field = model.fields.find(f=>f.kind===spec.kind && f.variable===spec.variable);
   if (!field) throw new Error(`No ${spec.kind} field "${spec.variable}"; associations are not converted implicitly.`);
@@ -107,6 +109,7 @@ export function sampleRegion(model: MdpaModel, spec: PlotRegionSource): RegionSa
     if (["min","max"].includes(spec.operation) && bestId!==undefined) {origin.entityKind=spec.kind==="Nodal"?"Nodes":spec.kind==="Elemental"?"Elements":"Conditions";origin.entityId=bestId;}
     return {values:[value!==null&&Number.isFinite(value)?value:null],columns:[column(`${spec.operation} ${spec.variable}${spec.tensor?` ${spec.tensor.invariant}`:component==="magnitude"?" magnitude":field.components>1?` ${"XYZ"[component]??component}`:""}`,0)],origin,diagnostics,partial:!covered||covered<ids.size||value!==null&&!Number.isFinite(value),covered,measure:ids.size};
   }
+  if(spec.revolveAbout&&(pressureOps.has(spec.operation)||spec.boundary==="exterior"||spec.thickness!==undefined))throw new Error("revolveAbout applies to boundaryMean, boundaryIntegral and flux on line Conditions (not pressure loads, exterior boundaries or a thickness).");
   const exterior=spec.boundary==="exterior";
   if(!exterior&&!spec.submodelpart)throw new Error("Choose a boundary SubModelPart for integration.");
   if(!exterior&&spec.interface!==undefined)throw new Error("The interface side applies to exterior boundaries only.");
@@ -125,7 +128,7 @@ export function sampleRegion(model: MdpaModel, spec: PlotRegionSource): RegionSa
     scale=spec.pressureDensity;unit="Pa";dimensions=[1,-1,-2,0,0,0,0];diagnostics.push(`Kinematic pressure multiplied by supplied density ${scale} kg/m³.`);
   } else if(spec.pressureDensity!==undefined&&spec.operation!=="boundaryMean")throw new Error("Pressure density is only valid for recorded SI kinematic pressure, not an unknown or physical-pressure field.");
   const meanScale=spec.operation==="boundaryMean"?meanPressureScale():1;
-  const quadrature=exterior?exteriorQuadrature(model,spec.submodelpart,{interface:spec.interface}):boundaryQuadrature(model,spec.submodelpart!,pressure||flux?spec.orientation??"outward":undefined);
+  const quadrature=exterior?exteriorQuadrature(model,spec.submodelpart,{interface:spec.interface}):boundaryQuadrature(model,spec.submodelpart!,pressure||flux?spec.orientation??"outward":undefined,spec.revolveAbout);
   if(spec.thickness!==undefined && quadrature.dimension!==2)throw new Error("Thickness is only used for 2D line boundaries.");
   diagnostics.push(...quadrature.warnings);
   const thickness=spec.thickness??1, vector=[0,0,0];let total=0,covered=0;
@@ -140,9 +143,9 @@ export function sampleRegion(model: MdpaModel, spec: PlotRegionSource): RegionSa
     } else total+=(flux?tuple.reduce((sum,v,d)=>sum+v*q.normal[d],0):tuple[0])*weight;
   }
   const measure=quadrature.measure;
-  diagnostics.push(`Covered ${covered} of ${measure} source-coordinate ${quadrature.dimension===3?"area":"length"}; missing values and unorientable facets are excluded, never zero.`,quadrature.dimension===2?(spec.thickness?`2D thickness ${spec.thickness} in coordinate units.`:"2D integral is per unit depth; no thickness inferred."):"3D surface integral.");
+  diagnostics.push(`Covered ${covered} of ${measure} source-coordinate ${quadrature.dimension===3?"area":"length"}; missing values and unorientable facets are excluded, never zero.`,quadrature.dimension===2?(spec.revolveAbout?`Revolved about ${spec.revolveAbout}: 2π r weights on the r-z line; "area" is the surface of revolution.`:spec.thickness?`2D thickness ${spec.thickness} in coordinate units.`:"2D integral is per unit depth; no thickness inferred."):"3D surface integral.");
   if(pressure)diagnostics.push(`Pressure traction = −(p − ${spec.pressureOffset??0}) n; ${spec.orientation??"outward"} normals. Pressure reference is not inferred.`);
-  if(spec.operation!=="boundaryMean")multiplyMeasure((quadrature.dimension===3||spec.thickness!==undefined?2:1)+(spec.operation==="pressureMoment"?1:0));
+  if(spec.operation!=="boundaryMean")multiplyMeasure((quadrature.dimension===3||spec.thickness!==undefined||spec.revolveAbout?2:1)+(spec.operation==="pressureMoment"?1:0));
   const values=pressure?vector:[spec.operation==="boundaryMean"?total/(covered*thickness)*meanScale:total];
   return {values:values.map(v=>covered>0&&Number.isFinite(v)?v:null),columns:values.map((_,i)=>column(`${spec.variable} ${spec.operation}${pressure?` ${"XYZ"[i]}`:""}`,i)),origin,diagnostics,partial:quadrature.incomplete||!covered||values.some(v=>!Number.isFinite(v))||covered<measure-1e-10*Math.max(1,measure),covered,measure};
 }
