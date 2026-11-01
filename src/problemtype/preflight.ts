@@ -30,6 +30,7 @@ import { CaseState, FieldRequirement, ProblemtypeRuntime } from "./types";
 import { fieldDefault } from "./api";
 import { isFieldVisible } from "./layout";
 import { planCaseMesh } from "./caseMesh";
+import { sharedNodeConflicts } from "./nodeConflicts";
 import { ransPeriodicIdProblems } from "./periodicCheck";
 import { FLUID_NOT_BOUNDARY, NO_SKIN } from "./builtins/fluid";
 import { handoffFindings, type HandoffRead } from "./handoff";
@@ -249,12 +250,14 @@ export async function preflightCase(
   const partIds = new Set(partsConditionIds(decl));
 
   let applications: string[] | undefined;
+  let generatedParameters: string | undefined;
   // --- 1. Dry run of the generator: everything it refuses on is an error. ---
   try {
     const plan = planCaseMesh(runtime, model, state, stem, opts.isMdpaSource ?? true);
     for (const w of plan.warnings) add("warning", "plan-warning", w);
     const out = await generateCase(runtime, plan.caseModel, state, plan.caseStem);
     applications = out.applications;
+    generatedParameters = out.projectParameters;
     for (const w of out.warnings) {
       if (COVERED_GENERATOR_WARNING.some((re) => re.test(w))) continue;
       add("warning", "generate-warning", w);
@@ -425,6 +428,8 @@ export async function preflightCase(
 
   // --- 5b. Multi-point constraints (former roadmap item 23). ---
   findings.push(...constraintFindings(model, state, decl.conditions));
+  // --- 5c. Different conditions fixing the same variable on shared nodes (item 41). ---
+  if (generatedParameters) findings.push(...sharedNodeConflicts(model, generatedParameters, state.assignments, decl.conditions));
 
   // --- 6. Mesh quality (mesh-wide; the metrics have no per-part split). ---
   if (opts.quality !== false) {

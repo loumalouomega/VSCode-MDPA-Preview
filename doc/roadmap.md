@@ -371,12 +371,6 @@ Admission criterion: closes a gap between a generated case and how its results a
 
 **Acceptance:** a ten-frame recording captioned `{max(DISPLACEMENT, mm)}` shows the value `mesh_field_series` reports for each frame; a bad token prints `?` and the capture still completes. **MCP:** none (presentation).
 
-### 41. Conflicting conditions on shared nodes — S
-
-**Pending — added 2026-10-31 (ElmerStudio review, second pass).** Preflight warns when one condition is assigned twice to one SubModelPart (`assignment-duplicate`), but two *different* conditions that fix the same variable on nodes shared by their parts — a fixed support and an imposed displacement meeting at an edge, two inlets touching at a corner — are passed to Kratos, where the process applied last silently wins. Add a finding that names both conditions, both parts, the variable, the number of shared nodes and whether the values agree (an `info` when they do, a `warning` when they do not), with the shared nodes as the finding's `entityIds` so item 35 can highlight them. ElmerStudio's per-keyword owner rule is the model; the rule here is per fixed variable, since that is what Kratos processes write.
-
-**Acceptance:** a cantilever with a fixed support and a prescribed displacement sharing one edge reports the edge's nodes once, with both values; two conditions on disjoint parts report nothing. **MCP:** `case_validate` returns the same finding.
-
 ### 42. Total force on a surface or line — S
 
 **Pending — added 2026-10-31 (ElmerStudio review, second pass).** Structural surface loads are entered in N/m² and line loads in N/m, so a user with a known total force divides by an area they have to measure first. Add a **Total force (N)** mode to those conditions: at generation the force is divided by the part's area or length measured from the mesh (`partMeasures.ts` already computes both), the preparation report records the measure used, a zero measure is refused by name, and the case file keeps the total so a re-mesh recomputes the distributed value. As in ElmerStudio, the measure is the undeformed one; a follower load is out of scope.

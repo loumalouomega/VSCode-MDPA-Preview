@@ -330,3 +330,31 @@ End Nodes
   const clean = await preflightCase(structural, parseMdpa(MDPA), goodState(), "beam");
   assert.equal(codes(clean.findings, "constraint-slave-fixed").length, 0);
 });
+
+test("two conditions fixing the same variable on shared nodes are reported (item 41)", async () => {
+  const model = parseMdpa(MDPA);
+  const state = goodState();
+  // "Unused" shares node 1 with "Support"; the values differ in x.
+  state.assignments.push({ conditionId: "displacement", smpPath: "Unused", values: { value: [1, 0, 0], constrained: true } });
+  let report = await preflightCase(structural, model, state, "beam");
+  let shared = codes(report.findings, "condition-shared-nodes");
+  assert.equal(shared.length, 1);
+  assert.equal(shared[0].severity, "warning");
+  assert.match(shared[0].message, /DISPLACEMENT/);
+  assert.match(shared[0].message, /1 shared node/);
+  assert.match(shared[0].message, /different values/);
+  assert.deepEqual(shared[0].target?.entityIds, [1]);
+  assert.equal(shared[0].target?.conditionId, "displacement");
+
+  // Same values: an info, not a warning.
+  state.assignments[state.assignments.length - 1].values = { value: [0, 0, 0], constrained: true };
+  report = await preflightCase(structural, model, state, "beam");
+  shared = codes(report.findings, "condition-shared-nodes");
+  assert.equal(shared[0].severity, "info");
+  assert.match(shared[0].message, /same values/);
+
+  // Disjoint parts ("Loaded" is node 4 only) report nothing.
+  state.assignments[state.assignments.length - 1] = { conditionId: "displacement", smpPath: "Loaded", values: { value: [1, 0, 0], constrained: true } };
+  report = await preflightCase(structural, model, state, "beam");
+  assert.equal(codes(report.findings, "condition-shared-nodes").length, 0);
+});
