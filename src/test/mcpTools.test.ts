@@ -36,6 +36,7 @@ import {
   problemtypeList,
   problemtypeDescribe,
   caseValidate,
+  meshAleQuality,
   caseEstimateTimestep,
   caseWriteState,
   caseMaterialAssign,
@@ -4737,4 +4738,21 @@ test("mesh_info revolveAbout reports revolved measures and refuses a 3D mesh (ro
   assert.equal(plain.measure.kind, "area");
   assert.equal(plain.measure.revolvedAbout, undefined);
   await assert.rejects(meshInfo({ path: writeFixture(tmpDir()), revolveAbout: "y" }), /planar/);
+});
+
+test("mesh_ale_quality walks a committed series and reports a per-frame table (roadmap item 46)", async () => {
+  const series = path.resolve(__dirname, "../../example/VTK/Main_0_2.vtk");
+  const csv = path.join(tmpDir(), "ale.csv");
+  const r = (await meshAleQuality({ path: series, variable: "DISPLACEMENT", outputPath: csv })) as {
+    totalSteps: number;
+    frames: { label: string; inverted?: number; minShapeRatio?: number; error?: string }[];
+    worstFrame?: { label: string };
+  };
+  assert.equal(r.totalSteps, 3);
+  assert.equal(r.frames.length, 3);
+  assert.equal(r.frames[0].minShapeRatio, 1);
+  assert.ok(r.worstFrame);
+  assert.ok(fs.readFileSync(csv, "utf8").startsWith("frame,label,elements,inverted"));
+  const noField = (await meshAleQuality({ path: series })) as { frames: { error?: string }[] };
+  assert.match(noField.frames[0].error!, /MESH_DISPLACEMENT/);
 });

@@ -32,8 +32,12 @@ import {
   meshFieldIntegrate,
   caseEvaluateQuantity,
   meshDerive,
+  meshFitPrimitives,
 } from "../mcp/tools";
 import { parseMdpa } from "../parser/mdpaParser";
+import { generateMesh } from "../parser/kernelMeshes";
+import { extractSkinModel } from "../parser/extractSkin";
+import { writeMeshFile } from "../parser/writers/meshWriter";
 import { parseMeshFile } from "../parser/meshFileParser";
 
 function tmpDir(): string {
@@ -740,4 +744,21 @@ test("mesh_derive builds a grid with no input mesh, samples a sphere's SDF to .v
   assert.ok(vox.blocks[0].count > 0);
   await assert.rejects(meshDerive({ path: sphere, kind: "voxelize", cellSize: 0.25, fill: "inside", outputPath: path.join(dir, "vox.vti") }), /dense regular lattice/);
   await assert.rejects(meshDerive({ path: sphere, kind: "voxelize", cellSize: 0.0001, outputPath: path.join(dir, "big.vtu") }), /over 20,000,000/);
+});
+
+test("mesh_fit_primitives segments a cube skin and reports six planes; outputPath writes FIT_PRIMITIVE (item 31)", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "fitprim-"));
+  try {
+    const box = await generateMesh({ kind: "generate", shape: "box", params: { dims: [2, 2, 2] } });
+    const skinPath = path.join(dir, "skin.vtu");
+    fs.writeFileSync(skinPath, writeMeshFile(extractSkinModel(box.model).model, ".vtu"));
+    const out = path.join(dir, "fit.vtu");
+    const r = (await meshFitPrimitives({ path: skinPath, outputPath: out })) as { counts: { plane: number }; patches: unknown[]; segmented: { numPatches: number } };
+    assert.equal(r.counts.plane, 6);
+    assert.equal(r.patches.length, 6);
+    assert.equal(r.segmented.numPatches, 6);
+    assert.ok(fs.readFileSync(out, "utf8").includes("FIT_PRIMITIVE"));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });

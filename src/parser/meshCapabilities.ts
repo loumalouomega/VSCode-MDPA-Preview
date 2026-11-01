@@ -287,9 +287,8 @@ export async function getMeshCapabilities(): Promise<MeshCapabilities> {
     unroutedReaders,
     writers: { ...MESHIO_WRITE_FORMAT },
     namedWriters: [...MESHIO_WRITER_KEYS],
-    operations: { available: ["featureEdges", "hausdorff", "qualityGate", "periodicNodes", "regionAlgebra", "resampleSequence", "segment", "refinePatches", "octree", "octreeMesh", "meshCadSurface", "projectToCad", "extrude", "revolve", "mirror", "boundaryLayer", "tetrahedralize", "errorSize", "checkConformity", "generators (rectangle, box, disk, uvSphere, icosaSphere, cylinder, referenceCells, referenceTriangle, ngon, annulus, lshape, plateWithHole, honeycomb, line, circle, helix, spherePoints, boxPoints, tetraSphere, octaSphere, cubeSphere, geoSphere, torus, moebius, tube, cone, capsule, boxSurface, platonic, ball, sphericalShell, pipe, fichera, solidTorus)"], unavailable: [
+    operations: { available: ["featureEdges", "hausdorff", "qualityGate", "periodicNodes", "regionAlgebra", "resampleSequence", "segment", "refinePatches", "fitPrimitives (mesh_fit_primitives)", "octree", "octreeMesh", "meshCadSurface", "projectToCad", "extrude", "revolve", "mirror", "boundaryLayer", "tetrahedralize", "errorSize", "checkConformity", "generators (rectangle, box, disk, uvSphere, icosaSphere, cylinder, referenceCells, referenceTriangle, ngon, annulus, lshape, plateWithHole, honeycomb, line, circle, helix, spherePoints, boxPoints, tetraSphere, octaSphere, cubeSphere, geoSphere, torus, moebius, tube, cone, capsule, boxSurface, platonic, ball, sphericalShell, pipe, fichera, solidTorus)"], unavailable: [
       { name: "agglomerate", reason: "Polyhedral output cannot be preserved by the editable model." },
-      { name: "fitPrimitives", reason: "Fits a primitive to each patch of a segmented surface and only labels it (fit:* data); the .step export's fitCad does the fitting itself, and no Kratos entity carries a fitted primitive." },
       { name: "retagRegions", reason: "SubModelParts do not retain native region tags or side selectors." }
     ] },
     extensions: {

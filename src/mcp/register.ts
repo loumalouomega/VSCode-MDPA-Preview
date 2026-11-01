@@ -23,6 +23,8 @@ import {
   meshFlowBalance,
   caseEvaluateQuantity,
   meshCurvature,
+  meshFitPrimitives,
+  meshAleQuality,
   meshCompare,
   meshDerive,
   windTunnelPlanTool,
@@ -432,6 +434,39 @@ export function registerAllTools(server: McpServer): void {
       },
     },
     runCancellable(meshCurvature)
+  );
+
+  server.registerTool(
+    "mesh_ale_quality",
+    {
+      description:
+        "Did the mesh solver keep a moving (ALE) mesh valid? For every frame of a time series, measures each Element of the top dimension (volume cells, else planar xy surface cells) on its deformed coordinates (coordinates + the nodal displacement, default MESH_DISPLACEMENT) and compares it with the SAME element at the first frame, so an intentionally graded mesh is not flagged: measureRatio = signed measure / reference (<= 0 means flat or inverted) and shapeRatio = signed mean-ratio quality / reference quality (1 = as good as at the start, negative = inverted). Returns per frame the inverted count and ids (capped at 50), the lowest ratios and the worst element, plus the overall worstFrame. A frame with a different element set or no displacement field is an error row, not compared by position. Read-only; .csv outputPath writes the table.",
+      inputSchema: {
+        path: meshPath,
+        variable: z.string().optional().describe("Nodal displacement vector field (default MESH_DISPLACEMENT)"),
+        outputPath: z.string().optional().describe("Write the per-frame table as .csv"),
+      },
+    },
+    runCancellable(meshAleQuality)
+  );
+
+  server.registerTool(
+    "mesh_fit_primitives",
+    {
+      description:
+        "Name the boundaries of a SURFACE mesh by shape (a solid is refused — extract its boundary with mesh_extract_skin first). Segments the surface into smooth patches (featureAngle, default 30 degrees; method angle|primitive) unless it already carries SEGMENT_PATCH, then fits a plane, sphere, cylinder, cone or torus to each patch via meshio++ fitPrimitives and reports per patch: the primitive (or none), the cell count, the fraction of facets within tolerance, rms and max distance, and for planes/spheres/cylinders the point, axis/normal and radius ('these four patches are cylinders of radius 5'). Cone and torus parameters are returned raw. tolerance is relative to the bounding-box diagonal unless relative is false. Read-only; with outputPath the mesh is written carrying the integer FIT_PRIMITIVE cell field (1 plane, 2 sphere, 3 cylinder, 4 cone, 5 torus, 0 unfitted, -1 off the surface) so patches can be coloured by type.",
+      inputSchema: {
+        path: meshPath,
+        featureAngle: z.number().min(0).max(180).optional().describe("Dihedral degrees above which an edge separates patches (default 30)"),
+        method: z.enum(["angle", "primitive"]).optional(),
+        tolerance: z.number().positive().optional(),
+        relative: z.boolean().optional(),
+        minInlierFraction: z.number().min(0).max(1).optional(),
+        types: z.array(z.enum(["plane", "sphere", "cylinder", "cone", "torus"])).optional(),
+        outputPath: z.string().optional().describe("Write the mesh with the FIT_PRIMITIVE field here"),
+      },
+    },
+    runCancellable(meshFitPrimitives)
   );
 
   server.registerTool(

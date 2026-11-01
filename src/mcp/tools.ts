@@ -57,6 +57,9 @@ import { MdpaModel, EntityBlock, SubModelPart, EntityKind } from "../parser/type
 import { parseMdpa } from "../parser/mdpaParser";
 import { surfaceDefects } from "../parser/surfaceDefects";
 import { curvatureModel, gaussBonnetResidual } from "../parser/curvature";
+import { fitPrimitivesReport } from "../parser/primitiveReport";
+import { aleQualitySeries } from "../parser/aleQuality";
+import { segmentModel, SEGMENT_VARIABLE } from "../parser/segmentMesh";
 import { compareMeshes, compareFieldModel } from "../parser/meshCompare";
 import { fieldUnitLabel } from "../parser/fieldDimensions";
 import { DeriveSpec, DERIVE_KINDS, DERIVE_STANDALONE_KINDS, recordedDeriveParameters } from "../parser/deriveMesh";
@@ -932,6 +935,44 @@ export async function meshFlowBalance(args: {
 }
 
 /**
+ * mesh_ale_quality (roadmap item 46): per frame, the quality of every Element on
+ * its deformed coordinates (coords + the nodal displacement) relative to the same
+ * element at the first frame, the count of inverted elements and the worst frame.
+ */
+export async function meshAleQuality(args: {
+  path: string;
+  variable?: string;
+  outputPath?: string;
+}, execution: PlotExecution = {}): Promise<object> {
+  const abs = path.resolve(args.path);
+  if (!fs.existsSync(abs)) throw new Error(`File not found: ${abs}`);
+  if (args.outputPath && path.extname(args.outputPath).toLowerCase() !== ".csv") throw new Error("outputPath must end in .csv.");
+  const { steps, source } = await discoverSeriesSteps(abs, execution.signal);
+  const loadable = source === "single" ? steps.map((s) => ({ ...s, load: async () => (await loadMesh(abs, undefined, undefined, undefined, undefined, undefined, execution.signal)).model })) : steps;
+  const series = await aleQualitySeries(loadable, { variable: args.variable, signal: execution.signal });
+  throwIfCancelled(execution.signal);
+  let written: string | undefined;
+  if (args.outputPath) {
+    written = path.resolve(args.outputPath);
+    const rows = ["frame,label,elements,inverted,minMeasureRatio,minShapeRatio,worstElementId,error"];
+    for (const f of series.frames) rows.push([f.frameIndex, JSON.stringify(f.label), f.elements ?? "", f.inverted ?? "", f.minMeasureRatio ?? "", f.minShapeRatio ?? "", f.worstElementId ?? "", JSON.stringify(f.error ?? "")].join(","));
+    fs.writeFileSync(written, rows.join("\n") + "\n", "utf8");
+  }
+  const worst = series.worstFrame !== undefined ? series.frames[series.worstFrame] : undefined;
+  return {
+    path: abs,
+    source,
+    variable: series.variable,
+    referenceFrame: series.referenceLabel,
+    totalSteps: steps.length,
+    anyInverted: series.frames.some((f) => (f.inverted ?? 0) > 0),
+    ...(worst ? { worstFrame: { label: worst.label, frameIndex: worst.frameIndex, minShapeRatio: worst.minShapeRatio, minMeasureRatio: worst.minMeasureRatio, worstElementId: worst.worstElementId, inverted: worst.inverted } } : {}),
+    frames: series.frames,
+    outputPath: written,
+  };
+}
+
+/**
  * Evaluate one explicitly selected scalar from a solver result using the
  * parser's existing field/reduction routines. The app stores this versioned
  * definition with its source run; this tool never guesses units or mutates a
@@ -1054,6 +1095,51 @@ export async function meshCurvature(args: {
     watertight: r.quality,
     warnings: r.warnings,
   };
+}
+
+/**
+ * mesh_fit_primitives (roadmap item 31): segment a SURFACE mesh into smooth
+ * patches (unless it already carries SEGMENT_PATCH) and report, per patch, the
+ * plane/sphere/cylinder/cone/torus it matches, its parameters and the fit
+ * residual — "these four patches are cylinders of radius 5". With `outputPath`
+ * the mesh is written carrying the integer FIT_PRIMITIVE field.
+ */
+export async function meshFitPrimitives(args: {
+  path: string;
+  featureAngle?: number;
+  method?: "angle" | "primitive";
+  tolerance?: number;
+  relative?: boolean;
+  minInlierFraction?: number;
+  types?: ("plane" | "sphere" | "cylinder" | "cone" | "torus")[];
+  outputPath?: string;
+  provenance?: ProvenanceMode;
+  verify?: boolean;
+}, execution: PlotExecution = {}): Promise<object> {
+  const loaded = await loadMesh(args.path, undefined, undefined, undefined, undefined, undefined, execution.signal);
+  let model = loaded.model;
+  let segmented: { numPatches: number; labelled: number; details: string } | undefined;
+  if (!model.fields.some((f) => f.variable === SEGMENT_VARIABLE)) {
+    const seg = await segmentModel(model, { featureAngle: args.featureAngle, method: args.method });
+    model = seg.model;
+    segmented = { numPatches: seg.numPatches, labelled: seg.labelled, details: seg.details };
+  }
+  const r = await fitPrimitivesReport(model, {
+    tolerance: args.tolerance,
+    relative: args.relative,
+    minInlierFraction: args.minInlierFraction,
+    types: args.types,
+    writeField: args.outputPath !== undefined,
+  });
+  const out: Record<string, unknown> = { path: args.path, ...(segmented ? { segmented } : {}), counts: r.counts, patches: r.patches, message: r.message };
+  if (args.outputPath && r.patches.length > 0) {
+    const warnings: string[] = [];
+    const written = await writeModelReported(r.model, args.outputPath, loaded.sourceText, undefined, warnings, { sourceFile: args.path, ops: [{ op: "fitPrimitives" }], provenance: args.provenance, verify: args.verify });
+    out.outputPath = written.path;
+    out.report = written.report;
+    out.warnings = warnings;
+  }
+  return out;
 }
 
 /**
