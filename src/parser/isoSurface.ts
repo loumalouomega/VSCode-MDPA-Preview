@@ -10,7 +10,7 @@
 // Node unit tests — mirroring meshQuality.ts.
 
 import { FieldData, MdpaModel } from "./types";
-import { decompositionFor, CellDecomposition } from "./cellDecomposition";
+import { decompositionFor, CellDecomposition, HEX_TETS, QUAD_TRIS } from "./cellDecomposition";
 import { VtkCellType } from "./geometryMap";
 
 export interface IsoSurfaceResult {
@@ -60,6 +60,23 @@ function scalarByNode(field: FieldData): Map<number, number> {
  * same from both sides, so crossing points weld across cells. Tri6: corners 0-2,
  * mids 3:(0,1) 4:(1,2) 5:(2,0).
  */
+// Parametric positions (0, 1, 2 = start, middle, end) of the nodes of the 27-node hexahedron
+// and the 9-node quad in VTK order; a sub-cell is a 2x2(x2) block of this grid.
+const HEX_CORNER = [[0, 0, 0], [2, 0, 0], [2, 2, 0], [0, 2, 0], [0, 0, 2], [2, 0, 2], [2, 2, 2], [0, 2, 2]];
+const HEX_EDGES = [[0, 1], [1, 2], [2, 3], [3, 0], [4, 5], [5, 6], [6, 7], [7, 4], [0, 4], [1, 5], [2, 6], [3, 7]];
+const HEX_FACES = [[0, 4, 7, 3], [1, 2, 6, 5], [0, 1, 5, 4], [3, 7, 6, 2], [0, 3, 2, 1], [4, 5, 6, 7]];
+const mid = (pts: number[][]): number[] => pts[0].map((_, d) => pts.reduce((a, p) => a + p[d], 0) / pts.length);
+const HEX27_POS: number[][] = [...HEX_CORNER, ...HEX_EDGES.map((e) => mid(e.map((c) => HEX_CORNER[c]))), ...HEX_FACES.map((f) => mid(f.map((c) => HEX_CORNER[c]))), [1, 1, 1]];
+const QUAD_CORNER = [[0, 0], [2, 0], [2, 2], [0, 2]];
+const QUAD9_POS: number[][] = [...QUAD_CORNER, ...[[0, 1], [1, 2], [2, 3], [3, 0]].map((e) => mid(e.map((c) => QUAD_CORNER[c]))), [1, 1]];
+
+function subCells(pos: number[][], corner: number[][], origins: number[][]): number[][] {
+  const at = (p: number[]): number => pos.findIndex((q) => q.every((v, d) => Math.abs(v - p[d]) < 1e-9));
+  return origins.map((o) => corner.map((c) => at(c.map((v, d) => o[d] + v / 2))));
+}
+const HEX27_SUBS = subCells(HEX27_POS, HEX_CORNER, [0, 1].flatMap((k) => [0, 1].flatMap((j) => [0, 1].map((i) => [i, j, k]))));
+const QUAD9_SUBS = subCells(QUAD9_POS, QUAD_CORNER, [0, 1].flatMap((j) => [0, 1].map((i) => [i, j])));
+
 export function quadraticDecomposition(cellType: number | undefined, stride: number): CellDecomposition | undefined {
   if (cellType === VtkCellType.QUADRATIC_TETRA && stride >= 10) {
     return {
@@ -72,6 +89,12 @@ export function quadraticDecomposition(cellType: number | undefined, stride: num
   }
   if (cellType === VtkCellType.QUADRATIC_TRIANGLE && stride >= 6) {
     return { corners: 6, tris: [[0, 3, 5], [3, 1, 4], [5, 4, 2], [3, 4, 5]] };
+  }
+  if (cellType === VtkCellType.TRIQUADRATIC_HEXAHEDRON && stride >= 27) {
+    return { corners: 27, tets: HEX27_SUBS.flatMap((sub) => HEX_TETS.map((t) => t.map((k) => sub[k]))) };
+  }
+  if (cellType === VtkCellType.BIQUADRATIC_QUAD && stride >= 9) {
+    return { corners: 9, tris: QUAD9_SUBS.flatMap((sub) => QUAD_TRIS.map((t) => t.map((k) => sub[k]))) };
   }
   return undefined;
 }
