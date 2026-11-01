@@ -353,59 +353,17 @@ Admission criterion: closes a gap between a generated case and how its results a
 
 **Acceptance:** `T / avg(Body, T)` has a mean of 1 over `Body`; a formula seed `VON_MISES > 0.9 * max(Body, VON_MISES)` selects the same cells as a threshold at the computed value; a recipe with the formula replays identically. **MCP:** `mesh_transform` `fieldCalc` and `mesh_select` formula seeds accept the functions.
 
-### 35. Preflight findings that point at what they name — S
-
-**Pending — added 2026-10-31 (ElmerStudio review).** `FindingTarget` already carries `conditionId`, `lawId`, `propertyId`, `entityKind` and a bounded `entityIds` sample, but the webview's `PreflightFinding` only reads `smpPath` (a part-bearing row frames that part). Make every target actionable: `entityIds` highlight the entities through the selection overlay (as a transient set, never an OpRecord), `conditionId`/`lawId` scroll the case form to that card, and `propertyId` opens the Properties editor on that set.
-
-**Acceptance:** each finding kind with a target is clickable and lands on the right card or entities; a finding without a target stays a plain row. **MCP:** none (the targets are already in `case_validate`'s output); UI-only.
-
-### 36. Honest colour ranges and visible extremes — S
-
-**Pending — added 2026-10-31 (ElmerStudio review, second pass).** Three small rules in `fieldScalars.ts` and the Field panel: (1) a field whose range is within a relative 1e-9 of its magnitude (solver round-off on a constant field) is drawn in one colour with a legend that says "constant: v", instead of spreading noise over the whole colormap; (2) a **Symmetric** range option (−m … +m with m = max |value|), on by default when a diverging colormap is chosen and off otherwise; (3) the legend always shows the field's true minimum and maximum beside the mapping range, so a manual or symmetric range never hides what the data reaches, and **Show extremes** places a marker at the node (or cell) holding each, with a "Go to" that frames it and an Inspect pick on it. Extremes are node/cell values, not interpolated, and the legend says so.
-
-**Acceptance:** a uniform temperature field with 1e-13 noise renders in a single colour and states its value; a symmetric range on a signed stress field puts zero at the colormap's centre; with a manual range narrower than the data the legend still prints the true extremes and the markers sit on the entities `mesh_field_series`/`mesh_info` report as extreme. **MCP:** none for the view; the extremes and their entity ids join `mesh_info`'s field summary if not already there.
-
-### 37. Automatic deformation scale — S
-
-**Pending — added 2026-10-31 (ElmerStudio review, second pass).** The deformed-shape mode starts at a scale of 1, so a structural result usually looks undeformed until the user types a factor. Add **Auto**: the largest displacement magnitude is drawn at about 10 % of the bounding-box diagonal, rounded down to a 1/2/5 × 10ⁿ factor so it reads as a number a person would choose, shown as "Auto (×2000)". It is computed once when the mode is turned on (from the frame on screen) and then held while the timeline is scrubbed, so the picture does not change scale under the user; a typed factor turns Auto off and is remembered in the view sidecar like the other Field settings. Display only, as today.
-
-**Acceptance:** on the KKSS cantilever tutorial result Auto chooses a factor within a power of ten of the 1000× the tutorial uses, holds it across frames, and a manual factor survives a reload. **MCP:** none (display).
-
 ### 38. Contours and isosurfaces that follow quadratic cells — M
 
 **Pending — added 2026-10-31 (ElmerStudio review, second pass).** `isoSurface.ts` decomposes each volume cell into tetrahedra over its corner nodes only, so on tet10/hex20/hex27 results the mid-side nodal values, which the solver computed, play no part in where an isosurface or contour lies. Run marching tetrahedra over a level-1 subdivision of quadratic cells, built in memory with the same parent→child rules as the shipped `tessellate` derive (item 10) and never written, and the surface iso-lines over `curvedDisplay.ts`'s subdivided faces; linear meshes keep today's path byte for byte. A second increment adds contour level labels spaced along each line (ElmerStudio prints one label per level at one vertex, which is the part not worth copying).
 
 **Acceptance:** on a quadratic tetrahedral mesh carrying a field quadratic in x, the isosurface at a level lies within 1 % of the analytic plane where the corner-only surface does not; a linear mesh produces an identical surface to today's. **MCP:** `mesh_derive` `isosurface` takes the same quadratic path, so the exported surface and the drawn one agree.
 
-### 39. Step through entities under the cursor — S
-
-**Pending — added 2026-10-31 (ElmerStudio review, second pass); shared vocabulary with CAD-Preview (item 1).** Inspect and Selection always take the front-most entity at the cursor. Add stepping: Up/Down (or +/−) while hovering walks through every cell or face the view ray crosses, front to back, with "2 of 5 under the cursor" on the status bar, and the next click within a few pixels takes the stepped entity; in Selection mode the hover highlight says whether a click would add or remove. Hidden-by-visibility layers stay excluded, as they are from picking today. This is webview-only and reuses `pickAt`; CAD-Preview's roadmap tracks the same interaction so the two viewers agree.
-
-**Acceptance:** on a two-solid stack the inner face is reachable without hiding or clipping, the status count matches the faces the ray crosses, and keyboard-only users can do the same. **MCP:** none (interaction).
-
-### 40. Evaluated tokens in captions and recorder labels — S
-
-**Pending — added 2026-10-31 (ElmerStudio review, second pass).** Screenshot titles, captions and recorder frame labels accept tokens evaluated per frame: `{max(VON_MISES, MPa)}`, `{min(F)}`, `{avg(Part, T, degC)}`, `{time}`, `{step}`. Values come from the same `region.ts` reductions plots and monitors use and are formatted with the field's display unit (`fieldDimensions.ts`); an unknown field, part or unit prints `?` and names the token in a diagnostic rather than failing the capture. A recorded GIF can then carry its peak value frame by frame, which today needs post-editing.
-
-**Acceptance:** a ten-frame recording captioned `{max(DISPLACEMENT, mm)}` shows the value `mesh_field_series` reports for each frame; a bad token prints `?` and the capture still completes. **MCP:** none (presentation).
-
-### 41. Conflicting conditions on shared nodes — S
-
-**Pending — added 2026-10-31 (ElmerStudio review, second pass).** Preflight warns when one condition is assigned twice to one SubModelPart (`assignment-duplicate`), but two *different* conditions that fix the same variable on nodes shared by their parts — a fixed support and an imposed displacement meeting at an edge, two inlets touching at a corner — are passed to Kratos, where the process applied last silently wins. Add a finding that names both conditions, both parts, the variable, the number of shared nodes and whether the values agree (an `info` when they do, a `warning` when they do not), with the shared nodes as the finding's `entityIds` so item 35 can highlight them. ElmerStudio's per-keyword owner rule is the model; the rule here is per fixed variable, since that is what Kratos processes write.
-
-**Acceptance:** a cantilever with a fixed support and a prescribed displacement sharing one edge reports the edge's nodes once, with both values; two conditions on disjoint parts report nothing. **MCP:** `case_validate` returns the same finding.
-
 ### 42. Total force on a surface or line — S
 
 **Pending — added 2026-10-31 (ElmerStudio review, second pass).** Structural surface loads are entered in N/m² and line loads in N/m, so a user with a known total force divides by an area they have to measure first. Add a **Total force (N)** mode to those conditions: at generation the force is divided by the part's area or length measured from the mesh (`partMeasures.ts` already computes both), the preparation report records the measure used, a zero measure is refused by name, and the case file keeps the total so a re-mesh recomputes the distributed value. As in ElmerStudio, the measure is the undeformed one; a follower load is out of scope.
 
 **Acceptance:** a 1000 N total on a 10 mm × 10 mm face writes 10 N/mm² (in the case's unit system) and the reaction sum on the support (`reactionMoment`/`sum` region ops) returns 1000 N within solver tolerance; re-meshing the face changes no total. **MCP:** `case_generate` accepts the mode; `problemtype_describe` lists it.
-
-### 43. Make the linear-solver choice visible — S
-
-**Pending — added 2026-10-31 (ElmerStudio review, second pass).** With the linear solver on *automatic*, `linearSolverSettings` writes no `linear_solver_settings`, so the solver Kratos picks is decided inside Kratos (to be confirmed against the pinned 10.4.x applications; the structural solver is expected to fall back to the fastest available direct solver) and nothing tells the user. ElmerStudio chooses by an estimated DOF count and records why. Here: estimate DOFs (nodes × degrees of freedom per node of the chosen element family), state in the preflight report which solver *automatic* will resolve to and why, and add a warning when a direct solver meets an estimate above a stated threshold on a 3D case, pointing at AMGCL; nothing is changed unless the user picks a solver.
-
-**Acceptance:** the structural tutorial reports its resolved solver and DOF estimate; a 1M-node 3D case on *automatic* produces the warning; the generated `ProjectParameters.json` for *automatic* stays byte-identical. **MCP:** `case_validate` reports the resolved solver and the estimate.
 
 ### 44. Revolved integrals and measures for axisymmetric results — S–M
 

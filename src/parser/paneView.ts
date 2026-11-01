@@ -62,6 +62,14 @@ export interface PaneFieldState {
   /** The vector field driving the deformation (may differ from the coloring field). */
   deformKey: string;
   deformScale: number;
+  /** Auto deformation scale (default on); the held factor is `deformAutoScale`. */
+  deformAuto: boolean;
+  deformAutoScale?: number;
+  /** Symmetric colour range (-m..+m). Follows the colormap until the user touches it. */
+  symmetric: boolean;
+  symmetricTouched: boolean;
+  /** Mark the true min/max entities in the scene. */
+  showExtremes: boolean;
   /** [lo,hi] window of cells to show; undefined = everything passes. */
   thresholdRange?: [number, number];
   thresholdRule: ThresholdRule;
@@ -105,6 +113,11 @@ export function defaultPaneFieldState(colormap: string): PaneFieldState {
     scale: 1,
     deformKey: "",
     deformScale: 1,
+    deformAuto: true,
+    deformAutoScale: undefined,
+    symmetric: false,
+    symmetricTouched: false,
+    showExtremes: false,
     thresholdRange: undefined,
     thresholdRule: "all",
   };

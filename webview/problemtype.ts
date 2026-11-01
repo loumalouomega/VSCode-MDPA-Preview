@@ -1096,6 +1096,9 @@ function addRow(choices: AddChoice[], buttonTitle: string, onAdd: (choice: strin
 }
 
 /** One applied assignment/material row: header (icon · label · path · ×) + its fields. */
+/** Set just before building a card so `appliedRow` can tag it for preflight scrolling. */
+let pendingCardTag: { conditionId?: string; lawId?: string } | undefined;
+
 function appliedRow(
   title: string,
   smpPath: string,
@@ -1108,6 +1111,11 @@ function appliedRow(
 ): HTMLElement {
   const box = document.createElement("div");
   box.className = "pt-assign";
+  if (pendingCardTag) {
+    if (pendingCardTag.conditionId) box.dataset.conditionId = pendingCardTag.conditionId;
+    if (pendingCardTag.lawId) box.dataset.lawId = pendingCardTag.lawId;
+    pendingCardTag = undefined;
+  }
   const head = document.createElement("div");
   head.className = "pt-assign-head";
   const glyph = iconSpan(icon, "toolbar-icon pt-assign-icon");
@@ -1298,6 +1306,7 @@ function renderParts(decl: ProblemtypeDeclaration): void {
     );
     state.assignments.forEach((a: Assignment, i: number) => {
       if (a.conditionId !== entry.conditionId) return;
+      pendingCardTag = { conditionId: a.conditionId };
       body.appendChild(
         appliedRow(cond.label, a.smpPath, cond.fields, a.values, () => {
           state!.assignments.splice(i, 1);
@@ -1358,6 +1367,7 @@ function renderAssignments(decl: ProblemtypeDeclaration): void {
       count: rows.length,
     });
     for (const { a, i, cond } of rows) {
+      pendingCardTag = { conditionId: a.conditionId };
       gbody.appendChild(
         appliedRow(cond!.label, a.smpPath, cond!.fields, a.values, () => {
           state!.assignments.splice(i, 1);
@@ -1374,6 +1384,7 @@ function renderAssignments(decl: ProblemtypeDeclaration): void {
   state.assignments.forEach((a: Assignment, i: number) => {
     if (known.has(a.conditionId)) return;
     shown += 1;
+    pendingCardTag = { conditionId: a.conditionId };
     body.appendChild(
       appliedRow(`${a.conditionId} (unknown)`, a.smpPath, [], a.values, () => {
         state!.assignments.splice(i, 1);
@@ -1580,6 +1591,7 @@ function renderMaterials(decl: ProblemtypeDeclaration): void {
       else if (nextIssues) row.appendChild(nextIssues);
       issues = nextIssues;
     };
+    pendingCardTag = { lawId: m.lawId };
     const row: HTMLElement = appliedRow(
       law?.name || m.lawId,
       m.smpPath,
@@ -1716,10 +1728,21 @@ interface PreflightFinding {
   severity: "error" | "warning" | "info";
   code: string;
   message: string;
-  target?: { smpPath?: string };
+  target?: PreflightTarget;
+}
+
+/** What a finding points at (mirrors FindingTarget in src/problemtype/preflight.ts). */
+export interface PreflightTarget {
+  smpPath?: string;
+  conditionId?: string;
+  lawId?: string;
+  propertyId?: number;
+  entityKind?: "Elements" | "Conditions" | "Geometries";
+  entityIds?: number[];
 }
 
 let preflightFrameHandler: (smpPath: string) => void = () => {};
+let preflightTargetHandler: (target: PreflightTarget) => void = () => {};
 /** The Preflight card starts open and remembers the user's choice across updates. */
 let preflightOpen = true;
 let lastPreflight: { counts: Record<string, number>; findings: PreflightFinding[] } | undefined;
@@ -1727,6 +1750,28 @@ let lastPreflight: { counts: Record<string, number>; findings: PreflightFinding[
 /** Lets the host page decide what "show me that part" means (frame its outline layer). */
 export function setPreflightFrameHandler(handler: (smpPath: string) => void): void {
   preflightFrameHandler = handler;
+}
+
+/** Lets the host page act on entity ids / a Properties id (selection overlay, Properties editor). */
+export function setPreflightTargetHandler(handler: (target: PreflightTarget) => void): void {
+  preflightTargetHandler = handler;
+}
+
+/** Scrolls the case form to the card a finding names and flashes it. Returns whether one was found. */
+function scrollToCard(target: PreflightTarget): boolean {
+  const sel = target.conditionId
+    ? `[data-condition-id="${CSS.escape(target.conditionId)}"]`
+    : target.lawId
+    ? `[data-law-id="${CSS.escape(target.lawId)}"]`
+    : undefined;
+  if (!sel) return false;
+  const cards = Array.from(document.querySelectorAll<HTMLElement>(sel));
+  const card = target.smpPath ? cards.find((c) => c.querySelector(".pt-assign-path")?.textContent === target.smpPath) ?? cards[0] : cards[0];
+  if (!card) return false;
+  card.scrollIntoView({ block: "center", behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+  card.classList.add("pt-flash");
+  window.setTimeout(() => card.classList.remove("pt-flash"), 1200);
+  return true;
 }
 
 function plural(n: number, word: string): string {
@@ -1774,7 +1819,9 @@ export function setProblemtypePreflight(msg: {
   rows.className = "pt-preflight-rows";
   rows.hidden = !preflightOpen;
   for (const f of findings) {
-    const row = document.createElement(f.target?.smpPath ? "button" : "div");
+    const tg = f.target;
+    const actionable = !!tg && !!(tg.smpPath || tg.conditionId || tg.lawId || tg.propertyId !== undefined || (tg.entityIds && tg.entityIds.length > 0));
+    const row = document.createElement(actionable ? "button" : "div");
     row.className = `pt-preflight-row ${f.severity}`;
     row.title = f.code;
     const mark = document.createElement("span");
@@ -1784,11 +1831,16 @@ export function setProblemtypePreflight(msg: {
     const text = document.createElement("span");
     text.textContent = f.message;
     row.append(mark, text);
-    const smp = f.target?.smpPath;
-    if (smp) {
+    if (actionable && tg) {
       (row as HTMLButtonElement).type = "button";
-      row.title = `${f.code} — show "${smp}"`;
-      row.addEventListener("click", () => preflightFrameHandler(smp));
+      const what = tg.conditionId ?? tg.lawId ?? tg.smpPath ?? (tg.propertyId !== undefined ? `Properties ${tg.propertyId}` : "entities");
+      row.title = `${f.code} — show "${what}"`;
+      row.addEventListener("click", () => {
+        // Card first (a form edit), then the scene side (frame / selection / Properties).
+        scrollToCard(tg);
+        if (tg.smpPath) preflightFrameHandler(tg.smpPath);
+        if (tg.propertyId !== undefined || (tg.entityIds && tg.entityIds.length > 0)) preflightTargetHandler(tg);
+      });
     }
     rows.appendChild(row);
   }

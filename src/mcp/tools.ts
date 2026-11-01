@@ -1,3 +1,4 @@
+import { fieldExtremes } from "../parser/fieldScalars";
 import { computePartMeasures, measureName, PartMeasures } from "../parser/partMeasures";
 import { discoverOutputs } from '../problemtype/outputDiscovery';
 import { exportCaseResults, normalizeExportFormats } from "../problemtype/resultExport";
@@ -167,7 +168,8 @@ import { planRunWorkspace, snapshotRunInputs } from "../problemtype/runWorkspace
 import { compareRuns } from "../problemtype/runCompare";
 import { probeKratosApplications } from "../problemtype/kratosAppProbe";
 import { describeMissingApplications } from "../problemtype/applications";
-import { defaultCaseState } from "../problemtype/api";
+import { defaultCaseState, flattenValues } from "../problemtype/api";
+import { adviseLinearSolver } from "../problemtype/solverAdvice";
 import { planCaseMesh } from "../problemtype/caseMesh";
 import {
   BUILTIN_PRESETS,
@@ -653,15 +655,20 @@ export async function meshInfo(args: {
           },
         }
       : {}),
-    fields: model.fields.map((f) => ({
+    fields: model.fields.map((f) => {
+      // True extremes (magnitude for vectors) and the entity ids holding them.
+      const ex = fieldExtremes(f, "mag");
+      return {
       variable: f.variable,
       kind: f.kind,
       components: f.components,
       count: f.ids.length,
+      ...(ex ? { min: { value: ex.min.value, id: ex.min.id }, max: { value: ex.max.value, id: ex.max.id } } : {}),
       // Only when the source stated them (an OpenFOAM `dimensions [..]`); absent = UNKNOWN,
       // never dimensionless (former roadmap item 12).
       ...(f.dimensions ? { dimensions: f.dimensions, unit: fieldUnitLabel(f) } : {}),
-    })),
+      };
+    }),
     // Global (scalar) variable SPECS with their live values, recomputed from
     // the current fields (see globalReduce.ts) — conditional like `fields`,
     // so a mesh with none reports nothing new.
@@ -3019,11 +3026,15 @@ export async function caseValidate(args: {
       ...(probe.missing.length > 0 ? { message: describeMissingApplications(probe.missing) } : {}),
     };
   }
+  const solverInfo = adviseLinearSolver(runtime.decl.id, flattenValues(runtime.decl, state), model.nodeIds.length, model.is3D);
   return {
     ok: report.ok,
     problemtype: ptId,
     source: from,
     warnings,
+    ...(solverInfo
+      ? { solver: { resolved: solverInfo.kind === "automatic" ? "automatic" : solverInfo.name, dofs: solverInfo.dofs ?? null, why: solverInfo.why } }
+      : {}),
     ...(report.applications ? { applications: report.applications } : {}),
     ...(install ? { install } : {}),
     // Errors only: a case with none generates. Warnings and info are advisories.

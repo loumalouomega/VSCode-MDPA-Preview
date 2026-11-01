@@ -145,11 +145,13 @@ import {
   isoGeometry,
   ScalarStyle,
 } from "./fieldRender";
-import { COLORMAPS, DEFAULT_COLORMAP, colorAt, getColormap } from "./colormaps";
-import { FieldComponent, effectiveRange, spacedIsoValues, transformStops } from "../src/parser/fieldScalars";
+import { COLORMAPS, DEFAULT_COLORMAP, colorAt, getColormap, isDivergingColormap } from "./colormaps";
+import { FieldComponent, autoDeformScale, computeFieldRange, effectiveRange, fieldExtremes, resolveColorRange, spacedIsoValues, transformStops } from "../src/parser/fieldScalars";
 import { LegendSpec } from "./screenshotLegend";
 import { buildCapturePlan, captureBackground, captureFieldLabel, captureStepLabel, CaptureSettings, DEFAULT_CAPTURE_SETTINGS } from "../src/parser/capturePlan";
 import { composeCaptureOverlays, CaptureOverlay } from "./captureCompositor";
+import { evaluateCaption } from "../src/parser/captionTokens";
+import { cycleIndex, withinPickRadius, pickStackLabel, stepDirection, PICK_STACK_MAX } from "../src/parser/pickStack";
 import { renderScreenshotPanel } from "./screenshotPanel";
 import { thresholdCells } from "../src/parser/thresholdCells";
 import { blockCentroids } from "../src/parser/render/hardwareSelection";
@@ -301,6 +303,7 @@ import {
   setProblemtypeModel,
   setProblemtypePreflight,
   setPreflightFrameHandler,
+  setPreflightTargetHandler,
   setProblemtypeStatus,
   setProblemtypeEstimate,
   setProblemtypeCapability,
@@ -1582,6 +1585,8 @@ let propertiesVisible = false;
 const FIELD_CONTOUR_ID = "field:contour";
 const FIELD_QUIVER_ID = "field:quiver";
 const FIELD_THRESHOLD_ID = "field:threshold";
+// Min/max markers: one tiny point overlay per extreme ("field:extremes:min"/"…:max").
+const FIELD_EXTREMES_PREFIX = "field:extremes:";
 // Multiple simultaneous iso values (Phase 1.5) each get their own layer id
 // under this prefix rather than a single fixed id.
 const FIELD_ISO_PREFIX = "field:iso:";
@@ -1590,7 +1595,8 @@ function isFieldLayerId(id: string): boolean {
     id === FIELD_CONTOUR_ID ||
     id === FIELD_QUIVER_ID ||
     id === FIELD_THRESHOLD_ID ||
-    id.startsWith(FIELD_ISO_PREFIX)
+    id.startsWith(FIELD_ISO_PREFIX) ||
+    id.startsWith(FIELD_EXTREMES_PREFIX)
   );
 }
 let fieldInfos: FieldInfo[] = [];
@@ -3900,6 +3906,22 @@ initOpQueue((msg) => vscode.postMessage(msg));
 initVariablesPanel((msg) => vscode.postMessage(msg));
 initProblemtype((msg) => vscode.postMessage(msg));
 setPreflightFrameHandler((smpPath) => frameLayer(`smp:${smpPath}`));
+// Entity ids -> a transient-looking selection set ("Preflight"); a Properties id
+// -> the Properties editor scrolled to that set. Neither is an OpRecord.
+setPreflightTargetHandler((target) => {
+  if (target.entityKind && target.entityIds && target.entityIds.length > 0) {
+    applySelectionSeed({ name: "Preflight", kinds: { [target.entityKind]: target.entityIds } });
+  }
+  if (target.propertyId !== undefined) {
+    if (!propertiesVisible) showPropertiesPanel();
+    const card = document.querySelector<HTMLElement>(`[data-prop-set="${target.propertyId}"]`);
+    if (card) {
+      card.scrollIntoView({ block: "center" });
+      card.classList.add("pt-flash");
+      window.setTimeout(() => card.classList.remove("pt-flash"), 1200);
+    }
+  }
+});
 
 // --- Embedded Flowgraph editor pane -------------------------------------
 const flowgraphOrientation =
@@ -5874,7 +5896,11 @@ function renderFieldPanelUI(): void {
     isoValues: fs.isoValues,
     scale: fs.scale,
     deformKey: fs.deformKey,
-    deformScale: fs.deformScale,
+    deformScale: effectiveDeformScale(pane),
+    symmetric: fs.symmetric,
+    showExtremes: fs.showExtremes,
+    extremes: fieldExtremeRows(pane),
+    deformAuto: fs.deformAuto && !!selectedDeformInfo(pane)?.isVector,
     hasVolume: modelHasVolume(scopeModel(pane)),
     thresholdRange: fs.thresholdRange,
     thresholdRule: fs.thresholdRule,
@@ -5897,12 +5923,28 @@ function renderFieldPanelUI(): void {
     },
     onToggleMode: (mode) => {
       if (fs.modes.has(mode)) fs.modes.delete(mode);
-      else fs.modes.add(mode);
+      else {
+        fs.modes.add(mode);
+        if (mode === "deformed") fs.deformAutoScale = undefined; // Auto is taken from the frame on screen now
+      }
+      renderFieldPanelUI();
+      rebuild();
+    },
+    onSymmetric: (on) => {
+      fs.symmetric = on;
+      fs.symmetricTouched = true;
+      renderFieldPanelUI();
+      rebuild();
+    },
+    onGoToExtreme: (which) => goToExtreme(which),
+    onShowExtremes: (on) => {
+      fs.showExtremes = on;
       renderFieldPanelUI();
       rebuild();
     },
     onSelectColormap: (name) => {
       fs.colormap = name;
+      if (!fs.symmetricTouched) fs.symmetric = isDivergingColormap(name);
       renderFieldPanelUI();
       rebuild();
     },
@@ -5972,10 +6014,19 @@ function renderFieldPanelUI(): void {
     },
     onSelectDeformField: (key) => {
       fs.deformKey = key;
+      fs.deformAutoScale = undefined;
       rebuild();
     },
     onDeformScale: (v) => {
       fs.deformScale = v;
+      fs.deformAuto = false; // a typed factor turns Auto off
+      renderFieldPanelUI();
+      rebuild();
+    },
+    onDeformAuto: (on) => {
+      fs.deformAuto = on;
+      fs.deformAutoScale = undefined; // recompute from the frame on screen
+      renderFieldPanelUI();
       rebuild();
     },
     onThresholdRange: (range) => {
@@ -6194,6 +6245,23 @@ function selectedDeformInfo(pane: Pane): FieldInfo | undefined {
   return scopeInfos(pane).find((i) => i.key === pane.field.deformKey && isDeformable(i));
 }
 
+// The factor the warp uses. Auto (vector displacement only; a scalar relief has
+// no natural length) is computed once from the frame on screen and then held,
+// so scrubbing the timeline does not change the picture's scale.
+function effectiveDeformScale(pane: Pane): number {
+  const fs = pane.field;
+  if (!fs.deformAuto) return fs.deformScale;
+  const info = selectedDeformInfo(pane);
+  if (!info || !info.isVector) return fs.deformScale;
+  if (fs.deformAutoScale === undefined) {
+    const [, maxMag] = computeFieldRange(info.field, "mag");
+    const b = scopeModel(pane)?.bounds;
+    const diag = b ? Math.hypot(b.max[0] - b.min[0], b.max[1] - b.min[1], b.max[2] - b.min[2]) : 0;
+    fs.deformAutoScale = autoDeformScale(maxMag, diag);
+  }
+  return fs.deformAutoScale;
+}
+
 // When deformed shape is active, produce a warped copy of the geometry
 // (coords += deformScale · displacement). Everything else (topology, fields) is
 // shared by reference so all field layers render on the deformed geometry.
@@ -6204,7 +6272,7 @@ function computeWarpedGeometry(pane: Pane): { prepared: PreparedNodes; model: Md
   const info = selectedDeformInfo(pane);
   if (!info) return null;
   const coords = new Float32Array(scopePrep.coords); // copy (never mutate the reference)
-  const scale = pane.field.deformScale;
+  const scale = effectiveDeformScale(pane);
   for (let i = 0; i < scope.nodeCount; i++) {
     if (!info.isVector) {
       // Relief: a nodal scalar lifts the point along +Z.
@@ -6233,7 +6301,7 @@ function currentComponent(pane: Pane): FieldComponent {
 // stored value stays in field units, so switching units never rewrites samples.
 function effectiveScalarRange(pane: Pane, info: FieldInfo): [number, number] {
   const dataRange = rangeForComponent(info, info.isVector ? currentComponent(pane) : "mag");
-  const [lo, hi] = effectiveRange(dataRange, pane.field.rangeOverride);
+  const { range: [lo, hi] } = resolveColorRange(dataRange, pane.field.rangeOverride, pane.field.symmetric);
   const scale = displayScaleFor(info.field, pane.field.displayUnit);
   return [lo / scale, hi / scale];
 }
@@ -6361,6 +6429,7 @@ function applyFieldMode(pane: Pane): void {
   if (info?.isVector && fs.modes.has("quiver")) buildQuiverLayer(pane, info, prep);
   if (info && !info.isVector && fs.modes.has("iso")) buildIsoLayer(pane, info, useModel);
   if (info && wantThreshold) buildThresholdLayer(pane, info, prep, wantContour);
+  if (info && fs.showExtremes) buildExtremesLayer(pane, info, prep);
 
   syncPaneDimming();
   applyScalarBar(pane, info);
@@ -6483,6 +6552,110 @@ function buildThresholdLayer(
     prop.setStyle({ color: [0.8, 0.82, 0.88] }); // same neutral as the uncolored deformed surface
   }
   registerPaneOverlay(pane, FIELD_THRESHOLD_ID, prop);
+}
+
+/** Where a field's extreme sits: the node itself, or the cell's centroid. */
+function extremePosition(
+  pane: Pane,
+  info: FieldInfo,
+  prep: PreparedNodes,
+  id: number
+): [number, number, number] | undefined {
+  if (info.field.kind === "Nodal") return coordOfPrep(prep, id);
+  const maps = scopeCellMaps(pane);
+  const cell =
+    info.field.kind === "Conditional" ? maps.conditionById.get(id) : maps.elementById.get(id);
+  if (!cell) return undefined;
+  const sum: [number, number, number] = [0, 0, 0];
+  let n = 0;
+  for (let k = 0; k < cell.nodeIds.length; k++) {
+    const c = coordOfPrep(prep, cell.nodeIds[k]);
+    if (!c) continue;
+    sum[0] += c[0];
+    sum[1] += c[1];
+    sum[2] += c[2];
+    n++;
+  }
+  return n > 0 ? [sum[0] / n, sum[1] / n, sum[2] / n] : undefined;
+}
+
+// Two big points at the entities holding the TRUE minimum (blue) and maximum
+// (red) of the shown field — node or cell values, not interpolated.
+function buildExtremesLayer(pane: Pane, info: FieldInfo, prep: PreparedNodes): void {
+  const ex = fieldExtremes(info.field, info.isVector ? currentComponent(pane) : "mag");
+  if (!ex) return;
+  for (const [which, e, color] of [
+    ["min", ex.min, [0.2, 0.45, 1]],
+    ["max", ex.max, [1, 0.15, 0.1]],
+  ] as const) {
+    const pos = extremePosition(pane, info, prep, e.id);
+    if (!pos) continue;
+    const prop = backend.createProp();
+    prop.setGeometry(
+      backend.createGeometry({
+        points: Float32Array.from(pos),
+        verts: Uint32Array.from([1, 0]),
+      })
+    );
+    prop.setStyle({ color: [color[0], color[1], color[2]], pointSize: 14, edgeVisible: false });
+    registerPaneOverlay(pane, FIELD_EXTREMES_PREFIX + which, prop);
+  }
+}
+
+/** Field panel "Go to": centre the focused pane on an extreme and open Inspect on it. */
+function fieldExtremeRows(pane: Pane): { min: { value: number; id: number }; max: { value: number; id: number } } | undefined {
+  const info = selectedFieldInfo(pane);
+  if (!info || !pane.field.showExtremes) return undefined;
+  const ex = fieldExtremes(info.field, info.isVector ? currentComponent(pane) : "mag");
+  if (!ex) return undefined;
+  const sc = paneDisplayScale(pane, info);
+  return { min: { value: ex.min.value / sc, id: ex.min.id }, max: { value: ex.max.value / sc, id: ex.max.id } };
+}
+
+function goToExtreme(which: "min" | "max"): void {
+  const pane = focusedPane();
+  const info = selectedFieldInfo(pane);
+  const prep = scopePrepared(pane);
+  if (!info || !prep) return;
+  if (isComparePane(pane)) {
+    toast(t("Go to works on the primary mesh only."));
+    return;
+  }
+  const ex = fieldExtremes(info.field, info.isVector ? currentComponent(pane) : "mag");
+  if (!ex) return;
+  const e = ex[which];
+  const pos = extremePosition(pane, info, prep, e.id);
+  if (!pos) return;
+  const b = model?.bounds;
+  const diag = b ? Math.hypot(b.max[0] - b.min[0], b.max[1] - b.min[1], b.max[2] - b.min[2]) : 1;
+  const r = Math.max(diag * 0.05, 1e-9);
+  pane.view.resetCamera([pos[0] - r, pos[0] + r, pos[1] - r, pos[1] + r, pos[2] - r, pos[2] + r]);
+  // Inspect card for the entity (or node) holding the extreme.
+  const kind = info.field.kind;
+  const selection: InspectSelection = {};
+  if (kind === "Nodal") {
+    selection.node = {
+      id: e.id,
+      coords: pos,
+      smpPaths: getMembershipIndex().nodes.get(e.id) ?? [],
+      fields: fieldValuesForEntity("Nodal", e.id),
+      constraints: constraintLinesFor(e.id),
+    };
+  } else {
+    const idx = getMembershipIndex();
+    const isCond = kind === "Conditional";
+    selection.entity = {
+      kind: isCond ? "Condition" : "Element",
+      id: e.id,
+      smpPaths: (isCond ? idx.conditions : idx.elements).get(e.id) ?? [],
+      fields: fieldValuesForEntity(kind, e.id),
+    };
+  }
+  inspectSelection = selection;
+  if (!inspectMode) toggleInspectMode();
+  renderInspectUI();
+  render();
+  if (showNodeIds) requestLabelUpdate();
 }
 
 // Anchor points (node coords or cell centroids), vectors and magnitudes.
@@ -6787,11 +6960,17 @@ function captureScene(settings: CaptureSettings): HTMLCanvasElement {
       legend: settings.legends ? legendSpecForPane(panes[p.index], true) ?? meshSizeLegendSpec() : undefined,
       label: step,
     }));
+    const capTime = currentStepKind === "time" && currentStepLabel !== undefined && Number.isFinite(Number(currentStepLabel)) ? Number(currentStepLabel) : undefined;
+    const capCtx = { model, step: timelineVisible ? currentStepLabel : undefined, time: capTime };
+    const capTitle = evaluateCaption(settings.title, capCtx);
+    const capCaption = evaluateCaption(settings.caption, capCtx);
     composeCaptureOverlays(ctx, overlays, {
       fontSize: settings.fontSize, corner: settings.corner,
       separators: settings.scope === "layout" && panes.length > 1,
-      title: settings.title, caption: settings.caption, captionPosition: settings.captionPosition,
+      title: capTitle.text, caption: capCaption.text, captionPosition: settings.captionPosition,
     });
+    const capDiag = [...capTitle.diagnostics, ...capCaption.diagnostics];
+    if (capDiag.length) toast(`Caption: ${capDiag[0]}${capDiag.length > 1 ? ` (+${capDiag.length - 1} more)` : ""}`);
     return output;
   } finally {
     raw.width = 0; raw.height = 0;
@@ -8997,13 +9176,71 @@ interface PickResolution {
  * origin; the backend scales to its own pixels (the HiDPI fix lives there).
  * Undefined = nothing pickable there.
  */
+// --- Stepping through the entities under the cursor (roadmap item 39) ---------
+// Up/Down (or +/-) while hovering cycles the pick through every pickable layer
+// the view ray crosses, nearest first. The stack is built on demand by picking,
+// making each hit unpickable for the next pick, then restoring all of them; the
+// next click within a few pixels takes the stepped hit instead of the nearest.
+type StackHit = NonNullable<ReturnType<typeof backend.pick>>;
+let pickStack: { x: number; y: number; hits: StackHit[]; index: number } | undefined;
+let hoverPointer: { x: number; y: number } | undefined;
+
+function steppedHit(x: number, y: number): StackHit | undefined {
+  const st = pickStack;
+  if (!st || !withinPickRadius(st.x, st.y, x, y)) return undefined;
+  return st.hits[st.index];
+}
+
+function collectPickStack(x: number, y: number): StackHit[] {
+  const hits: StackHit[] = [];
+  try {
+    for (let i = 0; i < PICK_STACK_MAX; i++) {
+      const hit = backend.pick(focusedView(), x, y);
+      if (!hit) break;
+      hit.prop.setPickable(false);
+      hits.push(hit);
+    }
+  } finally {
+    for (const h of hits) h.prop.setPickable(true);
+  }
+  return hits.filter((h) => { const l = findLayerByProp(h.prop); return !!l && l.pickKind !== undefined && (l.visible ?? true); });
+}
+
+function stepPickStack(dir: 1 | -1): boolean {
+  if (!model || !hoverPointer || (!inspectMode && !selectionVisible)) return false;
+  if (comparePaneIndex() === focusedPaneIndex()) return false;
+  const { x, y } = hoverPointer;
+  if (!pickStack || !withinPickRadius(pickStack.x, pickStack.y, x, y)) {
+    const hits = collectPickStack(x, y);
+    pickStack = hits.length ? { x, y, hits, index: 0 } : undefined;
+    if (!pickStack) return false;
+  }
+  pickStack.index = cycleIndex(pickStack.index, pickStack.hits.length, dir);
+  const layer = findLayerByProp(pickStack.hits[pickStack.index].prop);
+  toast(`${pickStackLabel(pickStack.index, pickStack.hits.length)}${layer ? ` — ${layer.id}` : ""}`);
+  return true;
+}
+
+renderRoot.addEventListener("pointermove", (ev: PointerEvent) => {
+  const rect = renderRoot.getBoundingClientRect();
+  hoverPointer = { x: ev.clientX - rect.left, y: rect.height - (ev.clientY - rect.top) };
+  if (pickStack && !withinPickRadius(pickStack.x, pickStack.y, hoverPointer.x, hoverPointer.y)) pickStack = undefined;
+});
+renderRoot.addEventListener("pointerleave", () => { hoverPointer = undefined; pickStack = undefined; });
+document.addEventListener("keydown", (e) => {
+  const tag = (e.target as HTMLElement | null)?.tagName;
+  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || e.ctrlKey || e.metaKey || e.altKey) return;
+  const dir = stepDirection(e.key);
+  if (dir && stepPickStack(dir)) e.preventDefault();
+});
+
 function pickAt(displayX: number, displayY: number): PickResolution | undefined {
   if (!model || !prepared) return undefined;
   // The peer is a read-only reference: picks (Inspect, selection, measure,
   // probe, streamline seeds) resolve against the primary mesh only. Peer
   // layers are non-pickable too, so this is the backstop, not the mechanism.
   if (comparePaneIndex() === focusedPaneIndex()) return undefined;
-  const hit = backend.pick(focusedView(), displayX, displayY);
+  const hit = steppedHit(displayX, displayY) ?? backend.pick(focusedView(), displayX, displayY);
   if (!hit) return undefined;
   const layer = findLayerByProp(hit.prop);
   if (!layer || layer.pickKind === undefined || !layer.pointGlobalIds || !layer.cellEntityIds) return undefined;

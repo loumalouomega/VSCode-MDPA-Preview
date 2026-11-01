@@ -21,6 +21,8 @@ import {
   clampComponent,
   fieldComponents,
   effectiveRange,
+  resolveColorRange,
+  isConstantRange,
   legendTicks,
   transformStops,
 } from "../src/parser/fieldScalars";
@@ -54,6 +56,11 @@ export interface FieldPanelState {
   /** The vector field driving the deformation (own selector, may differ from the coloring field). */
   deformKey: string;
   deformScale: number;
+  /** Auto deformation scale is driving `deformScale` (vector displacement only). */
+  deformAuto: boolean;
+  symmetric?: boolean;
+  showExtremes?: boolean;
+  extremes?: { min: { value: number; id: number }; max: { value: number; id: number } };
   hasVolume: boolean; // mesh has volume cells (isosurface produces surfaces, else iso-lines)
   /** [lo,hi] window of cells to show; undefined = the full effective range (everything passes). */
   thresholdRange?: [number, number];
@@ -90,6 +97,10 @@ export interface FieldPanelHandlers {
   onScale(v: number): void;
   onSelectDeformField(key: string): void;
   onDeformScale(v: number): void;
+  onDeformAuto(on: boolean): void;
+  onSymmetric(on: boolean): void;
+  onShowExtremes(on: boolean): void;
+  onGoToExtreme(which: "min" | "max"): void;
   onThresholdRange(range: [number, number] | undefined): void;
   onThresholdRule(rule: ThresholdRule): void;
   /** Push this pane's whole field setup onto every other pane. */
@@ -137,9 +148,16 @@ export function activeComponent(state: Pick<FieldPanelState, "modes" | "componen
 /** The effective [min,max] the active coloring is stretched over, in display units. */
 export function effectiveFieldRange(state: FieldPanelState, info: FieldInfo): [number, number] {
   const dataRange = rangeForComponent(info, info.isVector ? activeComponent(state) : "mag");
-  const [lo, hi] = effectiveRange(dataRange, state.rangeOverride);
+  const { range: [lo, hi] } = resolveColorRange(dataRange, state.rangeOverride, !!state.symmetric);
   const scale = displayScaleFor(info.field, state.displayUnit);
   return [lo / scale, hi / scale];
+}
+
+/** The field's TRUE [min,max] in display units (never the mapping range). */
+function trueRange(state: FieldPanelState, info: FieldInfo): [number, number] {
+  const r = rangeForComponent(info, info.isVector ? activeComponent(state) : "mag");
+  const scale = displayScaleFor(info.field, state.displayUnit);
+  return [r[0] / scale, r[1] / scale];
 }
 
 export function renderFieldPanel(
@@ -500,7 +518,46 @@ function buildRangeControls(
   bandsSel.addEventListener("change", () => handlers.onBands(Number(bandsSel.value)));
   bandsLabel.appendChild(bandsSel);
   optsRow.appendChild(bandsLabel);
+  const symLabel = document.createElement("label");
+  symLabel.className = "edit-check";
+  const symCk = document.createElement("input");
+  symCk.type = "checkbox";
+  symCk.checked = !!state.symmetric;
+  symCk.disabled = state.log;
+  symCk.addEventListener("change", () => handlers.onSymmetric(symCk.checked));
+  symLabel.appendChild(symCk);
+  symLabel.appendChild(document.createTextNode(t("Symmetric range")));
+  symLabel.title = t("Map −max|value| … +max|value| so zero sits at the colormap centre");
+  optsRow.appendChild(symLabel);
   wrap.appendChild(optsRow);
+
+  const extLabel = document.createElement("label");
+  extLabel.className = "edit-check";
+  const extCk = document.createElement("input");
+  extCk.type = "checkbox";
+  extCk.checked = !!state.showExtremes;
+  extCk.addEventListener("change", () => handlers.onShowExtremes(extCk.checked));
+  extLabel.appendChild(extCk);
+  extLabel.appendChild(document.createTextNode(t("Show extremes")));
+  wrap.appendChild(extLabel);
+  if (state.showExtremes && state.extremes) {
+    for (const which of ["min", "max"] as const) {
+      const e = state.extremes[which];
+      const row = document.createElement("div");
+      row.className = "field-row field-extreme-row";
+      const txt = document.createElement("span");
+      txt.className = "field-extreme-text";
+      txt.textContent = `${which === "min" ? t("Min") : t("Max")} ${e.value} (id ${e.id})`;
+      txt.title = t("Node/cell value, not interpolated");
+      const go = document.createElement("button");
+      go.className = "panel-btn field-extreme-go";
+      go.textContent = t("Go to");
+      go.addEventListener("click", () => handlers.onGoToExtreme(which));
+      row.appendChild(txt);
+      row.appendChild(go);
+      wrap.appendChild(row);
+    }
+  }
 
   // --- in-scene scalar bar ---
   const barLabel = document.createElement("label");
@@ -550,7 +607,17 @@ function buildLegend(state: FieldPanelState, info: FieldInfo): HTMLElement {
     min,
     max,
   });
-  return legendFromStops(stops, legendTicks(min, max, useLog));
+  const legend = legendFromStops(stops, legendTicks(min, max, useLog));
+  const [tlo, thi] = trueRange(state, info);
+  const note = document.createElement("div");
+  note.className = "field-legend-note";
+  note.textContent = isConstantRange(tlo, thi)
+    ? t("constant: {v}", { v: String(tlo) })
+    : t("data: {lo} … {hi} (node/cell values)", { lo: String(tlo), hi: String(thi) });
+  const box = document.createElement("div");
+  box.appendChild(legend);
+  box.appendChild(note);
+  return box;
 }
 
 function buildIsoControls(
@@ -710,17 +777,29 @@ function buildDeformControls(state: FieldPanelState, handlers: FieldPanelHandler
   slider.max = "1000";
   slider.step = "0.1";
   slider.title = t("Display-only multiplier for the displacement field (0–1000×)");
-  slider.value = String(state.deformScale);
+  slider.value = String(Math.min(1000, state.deformScale));
   const valEl = document.createElement("span");
   valEl.className = "field-slider-value";
-  valEl.textContent = `${state.deformScale.toFixed(1)}×`;
+  const fmt = (v: number): string => (v >= 100 ? v.toFixed(0) : v.toFixed(1));
+  valEl.textContent = state.deformAuto ? t("Auto (×{n})", { n: fmt(state.deformScale) }) : `${fmt(state.deformScale)}×`;
   slider.addEventListener("input", () => {
-    valEl.textContent = `${Number(slider.value).toFixed(1)}×`;
+    valEl.textContent = `${fmt(Number(slider.value))}×`;
     handlers.onDeformScale(Number(slider.value));
   });
   row.appendChild(slider);
   row.appendChild(valEl);
   wrap.appendChild(row);
+
+  const autoRow = document.createElement("label");
+  autoRow.className = "field-check";
+  const auto = document.createElement("input");
+  auto.type = "checkbox";
+  auto.checked = state.deformAuto;
+  auto.title = t("Draw the largest displacement at about 10 % of the model size");
+  auto.addEventListener("change", () => handlers.onDeformAuto(auto.checked));
+  autoRow.appendChild(auto);
+  autoRow.appendChild(document.createTextNode(" " + t("Auto scale")));
+  wrap.appendChild(autoRow);
   return wrap;
 }
 

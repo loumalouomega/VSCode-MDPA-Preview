@@ -4,6 +4,18 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Step through entities under the cursor.** With Inspect or the Selection panel open, **Up/Down** (or **+/−**) while hovering cycles through the pickable layers the view ray crosses, nearest first, and the toast says "k of n under the cursor — layer"; the next click within a few pixels takes the stepped entity. One hit per layer; the VTK-wasm renderer steps the same way.
+- **Evaluated captions.** Screenshot titles/captions (and so recorder frames) accept `{max(F[,unit])}`, `{min(F[,unit])}`, `{avg(Part,F[,unit])}`, `{time}` and `{step}`, evaluated against the frame on screen with the field's display units. An unknown field, part or unit prints `?` and one note appears; capture never fails.
+- **Visible linear-solver choice.** Preflight reports the chosen linear solver and an estimate of the unknowns (`solver-choice`), and warns (`solver-direct-large`) when a direct solver meets a large 3D case. `case_validate` returns `solver: {resolved, dofs, why}`. The generated JSON is unchanged.
+- **Conflicting conditions on shared nodes.** Preflight now reports two different parts whose conditions fix the same variable on nodes they share (a support and an imposed displacement meeting at an edge, two inlets at a corner): a warning when the values differ, a note when they agree, naming both conditions, both parts, the variable components and the shared node count, with the nodes selectable from the finding. Judged from the generated `constraints_process_list`, so hook-built processes count; processes whose intervals never overlap are ignored. `case_validate` returns the same `condition-shared-nodes` finding.
+- **Clickable preflight findings.** Every preflight row that names something is now a button: entity ids select those cells in a set called "Preflight", a condition or material-law id scrolls the case form to that card, and a Properties id opens the Properties editor on that set (a part path still frames the part). Rows without a target stay plain text.
+- **Honest colour ranges.** A field constant within round-off draws in one colour, the Field panel gains **Symmetric range** (on by default for diverging colormaps until touched) and its legend always prints the true data min and max beside the mapping range. **Show extremes** marks the entities holding the true minimum (blue) and maximum (red) in the scene, with a **Go to** button for each that frames it and opens Inspect on it. `mesh_info` now reports each field's `min`/`max` value and entity id.
+- **Auto deformation scale.** The Deformed-shape mode now starts on **Auto scale**: the largest displacement is drawn at about 10 % of the model's bounding-box diagonal, rounded down to a 1/2/5 × 10ⁿ factor and shown as "Auto (×N)". It is computed once when the mode is turned on (or the deform field changes) and held while the timeline is scrubbed; moving the slider turns it off. Saved in the view sidecar (`deformAuto`, `deformAutoScale`); a sidecar written before this keeps its typed factor. Display only.
+
 ## [5.27.0] - 2026-10-30
 
 ### Added

@@ -2,6 +2,12 @@ import { test } from "node:test";
 import assert from "node:assert";
 import {
   ColorStop,
+  autoDeformScale,
+  fieldExtremes,
+  isConstantRange,
+  resolveColorRange,
+  symmetricRange,
+  floorNice125,
   canLogScale,
   componentLabel,
   componentScalar,
@@ -220,4 +226,55 @@ test("componentScalar and computeFieldRange address any column of a 9-component 
   };
   assert.strictEqual(componentScalar(f, 1, 5), 15);
   assert.deepStrictEqual(computeFieldRange(f, 8), [8, 18]);
+});
+
+test("floorNice125 rounds down to 1/2/5 x 10^n", () => {
+  assert.strictEqual(floorNice125(1), 1);
+  assert.strictEqual(floorNice125(1.9), 1);
+  assert.strictEqual(floorNice125(2), 2);
+  assert.strictEqual(floorNice125(4.99), 2);
+  assert.strictEqual(floorNice125(5), 5);
+  assert.strictEqual(floorNice125(9999), 5000);
+  assert.strictEqual(floorNice125(0.037), 0.02);
+});
+
+test("autoDeformScale draws the largest displacement at ~10% of the diagonal", () => {
+  // Cantilever 1 m long, 1 mm tip deflection: raw = 0.1*1/0.001 = 100 -> 100.
+  assert.strictEqual(autoDeformScale(0.001, 1), 100);
+  // raw = 0.1*10/0.0004 = 2500 -> rounded down to 2000.
+  assert.strictEqual(autoDeformScale(0.0004, 10), 2000);
+  // Never larger than the 10% target.
+  const f = autoDeformScale(0.0037, 5);
+  assert.ok(f * 0.0037 <= 0.1 * 5 + 1e-12);
+  assert.ok(f * 0.0037 > 0.1 * 5 / 2.5);
+});
+
+test("autoDeformScale falls back to 1 when there is nothing to scale against", () => {
+  assert.strictEqual(autoDeformScale(0, 1), 1);
+  assert.strictEqual(autoDeformScale(1, 0), 1);
+  assert.strictEqual(autoDeformScale(NaN, 1), 1);
+  assert.strictEqual(autoDeformScale(Infinity, 1), 1);
+});
+
+test("constant fields are detected within relative 1e-9 and drawn in one colour", () => {
+  assert.ok(isConstantRange(300, 300 + 1e-13));
+  assert.ok(!isConstantRange(300, 301));
+  const r = resolveColorRange([300, 300 + 1e-13]);
+  assert.ok(r.constant);
+  assert.ok(r.range[0] < 300 && r.range[1] > 300);
+  assert.ok(!resolveColorRange([300, 300], [0, 1000]).constant);
+});
+
+test("symmetric range centres zero; manual override wins", () => {
+  assert.deepStrictEqual(symmetricRange(-2, 5), [-5, 5]);
+  assert.deepStrictEqual(resolveColorRange([-2, 5], undefined, true).range, [-5, 5]);
+  assert.deepStrictEqual(resolveColorRange([-2, 5], [0, 1], true).range, [0, 1]);
+});
+
+test("fieldExtremes reports the entity holding min and max, skipping NaN", () => {
+  const f = scalarField([3, NaN, -4, 9]);
+  const e = fieldExtremes(f)!;
+  assert.strictEqual(e.min.value, -4);
+  assert.strictEqual(e.max.value, 9);
+  assert.strictEqual(e.max.id, f.ids[3]);
 });

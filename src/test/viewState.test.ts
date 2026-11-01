@@ -279,3 +279,30 @@ test("curvedLevel round trips, clamps and is omitted when off", () => {
   assert.equal("curvedLevel" in serializeViewState(emptyViewState()), false);
   assert.equal(isEmptyViewState({ ...emptyViewState(), curvedLevel: 1 }), false);
 });
+
+test("deformation Auto defaults on; a pre-Auto sidecar with a typed factor stays manual", () => {
+  const def = validateViewState({ panes: [{ field: {} }] }).view.panes[0].field;
+  assert.equal(def.deformAuto, true);
+  const old = validateViewState({ panes: [{ field: { deformScale: 40 } }] }).view.panes[0].field;
+  assert.equal(old.deformAuto, false);
+  assert.equal(old.deformScale, 40);
+});
+
+test("deformation Auto and its held factor round-trip; bad values fall back with warnings", () => {
+  const ok = validateViewState({ panes: [{ field: { deformAuto: true, deformAutoScale: 2000 } }] });
+  assert.equal(ok.view.panes[0].field.deformAutoScale, 2000);
+  assert.equal(ok.warnings.length, 0);
+  const bad = validateViewState({ panes: [{ field: { deformAuto: "yes", deformAutoScale: -3 } }] });
+  assert.equal(bad.view.panes[0].field.deformAuto, true);
+  assert.equal(bad.view.panes[0].field.deformAutoScale, undefined);
+  assert.equal(bad.warnings.length, 2);
+});
+
+test("symmetric/showExtremes round-trip; bad values warn", () => {
+  const ok = validateViewState({ panes: [{ field: { symmetric: true, showExtremes: true } }] });
+  assert.equal(ok.view.panes[0].field.symmetric, true);
+  assert.equal(ok.view.panes[0].field.showExtremes, true);
+  const bad = validateViewState({ panes: [{ field: { symmetric: "x" } }] });
+  assert.equal(bad.view.panes[0].field.symmetric, false);
+  assert.equal(bad.warnings.length, 1);
+});

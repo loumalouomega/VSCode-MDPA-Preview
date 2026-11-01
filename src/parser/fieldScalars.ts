@@ -75,6 +75,29 @@ export function computeFieldRange(
   return [min, max];
 }
 
+/** Largest 1/2/5 x 10^n value that is <= v (v > 0 and finite). */
+export function floorNice125(v: number): number {
+  const e = Math.floor(Math.log10(v));
+  const base = Math.pow(10, e);
+  const m = v / base;
+  const nice = m >= 5 ? 5 : m >= 2 ? 2 : 1;
+  return nice * base;
+}
+
+/**
+ * Automatic deformation scale: draws the largest displacement at about 10 % of
+ * the bounding-box diagonal, rounded DOWN to a 1/2/5 x 10^n factor a person
+ * would type. Returns 1 when either input is zero or not finite (nothing to
+ * scale against). Display only.
+ */
+export function autoDeformScale(maxMagnitude: number, bboxDiagonal: number): number {
+  if (!(maxMagnitude > 0) || !(bboxDiagonal > 0)) return 1;
+  if (!Number.isFinite(maxMagnitude) || !Number.isFinite(bboxDiagonal)) return 1;
+  const raw = (0.1 * bboxDiagonal) / maxMagnitude;
+  if (!Number.isFinite(raw) || raw <= 0) return 1;
+  return floorNice125(raw);
+}
+
 /**
  * The range the colormap actually spans: a user override wins over the data
  * range. The override is normalized (lo ≤ hi) so swapped inputs cannot
@@ -88,6 +111,76 @@ export function effectiveRange(
     return dataRange;
   }
   return override[0] <= override[1] ? [override[0], override[1]] : [override[1], override[0]];
+}
+
+/**
+ * True when a range is a constant field in disguise: solver round-off (relative
+ * 1e-9 of the magnitude) must not be spread over the whole colormap.
+ */
+export function isConstantRange(min: number, max: number): boolean {
+  if (!Number.isFinite(min) || !Number.isFinite(max)) return false;
+  const mag = Math.max(Math.abs(min), Math.abs(max));
+  return max - min <= 1e-9 * (mag > 0 ? mag : 1e-300);
+}
+
+/** Symmetric range [-m, m] with m = max |value|. */
+export function symmetricRange(min: number, max: number): [number, number] {
+  const m = Math.max(Math.abs(min), Math.abs(max));
+  return [-m, m];
+}
+
+export interface ResolvedRange {
+  /** The [lo, hi] the colormap spans (widened around a constant field). */
+  range: [number, number];
+  /** The field is constant within round-off (and no manual override applies). */
+  constant: boolean;
+  /** The constant's value when `constant`. */
+  constantValue?: number;
+}
+
+/**
+ * Resolution order: manual override > symmetric > data range. A constant data
+ * range (no override, not symmetric-forced) is widened to a non-degenerate
+ * interval so it draws in ONE colour, and flagged so the legend can say so.
+ */
+export function resolveColorRange(
+  dataRange: [number, number],
+  override?: [number, number],
+  symmetric = false
+): ResolvedRange {
+  if (override && Number.isFinite(override[0]) && Number.isFinite(override[1])) {
+    return { range: effectiveRange(dataRange, override), constant: false };
+  }
+  if (isConstantRange(dataRange[0], dataRange[1])) {
+    const v = (dataRange[0] + dataRange[1]) / 2;
+    const d = Math.abs(v) > 0 ? Math.abs(v) * 1e-3 : 1;
+    return { range: [v - d, v + d], constant: true, constantValue: v };
+  }
+  return { range: symmetric ? symmetricRange(dataRange[0], dataRange[1]) : dataRange, constant: false };
+}
+
+export interface FieldExtreme {
+  value: number;
+  /** Row index into the field's ids/values. */
+  row: number;
+  /** Entity id holding it. */
+  id: number;
+}
+
+/** The rows holding the true minimum and maximum (finite rows only). */
+export function fieldExtremes(
+  field: FieldData,
+  component: FieldComponent = "mag"
+): { min: FieldExtreme; max: FieldExtreme } | undefined {
+  let lo: FieldExtreme | undefined;
+  let hi: FieldExtreme | undefined;
+  for (let i = 0; i < field.ids.length; i++) {
+    const v = componentScalar(field, i, component);
+    if (!Number.isFinite(v)) continue;
+    if (!lo || v < lo.value) lo = { value: v, row: i, id: field.ids[i] };
+    if (!hi || v > hi.value) hi = { value: v, row: i, id: field.ids[i] };
+  }
+  return lo && hi ? { min: lo, max: hi } : undefined;
 }
 
 /** Log color mapping needs a strictly positive, non-degenerate range. */

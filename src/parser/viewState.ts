@@ -246,6 +246,13 @@ function validateFieldState(raw: unknown, colormapFallback: string, label: strin
   if (r.scale !== undefined) isFiniteNumber(r.scale) && r.scale > 0 ? (out.scale = r.scale) : bad("scale");
   if (r.deformKey !== undefined) typeof r.deformKey === "string" ? (out.deformKey = r.deformKey) : bad("deformKey");
   if (r.deformScale !== undefined) isFiniteNumber(r.deformScale) ? (out.deformScale = r.deformScale) : bad("deformScale");
+  // A sidecar written before Auto existed holds a typed factor: keep it manual.
+  for (const k of ["symmetric", "symmetricTouched", "showExtremes"] as const) {
+    if (r[k] !== undefined) typeof r[k] === "boolean" ? (out[k] = r[k] as boolean) : bad(k);
+  }
+  if (r.deformAuto === undefined && r.deformScale !== undefined) out.deformAuto = false;
+  if (r.deformAuto !== undefined) typeof r.deformAuto === "boolean" ? (out.deformAuto = r.deformAuto) : bad("deformAuto");
+  if (r.deformAutoScale !== undefined) isFiniteNumber(r.deformAutoScale) && r.deformAutoScale > 0 ? (out.deformAutoScale = r.deformAutoScale) : bad("deformAutoScale");
   if (r.thresholdRange !== undefined) {
     const p = pair(r.thresholdRange);
     p ? (out.thresholdRange = p) : bad("thresholdRange");

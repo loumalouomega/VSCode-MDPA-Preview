@@ -4808,3 +4808,14 @@ button.pt-preflight-row:hover,
   cursor: crosshair;
   touch-action: none;
 }
+
+.field-legend-note {
+  font-size: var(--ui-fs-sm);
+  color: var(--vscode-descriptionForeground);
+  margin-top: 4px;
+}
+
+.pt-flash {
+  outline: 2px solid var(--vscode-focusBorder);
+  outline-offset: 1px;
+}
