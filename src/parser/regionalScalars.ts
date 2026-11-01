@@ -20,13 +20,13 @@ import type { FieldData, MdpaModel } from "./types";
 import { findSubModelPart } from "./subModelPartExtract";
 import { sampleRegion } from "./plot/region";
 import type { PlotRegionSource } from "./plot/types";
+import { REGIONAL_CALL, hasRegionalCall } from "./regionalCalls";
 
-const CALL = /\b(avg|int|max|min)\s*\(\s*([A-Za-z_][A-Za-z0-9_./]*)\s*,\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)/gi;
+const CALL = REGIONAL_CALL;
 
 /** True when the text contains something that looks like a regional call (cheap pre-check). */
 export function mayHaveRegionalScalars(expr: string): boolean {
-  CALL.lastIndex = 0;
-  return CALL.test(expr);
+  return hasRegionalCall(expr);
 }
 
 function pickField(model: MdpaModel, name: string): FieldData | undefined {

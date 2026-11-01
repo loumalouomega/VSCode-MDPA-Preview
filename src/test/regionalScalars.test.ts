@@ -106,3 +106,10 @@ test("a formula seed with max(PART, F) selects what the literal threshold select
   assert.equal(validateFormula(model, "temp > max(Nope, TEMP)") !== undefined, true);
   assert.equal(validateFormula(model, "temp > max(Body, TEMP)"), undefined);
 });
+
+test("maskRegionalCalls leaves a syntactically valid formula for the webview's inline check", async () => {
+  const { maskRegionalCalls, hasRegionalCall } = await import("../parser/regionalCalls");
+  assert.equal(maskRegionalCalls("temp / avg(Body, TEMP) + max(Other, T)"), "temp / (0) + (0)");
+  assert.equal(hasRegionalCall("max(temp, 3)"), false);
+  assert.equal(hasRegionalCall("max(Body, TEMP)"), true);
+});

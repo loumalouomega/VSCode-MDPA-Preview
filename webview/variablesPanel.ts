@@ -50,6 +50,7 @@
 
 import { t } from "../src/parser/i18n/runtime";
 import { validateSizeExpr } from "../src/parser/sizeExpr";
+import { maskRegionalCalls } from "../src/parser/regionalCalls";
 import { scopeVariables } from "../src/parser/fieldCalc";
 import {
   GLOBAL_REDUCTIONS,
@@ -819,7 +820,8 @@ function validateRow(row: VarRow): string | undefined {
   switch (row.method) {
     case "formula": {
       if (!row.expr.trim()) return "Enter a formula.";
-      return validateSizeExpr(row.expr.trim(), formulaScopes[outputKindOf(row)]);
+      // Regional scalars (avg(Part, F) …) are checked by the host, which knows the parts and fields.
+      return validateSizeExpr(maskRegionalCalls(row.expr.trim()), formulaScopes[outputKindOf(row)]);
     }
     case "distanceFile":
       return row.path ? undefined : "Choose a surface file.";
