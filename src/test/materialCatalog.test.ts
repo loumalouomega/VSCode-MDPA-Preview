@@ -20,6 +20,7 @@ import {
   snapshotOf,
   unitOfField,
   validateMaterialAssignment,
+  materialContents,
 } from "../problemtype/materialCatalog";
 import {
   discoverMaterialLibrary,
@@ -435,4 +436,26 @@ test("exporting refuses to overwrite unless told to", () => {
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("materialContents marks provided / preset / defaulted / missing, required first (item 28)", () => {
+  const law = {
+    id: "toy", name: "Toy", variables: [
+      { id: "OPT", label: "Optional", type: "number" as const, default: 5 },
+      { id: "DENSITY", label: "Density [kg/m³]", type: "number" as const, unit: "kg/m³" },
+      { id: "YOUNG_MODULUS", label: "Young [Pa]", type: "number" as const, unit: "Pa" },
+      { id: "NEEDED", label: "Needed", type: "number" as const },
+    ],
+  };
+  const preset = { id: "p", name: "Steel", laws: ["toy"], origin: "builtin" as const, source: { name: "Handbook" }, values: { YOUNG_MODULUS: 2e11 } } as unknown as Parameters<typeof materialContents>[2];
+  const rows = materialContents(law, { YOUNG_MODULUS: 2e11, DENSITY: -1 }, preset);
+  assert.deepEqual(rows.map((r) => r.id), ["DENSITY", "YOUNG_MODULUS", "NEEDED", "OPT"]);
+  const by = Object.fromEntries(rows.map((r) => [r.id, r]));
+  assert.equal(by.YOUNG_MODULUS.status, "preset");
+  assert.match(by.YOUNG_MODULUS.presetName!, /Steel/);
+  assert.equal(by.DENSITY.status, "provided");
+  assert.equal(by.DENSITY.severity, "error"); // the same rulebook message generation raises
+  assert.equal(by.NEEDED.status, "missing");
+  assert.equal(by.OPT.status, "defaulted");
+  assert.equal(by.OPT.value, 5);
 });

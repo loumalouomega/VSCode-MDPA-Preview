@@ -594,3 +594,60 @@ export function describeReference(reference: MaterialReference | undefined): str
   if (reference.note) parts.push(reference.note);
   return parts.length > 0 ? parts.join(" · ") : undefined;
 }
+
+
+// --- contents table (roadmap item 28) -------------------------------------------
+
+/** Where a property of one material assignment gets its value. */
+export type MaterialContentStatus = "provided" | "preset" | "defaulted" | "missing";
+
+export interface MaterialContentRow {
+  id: string;
+  label: string;
+  unit?: string;
+  /**
+   * True when the law declares no default for this variable, so a value is expected
+   * from the case; a variable with a declared default is optional.
+   */
+  required: boolean;
+  status: MaterialContentStatus;
+  /** The value that will be written (the declared default for "defaulted"). */
+  value?: JsonValue;
+  /** For "preset": the snapshot's name and source, so the origin is visible. */
+  presetName?: string;
+  /** The rulebook's message for this variable (`validateMaterialAssignment`), if any. */
+  issue?: string;
+  severity?: "error" | "warning";
+}
+
+/**
+ * One row per property of the law an assignment uses, required rows first, each
+ * marked provided / from preset / defaulted / missing. It reads the same rulebook
+ * generation uses (`validateMaterialAssignment`) and adds no rule of its own: the
+ * `issue` on a row is that rulebook's message for the variable.
+ */
+export function materialContents(
+  law: MaterialLawSpec,
+  values: Record<string, JsonValue>,
+  preset?: MaterialPresetSnapshot
+): MaterialContentRow[] {
+  const issues = validateMaterialAssignment(law, values, preset);
+  const rows = law.variables.map((v): MaterialContentRow => {
+    const given = values[v.id];
+    const required = v.default === undefined;
+    const unit = unitOfField(v);
+    const fromPreset = preset !== undefined && Object.prototype.hasOwnProperty.call(preset.values, v.id);
+    const issue = issues.find((i) => i.variable === v.id);
+    const base = { id: v.id, label: v.label, ...(unit ? { unit } : {}), required };
+    const tail = issue ? { issue: issue.message, severity: issue.severity } : {};
+    if (given !== undefined) {
+      return fromPreset && preset
+        ? { ...base, status: "preset", value: given, presetName: `${preset.name} · ${preset.source.name}`, ...tail }
+        : { ...base, status: "provided", value: given, ...tail };
+    }
+    return required
+      ? { ...base, status: "missing", ...tail }
+      : { ...base, status: "defaulted", value: v.default as JsonValue, ...tail };
+  });
+  return rows.sort((a, b) => Number(b.required) - Number(a.required));
+}

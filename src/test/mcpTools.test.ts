@@ -3429,6 +3429,9 @@ test("case_write_state + case_validate round-trip; bad paths become issues", asy
   const ok = (await caseValidate({ meshPath: src })) as { ok: boolean; issues: string[] };
   assert.deepEqual(ok.issues, []);
   assert.equal(ok.ok, true);
+  const contents = (ok as unknown as { materialContents: { smpPath: string; rows: { id: string; status: string }[] }[] }).materialContents;
+  assert.ok(contents.length >= 1);
+  assert.ok(contents[0].rows.some((r) => r.id === "YOUNG_MODULUS" && r.status === "provided"));
   const bad = structuralState();
   bad.assignments.push({ conditionId: "nope", smpPath: "Missing/Part", values: {} });
   const invalid = (await caseValidate({ meshPath: src, state: bad })) as {

@@ -181,6 +181,7 @@ import {
   serializePresetFile,
   snapshotOf,
   validateMaterialAssignment,
+  materialContents,
 } from "../problemtype/materialCatalog";
 import {
   DEFAULT_MATERIAL_LIBRARY_PATHS,
@@ -3042,6 +3043,12 @@ export async function caseValidate(args: {
     advisories: report.findings.filter((f) => f.severity !== "error").map((f) => f.message),
     counts: report.counts,
     findings: report.findings,
+    // Per assignment: every property of its law, marked provided / preset /
+    // defaulted / missing, from the same rulebook generation uses.
+    materialContents: state.materials.flatMap((m) => {
+      const law = runtime.decl.materialLaws.find((l) => l.id === m.lawId);
+      return law ? [{ smpPath: m.smpPath, lawId: m.lawId, law: law.name || law.id, rows: materialContents(law, m.values, m.preset) }] : [];
+    }),
     state,
   };
 }

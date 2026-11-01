@@ -311,12 +311,6 @@ Admission criterion: closes a gap between a generated case and how its results a
 
 **Acceptance:** `20[degC]` in a Kelvin field generates 293.15; `L = 2[m]` used by two fields regenerates both when `L` changes; `5[s]` in a length field produces a `unit-mismatch` preflight warning and `case_validate` reports the same; a case file written before this item opens unchanged. **MCP:** `case_generate`/`case_validate` accept and report the same expressions; `problemtype_describe` lists the declared unit per field.
 
-### 28. Material contents table — S
-
-**Pending — added 2026-10-31 (ElmerStudio review).** For every material assignment, a table of the properties its law requires and the ones it may take, each marked provided, from preset (with the preset's snapshot name and unit conversion), defaulted or missing, required rows first. It reads the same rulebook the dry run uses (`validateMaterialAssignment`), so it adds no rule of its own; a missing required property is already an error there, and this makes it visible before Generate rather than after.
-
-**Acceptance:** each built-in problemtype's laws show exactly the properties their generators write; removing a required value flips its row and the preflight error together. **MCP:** `case_validate` already reports the rule failures; it gains the per-assignment table as structured data.
-
 ### 29. Restart and initial state from another run — M
 
 **Pending — added 2026-10-31 (ElmerStudio review); needs a solver to verify.** Let a case start from a previous run's state: the generators of the structural, fluid and convection-diffusion problemtypes write a restart output (Kratos `save_restart_process` / `RestartUtility`) when asked, and a new case can name a previous run's restart as its initial state. Refuse with a reason when the meshes differ (node count or coordinates), when the previous run is not terminal, or when the problemtype has no adapter. This is the upstream half of KKSS's sweep warm start (a stationary sweep row starting from the previous row) and of continuing a stopped run.
