@@ -10,7 +10,8 @@
 // Node unit tests — mirroring meshQuality.ts.
 
 import { FieldData, MdpaModel } from "./types";
-import { decompositionFor } from "./cellDecomposition";
+import { decompositionFor, CellDecomposition } from "./cellDecomposition";
+import { VtkCellType } from "./geometryMap";
 
 export interface IsoSurfaceResult {
   /** Interpolated crossing points, x,y,z triples in world coordinates. */
@@ -43,6 +44,36 @@ function scalarByNode(field: FieldData): Map<number, number> {
     }
   }
   return map;
+}
+
+/**
+ * Level-1 subdivision of a quadratic cell over ALL its nodes (roadmap item 38),
+ * so the mid-side values the solver computed take part in where the surface lies
+ * and the curved edges' own mid-node coordinates are used. Built in memory per
+ * cell and never written. Linear cells (and the quadratic types without a table
+ * here: 20-node hexahedra, 27-node hexahedra, 8/9-node quads, wedges, pyramids)
+ * return undefined and keep the corner-only decomposition, byte for byte.
+ *
+ * VTK node order. Tet10: corners 0-3, mids 4:(0,1) 5:(1,2) 6:(2,0) 7:(0,3) 8:(1,3)
+ * 9:(2,3). The eight sub-tetrahedra are the four corner tets plus the central
+ * octahedron cut along its 4-9 diagonal; the sub-edges on any shared face are the
+ * same from both sides, so crossing points weld across cells. Tri6: corners 0-2,
+ * mids 3:(0,1) 4:(1,2) 5:(2,0).
+ */
+export function quadraticDecomposition(cellType: number | undefined, stride: number): CellDecomposition | undefined {
+  if (cellType === VtkCellType.QUADRATIC_TETRA && stride >= 10) {
+    return {
+      corners: 10,
+      tets: [
+        [0, 4, 6, 7], [1, 5, 4, 8], [2, 6, 5, 9], [3, 7, 9, 8],
+        [4, 9, 5, 6], [4, 9, 6, 7], [4, 9, 7, 8], [4, 9, 8, 5],
+      ],
+    };
+  }
+  if (cellType === VtkCellType.QUADRATIC_TRIANGLE && stride >= 6) {
+    return { corners: 6, tris: [[0, 3, 5], [3, 1, 4], [5, 4, 2], [3, 4, 5]] };
+  }
+  return undefined;
 }
 
 export function computeIsoSurface(
@@ -130,7 +161,7 @@ function marchVolumes(
   out: number[]
 ): void {
   for (const block of model.blocks) {
-    const t = decompositionFor(block.vtkCellType);
+    const t = quadraticDecomposition(block.vtkCellType, block.stride) ?? decompositionFor(block.vtkCellType);
     if (!t.tets) continue;
     for (let i = 0; i < block.count; i++) {
       const base = i * block.stride;
@@ -215,7 +246,7 @@ function marchSurfaces(
   out: number[]
 ): void {
   for (const block of model.blocks) {
-    const t = decompositionFor(block.vtkCellType);
+    const t = quadraticDecomposition(block.vtkCellType, block.stride) ?? decompositionFor(block.vtkCellType);
     if (!t.tris) continue;
     for (let i = 0; i < block.count; i++) {
       const base = i * block.stride;

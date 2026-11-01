@@ -156,3 +156,36 @@ test("iso value outside the data range yields nothing", () => {
   assert.equal(r.triangles.length, 0);
   assert.equal(r.points.length, 0);
 });
+
+// --- quadratic cells (roadmap item 38) -------------------------------------------
+
+const TET10_NODES: [number, number, number, number][] = [
+  [1, 0, 0, 0], [2, 1, 0, 0], [3, 0, 1, 0], [4, 0, 0, 1],
+  [5, 0.5, 0, 0], [6, 0.5, 0.5, 0], [7, 0, 0.5, 0], [8, 0, 0, 0.5], [9, 0.5, 0, 0.5], [10, 0, 0.5, 0.5],
+];
+
+test("tet10 with a field quadratic in x: the isosurface lies on the analytic plane, the corner-only one does not", () => {
+  const values = new Map<number, number>();
+  for (const [id, x] of TET10_NODES) values.set(id, x * x);
+  const quad = model(TET10_NODES, VtkCellType.QUADRATIC_TETRA, [[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]], values);
+  const r = computeIsoSurface(quad, quad.fields[0], 0.25);
+  assert.ok(r.triangles.length >= 3);
+  for (let i = 0; i < r.points.length; i += 3) assert.ok(approx(r.points[i], 0.5, 5e-3), `x=${r.points[i]}`);
+
+  // The same cell treated as linear (corner nodes only) puts the plane at x = 0.25.
+  const linear = model(TET10_NODES.slice(0, 4), VtkCellType.TETRA, [[1, 2, 3, 4]], new Map([[1, 0], [2, 1], [3, 0], [4, 0]]));
+  const corner = computeIsoSurface(linear, linear.fields[0], 0.25);
+  for (let i = 0; i < corner.points.length; i += 3) assert.ok(Math.abs(corner.points[i] - 0.5) > 0.2);
+});
+
+test("tri6 iso-lines follow the mid-side values", () => {
+  const nodes: [number, number, number, number][] = [
+    [1, 0, 0, 0], [2, 1, 0, 0], [3, 0, 1, 0], [4, 0.5, 0, 0], [5, 0.5, 0.5, 0], [6, 0, 0.5, 0],
+  ];
+  const values = new Map<number, number>(nodes.map(([id, x]) => [id, x * x]));
+  const m = model(nodes, VtkCellType.QUADRATIC_TRIANGLE, [[1, 2, 3, 4, 5, 6]], values);
+  const r = computeIsoSurface(m, m.fields[0], 0.25);
+  assert.equal(r.is2D, true);
+  assert.ok(r.lines.length >= 2);
+  for (let i = 0; i < r.points.length; i += 3) assert.ok(approx(r.points[i], 0.5, 5e-3));
+});
