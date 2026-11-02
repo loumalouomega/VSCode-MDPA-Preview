@@ -352,6 +352,14 @@ export interface OptimizeVolumeParams {
   preserveBoundary?: boolean;
   /** Stop when an iteration improves the worst quality by less than this (default 1e-6). */
   minImprovement?: number;
+  /**
+   * meshio++ 18.0.0: `"energy"` (default here) is the ODT energy with scaled-Jacobian flips, byte-identical to
+   * what 17.23.0 did, so recorded recipes keep their result; `"worst"` (upstream's own default) raises the least
+   * dihedral angle and never lowers it, adding edge and multi-face removal and worst-cell smoothing.
+   */
+  objective?: "worst" | "energy";
+  /** Longest edge ring, in tetrahedra, an edge removal considers (`"worst"` only; upstream default 7). */
+  maxRingSize?: number;
 }
 
 export async function optimizeVolumeModel(model: MdpaModel, params: OptimizeVolumeParams = {}, diagnostics: MdpaDiagnostic[] = []): Promise<MeshingOutcome> {
@@ -375,12 +383,12 @@ export async function optimizeVolumeModel(model: MdpaModel, params: OptimizeVolu
     tetModel,
     diagnostics,
     "optimizeVolume",
-    (m, mesh) => m.optimizeVolume(mesh, params.maxIterations ?? 10, params.relocate ?? true, params.flip ?? true, params.preserveBoundary ?? true, params.minImprovement ?? 1e-6),
+    (m, mesh) => m.optimizeVolume(mesh, params.maxIterations ?? 10, params.relocate ?? true, params.flip ?? true, params.preserveBoundary ?? true, params.minImprovement ?? 1e-6, params.objective ?? "energy", params.maxRingSize ?? 7),
     {}
   );
   if (!run) return { model, changed: false, message: "Nothing to optimize." };
   const r = run.result;
-  if (r.numFlips === 0 && r.numVerticesMoved === 0) {
+  if (r.numFlips === 0 && r.numVerticesMoved === 0 && !r.numEdgeRemovals && !r.numMultiFaceRemovals && !r.numWorstSmoothed) {
     return { model, changed: false, message: `Nothing to improve (worst tetrahedron quality ${r.minQualityBefore.toPrecision(3)}).` };
   }
   // Points are unchanged (a flip or a relocation never adds or removes one), so node ids came back through
@@ -396,8 +404,11 @@ export async function optimizeVolumeModel(model: MdpaModel, params: OptimizeVolu
   };
   const afterAngle = minAngle(out);
   const parts: string[] = [
-    `Optimized ${r.numTets} tetrahedra: ${r.numFlips} flip(s) (${r.num23Flips} 2-3, ${r.num32Flips} 3-2), ${r.numVerticesMoved} vertex(es) relocated. ` +
-      `Worst tetrahedron quality ${r.minQualityBefore.toPrecision(3)} → ${r.minQualityAfter.toPrecision(3)}.`,
+    `Optimized ${r.numTets} tetrahedra (${params.objective ?? "energy"} objective): ${r.numFlips} flip(s) (${r.num23Flips} 2-3, ${r.num32Flips} 3-2), ` +
+      ((r.numEdgeRemovals ?? 0) + (r.numMultiFaceRemovals ?? 0) > 0 ? `${r.numEdgeRemovals} edge removal(s), ${r.numMultiFaceRemovals} multi-face removal(s), ` : "") +
+      `${r.numVerticesMoved} vertex(es) relocated` + ((r.numWorstSmoothed ?? 0) > 0 ? `, ${r.numWorstSmoothed} smoothed around the worst cell` : "") + `. ` +
+      `Worst tetrahedron quality ${r.minQualityBefore.toPrecision(3)} → ${r.minQualityAfter.toPrecision(3)}` +
+      (Number.isFinite(r.minDihedralBefore) && Number.isFinite(r.minDihedralAfter) ? `; least dihedral angle ${r.minDihedralBefore.toFixed(1)}° → ${r.minDihedralAfter.toFixed(1)}°.` : "."),
   ];
   if (beforeAngle !== undefined && afterAngle !== undefined) parts.push(`Smallest angle ${beforeAngle.toFixed(1)}° → ${afterAngle.toFixed(1)}°.`);
   parts.push(

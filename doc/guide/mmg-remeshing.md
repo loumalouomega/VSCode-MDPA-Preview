@@ -62,6 +62,10 @@ Kratos `Properties` are still dropped, as they are by any remesh — "material" 
 
 **Base reference blocks / parts** name **boundary** entities that a split domain must touch in order to survive; any domain attached to none of them is removed. This is a topological cleanup where `rmc` is a size-based one, and it is inert on its own — giving base references without `rmc` enables it at `1e-5`. A selector that matches nothing, or that names only volume cells, warns and is skipped rather than failing the run.
 
+## The kernel's own MMG (new mesh, full artifact)
+
+meshio++ 18.0.0 links MMG 5.8.0 into its **full** artifact, which adds four derived-mesh kinds to Advanced ▸ *Sweep, mirror and layers…* and `mesh_derive`: `adapt` (remesh a tetrahedral or triangle mesh to a size or metric), `discretizeLevelset` (insert an isovalue of a nodal field as a conforming interface), `meshDomain` (mesh a planar domain from its boundary lines, holes named by a point inside each) and `metricFromHessian` (a metric field from a Hessian and a target error; it needs no MMG and also works on the lean build). They write a **new mesh** with the kernel's naming; use the Remesh and Level-set forms above when block and SubModelPart membership must survive. They are refused by name on an install without the full artifact. The kernel's `move` needs MMG's GPL-3.0 ELAS library, which is not linked, so it is not offered. `tetrahedralize` (same menu) also uses the full artifact now: its Netgen backend keeps the surface triangles instead of fitting an octree boundary.
+
 ## What survives a remesh
 
 - **Element / condition / geometry blocks** keep their names — every cell is tagged with an MMG reference encoding its block + SubModelPart membership, and the output is regrouped from those references.

@@ -69,6 +69,11 @@ export interface MeshCapabilities {
     bzip2: boolean;
     /** KaHIP partitioner linked (meshio++ >= 17.9.0): false on the lean build. */
     kahip: boolean;
+    /** Netgen / MMG backends linked (meshio++ >= 18.0.0): false on the lean build, true on the full one. */
+    netgen: boolean;
+    mmg: boolean;
+    /** MMG's ELAS library, which `move` needs: false on both artifacts (GPL-3.0). */
+    mmgElas: boolean;
   };
   /**
    * The FULL artifact shipped beside the lean one since 17.2.0 (OpenCASCADE,
@@ -88,6 +93,9 @@ export interface MeshCapabilities {
       lz4: boolean;
       bzip2: boolean;
       kahip: boolean;
+      netgen: boolean;
+      mmg: boolean;
+      mmgElas: boolean;
       readers: string[];
       writers: string[];
     };
@@ -276,6 +284,9 @@ export async function getMeshCapabilities(): Promise<MeshCapabilities> {
       flavour: m.buildFlavour(),
       occt: m.hasOcct(),
       kahip: m.hasKahip(),
+      netgen: m.hasNetgen(),
+      mmg: m.hasMmg(),
+      mmgElas: m.hasMmgElas(),
       zstd: m.hasZstd(),
       lz4: m.hasLz4(),
       bzip2: m.hasBzip2(),
@@ -287,8 +298,10 @@ export async function getMeshCapabilities(): Promise<MeshCapabilities> {
     unroutedReaders,
     writers: { ...MESHIO_WRITE_FORMAT },
     namedWriters: [...MESHIO_WRITER_KEYS],
-    operations: { available: ["featureEdges", "hausdorff", "qualityGate", "periodicNodes", "regionAlgebra", "resampleSequence", "segment", "refinePatches", "fitPrimitives (mesh_fit_primitives)", "octree", "octreeMesh", "meshCadSurface", "projectToCad", "extrude", "revolve", "mirror", "boundaryLayer", "tetrahedralize", "errorSize", "checkConformity", "generators (rectangle, box, disk, uvSphere, icosaSphere, cylinder, referenceCells, referenceTriangle, ngon, annulus, lshape, plateWithHole, honeycomb, line, circle, helix, spherePoints, boxPoints, tetraSphere, octaSphere, cubeSphere, geoSphere, torus, moebius, tube, cone, capsule, boxSurface, platonic, ball, sphericalShell, pipe, fichera, solidTorus)"], unavailable: [
+    operations: { available: ["featureEdges", "hausdorff", "qualityGate", "periodicNodes", "regionAlgebra", "resampleSequence", "segment", "refinePatches", "fitPrimitives (mesh_fit_primitives)", "octree", "octreeMesh", "meshCadSurface", "projectToCad", "extrude", "revolve", "mirror", "boundaryLayer", "tetrahedralize", "errorSize", "checkConformity", "adapt (full artifact; mesh_derive)", "discretizeLevelset (full artifact; mesh_derive)", "meshDomain (full artifact; mesh_derive)", "metricFromHessian", "findIntersections (mesh_intersections)", "thickness", "selectRegion", "tetToPoly (mesh_derive; a .vtu keeps the polyhedra)", "generators (rectangle, box, disk, uvSphere, icosaSphere, cylinder, referenceCells, referenceTriangle, ngon, annulus, lshape, plateWithHole, honeycomb, line, circle, helix, spherePoints, boxPoints, tetraSphere, octaSphere, cubeSphere, geoSphere, torus, moebius, tube, cone, capsule, boxSurface, platonic, ball, sphericalShell, pipe, fichera, solidTorus)"], unavailable: [
       { name: "agglomerate", reason: "Polyhedral output cannot be preserved by the editable model." },
+      { name: "move", reason: "meshio++ 18.0.0's MMG move needs MMG's ELAS library, which neither artifact links (GPL-3.0), so it always throws by name." },
+      { name: "polyToTet", reason: "The extension already decomposes every polyhedron into tetrahedra when it reads a mesh (polyhedronDecompose.ts), so there is nothing polyhedral left to apply it to." },
       { name: "retagRegions", reason: "SubModelParts do not retain native region tags or side selectors." }
     ] },
     extensions: {
@@ -329,6 +342,9 @@ async function probeFullArtifact(): Promise<MeshCapabilities["full"]> {
         lz4: fm.hasLz4(),
         bzip2: fm.hasBzip2(),
         kahip: fm.hasKahip(),
+        netgen: fm.hasNetgen(),
+        mmg: fm.hasMmg(),
+        mmgElas: fm.hasMmgElas(),
         readers: [...live.readers].sort(),
         writers: [...live.writers].sort(),
       },

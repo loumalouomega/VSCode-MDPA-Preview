@@ -2005,8 +2005,8 @@ function handleHostMessage(event: MessageEvent): void {
     }
 
     case "meshAnalysisResult": {
-      const r = msg as { kind?: string; seq?: number; cancelled?: boolean; edges?: { points: number[]; lines: number[] } };
-      if (["qualityGate","hausdorff","periodicNodes","featureEdges"].includes(r.kind ?? "")) {
+      const r = msg as { kind?: string; seq?: number; cancelled?: boolean; edges?: { points: number[]; lines: number[] }; selection?: Record<string, unknown> };
+      if (["qualityGate","hausdorff","periodicNodes","featureEdges","intersections"].includes(r.kind ?? "")) {
         // A cancelled or superseded worker run must not overwrite the current report.
         if (isStaleAnalysisReply(r)) break;
         showAnalysisResult(msg);
@@ -2017,6 +2017,8 @@ function handleHostMessage(event: MessageEvent): void {
           registerGlobalOverlay("analysis-feature-edges",()=>{const prop=backend.createProp();prop.setGeometry(geometry);prop.setColoring({kind:"none"});prop.setStyle({color:[1,0.5,0]});return prop;},geometry);
           render();
         }
+        // The facets that take part in an intersection, as a named selection set (Selection panel).
+        if (r.kind === "intersections" && r.selection) applySelectionSeed(r.selection);
       }
 
       if (r.kind === "watertight") applyWatertightResult(msg as Parameters<typeof applyWatertightResult>[0]);

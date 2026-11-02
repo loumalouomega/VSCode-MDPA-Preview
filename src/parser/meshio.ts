@@ -173,6 +173,21 @@ export interface XdmfTimeSeriesWriter {
   close(): void;
 }
 
+/** What an MMG kernel returns (meshio++ 18.0.0): the mesh plus MMG's own report. */
+export interface MmgKernelResult {
+  mesh: MeshioMesh;
+  report: {
+    status: "success" | "lowFailure";
+    library: string;
+    numPointsIn: number;
+    numPointsOut: number;
+    numElementsIn: number;
+    numElementsOut: number;
+    quality: { min: number; max: number; mean: number; count: number };
+    warnings: string[];
+  };
+}
+
 /** Shared result of `extrude` / `revolve` (meshio++ 17.23.0). */
 export interface KernelSweepResult {
   mesh: MeshioMesh; numCells: number; numHexahedra: number; numWedges: number; numPyramids: number; numTetrahedra: number;
@@ -279,9 +294,50 @@ export interface MeshioModule {
     mesh: MeshioMesh; numProjected: number; numOnEdges: number; numOnCurves: number; numCorners: number; numAmbiguous: number;
     numTooFar: number; numFailed: number; numOutsideTrim: number; maxMove: number; outsideTrim: number[]; warnings: string[];
   };
-  /** Whether the Netgen / MMG backends are linked into this artifact (17.23.0). `tetrahedralize` falls back to the native octree without Netgen. */
+  /**
+   * Whether the Netgen / MMG backends are linked into this artifact. Since 18.0.0 both are
+   * in the FULL artifact (Netgen LGPL-2.1, MMG 5.8.0 LGPL-3.0) and absent from the lean one,
+   * where `tetrahedralize` falls back to the native octree and the MMG kernels throw by name.
+   */
   hasNetgen(): boolean;
   hasMmg(): boolean;
+  /** MMG's ELAS library, which `move` needs: false in BOTH artifacts (GPL-3.0), so `move` always throws. */
+  hasMmgElas(): boolean;
+
+  /**
+   * meshio++ >= 18.0.0 MMG kernels (full artifact only; options are named-option objects
+   * the kernel validates). `metricFromHessian` needs no MMG and runs on both artifacts.
+   */
+  adapt(mesh: MeshioMesh, options?: Record<string, unknown>): MmgKernelResult;
+  discretizeLevelset(mesh: MeshioMesh, options?: Record<string, unknown>): MmgKernelResult;
+  meshDomain(boundary: MeshioMesh, options?: Record<string, unknown>): MmgKernelResult & { numSubdomains: number; numHoles: number };
+  move(mesh: MeshioMesh, options?: Record<string, unknown>): MmgKernelResult;
+  metricFromHessian(mesh: MeshioMesh, options?: Record<string, unknown>): MeshioMesh;
+
+  /**
+   * meshio++ >= 18.0.0 region selection (`doc/select.md`): writes ONE named region of
+   * points, cells or sides chosen by box / plane / sphere / data / quality, a connected
+   * component, or a patch grown from a seed. The mesh is otherwise unchanged.
+   */
+  selectRegion(mesh: MeshioMesh, name: string, options?: Record<string, unknown>): {
+    mesh: MeshioMesh; numCandidates: number; numSelected: number; numGrown: number; numComponents: number;
+  };
+  /** Triangle-triangle intersections of a surface with itself, or with `options.other` (18.0.0). */
+  findIntersections(mesh: MeshioMesh, options?: Record<string, unknown>): {
+    mesh: MeshioMesh; other: MeshioMesh | null; segments: MeshioMesh | null; pairs: Int32Array; numPairs: number;
+    numTrianglePairs: number; numCoplanar: number; numSegments: number; numCellsA: number; numCellsB: number;
+    truncated: boolean; clean: boolean; warnings: string[];
+  };
+  /** Wall thickness (inward) or clearance (outward) per facet by ray casting (18.0.0). */
+  thickness(mesh: MeshioMesh, options?: Record<string, unknown>): {
+    mesh: MeshioMesh; direction: "inward" | "outward"; numCells: number; numHit: number; numMissed: number; numBelow: number;
+    min: number; max: number; mean: number; minCell: number; minPoint: Float64Array; maxDistance: number; warnings: string[];
+  };
+  /** The median-dual polyhedral mesh of a tetrahedral one (18.0.0); `returnMaps` adds the vertex map and counts. */
+  tetToPoly(mesh: MeshioMesh, options?: Record<string, unknown>, returnMaps?: boolean): MeshioMesh | {
+    mesh: MeshioMesh; vertexMap: Int32Array; numNewPoints: number; numBoundaryFaces: number; numSplitVertices: number;
+  };
+  polyToTet(mesh: MeshioMesh, recordParentIds?: boolean, returnMaps?: boolean): MeshioMesh | { mesh: MeshioMesh; numExactTets: number; numFannedCells: number } & Record<string, unknown>;
 
   /**
    * The older adaptive octree around a skin (17.8.0), positional arguments as
@@ -970,16 +1026,25 @@ export interface MeshioModule {
     relocate?: boolean,
     flip?: boolean,
     preserveBoundary?: boolean,
-    minImprovement?: number
+    minImprovement?: number,
+    /** 18.0.0: "worst" (upstream default; never lowers the least dihedral angle) or "energy" (the 17.23.0 behaviour, byte-identical). */
+    objective?: "worst" | "energy",
+    /** 18.0.0: the longest edge ring, in tetrahedra, an edge removal considers (upstream default 7). */
+    maxRingSize?: number
   ): {
     mesh: MeshioMesh;
     numFlips: number;
     num23Flips: number;
     num32Flips: number;
+    numEdgeRemovals: number;
+    numMultiFaceRemovals: number;
     numVerticesMoved: number;
+    numWorstSmoothed: number;
     numTets: number;
     minQualityBefore: number;
     minQualityAfter: number;
+    minDihedralBefore: number;
+    minDihedralAfter: number;
   };
 
   /**

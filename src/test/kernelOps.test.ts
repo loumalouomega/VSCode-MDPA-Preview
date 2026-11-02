@@ -49,7 +49,7 @@ test("boundaryLayer grows wedge layers from a closed skin", async () => {
   assert.ok(hasBlock(r.model, "Element3D6N"));
 });
 
-test("tetrahedralize fills a closed skin (octree backend where Netgen is absent)", async () => {
+test("tetrahedralize fills a closed skin", async () => {
   const r = await deriveMesh(icosphere(1, 2), { kind: "tetrahedralize", options: { maxSize: 0.4 } });
   assert.ok(hasBlock(r.model, "Element3D4N"));
   assert.ok(cells(r.model, "Elements") > 100);
@@ -75,4 +75,43 @@ test("generators: 17.23.0 shapes, the complete flag and its type check", async (
   await assert.rejects(generateMesh({ kind: "generate", shape: "box", params: { complete: "yes" } }), /"complete" must be true or false/);
   await assert.rejects(generateMesh({ kind: "generate", shape: "spherePoints", params: { complete: true } }), /no parameter "complete"/);
   assert.equal(estimateGeneratedCells("capsule", { ntheta: 10, nz: 2, ncap: 3 }), 10 * 8 * 2);
+});
+
+// --- meshio++ 18.0.0: Netgen-backed tetrahedralize and the MMG family (full artifact) --------------------
+
+test("the 18.0.0 MMG kernels are derive kinds", () => {
+  for (const k of ["adapt", "discretizeLevelset", "meshDomain", "metricFromHessian"]) assert.ok((DERIVE_KINDS as readonly string[]).includes(k), k);
+});
+
+test("tetrahedralize keeps the surface triangles with the full artifact's Netgen", async () => {
+  const r = await deriveMesh(icosphere(1, 2), { kind: "tetrahedralize", options: { maxSize: 0.4 } });
+  assert.ok(hasBlock(r.model, "Element3D4N"));
+  assert.match(r.summary, /netgen/i);
+  assert.match(r.summary, /surface triangles are kept/);
+});
+
+test("tetrahedralize can still be forced onto the octree backend", async () => {
+  const r = await deriveMesh(icosphere(1, 2), { kind: "tetrahedralize", options: { maxSize: 0.4, backend: "octree" } });
+  assert.match(r.summary, /octree/i);
+  assert.match(r.summary, /fitted within/);
+});
+
+test("adapt remeshes a tetrahedral mesh with the kernel's MMG to a requested size", async () => {
+  const tets = await deriveMesh(icosphere(1, 2), { kind: "tetrahedralize", options: { maxSize: 0.5 } });
+  const r = await deriveMesh(tets.model, { kind: "adapt", options: { hsiz: 0.3 } });
+  assert.ok(cells(r.model, "Elements") > 0);
+  assert.match(r.summary, /Adapted with/);
+});
+
+test("meshDomain meshes a planar domain from its boundary lines", async () => {
+  const circle = (await generateMesh({ kind: "generate", shape: "circle", params: {} })).model;
+  const r = await deriveMesh(circle, { kind: "meshDomain", options: { hsiz: 0.2 } });
+  assert.ok(cells(r.model, "Elements") > 10);
+  assert.match(r.summary, /Meshed the planar domain/);
+});
+
+test("move is not routed and an unknown MMG option is refused by the kernel", async () => {
+  assert.ok(!(DERIVE_KINDS as readonly string[]).includes("move"));
+  const tets = await deriveMesh(icosphere(1, 2), { kind: "tetrahedralize", options: { maxSize: 0.5 } });
+  await assert.rejects(deriveMesh(tets.model, { kind: "adapt", options: { nonsense: 1 } }), /nonsense|unknown/i);
 });

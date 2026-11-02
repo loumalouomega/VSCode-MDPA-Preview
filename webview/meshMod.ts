@@ -305,6 +305,8 @@ const ASYNC_BUILDERS: Record<string, () => Record<string, unknown> | undefined> 
   volumeMesh: buildVolumeMeshMsg,
   optimizeVolume: buildOptimizeVolumeMsg,
   curvature: buildCurvatureMsg,
+  thickness: buildThicknessMsg,
+  selectRegion: buildSelectRegionMsg,
   shrinkwrap: buildShrinkwrapMsg,
   projectToCad: buildProjectToCadMsg,
   compareField: buildCompareFieldMsg,
@@ -1464,6 +1466,8 @@ function buildOptimizeVolumeMsg(): Record<string, unknown> | undefined {
     relocate: checked("ov-relocate"),
     preserveBoundary: checked("ov-boundary"),
     maxIterations: Math.floor(iter),
+    objective: (document.getElementById("ov-objective") as HTMLSelectElement | null)?.value || "energy",
+    ...(optNum("ov-ring") !== undefined ? { maxRingSize: Math.floor(optNum("ov-ring") as number) } : {}),
   };
 }
 
@@ -1471,6 +1475,54 @@ function buildOptimizeVolumeMsg(): Record<string, unknown> | undefined {
 function updateSurfaceRemeshUI(): void {
   const metric = (document.getElementById("sr-metric") as HTMLSelectElement | null)?.value ?? "isotropic";
   document.getElementById("sr-aniso-field")?.classList.toggle("hidden", metric !== "anisotropic");
+}
+
+// --- wall thickness and region selection (meshio++ 18.0.0 oracles) ------------
+
+function buildThicknessMsg(): Record<string, unknown> {
+  const msg: Record<string, unknown> = {
+    type: "applyOp",
+    op: "thickness",
+    direction: (document.getElementById("thick-dir") as HTMLSelectElement | null)?.value ?? "auto",
+  };
+  const max = optNum("thick-max");
+  if (max !== undefined && max > 0) msg.maxDistance = max;
+  const below = optNum("thick-below");
+  if (below !== undefined && below > 0) msg.threshold = below;
+  const out = optStr("thick-out");
+  if (out) msg.output = out;
+  return msg;
+}
+
+/** "1, 2,3" → [1, 2, 3]; undefined when the box is blank, null when it is not exactly `n` numbers. */
+function numList(id: string, n: number): number[] | undefined | null {
+  const raw = optStr(id);
+  if (!raw) return undefined;
+  const parts = raw.split(/[\s,]+/).filter(Boolean).map(Number);
+  return parts.length === n && parts.every(Number.isFinite) ? parts : null;
+}
+
+function buildSelectRegionMsg(): Record<string, unknown> | undefined {
+  const name = optStr("selreg-name");
+  if (!name || name.includes("/")) return undefined;
+  const msg: Record<string, unknown> = {
+    type: "applyOp",
+    op: "selectRegion",
+    name,
+    kind: (document.getElementById("selreg-kind") as HTMLSelectElement | null)?.value ?? "cell",
+    mode: (document.getElementById("selreg-mode") as HTMLSelectElement | null)?.value ?? "all",
+  };
+  let criteria = 0;
+  for (const [key, id, n] of [["box", "selreg-box", 6], ["plane", "selreg-plane", 6], ["sphere", "selreg-sphere", 4], ["seed", "selreg-seed", 3]] as const) {
+    const v = numList(id, n);
+    if (v === null) return undefined;
+    if (v) { msg[key] = v; criteria++; }
+  }
+  const comp = optNum("selreg-comp");
+  if (comp !== undefined) { msg.component = Math.floor(comp); criteria++; }
+  const angle = optNum("selreg-angle");
+  if (angle !== undefined) msg.featureAngle = angle;
+  return criteria > 0 ? msg : undefined;
 }
 
 // --- surface curvature (meshio++ oracle) --------------------------------------

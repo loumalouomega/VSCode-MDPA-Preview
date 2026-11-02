@@ -1,7 +1,13 @@
 /**
  * Derived meshes made by the meshio++ 17.23.0 sweep / layer / volume kernels:
  * `extrude`, `revolve`, `mirror`, `boundaryLayer`, `tetrahedralize`,
- * `errorSize` and `checkConformity`.
+ * `errorSize` and `checkConformity`, and the 18.0.0 MMG family `adapt`,
+ * `discretizeLevelset`, `meshDomain` plus `metricFromHessian`.
+ *
+ * The MMG kernels are the kernel's OWN MMG (5.8.0, linked into the FULL artifact only), a
+ * separate path from the extension's in-place `remesh`/`levelset` ops, which keep running on
+ * `@loumalouomega/mmg-wasm` and carry block/SubModelPart identity. These write a new mesh.
+ * `move` is deliberately not routed: it needs MMG's ELAS library, linked into neither artifact.
  *
  * Like `kernelMeshes.ts` these are DERIVED meshes (a new file, never an edit of
  * the open mesh), dispatched from `deriveMesh.ts` so the UI export and MCP
@@ -20,11 +26,13 @@
 
 import type { MdpaDiagnostic, MdpaModel } from "./types";
 import { meshioToModel, modelToMeshio } from "./meshioConvert";
-import { loadMeshio } from "./meshio";
+import { loadMeshio, loadMeshioFull, meshioFullInstalled, type MeshioModule } from "./meshio";
 import { triangleSurfaceOf } from "./gridSample";
 import { withKratosBlockNames, legalFields, type KernelMeshResult } from "./kernelMeshes";
 
-export const KERNEL_OP_KINDS = ["extrude", "revolve", "mirror", "boundaryLayer", "tetrahedralize", "errorSize", "checkConformity"] as const;
+export const KERNEL_OP_KINDS = ["extrude", "revolve", "mirror", "boundaryLayer", "tetrahedralize", "errorSize", "checkConformity", "adapt", "discretizeLevelset", "meshDomain", "metricFromHessian", "findIntersections", "tetToPoly"] as const;
+/** The kinds that need MMG, which only the full artifact links (meshio++ 18.0.0). */
+export const MMG_KERNEL_KINDS: readonly KernelOpKind[] = ["adapt", "discretizeLevelset", "meshDomain"];
 export type KernelOpKind = (typeof KERNEL_OP_KINDS)[number];
 
 export interface KernelOpSpec {
@@ -38,17 +46,42 @@ const n = (x: number) => x.toLocaleString("en-US");
 const f = (x: number) => (Number.isFinite(x) ? String(+x.toPrecision(4)) : "n/a");
 type Mesh = Parameters<typeof meshioToModel>[0];
 
+/** One sentence for an MMG report. */
+function mmgReport(r: { status: string; library: string; numPointsIn: number; numPointsOut: number; numElementsIn: number; numElementsOut: number; quality: { min: number; mean: number }; warnings: string[] }): string {
+  return (
+    `${r.library}: ${n(r.numPointsIn)} → ${n(r.numPointsOut)} node(s), ${n(r.numElementsIn)} → ${n(r.numElementsOut)} element(s), quality min ${f(r.quality.min)} / mean ${f(r.quality.mean)}` +
+    (r.status === "lowFailure" ? " (MMG reported a low failure: the mesh is valid but not fully adapted)" : "") + "." + (r.warnings.length ? ` ${r.warnings.join(" ")}` : "")
+  );
+}
+
 /** The volume cells a sweep made, e.g. "48 hexahedra, 4 wedges". */
 function cellMix(r: { numHexahedra: number; numWedges: number; numPyramids: number; numTetrahedra: number }): string {
   const parts = [["hexahedra", r.numHexahedra], ["wedges", r.numWedges], ["pyramids", r.numPyramids], ["tetrahedra", r.numTetrahedra]] as const;
   return parts.filter(([, c]) => c > 0).map(([name, c]) => `${n(c)} ${name}`).join(", ") || "no cells";
 }
 
-/** Runs one of the 17.23.0 kernels on the open mesh and reads its mesh back. */
+/**
+ * The module a kernel needs. The MMG kernels need the full artifact (a lean run would only throw
+ * the kernel's own "needs {full: true}" refusal, so it is named here instead); `tetrahedralize`
+ * prefers the full one because only it links Netgen, which keeps the surface triangles, and
+ * falls back to the lean octree backend when the full pair is absent or `backend: "octree"` is asked.
+ */
+async function moduleFor(spec: KernelOpSpec, options: Record<string, unknown>): Promise<MeshioModule> {
+  if (MMG_KERNEL_KINDS.includes(spec.kind)) {
+    if (!meshioFullInstalled()) {
+      throw new Error(`${spec.kind} runs on the MMG library that only the full meshio++ artifact links, and this install ships the lean one. Use the in-place Remesh (MMG) operation instead.`);
+    }
+    return loadMeshioFull();
+  }
+  if (spec.kind === "tetrahedralize" && options.backend !== "octree" && meshioFullInstalled()) return loadMeshioFull();
+  return loadMeshio();
+}
+
+/** Runs one of the 17.23.0 / 18.0.0 kernels on the open mesh and reads its mesh back. */
 export async function kernelOpModel(model: MdpaModel, spec: KernelOpSpec, diagnostics: MdpaDiagnostic[] = []): Promise<KernelMeshResult> {
   if (!(KERNEL_OP_KINDS as readonly string[]).includes(spec.kind)) throw new Error(`kind must be one of ${KERNEL_OP_KINDS.join(", ")}.`);
   const options = defined(spec.options ?? {});
-  const m = await loadMeshio();
+  const m = await moduleFor(spec, options);
   // The layer and volume meshers read a closed triangle skin; every other kernel takes the mesh as it is.
   const wantsSkin = spec.kind === "boundaryLayer" || spec.kind === "tetrahedralize";
   const { surface, note } = wantsSkin ? triangleSurfaceOf(model) : { surface: model, note: "" };
@@ -106,7 +139,7 @@ export async function kernelOpModel(model: MdpaModel, spec: KernelOpSpec, diagno
         summary:
           `Tetrahedralized ${note} (${r.backend} backend): ${n(r.numTetrahedra)} tetrahedra, ${n(r.numPoints)} node(s), volume ${f(r.volume)}, dihedral ${f(r.minDihedralDeg)}°–${f(r.maxDihedralDeg)}°. ` +
           (r.boundaryPreserved ? "The surface triangles are kept." : `The boundary is fitted within ${f(r.hausdorffToSurface)} of the surface, not kept exactly.`) +
-          (!m.hasNetgen() ? " (This build has no Netgen backend, so the native octree mesher ran.)" : "") + warn(r.warnings.filter((w) => !/no Netgen/.test(w))),
+          (!m.hasNetgen() ? " (This build has no Netgen backend, so the native octree mesher ran; the full meshio++ artifact keeps the surface triangles.)" : "") + warn(r.warnings.filter((w) => !/no Netgen/.test(w))),
         suffix: "tetrahedralized",
       };
     }
@@ -116,6 +149,59 @@ export async function kernelOpModel(model: MdpaModel, spec: KernelOpSpec, diagno
         model: read(r.mesh),
         summary: `Error-driven size field over ${n(r.numCells)} cell(s) (${n(r.numSkipped)} skipped, ${n(r.numClamped)} clamped to the size limits).` + warn(r.warnings),
         suffix: "error_size",
+      };
+    }
+    case "adapt":
+    case "discretizeLevelset": {
+      const r = spec.kind === "adapt" ? m.adapt(input, options) : m.discretizeLevelset(input, options);
+      return {
+        model: read(r.mesh),
+        summary: `${spec.kind === "adapt" ? "Adapted" : "Level set discretized"} with ${mmgReport(r.report)}`,
+        suffix: spec.kind === "adapt" ? "adapted" : "levelset",
+      };
+    }
+    case "meshDomain": {
+      const r = m.meshDomain(input, options);
+      return {
+        model: read(r.mesh),
+        summary: `Meshed the planar domain (${n(r.numSubdomains)} subdomain(s), ${n(r.numHoles)} hole(s)) with ${mmgReport(r.report)}`,
+        suffix: "domain",
+      };
+    }
+    case "metricFromHessian": {
+      const mesh = m.metricFromHessian(input, options);
+      const out = read(mesh);
+      const before = new Set(model.fields.map((fd) => `${fd.kind}:${fd.variable}`));
+      const added = out.fields.filter((fd) => !before.has(`${fd.kind}:${fd.variable}`)).map((fd) => fd.variable);
+      return {
+        model: out,
+        summary: `Metric from the Hessian: ${added.length > 0 ? `wrote ${added.join(", ")}` : "no new field"} (the size/metric input of an MMG adapt).`,
+        suffix: "metric",
+      };
+    }
+    case "tetToPoly": {
+      // The median dual: one polyhedron per vertex. Read back through meshioToModel, the polyhedra become
+      // tetrahedra plus the `model.polyhedra` side channel, which only the native .vtu writer folds back
+      // into real polyhedra (every other writer sees the tetrahedra).
+      const r = m.tetToPoly(input, options, true) as { mesh: Mesh; numNewPoints: number; numBoundaryFaces: number; numSplitVertices: number };
+      const out = read(r.mesh);
+      return {
+        model: out,
+        summary:
+          `Polyhedral dual: ${n(out.polyhedra?.count ?? 0)} polyhedra, ${n(r.numNewPoints)} new point(s), ${n(r.numBoundaryFaces)} boundary face(s)${r.numSplitVertices > 0 ? `, ${n(r.numSplitVertices)} vertex(es) split across blocks` : ""}. ` +
+          "Only a .vtu keeps the polyhedra; every other format receives their tetrahedral decomposition.",
+        suffix: "dual",
+      };
+    }
+    case "findIntersections": {
+      const r = m.findIntersections(input, { segments: true, ...options });
+      if (!r.segments || r.numSegments === 0) {
+        throw new Error(r.clean ? "The surface has no self-intersections, so there are no segments to write." : "The intersection produced no segments (only coplanar overlaps?).");
+      }
+      return {
+        model: read(r.segments),
+        summary: `Intersection curve: ${n(r.numSegments)} segment(s) from ${n(r.numPairs)} intersecting facet pair(s)${r.numCoplanar > 0 ? ` (${n(r.numCoplanar)} coplanar)` : ""}.` + warn(r.warnings),
+        suffix: "intersections",
       };
     }
     case "checkConformity": {

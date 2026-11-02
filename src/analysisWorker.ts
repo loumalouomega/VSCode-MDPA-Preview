@@ -19,8 +19,8 @@ import { probeAlongPath, ProbeParams } from "./parser/pathProbe";
 import { watertightReport } from "./parser/watertight";
 import { integrateFields } from "./parser/fieldIntegrate";
 import { lodSurface } from "./parser/lodSurface";
-import { featureEdges, hausdorff, periodicNodes, qualityGate } from "./parser/analysisOps";
-import type { FeatureEdgeOptions, PeriodicOptions } from "./parser/analysisOps";
+import { featureEdges, findIntersectionsReport, hausdorff, periodicNodes, qualityGate } from "./parser/analysisOps";
+import type { FeatureEdgeOptions, IntersectionOptions, PeriodicOptions } from "./parser/analysisOps";
 import { flowBalance } from "./parser/flowBalance";
 import type { FlowBalanceSpec } from "./parser/flowBalance";
 import type { MdpaModel } from "./parser/types";
@@ -40,6 +40,8 @@ export interface AnalysisParams {
   hausdorff: { other: MdpaModel; faceSamples?: number };
   periodicNodes: PeriodicOptions;
   featureEdges: FeatureEdgeOptions;
+  /** `other` (a second surface) is read on the host and structured-cloned in. */
+  intersections: IntersectionOptions;
   flowBalance: { spec: FlowBalanceSpec };
 }
 export type AnalysisKind = keyof AnalysisParams;
@@ -62,6 +64,7 @@ async function execute(req: AnalysisWorkRequest): Promise<unknown> {
     case "hausdorff": return hausdorff(req.model, req.params.other, req.params.faceSamples);
     case "periodicNodes": return periodicNodes(req.model, req.params);
     case "featureEdges": return featureEdges(req.model, req.params);
+    case "intersections": return findIntersectionsReport(req.model, req.params);
     case "flowBalance": return flowBalance(req.model, req.params.spec);
     default: throw new Error(`Unknown analysis "${(req as { type: string }).type}".`);
   }

@@ -1237,6 +1237,12 @@ const KERNEL_OP_EXAMPLES: Record<KernelOpKind, { description: string; options: R
   tetrahedralize: { description: "fill a closed triangle skin with tetrahedra", options: { maxSize: 0.2 } },
   errorSize: { description: "turn an error array into a target size field", options: { targetError: 0.01, errorArray: "ERROR_INDICATOR" } },
   checkConformity: { description: "report hanging nodes, T-junctions and overlaps; writes per-cell flags", options: {} },
+  adapt: { description: "remesh a tetrahedral/triangle mesh with the kernel's MMG to a size (full meshio++ build only; a new mesh)", options: { hsiz: 0.1, hmin: 0.02, hmax: 0.3, hausd: 0.01 } },
+  discretizeLevelset: { description: "insert a level-set isovalue as a conforming interface (full meshio++ build only; a new mesh)", options: { levelSet: "SDF_DISTANCE", isovalue: 0 } },
+  meshDomain: { description: "mesh a planar domain from its boundary lines, holes named by a point inside each (full meshio++ build only)", options: { hsiz: 0.1, holes: [] } },
+  tetToPoly: { description: "the polyhedral median dual of a tetrahedral mesh (a .vtu keeps the polyhedra)", options: { featureAngle: 1 } },
+  findIntersections: { description: "write the curve where a surface meets itself, as a line mesh", options: {} },
+  metricFromHessian: { description: "turn a Hessian field and a target error into an MMG metric field", options: { hessian: "HESSIAN", error: 0.01, hmin: 0.01, hmax: 1 } },
 };
 
 /**
