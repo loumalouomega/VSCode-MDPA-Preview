@@ -128,6 +128,21 @@ m = await fillAndClick({ "curv-mean": true, "curv-gauss": false, "curv-principal
 assert.deepEqual(m, { type: "applyOp", op: "curvature", mean: true, gaussian: false, principal: true, area: false, dualArea: "barycentric", includeBoundary: true, outputPrefix: "K" });
 assert.equal(await fillAndClick({ "curv-mean": false, "curv-gauss": false, "curv-principal": false, "curv-area": false }, '[data-op="curvature"]'), undefined, "nothing selected posts nothing");
 
+// meshio++ 18.0.0 forms: wall thickness, region selection, tetra optimization objective.
+m = await fillAndClick({ "thick-dir": "inward", "thick-max": "5", "thick-below": "0.2", "thick-out": "WALL" }, '[data-op="thickness"]');
+assert.deepEqual(m, { type: "applyOp", op: "thickness", direction: "inward", maxDistance: 5, threshold: 0.2, output: "WALL" });
+m = await fillAndClick({ "selreg-name": "Top", "selreg-kind": "cell", "selreg-mode": "centroid", "selreg-plane": "0,0,0, 0,0,1", "selreg-box": "", "selreg-sphere": "", "selreg-seed": "", "selreg-comp": "", "selreg-angle": "" }, '[data-op="selectRegion"]');
+assert.deepEqual(m, { type: "applyOp", op: "selectRegion", name: "Top", kind: "cell", mode: "centroid", plane: [0, 0, 0, 0, 0, 1] });
+m = await fillAndClick({ "selreg-name": "Face", "selreg-plane": "", "selreg-seed": "0.5,0.5,1", "selreg-angle": "20" }, '[data-op="selectRegion"]');
+assert.deepEqual(m.seed, [0.5, 0.5, 1]);
+assert.equal(m.featureAngle, 20);
+assert.equal(await fillAndClick({ "selreg-name": "Bad", "selreg-seed": "", "selreg-plane": "" }, '[data-op="selectRegion"]'), undefined, "no criterion posts nothing");
+assert.equal(await fillAndClick({ "selreg-name": "Bad", "selreg-plane": "1,2,3" }, '[data-op="selectRegion"]'), undefined, "a malformed plane posts nothing");
+m = await fillAndClick({ "ov-objective": "worst", "ov-ring": "9", "ov-iter": "4" }, '[data-op="optimizeVolume"]');
+assert.equal(m.objective, "worst");
+assert.equal(m.maxRingSize, 9);
+assert.equal(m.maxIterations, 4);
+
 // --- Surface / volume meshing --------------------------------------------------------------
 m = await fillAndClick({ "sr-clusters": 300, "sr-metric": "anisotropic", "sr-gradation": 0.5, "sr-aniso": 3, "sr-boundary": false }, '[data-op="surfaceRemesh"]');
 assert.deepEqual(m, { type: "applyOp", op: "surfaceRemesh", metric: "anisotropic", preserveBoundary: false, numClusters: 300, gradation: 0.5, maxAnisotropy: 3 });
@@ -140,8 +155,8 @@ assert.equal(await fillAndClick({ "sr-clusters": 2 }, '[data-op="surfaceRemesh"]
 assert.equal(await fillAndClick({ "vm-cellsize": "" }, '[data-op="volumeMesh"]'), undefined, "no cell size posts nothing");
 m = await fillAndClick({ "vm-cellsize": 0.25, "vm-warp": 0.2, "vm-surface": false }, '[data-op="volumeMesh"]');
 assert.deepEqual(m, { type: "applyOp", op: "volumeMesh", cellSize: 0.25, keepSurface: false, warpFraction: 0.2 });
-m = await fillAndClick({ "ov-flip": false, "ov-relocate": true, "ov-boundary": true, "ov-iter": 25 }, '[data-op="optimizeVolume"]');
-assert.deepEqual(m, { type: "applyOp", op: "optimizeVolume", flip: false, relocate: true, preserveBoundary: true, maxIterations: 25 });
+m = await fillAndClick({ "ov-objective": "energy", "ov-ring": "", "ov-flip": false, "ov-relocate": true, "ov-boundary": true, "ov-iter": 25 }, '[data-op="optimizeVolume"]');
+assert.deepEqual(m, { type: "applyOp", op: "optimizeVolume", flip: false, relocate: true, preserveBoundary: true, maxIterations: 25, objective: "energy" });
 
 // --- Shrinkwrap / Sobolev / Compare need a target: no target, no message ---------------
 assert.equal(await fillAndClick({}, '[data-op="shrinkwrap"]'), undefined);
@@ -243,7 +258,7 @@ assert.match(await statusText(), /no surface faces/);
 assert.equal(await page.evaluate(() => document.querySelector('[data-action="lod"]').classList.contains("active")), false);
 
 // --- The forms actually rendered, and the page raised no errors ---------------------------
-const forms = await page.evaluate(() => ["fm-form", "cond-form", "cvt-form", "repair-form", "curv-form", "sw-form", "sob-form", "cmp-form", "sr-form", "vm-form", "ov-form"].map((id) => [id, !!document.getElementById(id)]));
+const forms = await page.evaluate(() => ["fm-form", "cond-form", "cvt-form", "repair-form", "curv-form", "sw-form", "sob-form", "cmp-form", "sr-form", "vm-form", "ov-form", "thick-form", "selreg-form"].map((id) => [id, !!document.getElementById(id)]));
 for (const [id, present] of forms) assert.ok(present, `#${id} is in the sidebar`);
 assert.deepEqual(errors.filter((e) => !/WebGL|swiftshader|GPU/i.test(e)), [], "no page errors");
 

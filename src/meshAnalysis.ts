@@ -1,4 +1,4 @@
-import { qualityGate, hausdorff, periodicNodes, featureEdges, PeriodicOptions, FeatureEdgeOptions } from "./parser/analysisOps";
+import { qualityGate, hausdorff, periodicNodes, featureEdges, findIntersectionsReport, PeriodicOptions, FeatureEdgeOptions, IntersectionOptions } from "./parser/analysisOps";
 import { parseMeshFile } from "./parser/meshFileParser";
 import { parseMdpa } from "./parser/mdpaParser";
 import { meshExtname } from "./parser/meshFormats";
@@ -37,12 +37,14 @@ import { MdpaModel } from "./parser/types";
 /** The `meshAnalysis` kinds whose wasm work runs in the analysis worker (and are therefore cancellable). */
 export const WORKER_KINDS: ReadonlySet<string> = new Set([
   "probe", "watertight", "integrate", "lod",
-  "qualityGate", "hausdorff", "periodicNodes", "featureEdges", "flowBalance",
+  "qualityGate", "hausdorff", "periodicNodes", "featureEdges", "flowBalance", "intersections",
 ]);
 
 export interface MeshAnalysisMessage extends FeatureEdgeOptions {
   require?: string; maxInverted?: number; maxDegenerate?: number;
   path?: string; faceSamples?: number;
+  /** Intersections kind: keep at most this many facet pairs (counts still cover all). `path` names an optional SECOND surface. */
+  maxPairs?: number;
   slave?: string; master?: string; matrix?: number[]; translate?: number[]; rotate?: PeriodicOptions["rotate"]; atol?: number; requireComplete?: boolean;
   type: "meshAnalysis";
   kind?: string;
@@ -92,6 +94,7 @@ export async function runMeshAnalysis(
     hausdorffRunner?: (model: MdpaModel, other: MdpaModel, faceSamples: number | undefined, opts?: { signal?: AbortSignal }) => ReturnType<typeof hausdorff>;
     periodicRunner?: (model: MdpaModel, params: PeriodicOptions, opts?: { signal?: AbortSignal }) => ReturnType<typeof periodicNodes>;
     featureEdgesRunner?: (model: MdpaModel, params: FeatureEdgeOptions, opts?: { signal?: AbortSignal }) => ReturnType<typeof featureEdges>;
+    intersectionsRunner?: (model: MdpaModel, params: IntersectionOptions, opts?: { signal?: AbortSignal }) => ReturnType<typeof findIntersectionsReport>;
     flowBalanceRunner?: (model: MdpaModel, spec: FlowBalanceSpec, opts?: { signal?: AbortSignal }) => Promise<FlowBalance>;
   } = {}
 ): Promise<Record<string, unknown>> {
@@ -111,6 +114,18 @@ export async function runMeshAnalysis(
       const other = meshExtname(msg.path) === ".mdpa" ? parseMdpa(await fs.readFile(msg.path,"utf8")) : await parseMeshFile(msg.path);
       const report = await (opts.hausdorffRunner ?? ((m, o, n) => hausdorff(m, o, n)))(model, other, msg.faceSamples, signal);
       return { type: "meshAnalysisResult", kind, seq: msg.seq, report };
+    }
+    if (kind === "intersections") {
+      // An optional second surface is read here (host I/O); only finished models cross to the worker.
+      const other = msg.path ? (meshExtname(msg.path) === ".mdpa" ? parseMdpa(await fs.readFile(msg.path, "utf8")) : await parseMeshFile(msg.path)) : undefined;
+      const report = await (opts.intersectionsRunner ?? findIntersectionsReport)(model, { other, maxPairs: msg.maxPairs }, signal);
+      // The facets that take part, as an explicit selection set the panel can apply (self mode: both columns).
+      const selection = { name: other ? "Intersecting (this mesh)" : "Self-intersections", kinds: { Elements: report.cells.Elements, Conditions: report.cells.Conditions, Geometries: report.cells.Geometries } };
+      const summary = report.clean
+        ? (other ? "The two surfaces do not touch." : "No self-intersections.")
+        : `${report.numPairs} intersecting facet pair(s) (${report.numTrianglePairs} triangle pairs, ${report.numCoplanar} coplanar), ${report.cells.total} facet(s) involved${report.truncated ? "; pair list truncated" : ""}.`;
+      const { segments, ...rest } = report;
+      return { type: "meshAnalysisResult", kind, seq: msg.seq, report: rest, summary, selection: report.clean ? undefined : selection, edges: segments };
     }
     if (kind === "periodicNodes") {
       const params: PeriodicOptions = {

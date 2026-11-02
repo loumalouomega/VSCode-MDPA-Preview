@@ -777,6 +777,10 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
                   <label class="edit-check" title="Keep the boundary where it is."><input type="checkbox" id="ov-boundary" checked><span>preserve boundary</span></label>
                 </div>
                 <div class="edit-form-row">
+                  <label class="edit-field" title="Energy: the ODT energy with scaled-Jacobian flips (the original behaviour). Worst: raise the least dihedral angle and never lower it, with edge and multi-face removal."><span>objective</span><select id="ov-objective"><option value="energy" selected>Energy</option><option value="worst">Worst angle</option></select></label>
+                  <label class="edit-field" title="Longest edge ring, in tetrahedra, an edge removal considers (Worst angle only; blank = 7)."><span>ring</span><input type="number" id="ov-ring" class="edit-num" placeholder="7" min="3" step="1"></label>
+                </div>
+                <div class="edit-form-row">
                   <label class="edit-field" title="Passes over the mesh."><span>iterations</span><input type="number" id="ov-iter" class="edit-num edit-num-wide" value="10" min="1" step="1"></label>
                   <button type="button" class="edit-apply edit-apply-mmg" data-op="optimizeVolume" title="Improve a tetrahedral mesh without adding or removing nodes: every unchanged tetrahedron keeps its id, block, property and parts." data-run-title="Optimize the tetrahedra"><span class="apply-play">${ic("play")}</span><span class="apply-stop">${ic("stop")}</span></button>
                 </div>
@@ -988,6 +992,37 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
           <div class="sb-subsection collapsed" data-subsection="selection">
             <button type="button" class="sb-subsection-header" aria-expanded="false"><span class="sb-chevron"></span>${ic("catSelection")}<span>Selection &amp; combination</span></button>
             <div class="sb-subsection-body">
+              <div class="edit-form collapsed" id="selreg-form">
+                <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("fieldThreshold")}<span>Select region</span></button>
+                <div class="edit-form-row">
+                  <label class="edit-field edit-field-grow" title="Name of the new top-level SubModelPart that receives the selection."><span>name</span><input type="text" id="selreg-name" class="edit-text" placeholder="Region"></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field" title="Select cells (default) or points."><span>of</span><select id="selreg-kind" class="edit-sel edit-sel-mid"><option value="cell" selected>cells</option><option value="point">points</option></select></label>
+                  <label class="edit-field" title="How a cell reduces its nodes for the box, plane and sphere tests."><span>test</span><select id="selreg-mode" class="edit-sel edit-sel-mid"><option value="all" selected>all nodes</option><option value="any">any node</option><option value="centroid">centroid</option></select></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field edit-field-grow" title="xmin, ymin, zmin, xmax, ymax, zmax"><span>box</span><input type="text" id="selreg-box" class="edit-text" placeholder="0,0,0,1,1,1"></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field edit-field-grow" title="px, py, pz, nx, ny, nz — keeps what lies on the normal side of the plane."><span>plane</span><input type="text" id="selreg-plane" class="edit-text" placeholder="0,0,0, 0,0,1"></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field edit-field-grow" title="cx, cy, cz, radius"><span>sphere</span><input type="text" id="selreg-sphere" class="edit-text" placeholder="0,0,0,1"></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field edit-field-grow" title="x, y, z — grow a patch of facets from the one nearest this point, across dihedral angles up to the limit. A surface mesh."><span>grow from</span><input type="text" id="selreg-seed" class="edit-text" placeholder="x,y,z"></label>
+                  <label class="edit-field" title="Largest dihedral angle (degrees) the growth crosses. Blank = 30."><span>angle</span><input type="number" id="selreg-angle" class="edit-num" min="0" step="any" placeholder="30"></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field" title="The k-th connected component (0 = first)."><span>component</span><input type="number" id="selreg-comp" class="edit-num" min="0" step="1" placeholder="off"></label>
+                  <button type="button" class="edit-apply edit-apply-mmg" data-op="selectRegion" title="Select into a new SubModelPart" data-run-title="Select the region"><span class="apply-play">${ic("play")}</span><span class="apply-stop">${ic("stop")}</span></button>
+                </div>
+                <div class="edit-progress hidden" id="selreg-progress">
+                  <div class="edit-progress-track"><div class="edit-progress-bar"></div></div>
+                  <div class="edit-progress-msg"></div>
+                </div>
+              </div>
               <div class="edit-form collapsed">
                 <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("crop")}<span>Crop</span></button>
                 <div class="edit-form-row">
@@ -1228,6 +1263,28 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
                   <button type="button" class="edit-apply edit-apply-mmg" data-op="curvature" title="Measure the surface curvature (a surface mesh only)" data-run-title="Measure the surface curvature"><span class="apply-play">${ic("play")}</span><span class="apply-stop">${ic("stop")}</span></button>
                 </div>
                 <div class="edit-progress hidden" id="curv-progress">
+                  <div class="edit-progress-track"><div class="edit-progress-bar"></div></div>
+                  <div class="edit-progress-msg"></div>
+                </div>
+              </div>
+              <div class="edit-form collapsed" id="thick-form">
+                <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("meshSize")}<span>Wall thickness</span></button>
+                <div class="edit-form-row">
+                  <label class="edit-field edit-field-grow" title="Inward measures the wall (a ray through the surface), outward the clearance to the next surface. Auto chooses from the orientation."><span>direction</span><select id="thick-dir" class="edit-sel edit-sel-grow">
+                    <option value="auto" selected>auto</option>
+                    <option value="inward">inward (thickness)</option>
+                    <option value="outward">outward (clearance)</option>
+                  </select></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field" title="The longest ray. Blank = the bounding-box diagonal."><span>max</span><input type="number" id="thick-max" class="edit-num" min="0" step="any" placeholder="auto"></label>
+                  <label class="edit-field" title="Count the facets thinner than this in the result message."><span>below</span><input type="number" id="thick-below" class="edit-num" min="0" step="any" placeholder="off"></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field edit-field-grow" title="A per-facet field (Elemental for Elements, Conditional for Conditions). A ray that reaches nothing leaves a gap, not a zero. Colour by it in the Field panel."><span>field</span><input type="text" id="thick-out" class="edit-text" placeholder="THICKNESS"></label>
+                  <button type="button" class="edit-apply edit-apply-mmg" data-op="thickness" title="Measure the wall thickness of a surface mesh" data-run-title="Measure the wall thickness"><span class="apply-play">${ic("play")}</span><span class="apply-stop">${ic("stop")}</span></button>
+                </div>
+                <div class="edit-progress hidden" id="thick-progress">
                   <div class="edit-progress-track"><div class="edit-progress-bar"></div></div>
                   <div class="edit-progress-msg"></div>
                 </div>

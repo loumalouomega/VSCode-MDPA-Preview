@@ -37,7 +37,7 @@ import {
 } from "../recipePresetLibrary";
 import { sequenceSource, exportResampled, ResampleSourceOptions } from "../parser/resampleFiles";
 import type { ResampleOptions } from "../parser/resampleSequence";
-import { qualityGate, hausdorff, periodicNodes, PeriodicOptions } from "../parser/analysisOps";
+import { qualityGate, hausdorff, periodicNodes, findIntersectionsReport, PeriodicOptions } from "../parser/analysisOps";
 import { assertFreshElmerDestination } from "../parser/caeFiles";
 /**
  * The MCP tool handler core: path-based tools over the pure parser/problemtype
@@ -1144,6 +1144,35 @@ export async function meshCurvature(args: {
 }
 
 /**
+ * mesh_intersections: where a surface intersects itself, or (`otherPath`) where two surfaces interpenetrate
+ * or touch (meshio++ >= 18.0.0, exact triangle-triangle tests). Read-only; the same core as the Mesh-analysis
+ * panel's "Find intersections". Entity ids are capped by `idLimit` (the totals are not).
+ */
+export async function meshIntersections(args: {
+  path: string;
+  otherPath?: string;
+  maxPairs?: number;
+  idLimit?: number;
+  includeSegments?: boolean;
+}, execution: PlotExecution = {}): Promise<object> {
+  const { model } = await loadMesh(args.path, undefined, undefined, undefined, undefined, undefined, execution.signal);
+  const other = args.otherPath ? (await loadMesh(args.otherPath, undefined, undefined, undefined, undefined, undefined, execution.signal)).model : undefined;
+  const r = await findIntersectionsReport(model, { other, maxPairs: args.maxPairs, segments: args.includeSegments ?? false });
+  const limit = Math.max(0, args.idLimit ?? 100);
+  const cut = (c: { Elements: number[]; Conditions: number[]; Geometries: number[]; total: number }) => ({
+    Elements: c.Elements.slice(0, limit), Conditions: c.Conditions.slice(0, limit), Geometries: c.Geometries.slice(0, limit), total: c.total,
+  });
+  return {
+    path: args.path,
+    ...(args.otherPath ? { otherPath: args.otherPath } : {}),
+    mode: r.mode, clean: r.clean, numPairs: r.numPairs, numTrianglePairs: r.numTrianglePairs, numCoplanar: r.numCoplanar,
+    numSegments: r.numSegments, truncated: r.truncated, warnings: r.warnings,
+    cells: cut(r.cells), ...(r.otherCells ? { otherCells: cut(r.otherCells) } : {}),
+    ...(args.includeSegments && r.segments ? { segments: r.segments } : {}),
+  };
+}
+
+/**
  * mesh_fit_primitives (roadmap item 31): segment a SURFACE mesh into smooth
  * patches (unless it already carries SEGMENT_PATCH) and report, per patch, the
  * plane/sphere/cylinder/cone/torus it matches, its parameters and the fit
@@ -1936,7 +1965,13 @@ export async function meshDerive(args: {
     | "boundaryLayer"
     | "tetrahedralize"
     | "errorSize"
-    | "checkConformity";
+    | "checkConformity"
+    | "adapt"
+    | "discretizeLevelset"
+    | "meshDomain"
+    | "metricFromHessian"
+    | "findIntersections"
+    | "tetToPoly";
   outputPath: string;
   outputFormat?: string;
   /** Read this step of a multi-step file instead of the first (the frame every kind works on). */

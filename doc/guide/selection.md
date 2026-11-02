@@ -95,6 +95,10 @@ A beam's `CROSS_AREA` resolves through these sets (Properties first, then an
 Elemental field), so editing it re-renders the beam tubes immediately — no
 second source of truth.
 
+## Select region (Mesh Modification ▸ Selection & combination)
+
+The **Select region** form (meshio++ 18.0.0) creates a SubModelPart from cells or points chosen by geometry: a **box**, a **plane** (keeps the normal side), a **sphere**, the *k*-th **connected component**, or a **patch grown from a seed point** — the facet nearest the point, then every neighbour reachable without crossing a dihedral angle above the limit (default 30°), which selects "this flat face" of a CAD-like surface. Criteria combine (all must hold). *test* decides how a cell reduces its nodes for the geometric tests (all nodes, any node, or the centroid). The cells' nodes ride in, so the part is valid for Kratos. It is an ordinary undoable operation (`selectRegion` in recipes and `mesh_transform`; also `selectRegion name=Top plane=[0,0,0,0,0,1] mode=centroid` on the command line).
+
 ## Headless (MCP)
 
 Selection predicates and property mutations work headless too:

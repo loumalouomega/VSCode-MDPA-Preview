@@ -80,6 +80,8 @@ import {
 } from "./fieldManage";
 import { repairSurfaceModel, RepairSurfaceParams } from "./repairSurface";
 import { tessellateModel, TessellateParams, TESSELLATE_MAX_LEVELS } from "./tessellate";
+import { thicknessModel, describeThickness, THICKNESS_DIRECTIONS, ThicknessParams, ThicknessDirection } from "./thickness";
+import { selectRegionModel, describeSelectRegion, hasSelectRegionCriterion, SELECT_REGION_KINDS, SELECT_REGION_MODES, SelectRegionParams } from "./selectRegion";
 import { curvatureModel, gaussBonnetResidual, CurvatureParams, CURVATURE_DUAL_AREAS, CurvatureDualArea } from "./curvature";
 import { projectToCadModel, describeProjectToCad, ProjectToCadParams } from "./projectCad";
 import { shrinkwrapModel, sobolevDeformModel, describeInverted, ShrinkwrapParams, SobolevParams } from "./deform";
@@ -311,6 +313,9 @@ export type OpRecord =
   | ({ op: "optimizeVolume" } & OptimizeVolumeParams)
   // meshio++ as an ORACLE (see curvature.ts): per-node curvature fields, cells untouched.
   | ({ op: "curvature" } & CurvatureParams)
+  // meshio++ 18.0.0 oracles: wall thickness per facet (thickness.ts) and a region picked by geometry / data / a grown patch (selectRegion.ts).
+  | ({ op: "thickness" } & ThicknessParams)
+  | ({ op: "selectRegion" } & SelectRegionParams)
   // Coordinate-only meshio++ oracles (see deform.ts). shrinkwrap names its
   // target surface exactly like sdfDistance: a file, a SubModelPart of this
   // mesh, or its own skin — exactly one.
@@ -406,6 +411,8 @@ const ASYNC_OPS = new Set<OpName>([
   "volumeMesh",
   "optimizeVolume",
   "curvature",
+  "thickness",
+  "selectRegion",
   "shrinkwrap",
   "sobolevDeform",
   "projectToCad",
@@ -505,6 +512,8 @@ const ORACLE_OPS: ReadonlySet<OpName> = new Set<OpName>([
   "volumeMesh",
   "optimizeVolume",
   "curvature",
+  "thickness",
+  "selectRegion",
   "shrinkwrap",
   "sobolevDeform",
   "projectToCad",
@@ -1163,6 +1172,8 @@ export function applyOp(model: MdpaModel, rec: OpRecord): OpOutcome {
     case "volumeMesh":
     case "optimizeVolume":
     case "curvature":
+    case "thickness":
+    case "selectRegion":
     case "shrinkwrap":
     case "sobolevDeform":
     case "projectToCad":
@@ -1663,6 +1674,28 @@ async function applyAsyncOpInProcess(
         message: `Refined ${r.labelled} labelled cell(s) into ${r.numPatches} patch(es) (${r.details}).`,
       };
     }
+    case "thickness": {
+      const r = await thicknessModel(model, rec);
+      if (r.written.length === 0) return { model, noop: true, message: r.message ?? "No thickness could be measured." };
+      return { model: r.model, message: describeThickness(r, rec.threshold) };
+    }
+    case "selectRegion": {
+      const r = await selectRegionModel(model, rec);
+      const total = r.kinds.Elements.length + r.kinds.Conditions.length + r.kinds.Geometries.length + r.nodes.length;
+      if (total === 0) return { model, noop: true, message: r.message ?? "The criteria selected nothing." };
+      // The ids become a SubModelPart through the ordinary selection path: node closure, subset rule, name checks.
+      const made = applyOp(model, {
+        op: "createSubModelPartFromSelection",
+        parentPath: "",
+        name: rec.name.trim(),
+        elements: r.kinds.Elements,
+        conditions: r.kinds.Conditions,
+        geometries: r.kinds.Geometries,
+        nodes: r.nodes,
+      } as Extract<OpRecord, { op: "createSubModelPartFromSelection" }>);
+      if (made.noop) return { model, noop: true, message: made.message };
+      return { model: made.model, message: describeSelectRegion(rec.name.trim(), r) };
+    }
     case "partition": {
       const r = await partitionModel(model, rec);
       if (r.assigned === 0) return { model, noop: true, message: "No cells to partition." };
@@ -1765,6 +1798,8 @@ const KNOWN_OPS = new Set<OpName>([
   "volumeMesh",
   "optimizeVolume",
   "curvature",
+  "thickness",
+  "selectRegion",
   "shrinkwrap",
   "sobolevDeform",
   "projectToCad",
@@ -2270,6 +2305,56 @@ export function opRecordFromMessage(
       }
       return rec;
     }
+    case "thickness": {
+      const rec: Extract<OpRecord, { op: "thickness" }> = { op };
+      if (msg.direction !== undefined && msg.direction !== "") {
+        if (typeof msg.direction !== "string" || !(THICKNESS_DIRECTIONS as readonly string[]).includes(msg.direction)) return undefined;
+        rec.direction = msg.direction as ThicknessDirection;
+      }
+      for (const k of ["maxDistance", "threshold"] as const) {
+        if (msg[k] === undefined || msg[k] === "") continue;
+        const v = Number(msg[k]);
+        if (!Number.isFinite(v) || v < 0) return undefined;
+        rec[k] = v;
+      }
+      if (typeof msg.output === "string" && msg.output.trim()) {
+        if (!isValidFieldName(msg.output.trim())) return undefined;
+        rec.output = msg.output.trim();
+      }
+      return rec;
+    }
+    case "selectRegion": {
+      const name = typeof msg.name === "string" ? msg.name.trim() : "";
+      if (!name || name.includes("/")) return undefined;
+      const rec: Extract<OpRecord, { op: "selectRegion" }> = { op, name };
+      if (msg.kind !== undefined && msg.kind !== "") {
+        if (!(SELECT_REGION_KINDS as readonly string[]).includes(String(msg.kind))) return undefined;
+        rec.kind = msg.kind as SelectRegionParams["kind"];
+      }
+      if (msg.mode !== undefined && msg.mode !== "") {
+        if (!(SELECT_REGION_MODES as readonly string[]).includes(String(msg.mode))) return undefined;
+        rec.mode = msg.mode as SelectRegionParams["mode"];
+      }
+      for (const [k, n] of [["box", 6], ["plane", 6], ["sphere", 4], ["seed", 3]] as const) {
+        if (msg[k] === undefined || msg[k] === null || msg[k] === "") continue;
+        const a = msg[k];
+        if (!Array.isArray(a) || a.length !== n || a.some((x) => typeof x !== "number" || !Number.isFinite(x))) return undefined;
+        rec[k] = a as number[];
+      }
+      for (const k of ["where", "quality"] as const) {
+        if (msg[k] === undefined || msg[k] === null || msg[k] === "") continue;
+        const a = msg[k];
+        if (!Array.isArray(a) || a.length !== 3 || typeof a[0] !== "string" || typeof a[1] !== "string" || typeof a[2] !== "number" || !Number.isFinite(a[2])) return undefined;
+        rec[k] = [a[0], a[1], a[2]];
+      }
+      for (const k of ["component", "featureAngle", "normalTolerance"] as const) {
+        if (msg[k] === undefined || msg[k] === "") continue;
+        const v = Number(msg[k]);
+        if (!Number.isFinite(v) || v < 0 || (k === "component" && !Number.isInteger(v))) return undefined;
+        rec[k] = v;
+      }
+      return hasSelectRegionCriterion(rec) ? rec : undefined;
+    }
     case "surfaceRemesh": {
       const rec: Extract<OpRecord, { op: "surfaceRemesh" }> = { op };
       if (msg.numClusters !== undefined && msg.numClusters !== "") {
@@ -2332,6 +2417,15 @@ export function opRecordFromMessage(
         rec.minImprovement = v;
       }
       for (const k of ["relocate", "flip", "preserveBoundary"] as const) if (msg[k] !== undefined) rec[k] = Boolean(msg[k]);
+      if (msg.objective !== undefined && msg.objective !== "") {
+        if (msg.objective !== "worst" && msg.objective !== "energy") return undefined;
+        rec.objective = msg.objective;
+      }
+      if (msg.maxRingSize !== undefined && msg.maxRingSize !== "") {
+        const v = Number(msg.maxRingSize);
+        if (!Number.isInteger(v) || v < 3) return undefined;
+        rec.maxRingSize = v;
+      }
       return rec;
     }
     case "tessellate": {
@@ -3314,6 +3408,18 @@ function validateParams(rec: OpRecord, warnings: string[]): boolean {
       }
       return true;
     }
+    case "thickness": {
+      if (rec.direction !== undefined && !(THICKNESS_DIRECTIONS as readonly string[]).includes(rec.direction)) return bad("invalid direction");
+      for (const k of ["maxDistance", "threshold"] as const) if (rec[k] !== undefined && !(Number.isFinite(rec[k]) && (rec[k] as number) >= 0)) return bad(`invalid ${k}`);
+      if (rec.output !== undefined && (typeof rec.output !== "string" || !isValidFieldName(rec.output))) return bad("invalid output");
+      return true;
+    }
+    case "selectRegion": {
+      if (typeof rec.name !== "string" || !rec.name.trim() || rec.name.includes("/")) return bad("missing/invalid name");
+      if (rec.kind !== undefined && !(SELECT_REGION_KINDS as readonly string[]).includes(rec.kind)) return bad("invalid kind");
+      if (rec.mode !== undefined && !(SELECT_REGION_MODES as readonly string[]).includes(rec.mode)) return bad("invalid mode");
+      return hasSelectRegionCriterion(rec) ? true : bad("needs at least one criterion");
+    }
     case "surfaceRemesh": {
       if (rec.numClusters !== undefined && !(Number.isFinite(rec.numClusters) && rec.numClusters >= 4)) return bad("invalid numClusters");
       if (rec.metric !== undefined && !(SURFACE_REMESH_METRICS as readonly string[]).includes(rec.metric)) return bad("invalid metric");
@@ -3332,6 +3438,8 @@ function validateParams(rec: OpRecord, warnings: string[]): boolean {
     case "optimizeVolume": {
       if (rec.maxIterations !== undefined && !(Number.isFinite(rec.maxIterations) && rec.maxIterations >= 1)) return bad("invalid maxIterations");
       if (rec.minImprovement !== undefined && !(Number.isFinite(rec.minImprovement) && rec.minImprovement >= 0)) return bad("invalid minImprovement");
+      if (rec.objective !== undefined && rec.objective !== "worst" && rec.objective !== "energy") return bad("objective must be worst or energy");
+      if (rec.maxRingSize !== undefined && !(Number.isInteger(rec.maxRingSize) && rec.maxRingSize >= 3)) return bad("invalid maxRingSize");
       return true;
     }
     case "tessellate": {

@@ -14,7 +14,7 @@ import type { WatertightReport } from "./parser/watertight";
 import type { FieldIntegral } from "./parser/fieldIntegrate";
 import type { LodSurface } from "./parser/lodSurface";
 import type { FeatureEdgeOptions, PeriodicOptions } from "./parser/analysisOps";
-import type { featureEdges, hausdorff, periodicNodes, qualityGate } from "./parser/analysisOps";
+import type { featureEdges, findIntersectionsReport, hausdorff, periodicNodes, qualityGate } from "./parser/analysisOps";
 import type { FlowBalance, FlowBalanceSpec } from "./parser/flowBalance";
 import type { AnalysisKind, AnalysisParams, AnalysisWorkRequest, AnalysisWorkResponse } from "./analysisWorker";
 
@@ -104,6 +104,13 @@ export const runFeatureEdgesInWorker = (
   opts?: RunOpts
 ): Promise<Awaited<ReturnType<typeof featureEdges>>> =>
   runInAnalysisWorker("featureEdges", model, params, opts) as Promise<Awaited<ReturnType<typeof featureEdges>>>;
+
+export const runIntersectionsInWorker = (
+  model: MdpaModel,
+  params: AnalysisParams["intersections"],
+  opts?: RunOpts
+): Promise<Awaited<ReturnType<typeof findIntersectionsReport>>> =>
+  runInAnalysisWorker("intersections", model, params, opts) as Promise<Awaited<ReturnType<typeof findIntersectionsReport>>>;
 
 export const runFlowBalanceInWorker = (model: MdpaModel, spec: FlowBalanceSpec, opts?: RunOpts): Promise<FlowBalance> =>
   runInAnalysisWorker("flowBalance", model, { spec }, opts) as Promise<FlowBalance>;

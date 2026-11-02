@@ -4,6 +4,21 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **meshio++ 18.0.0.** The kernel moves from 17.23.0 to 18.0.0 (no format key changes: lean 82 readers / 83 writers, full 84 / 83). The full artifact now links **Netgen (LGPL-2.1) and MMG 5.8.0 (LGPL-3.0)**, so the licence expression and the README notices list them; MMG has no ELAS, so the kernel's `move` stays unavailable.
+- **Region selection.** New operation `selectRegion` (Mesh Modification ▸ Selection & combination, command line, `mesh_transform`) puts the cells or points chosen by a box, plane, sphere, field or quality test, the k-th connected component, or a **patch grown from a seed across a dihedral-angle limit** into a new SubModelPart, with its node closure.
+- **Wall thickness.** New operation `thickness` measures the wall thickness (or, outward, the clearance) of a surface mesh per facet by ray casting and writes it as a field; a ray that reaches nothing is a gap, never a zero.
+- **Self-intersections.** The Mesh-analysis panel and the new MCP tool `mesh_intersections` report where a surface meets itself or a second surface (exact triangle-triangle tests); the facets involved become a selection set and the intersection curve an overlay. `mesh_derive` kind `findIntersections` writes the curve as a line mesh.
+- **Kernel MMG, polyhedral dual and Hessian metrics.** `mesh_derive` and Advanced ▸ Sweep, mirror and layers… gain `adapt`, `discretizeLevelset` and `meshDomain` (the kernel's own MMG, full artifact only, writing a new mesh), `metricFromHessian` (both artifacts) and `tetToPoly` (the median-dual polyhedral mesh; a `.vtu` keeps the polyhedra).
+
+### Changed
+
+- **`tetrahedralize` keeps the surface triangles** when the full artifact is installed (Netgen backend); `backend: "octree"` still forces the fitted-boundary octree mesher.
+- **`optimizeVolume`** gains `objective` and `maxRingSize` and reports edge and multi-face removals, worst-cell smoothing and the least dihedral angle. The default objective stays `energy`, which was measured byte-identical to the 17.23.0 behaviour, so recorded recipes keep their result; `worst` (upstream's new default) never lowers the least dihedral angle.
+
 ## [5.28.0] - 2026-11-01
 
 ### Added

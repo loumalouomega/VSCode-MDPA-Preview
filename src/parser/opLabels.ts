@@ -70,6 +70,8 @@ export const OP_LABELS: Record<OpName, string> = {
   volumeMesh: "Generate volume mesh (retetrahedralize)",
   optimizeVolume: "Optimize tetrahedra (flips & relocation)",
   curvature: "Surface curvature (mean / Gaussian / principal)",
+  thickness: "Wall thickness / clearance per facet",
+  selectRegion: "Select a region (box / plane / sphere / grown patch)",
   shrinkwrap: "Shrinkwrap onto a surface",
   sobolevDeform: "Sobolev deformation (smoothed displacement)",
   projectToCad: "Project nodes onto the CAD B-rep",

@@ -1,7 +1,8 @@
 import { MESHIO_ID_KEY, MESHIO_KIND_KEY } from "./meshioFormats";
 /** Shared meshio++ 16.27 analysis adapters. Reports never mutate their input. */
 import { loadMeshio } from './meshio';
-import { modelToMeshio, meshioToModel } from './meshioConvert';
+import { modelToMeshio, meshioToModel, meshioBlockOrder } from './meshioConvert';
+import { cellCategory } from './writers/writerCommon';
 import type { MdpaModel } from './types';
 import { extractSubModelPart } from './subModelPartExtract';
 
@@ -81,4 +82,77 @@ export async function periodicNodes(model: MdpaModel, options: PeriodicOptions) 
   const m = await loadMeshio();
   const r = m.matchPeriodicNodes(mesh, 'slave', 'master', periodicMatrix(options), tolerance, options.requireComplete ?? true);
   return { pairs: Array.from(r.slave, (index,i) => ({ slave: model.nodeIds[index], master: model.nodeIds[r.master[i]] })), unmatched: Array.from(r.unmatched, i => model.nodeIds[i]), numFixed: r.numFixed, maxResidual: r.maxResidual };
+}
+
+
+export interface IntersectionOptions {
+  /** A second surface: report where the two meet instead of self-intersections. */
+  other?: MdpaModel;
+  /** Keep at most this many pairs (default 0: all); the counts still cover every pair. */
+  maxPairs?: number;
+  /** Build the line mesh of the intersection segments (default true). */
+  segments?: boolean;
+}
+/** Entity ids per kind; the id lists are capped (`total` says how many there are). */
+export interface IntersectionCells { Elements: number[]; Conditions: number[]; Geometries: number[]; total: number }
+
+const INTERSECTION_ID_CAP = 20000;
+
+function surfaceProblem(model: MdpaModel, label: string): string | undefined {
+  if (model.blocks.some((b) => b.count > 0 && cellCategory(b.vtkCellType) === 'volume')) {
+    return `${label} has volume cells; intersections are tested between surface facets. Export its skin first (Advanced ▸ Export skin…).`;
+  }
+  return model.blocks.some((b) => b.count > 0 && cellCategory(b.vtkCellType) === 'surface') ? undefined : `${label} has no surface cells (triangles or quadrilaterals).`;
+}
+
+function cellsOf(model: MdpaModel, globalIds: Iterable<number>): IntersectionCells {
+  const blocks = meshioBlockOrder(model);
+  const starts: number[] = [];
+  let at = 0;
+  for (const b of blocks) { starts.push(at); at += b.count; }
+  const sets = { Elements: new Set<number>(), Conditions: new Set<number>(), Geometries: new Set<number>() };
+  let bi = 0;
+  for (const g of [...new Set(globalIds)].sort((a, b) => a - b)) {
+    while (bi + 1 < blocks.length && g >= starts[bi + 1]) bi++;
+    if (g < 0 || g >= at) continue;
+    sets[blocks[bi].kind].add(blocks[bi].entityIds[g - starts[bi]]);
+  }
+  const cap = (x: Set<number>) => [...x].slice(0, INTERSECTION_ID_CAP);
+  return { Elements: cap(sets.Elements), Conditions: cap(sets.Conditions), Geometries: cap(sets.Geometries), total: sets.Elements.size + sets.Conditions.size + sets.Geometries.size };
+}
+
+/**
+ * Where a surface intersects itself, or (`options.other`) where two surfaces interpenetrate or touch, by
+ * exact triangle-triangle tests (meshio++ >= 18.0.0). Read-only. `cells` names the facets of `model` that
+ * take part (and `otherCells` those of the second surface), so a viewer can select them; `segments` is the
+ * plain `{points, lines}` of the intersection curve.
+ */
+export async function findIntersectionsReport(model: MdpaModel, options: IntersectionOptions = {}) {
+  const problem = surfaceProblem(model, 'The mesh') ?? (options.other ? surfaceProblem(options.other, 'The second mesh') : undefined);
+  if (problem) throw new Error(problem);
+  if (options.maxPairs !== undefined && !(Number.isInteger(options.maxPairs) && options.maxPairs >= 0)) throw new Error('maxPairs must be a nonnegative integer.');
+  const m = await loadMeshio();
+  const r = m.findIntersections(modelToMeshio({ ...model, is3D: true }, []), {
+    ...(options.other ? { other: modelToMeshio({ ...options.other, is3D: true }, []) } : {}),
+    segments: options.segments ?? true,
+    ...(options.maxPairs ? { maxPairs: options.maxPairs } : {}),
+  });
+  const colA: number[] = [];
+  const colB: number[] = [];
+  for (let i = 0; i + 1 < r.pairs.length; i += 2) { colA.push(r.pairs[i]); colB.push(r.pairs[i + 1]); }
+  const cells = cellsOf(model, options.other ? colA : [...colA, ...colB]);
+  const otherCells = options.other ? cellsOf(options.other, colB) : undefined;
+  let segments: { points: number[]; lines: number[] } | undefined;
+  if (r.segments) {
+    const seg = meshioToModel(r.segments, []);
+    const index = new Map(Array.from(seg.nodeIds, (id, i) => [id, i]));
+    const lines: number[] = [];
+    for (const b of seg.blocks) for (let i = 0; i < b.count; i++) lines.push(2, index.get(b.connectivity[i * b.stride])!, index.get(b.connectivity[i * b.stride + 1])!);
+    segments = { points: Array.from(seg.coords), lines };
+  }
+  return {
+    mode: options.other ? 'two-surface' : 'self',
+    clean: r.clean, numPairs: r.numPairs, numTrianglePairs: r.numTrianglePairs, numCoplanar: r.numCoplanar, numSegments: r.numSegments,
+    numCellsA: r.numCellsA, numCellsB: r.numCellsB, truncated: r.truncated, warnings: r.warnings, cells, otherCells, segments,
+  };
 }

@@ -221,6 +221,12 @@ export function noteFieldFireFromMessage(
       noteFieldFire({ origin: originOverride ?? "Surface curvature", expectedKeys: keys });
       return;
     }
+    case "thickness": {
+      // One field per id space the surface lives in; the host decides which, so claim neither kind
+      // and let the inventory diff attribute whatever arrives (thickness.ts).
+      noteFieldFire({ origin: originOverride ?? "Wall thickness", expectedKeys: [] });
+      return;
+    }
     case "renameField": {
       // The field keeps its values under a new name: attribute the arrival so
       // the row does not surface as an anonymous "MCP/timeline" field.

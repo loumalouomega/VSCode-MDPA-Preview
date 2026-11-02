@@ -312,6 +312,14 @@ Add a variable by hand (`+ Add variable`), name it (e.g. `d`), and pick how to c
 
 Fields with no reconstructible definition (file fields and the like) render as locked rows — name, kind and origin, show-on-mesh, delete — and deleting any row removes only the row, never the field. A row tracks the field it produced: if the field vanishes (e.g. a time-series step replays without the async op that computed it), a definition row says so and offers recompute instead of keeping a stale "Computed.", while a tracking row simply leaves with it.
 
+### Wall thickness
+
+**Wall thickness** (meshio++ 18.0.0) casts a ray from each facet's centroid along its normal and writes the distance to the first surface it meets as a per-facet field (`THICKNESS`; Elemental for elements, Conditional for conditions). *direction* **inward** measures the wall, **outward** the clearance to the next surface, **auto** chooses from the orientation. A ray that reaches nothing leaves a **gap**, never a zero, and *below* counts the facets thinner than a limit and names the thinnest one. Surface meshes only: a mesh with volume cells is refused (export its skin first). Operation name `thickness`.
+
+### Optimize tetrahedra: objective
+
+The **Optimize tetrahedra** form has an *objective*: **Energy** (the original behaviour: ODT energy with scaled-Jacobian flips and relocation, unchanged for existing recipes) or **Worst angle** (meshio++ 18.0.0: raises the least dihedral angle and never lowers it, adding edge removal over rings of up to *ring* tetrahedra, multi-face removal and worst-cell smoothing). The result message reports the counts and the least dihedral angle before and after.
+
 ## Reorganizing the SubModelPart tree
 
 ![The organize menu open on a SubModelPart row: New child, Move under, the union / intersection / difference "with (new part)" groups, Merge into, and Edit membership pre-filled with kind = nodes and ids 1,2,5-8](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/organize-submodelpart.png)
