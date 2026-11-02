@@ -155,8 +155,8 @@ assert.equal(await fillAndClick({ "sr-clusters": 2 }, '[data-op="surfaceRemesh"]
 assert.equal(await fillAndClick({ "vm-cellsize": "" }, '[data-op="volumeMesh"]'), undefined, "no cell size posts nothing");
 m = await fillAndClick({ "vm-cellsize": 0.25, "vm-warp": 0.2, "vm-surface": false }, '[data-op="volumeMesh"]');
 assert.deepEqual(m, { type: "applyOp", op: "volumeMesh", cellSize: 0.25, keepSurface: false, warpFraction: 0.2 });
-m = await fillAndClick({ "ov-flip": false, "ov-relocate": true, "ov-boundary": true, "ov-iter": 25 }, '[data-op="optimizeVolume"]');
-assert.deepEqual(m, { type: "applyOp", op: "optimizeVolume", flip: false, relocate: true, preserveBoundary: true, maxIterations: 25 });
+m = await fillAndClick({ "ov-objective": "energy", "ov-ring": "", "ov-flip": false, "ov-relocate": true, "ov-boundary": true, "ov-iter": 25 }, '[data-op="optimizeVolume"]');
+assert.deepEqual(m, { type: "applyOp", op: "optimizeVolume", flip: false, relocate: true, preserveBoundary: true, maxIterations: 25, objective: "energy" });
 
 // --- Shrinkwrap / Sobolev / Compare need a target: no target, no message ---------------
 assert.equal(await fillAndClick({}, '[data-op="shrinkwrap"]'), undefined);
