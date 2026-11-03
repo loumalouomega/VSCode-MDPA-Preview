@@ -4808,3 +4808,29 @@ button.pt-preflight-row:hover,
   cursor: crosshair;
   touch-action: none;
 }
+
+/* Inspect ▸ Evaluation table: one snapshot row per pick. */
+.inspect-eval-scroll {
+  max-height: 160px;
+  overflow: auto;
+}
+
+.inspect-eval-table {
+  border-collapse: collapse;
+  font-family: var(--ui-font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--ui-fs-label);
+}
+
+.inspect-eval-table th,
+.inspect-eval-table td {
+  padding: 1px var(--ui-s-2);
+  white-space: nowrap;
+  text-align: right;
+}
+
+.inspect-eval-table th {
+  position: sticky;
+  top: 0;
+  background: inherit;
+}
