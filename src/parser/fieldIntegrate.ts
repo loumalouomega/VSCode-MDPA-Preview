@@ -35,6 +35,7 @@ import { sanitizeVariable } from "./meshioConvert";
 import { MeshioFieldIntegral } from "./meshio";
 import { MdpaDiagnostic, MdpaModel } from "./types";
 import { prepareMeshioOp } from "./meshioAdapter";
+import { integrateRevolved } from "./revolvedIntegrate";
 
 export interface IntegralTotals {
   numCells: number;
@@ -50,6 +51,8 @@ export interface FieldIntegral {
   domain: IntegralTotals;
   /** One entry per named Cell region — the per-block / per-SubModelPart split. */
   regions: (IntegralTotals & { name: string })[];
+  /** Set only for a revolved (axisymmetric) integral: the explicit axis, "x" or "y". */
+  revolvedAbout?: "x" | "y";
 }
 
 function totals(t: {
@@ -76,8 +79,13 @@ function totals(t: {
 export async function integrateFields(
   model: MdpaModel,
   variables: string[] = [],
-  diagnostics: MdpaDiagnostic[] = []
+  diagnostics: MdpaDiagnostic[] = [],
+  opts: { revolveAbout?: unknown } = {}
 ): Promise<FieldIntegral[]> {
+  if (opts.revolveAbout !== undefined) {
+    // Explicit, never inferred; a planar xy mesh only (see revolvedIntegrate.ts).
+    return integrateRevolved(model, variables, opts.revolveAbout);
+  }
   const wanted = variables.map((v) => v.trim()).filter((v) => v.length > 0);
   for (const v of wanted) {
     const f = model.fields.find((x) => x.variable === v);
