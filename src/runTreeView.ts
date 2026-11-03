@@ -143,7 +143,10 @@ class RunTreeProvider implements vscode.TreeDataProvider<Node> {
       out.push({ kind: "detail", label: romRowText(status), icon: romIconId(status) });
     }
     const saved = readMonitors(r.sourceMeshFsPath ?? r.meshFsPath).parsed.monitors.length;
-    if (saved > 0) out.push({ kind: "detail", label: monitorRowText([], saved), icon: "dashboard" });
+    if (saved > 0) {
+      const m = r.progress?.monitors;
+      out.push({ kind: "detail", label: monitorRowText(m?.summaries ?? [], saved, { frames: m?.frames, live: m?.live }), icon: "dashboard" });
+    }
     out.push({ kind: "detail", label: "Log", icon: "output" });
     if (r.status === "failed" && typeof r.exitCode === "number") {
       out.push({ kind: "detail", label: `Exit code ${r.exitCode}`, icon: "error" });

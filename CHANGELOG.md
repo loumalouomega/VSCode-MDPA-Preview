@@ -4,6 +4,12 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Saved monitors follow a running case.** While a Kratos run is live, its Monitors row in Kratos Runs refreshes from the frames written so far (watcher-driven, at most one evaluation every 2 s, the newest possibly-truncated frame left out) and reads "evaluated from N written frames"; when the run ends one final evaluation replaces it. Stopping a run cancels the refresh. Values come from published output files, never stdout.
+
 ## [5.29.0] - 2026-11-02
 
 ### Added
