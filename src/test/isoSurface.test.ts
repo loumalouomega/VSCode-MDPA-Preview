@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { computeIsoSurface } from "../parser/isoSurface";
+import { computeIsoSurface, quadraticDecomposition } from "../parser/isoSurface";
 import { FieldData, MdpaModel } from "../parser/types";
 import { VtkCellType } from "../parser/geometryMap";
 
@@ -216,4 +216,89 @@ test("quad9 and hex27: iso-lines / isosurface follow a field quadratic in x", ()
   assert.equal(s.is2D, false);
   assert.ok(s.triangles.length >= 3);
   for (let i = 0; i < s.points.length; i += 3) assert.ok(approx(s.points[i], 1, 1e-4), `x=${s.points[i]}`);
+});
+
+// --- 20-node hexahedra, 8-node quads, 15-node wedges (virtual centres) ---------------
+
+type N4 = [number, number, number, number];
+const avgOf = (P: number[][], ids: number[]): number[] => [0, 1, 2].map((d) => ids.reduce((a, c) => a + P[c][d], 0) / ids.length);
+const withIds = (pts: number[][]): N4[] => pts.map((p, i) => [i + 1, p[0], p[1], p[2]] as N4);
+const ids = (nodes: N4[]): number[] => nodes.map((n) => n[0]);
+const xSquared = (nodes: N4[]): Map<number, number> => new Map(nodes.map(([id, x]) => [id, x * x]));
+
+const HEX_P = [[0, 0, 0], [2, 0, 0], [2, 2, 0], [0, 2, 0], [0, 0, 2], [2, 0, 2], [2, 2, 2], [0, 2, 2]];
+const HEX_E = [[0, 1], [1, 2], [2, 3], [3, 0], [4, 5], [5, 6], [6, 7], [7, 4], [0, 4], [1, 5], [2, 6], [3, 7]];
+const HEX20 = withIds([...HEX_P, ...HEX_E.map((e) => avgOf(HEX_P, e))]);
+
+test("hex20: the isosurface follows a field quadratic in x; the corner-only one does not", () => {
+  const h = model(HEX20, VtkCellType.QUADRATIC_HEXAHEDRON, [ids(HEX20)], xSquared(HEX20));
+  const r = computeIsoSurface(h, h.fields[0], 1);
+  assert.equal(r.is2D, false);
+  assert.ok(r.triangles.length >= 3);
+  for (let i = 0; i < r.points.length; i += 3) assert.ok(approx(r.points[i], 1, 1e-4), `x=${r.points[i]}`);
+
+  const corners = HEX20.slice(0, 8);
+  const lin = model(corners, VtkCellType.HEXAHEDRON, [ids(corners)], xSquared(corners));
+  const c = computeIsoSurface(lin, lin.fields[0], 1);
+  assert.ok(Math.abs(c.points[0] - 1) > 0.2);
+});
+
+test("quad8: iso-lines follow a field quadratic in x", () => {
+  const Q = [[0, 0, 0], [2, 0, 0], [2, 2, 0], [0, 2, 0]];
+  const nodes = withIds([...Q, ...[[0, 1], [1, 2], [2, 3], [3, 0]].map((e) => avgOf(Q, e))]);
+  const m = model(nodes, VtkCellType.QUADRATIC_QUAD, [ids(nodes)], xSquared(nodes));
+  const r = computeIsoSurface(m, m.fields[0], 1);
+  assert.equal(r.is2D, true);
+  assert.ok(r.lines.length >= 2);
+  for (let i = 0; i < r.points.length; i += 3) assert.ok(approx(r.points[i], 1, 1e-4), `x=${r.points[i]}`);
+});
+
+test("wedge15: the isosurface follows a field quadratic in x", () => {
+  const W = [[0, 0, 0], [2, 0, 0], [0, 2, 0], [0, 0, 2], [2, 0, 2], [0, 2, 2]];
+  const mids = [[0, 1], [1, 2], [2, 0], [3, 4], [4, 5], [5, 3], [0, 3], [1, 4], [2, 5]].map((e) => avgOf(W, e));
+  const nodes = withIds([...W, ...mids]);
+  const m = model(nodes, VtkCellType.QUADRATIC_WEDGE, [ids(nodes)], xSquared(nodes));
+  const r = computeIsoSurface(m, m.fields[0], 1);
+  assert.equal(r.is2D, false);
+  assert.ok(r.triangles.length >= 3);
+  for (let i = 0; i < r.points.length; i += 3) assert.ok(approx(r.points[i], 1, 1e-4), `x=${r.points[i]}`);
+});
+
+test("virtual centres: weights sum to 1, and linear types have no quadratic decomposition", () => {
+  for (const [type, stride] of [
+    [VtkCellType.QUADRATIC_HEXAHEDRON, 20], [VtkCellType.QUADRATIC_QUAD, 8], [VtkCellType.QUADRATIC_WEDGE, 15],
+  ] as [number, number][]) {
+    const d = quadraticDecomposition(type, stride)!;
+    assert.ok(d.virtuals && d.virtuals.length > 0);
+    for (const v of d.virtuals) assert.ok(approx(v.weights.reduce((a, b) => a + b, 0), 1, 1e-12));
+  }
+  assert.equal(quadraticDecomposition(VtkCellType.HEXAHEDRON, 8), undefined);
+  assert.equal(quadraticDecomposition(VtkCellType.WEDGE, 6), undefined);
+  assert.equal(quadraticDecomposition(VtkCellType.QUAD, 4), undefined);
+});
+
+test("two hex20 cells sharing a face weld their shared centre: no duplicated points", () => {
+  const key = (p: number[]): string => p.map((v) => v.toFixed(6)).join(",");
+  const upper = HEX_P.map((p) => [p[0], p[1], p[2] + 2]);
+  const upperAll = [...upper, ...HEX_E.map((e) => avgOf(upper, e))];
+  const pts: number[][] = [];
+  const index = new Map<string, number>();
+  const conn = (all: number[][]): number[] =>
+    all.map((p) => {
+      const k = key(p);
+      if (!index.has(k)) {
+        index.set(k, pts.length + 1);
+        pts.push(p);
+      }
+      return index.get(k)!;
+    });
+  const c1 = conn([...HEX_P, ...HEX_E.map((e) => avgOf(HEX_P, e))]);
+  const c2 = conn(upperAll);
+  const nodes = withIds(pts);
+  const m = model(nodes, VtkCellType.QUADRATIC_HEXAHEDRON, [c1, c2], xSquared(nodes));
+  const r = computeIsoSurface(m, m.fields[0], 2); // no node sits on the level, so equal coordinates can only mean a missed weld
+  assert.ok(r.triangles.length >= 6);
+  const seen = new Set<string>();
+  for (let i = 0; i < r.points.length; i += 3) seen.add(key([r.points[i], r.points[i + 1], r.points[i + 2]]));
+  assert.equal(seen.size, r.points.length / 3, "every crossing point is unique");
 });
