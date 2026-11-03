@@ -10,7 +10,7 @@
 // Node unit tests — mirroring meshQuality.ts.
 
 import { FieldData, MdpaModel } from "./types";
-import { decompositionFor, CellDecomposition, HEX_TETS, QUAD_TRIS } from "./cellDecomposition";
+import { decompositionFor, CellDecomposition, HEX_TETS, QUAD_TRIS, WEDGE_TETS } from "./cellDecomposition";
 import { VtkCellType } from "./geometryMap";
 
 export interface IsoSurfaceResult {
@@ -77,7 +77,48 @@ function subCells(pos: number[][], corner: number[][], origins: number[][]): num
 const HEX27_SUBS = subCells(HEX27_POS, HEX_CORNER, [0, 1].flatMap((k) => [0, 1].flatMap((j) => [0, 1].map((i) => [i, j, k]))));
 const QUAD9_SUBS = subCells(QUAD9_POS, QUAD_CORNER, [0, 1].flatMap((j) => [0, 1].map((i) => [i, j])));
 
-export function quadraticDecomposition(cellType: number | undefined, stride: number): CellDecomposition | undefined {
+/**
+ * A point that is not a node of the cell but a weighted mix of its nodes (the
+ * serendipity shape functions evaluated at a face or body centre). `sources`
+ * are local node indices; the sub-cell tables refer to it as `corners + j`.
+ */
+export interface VirtualPoint {
+  sources: number[];
+  weights: number[];
+}
+export interface QuadraticDecomposition extends CellDecomposition {
+  virtuals?: VirtualPoint[];
+}
+
+// Serendipity centre of a face given by its 4 corner indices and the (index, corner pair) of its edge mids:
+// corners weigh -1/4 and the 4 mids 1/2, so the weights sum to 1 and depend only on the face's own 8 nodes.
+function faceCentre(corners: number[], edgeMids: number[]): VirtualPoint {
+  return { sources: [...corners, ...edgeMids], weights: [...corners.map(() => -0.25), ...edgeMids.map(() => 0.5)] };
+}
+// Hex20: virtual j = HEX27 index 20 + j (6 face centres in HEX_FACES order, then the body centre).
+const HEX20_VIRTUALS: VirtualPoint[] = [
+  ...HEX_FACES.map((f) =>
+    faceCentre(f, HEX_EDGES.map((e, i) => (f.includes(e[0]) && f.includes(e[1]) ? 8 + i : -1)).filter((i) => i >= 0))
+  ),
+  {
+    sources: [...Array(20).keys()],
+    weights: [...HEX_CORNER.map(() => -0.25), ...HEX_EDGES.map(() => 0.25)],
+  },
+];
+const QUAD8_VIRTUALS: VirtualPoint[] = [faceCentre([0, 1, 2, 3], [4, 5, 6, 7])];
+// Wedge15 (VTK): mids 6-8 bottom, 9-11 top, 12-14 vertical. The three quad-face centres sit at mid height.
+const WEDGE15_VIRTUALS: VirtualPoint[] = [
+  faceCentre([0, 1, 4, 3], [6, 13, 9, 12]),
+  faceCentre([1, 2, 5, 4], [7, 14, 10, 13]),
+  faceCentre([2, 0, 3, 5], [8, 12, 11, 14]),
+];
+// Eight sub-wedges: four triangles of the bottom layer (6,7,8 = bottom mids; 12-14 + 15-17 = the mid layer), then four of the top.
+const WEDGE15_SUBS = [
+  [0, 6, 8, 12, 15, 17], [6, 1, 7, 15, 13, 16], [8, 7, 2, 17, 16, 14], [6, 7, 8, 15, 16, 17],
+  [12, 15, 17, 3, 9, 11], [15, 13, 16, 9, 4, 10], [17, 16, 14, 11, 10, 5], [15, 16, 17, 9, 10, 11],
+];
+
+export function quadraticDecomposition(cellType: number | undefined, stride: number): QuadraticDecomposition | undefined {
   if (cellType === VtkCellType.QUADRATIC_TETRA && stride >= 10) {
     return {
       corners: 10,
@@ -96,7 +137,58 @@ export function quadraticDecomposition(cellType: number | undefined, stride: num
   if (cellType === VtkCellType.BIQUADRATIC_QUAD && stride >= 9) {
     return { corners: 9, tris: QUAD9_SUBS.flatMap((sub) => QUAD_TRIS.map((t) => t.map((k) => sub[k]))) };
   }
+  // 20-node hexahedra, 8-node quads and 15-node wedges have no face/body-centre node: they subdivide like their
+  // fuller cousins, with the missing centres supplied as virtual points (the sub-cell tables are shared).
+  if (cellType === VtkCellType.QUADRATIC_HEXAHEDRON && stride >= 20) {
+    return { corners: 20, virtuals: HEX20_VIRTUALS, tets: HEX27_SUBS.flatMap((sub) => HEX_TETS.map((t) => t.map((k) => sub[k]))) };
+  }
+  if (cellType === VtkCellType.QUADRATIC_QUAD && stride >= 8) {
+    return { corners: 8, virtuals: QUAD8_VIRTUALS, tris: QUAD9_SUBS.flatMap((sub) => QUAD_TRIS.map((t) => t.map((k) => sub[k]))) };
+  }
+  if (cellType === VtkCellType.QUADRATIC_WEDGE && stride >= 15) {
+    return { corners: 15, virtuals: WEDGE15_VIRTUALS, tets: WEDGE15_SUBS.flatMap((sub) => WEDGE_TETS.map((t) => t.map((k) => sub[k]))) };
+  }
   return undefined;
+}
+
+// Welded virtual points of one contouring run: a negative id per distinct set of contributing nodes, so two cells
+// sharing a face share its centre. Value and position are the same weighted mix of the contributors.
+interface VirtualRegistry {
+  ids: Map<string, number>;
+  coords: Map<number, Vec3>;
+}
+function attachVirtuals(
+  t: QuadraticDecomposition,
+  corner: number[],
+  scalar: Map<number, number>,
+  coordOf: (id: number) => Vec3 | undefined,
+  reg: VirtualRegistry
+): boolean {
+  if (!t.virtuals) return true;
+  for (const v of t.virtuals) {
+    const nodes = v.sources.map((k) => corner[k]);
+    const key = [...nodes].sort((a, b) => a - b).join("_");
+    let id = reg.ids.get(key);
+    if (id === undefined) {
+      let s = 0;
+      const c: Vec3 = [0, 0, 0];
+      for (let i = 0; i < nodes.length; i++) {
+        const sv = scalar.get(nodes[i]);
+        const cv = coordOf(nodes[i]);
+        if (sv === undefined || !cv) return false;
+        s += v.weights[i] * sv;
+        c[0] += v.weights[i] * cv[0];
+        c[1] += v.weights[i] * cv[1];
+        c[2] += v.weights[i] * cv[2];
+      }
+      id = -(reg.ids.size + 1);
+      reg.ids.set(key, id);
+      reg.coords.set(id, c);
+      scalar.set(id, s);
+    }
+    corner.push(id);
+  }
+  return true;
 }
 
 export function computeIsoSurface(
@@ -108,7 +200,9 @@ export function computeIsoSurface(
   for (let i = 0; i < model.nodeCount; i++) nodeIndex.set(model.nodeIds[i], i);
   const scalar = scalarByNode(field);
 
+  const virtual: VirtualRegistry = { ids: new Map(), coords: new Map() };
   const coordOf = (nodeId: number): Vec3 | undefined => {
+    if (nodeId < 0) return virtual.coords.get(nodeId);
     const idx = nodeIndex.get(nodeId);
     if (idx === undefined) return undefined;
     const o = idx * 3;
@@ -157,7 +251,7 @@ export function computeIsoSurface(
   }
 
   if (hasVolume) {
-    marchVolumes(model, isoValue, scalar, crossing, triangles);
+    marchVolumes(model, isoValue, scalar, crossing, triangles, coordOf, virtual);
     return {
       points: Float32Array.from(points),
       triangles: Uint32Array.from(triangles),
@@ -166,7 +260,7 @@ export function computeIsoSurface(
     };
   }
 
-  marchSurfaces(model, isoValue, scalar, crossing, lines);
+  marchSurfaces(model, isoValue, scalar, crossing, lines, coordOf, virtual);
   return {
     points: Float32Array.from(points),
     triangles: new Uint32Array(0),
@@ -181,10 +275,12 @@ function marchVolumes(
   isoValue: number,
   scalar: Map<number, number>,
   crossing: (a: number, b: number) => number | undefined,
-  out: number[]
+  out: number[],
+  coordOf: (id: number) => Vec3 | undefined,
+  virtual: VirtualRegistry
 ): void {
   for (const block of model.blocks) {
-    const t = quadraticDecomposition(block.vtkCellType, block.stride) ?? decompositionFor(block.vtkCellType);
+    const t: QuadraticDecomposition = quadraticDecomposition(block.vtkCellType, block.stride) ?? decompositionFor(block.vtkCellType);
     if (!t.tets) continue;
     for (let i = 0; i < block.count; i++) {
       const base = i * block.stride;
@@ -198,7 +294,7 @@ function marchVolumes(
         }
         corner.push(nid);
       }
-      if (!ok) continue;
+      if (!ok || !attachVirtuals(t, corner, scalar, coordOf, virtual)) continue;
       for (const tet of t.tets) {
         marchTet(
           corner[tet[0]],
@@ -266,10 +362,12 @@ function marchSurfaces(
   isoValue: number,
   scalar: Map<number, number>,
   crossing: (a: number, b: number) => number | undefined,
-  out: number[]
+  out: number[],
+  coordOf: (id: number) => Vec3 | undefined,
+  virtual: VirtualRegistry
 ): void {
   for (const block of model.blocks) {
-    const t = quadraticDecomposition(block.vtkCellType, block.stride) ?? decompositionFor(block.vtkCellType);
+    const t: QuadraticDecomposition = quadraticDecomposition(block.vtkCellType, block.stride) ?? decompositionFor(block.vtkCellType);
     if (!t.tris) continue;
     for (let i = 0; i < block.count; i++) {
       const base = i * block.stride;
@@ -283,7 +381,7 @@ function marchSurfaces(
         }
         corner.push(nid);
       }
-      if (!ok) continue;
+      if (!ok || !attachVirtuals(t, corner, scalar, coordOf, virtual)) continue;
       for (const tri of t.tris) {
         marchTri(
           corner[tri[0]],

@@ -1,6 +1,15 @@
 import { initAnalysisTools, isStaleAnalysisReply, requestAnalysis, showAnalysisResult } from "./analysisTools";
 // The renderer is reached ONLY through webview/render/backend.ts (roadmap
 // item 12); vtk.js itself lives under webview/render/vtkjs/.
+import {
+  appendEvaluationRow,
+  buildEvaluationRow,
+  evaluationGrid,
+  evaluationToCsv,
+  evaluationToTsv,
+  type EvaluationFieldInput,
+  type EvaluationRow,
+} from "../src/parser/evaluationTable";
 import { displayAlternatives, displayScaleFor, fieldUnitLabel, labelWithUnit } from "../src/parser/fieldDimensions";
 import type { GridAxes, OrientationMarker, PropStyle, RGeometry, RPlane, RProp, RView, RenderBackend, ScalarBar } from "./render/backend";
 import { createVtkJsBackend } from "./render/vtkjs/backend";
@@ -1632,6 +1641,8 @@ const PROBE_COLOR: RGB = [0.35, 0.8, 1.0];
 let inspectMode = false;
 let inspectVisible = false;
 let inspectSelection: InspectSelection | undefined;
+/** The Inspect Evaluation table: snapshot rows, kept across frames and model rebuilds. */
+let evaluationRows: EvaluationRow[] = [];
 let measuring = false;
 /** Nodes picked so far by the in-progress measurement (2, or 3 in Angle mode). */
 let measurePicked: { id: number; coords: [number, number, number] }[] = [];
@@ -7379,6 +7390,39 @@ function syncPickStatus(): void {
   );
 }
 
+/** Fields of a pick as evaluation inputs: the focused pane's display unit applies to its selected field. */
+function evaluationFields(fields: { variable: string; value: number | number[] }[], kind: "Elemental" | "Conditional" | "Nodal"): EvaluationFieldInput[] {
+  const pane = focusedPane();
+  return fields.map((f) => {
+    const info = fieldInfos.find((i) => i.field.kind === kind && i.field.variable === f.variable);
+    if (!info) return { variable: f.variable, value: f.value };
+    const selected = fieldVisible && pane.field.selectedKey === `${kind}:${f.variable}`;
+    const scale = selected ? paneDisplayScale(pane, info) : 1;
+    const unit = selected ? paneDisplayUnit(pane, info) : fieldUnitLabel(info.field);
+    return { variable: f.variable, value: f.value, unit, scale };
+  });
+}
+
+function recordEvaluationRow(selection: InspectSelection, pickKind: "Elements" | "Conditions" | "Geometries"): void {
+  const e = selection.entity;
+  const n = selection.node;
+  if (!e && !n) return;
+  const fieldKind = e ? PICK_FIELD_KIND[pickKind] : undefined;
+  const fields = [
+    ...(e && fieldKind ? evaluationFields(e.fields, fieldKind) : []),
+    ...(n ? evaluationFields(n.fields, "Nodal") : []),
+  ];
+  const row = buildEvaluationRow({
+    frame: timelineFrameCount > 1 ? currentStepLabel : undefined,
+    kind: e ? e.kind : "Node",
+    id: e ? e.id : n!.id,
+    nodeId: n?.id,
+    coords: n?.coords,
+    fields,
+  });
+  evaluationRows = appendEvaluationRow(evaluationRows, row);
+}
+
 function renderInspectUI(): void {
   syncPickStatus();
   const state: InspectPanelState = {
@@ -7393,9 +7437,18 @@ function renderInspectUI(): void {
     // A single-step vtkGroup still sets timelineVisible, and TimelineControl
     // then hides itself — a one-step "series" is not something to plot.
     canPlotSeries: timelineFrameCount > 1,
+    evaluation: evaluationRows.length ? evaluationGrid(evaluationRows) : undefined,
   };
   renderInspectPanel(inspectPanelEl, state, {
     onClose: () => hideInspectPanel(),
+    onEvaluationCopy: () => {
+      const text = evaluationToTsv(evaluationRows);
+      const done = (): void => { messageEl.textContent = t("Evaluation table copied."); };
+      if (navigator.clipboard?.writeText) navigator.clipboard.writeText(text).then(done, () => { messageEl.textContent = t("Copy failed."); });
+      else messageEl.textContent = t("Copy failed.");
+    },
+    onEvaluationExport: () => postAnalysisCsv(evaluationToCsv(evaluationRows), "evaluation"),
+    onEvaluationClear: () => { evaluationRows = []; renderInspectUI(); },
     onFrame: () => frameLayer(INSPECT_MARKER_ID),
     onPlotOverTime: (target,variable)=>{
       const selection=target==="node"?inspectSelection?.node:inspectSelection?.entity;if(!selection)return;
@@ -9333,6 +9386,7 @@ function handleInspectPick(displayX: number, displayY: number): void {
   }
 
   inspectSelection = selection;
+  recordEvaluationRow(selection, pick.kind);
   if(selection.node)plotPane.pick("Nodal",selection.node.id);
 
   // Marker: highlight the resolved entity's own cell when there is one

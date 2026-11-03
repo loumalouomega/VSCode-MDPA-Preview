@@ -3,6 +3,8 @@ import { describeResultExport, shouldAutoExport } from "./problemtype/resultExpo
 import { discoverOutputs } from './problemtype/outputDiscovery';
 import { solverArgv } from './problemtype/threadControl';
 import { readConvergenceSummary } from './problemtype/convergenceFile';
+import { MonitorRefreshThrottle } from './problemtype/monitorRefresh';
+import { evaluateMonitors, readMonitors } from './problemtype/monitorsFile';
 import { readOptimizationSummary } from './problemtype/optimization/summaryLogFile';
 /**
  * The run registry: the one place that knows which Kratos solves are in flight.
@@ -370,6 +372,7 @@ export class RunManager implements vscode.Disposable {
       this.sentinels.get(record.id)?.remove();
       this.sentinels.delete(record.id);
       this.writeSidecar(record);
+      this.stopMonitors(record.id, record);
       this.refreshProgress(record);
       // Terminal: the receipt freezes its artifact revisions, exactly as the
       // MCP server freezes the ones it observed.
@@ -463,6 +466,7 @@ export class RunManager implements vscode.Disposable {
     record.message = stopMessage(record.stopRung);
     record.endedAt = Date.now();
     this.writeSidecar(record);
+    this.stopMonitors(record.id, record);
     void this.settleReceipt(record);
     this.changed();
   }
@@ -545,6 +549,7 @@ export class RunManager implements vscode.Disposable {
       debounce = setTimeout(() => {
         this.refreshProgress(record);
         this.changed();
+        this.monitorThrottle(record)?.request();
       }, 500);
     };
     watcher.onDidCreate(schedule);
@@ -575,6 +580,58 @@ export class RunManager implements vscode.Disposable {
   private disposeWatcher(id: string): void {
     this.watchers.get(id)?.dispose();
     this.watchers.delete(id);
+    this.stopMonitors(id);
+  }
+
+  // ---- live monitors (roadmap item 26) --------------------------------------
+
+  private readonly monitorThrottles = new Map<string, { throttle: MonitorRefreshThrottle; abort: AbortController }>();
+
+  /** The throttle for a run with saved monitors, created on first use; undefined when there is nothing to refresh. */
+  private monitorThrottle(record: RunRecord): MonitorRefreshThrottle | undefined {
+    const existing = this.monitorThrottles.get(record.id);
+    if (existing) return existing.throttle;
+    if (!isLive(record)) return undefined;
+    const defs = readMonitors(record.sourceMeshFsPath ?? record.meshFsPath).parsed.monitors;
+    if (defs.length === 0) return undefined;
+    const abort = new AbortController();
+    const throttle = new MonitorRefreshThrottle({
+      now: () => Date.now(),
+      setTimer: (fn, ms) => setTimeout(fn, ms),
+      clearTimer: (h) => clearTimeout(h as ReturnType<typeof setTimeout>),
+      run: () => this.evaluateLiveMonitors(record, abort.signal),
+    });
+    this.monitorThrottles.set(record.id, { throttle, abort });
+    return throttle;
+  }
+
+  private async evaluateLiveMonitors(record: RunRecord, signal: AbortSignal): Promise<void> {
+    const defs = readMonitors(record.sourceMeshFsPath ?? record.meshFsPath).parsed.monitors;
+    if (defs.length === 0 || signal.aborted) return;
+    // The newest frame is left out by evaluateMonitors itself while the
+    // latest run is not `finished`, so a file still being written never adds a row.
+    const live = isLive(record);
+    const evaluation = await evaluateMonitors(record.meshFsPath, defs, { signal });
+    if (signal.aborted || !evaluation.available) return;
+    record.progress = {
+      ...(record.progress ?? {}),
+      monitors: { saved: defs.length, frames: evaluation.savedFrames, live, summaries: evaluation.summaries },
+    };
+    this.changed();
+  }
+
+  /** Stops refreshing; a terminal run gets one last full evaluation when `final` is set. */
+  private stopMonitors(id: string, final?: RunRecord): void {
+    const entry = this.monitorThrottles.get(id);
+    if (entry) {
+      entry.throttle.stop();
+      entry.abort.abort();
+      this.monitorThrottles.delete(id);
+    }
+    if (final) {
+      const finalAbort = new AbortController();
+      void this.evaluateLiveMonitors(final, finalAbort.signal).catch(() => undefined);
+    }
   }
 
   // ---- sidecar ------------------------------------------------------------
@@ -761,6 +818,7 @@ export class RunManager implements vscode.Disposable {
     this.capabilityEmitter.dispose();
     for (const w of this.watchers.values()) w.dispose();
     this.watchers.clear();
+    for (const id of [...this.monitorThrottles.keys()]) this.stopMonitors(id);
     for (const c of this.channels.values()) c.dispose();
     this.channels.clear();
     this.emitter.dispose();

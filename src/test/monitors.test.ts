@@ -308,3 +308,29 @@ test("two cases in one folder never share monitors", async () => {
   assert.equal(readMonitors(other).exists, false);
   assert.deepEqual(readMonitors(other).parsed.monitors, []);
 });
+
+test("a live run's monitor table grows one row per completed frame and ends equal to the post-run table", async () => {
+  const frames = ["Main_0_2.vtk", "Main_0_4.vtk", "Main_0_6.vtk"];
+  const { dir, mesh } = caseDir([]);
+  const sidecar = (status: string, extra: object = {}) =>
+    fs.writeFileSync(
+      path.join(dir, "beam.kratosrun.json"),
+      JSON.stringify({ version: 1, runId: "r1", stem: "beam", meshFile: "beam.mdpa", status, launchMode: "spawn", argv: ["python"], startedAt: 1, launchedBy: "extension", pid: process.pid, ...extra })
+    );
+  sidecar("running");
+  const seen: number[] = [];
+  for (const f of frames) {
+    fs.copyFileSync(path.join(VTK, f), path.join(dir, "vtk_output", f));
+    const ev = await evaluateMonitors(mesh, [point]);
+    seen.push(ev.available ? ev.savedFrames : 0);
+    assert.equal(ev.available && ev.partial, true);
+  }
+  // The newest written frame is withheld while the run is live, except that a
+  // lone first frame is kept (nothing else to show): 1, then 1, then 2 rows.
+  assert.deepEqual(seen, [1, 1, 2]);
+  sidecar("finished", { endedAt: 2, exitCode: 0, pid: undefined });
+  const final = await evaluateMonitors(mesh, [point]);
+  assert.equal(final.savedFrames, 3);
+  assert.equal(final.partial, false);
+  assert.deepEqual(final.results[0].table.rows.map((r) => Number((r[2] as number).toFixed(3))), [0.716, 3.032, 6.948]);
+});

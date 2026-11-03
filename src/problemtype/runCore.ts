@@ -11,6 +11,7 @@
 
 import type { ConvergenceSummary } from "./convergence";
 import type { OptimizationSummary } from "./optimization/summaryLog";
+import type { MonitorSummary } from "./monitors";
 import { TIMELINE_EXTENSIONS } from "../parser/meshFormats";
 import { VtkFileGroup, fileFor, groupVtkFiles } from "../parser/vtkFileGroup";
 
@@ -48,6 +49,8 @@ export interface RunProgress {
   convergence?: ConvergenceSummary;
   /** Read from an optimization case's summary file (optimization_parameters.json names it). */
   optimization?: OptimizationSummary;
+  /** Saved monitors evaluated from the frames written so far (roadmap item 26). */
+  monitors?: { saved: number; frames: number; live: boolean; summaries: MonitorSummary[] };
 }
 
 /**

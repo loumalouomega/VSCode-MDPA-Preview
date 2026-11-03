@@ -366,11 +366,13 @@ export function registerAllTools(server: McpServer): void {
     "mesh_field_integrate",
     {
       description:
-        "Cell-measure-weighted total and mean of the Elemental/Conditional fields — a density field's total mass, a flux field's total power, an occupied volume. Reported for the whole mesh AND independently per named region, which here means one row per entity block and one per SubModelPart, so this is the per-part breakdown. Regions overlap rather than partition: a cell in two of them contributes fully to each, so region totals need not sum to the domain total. A cell whose measure is not computable, or a component whose value is non-finite, is excluded from that component's numerator AND denominator rather than given a fallback weight of 1. Read-only. A Nodal field is refused by name — move it to the cells with mesh_transform's averageField (nodalToElemental) first.",
+        "Cell-measure-weighted total and mean of the Elemental/Conditional fields — a density field's total mass, a flux field's total power, an occupied volume. Reported for the whole mesh AND independently per named region, which here means one row per entity block and one per SubModelPart, so this is the per-part breakdown. Regions overlap rather than partition: a cell in two of them contributes fully to each, so region totals need not sum to the domain total. A cell whose measure is not computable, or a component whose value is non-finite, is excluded from that component's numerator AND denominator rather than given a fallback weight of 1. Read-only. A Nodal field is refused by name — move it to the cells with mesh_transform's averageField (nodalToElemental) first. For an axisymmetric result stored on the r-z plane, pass revolveAbout \"x\" (r = y) or \"y\" (r = x): each cell is then weighted by 2*pi*r and the result says \"revolved about <axis>\". Never inferred; a 3D mesh, a mesh crossing the axis or any other axis is refused by name. Without it the integral stays the plain r-z plane one, labelled as not revolved.",
       inputSchema: {
         path: meshPath,
         variables: z.array(z.string()).optional()
           .describe("Field names to integrate; omit for every cell field the mesh carries"),
+        revolveAbout: z.string().optional()
+          .describe("Explicit axis of revolution for a planar xy mesh: \"x\" or \"y\". Omit for the plane (r-z) integral"),
       },
     },
     runCancellable(meshFieldIntegrate)

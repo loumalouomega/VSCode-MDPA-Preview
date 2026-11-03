@@ -397,13 +397,14 @@ export function summarizeMonitor(table: PlotTable, def: MonitorDefinition): Moni
 const sci = (v: number): string => (v !== 0 && (Math.abs(v) < 1e-3 || Math.abs(v) >= 1e5) ? v.toExponential(2) : String(Number(v.toPrecision(4))));
 
 /** The one-line label for the Kratos Runs tree. Decisions live here, not in the view. */
-export function monitorRowText(summaries: readonly MonitorSummary[], saved: number): string {
+export function monitorRowText(summaries: readonly MonitorSummary[], saved: number, opts: { frames?: number; live?: boolean } = {}): string {
   if (saved === 0) return "Monitors — none saved";
   if (summaries.length === 0) return `Monitors — ${saved} saved`;
   const first = summaries[0];
   const v = first.last?.values.find((x) => x !== null);
   const tail = v !== undefined && v !== null ? ` · ${first.name} ${sci(v)}${first.unit ? ` ${first.unit}` : ""}` : "";
-  return `Monitors — ${saved} saved${tail}`;
+  const from = opts.live && opts.frames !== undefined ? ` · evaluated from ${opts.frames} written frame${opts.frames === 1 ? "" : "s"}` : "";
+  return `Monitors — ${saved} saved${tail}${from}`;
 }
 
 export interface MonitorResult {
