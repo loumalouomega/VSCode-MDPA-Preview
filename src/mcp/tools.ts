@@ -837,11 +837,16 @@ export async function meshQuality(args: {
 export async function meshFieldIntegrate(args: {
   path: string;
   variables?: string[];
+  revolveAbout?: string;
 }, execution: PlotExecution = {}): Promise<object> {
   const { model } = await loadMesh(args.path, undefined, undefined, undefined, undefined, undefined, execution.signal);
-  const integrals = await integrateFields(model, args.variables ?? []);
+  const integrals = await integrateFields(model, args.variables ?? [], [], { revolveAbout: args.revolveAbout });
   return {
     path: args.path,
+    frame:
+      args.revolveAbout === undefined
+        ? "plane integral (cell area/length weighted, NOT revolved)"
+        : `revolved about ${args.revolveAbout} (each cell weighted by 2*pi*r; planar xy mesh)`,
     integrals,
     // Regions are not a partition — a cell in two of them contributes fully to
     // both — so the region totals need not sum to the domain total. Said here
