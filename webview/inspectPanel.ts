@@ -66,6 +66,8 @@ export interface InspectPanelState {
   /** Whether a time series exists to plot against — knowable only in main.ts,
    *  and false in the MDPA preview, which has no timeline at all. */
   canPlotSeries?: boolean;
+  /** The Evaluation table as a string grid (header first), from evaluationTable.ts. */
+  evaluation?: string[][];
 }
 
 export interface InspectPanelHandlers {
@@ -88,6 +90,45 @@ export interface InspectPanelHandlers {
   onSavePointMonitor?(variable: string): void;
   /** Keep a regional quantity of a SubModelPart ("" = the whole mesh) as a monitor. */
   onSaveRegionMonitor?(path: string): void;
+  /** Evaluation table actions (rows are appended by each pick in main.ts). */
+  onEvaluationCopy?(): void;
+  onEvaluationExport?(): void;
+  onEvaluationClear?(): void;
+}
+
+function evaluationSection(grid: string[][], handlers: InspectPanelHandlers): HTMLElement {
+  const wrap = document.createElement("div");
+  wrap.className = "inspect-evaluation";
+  wrap.appendChild(section(t("Evaluation table") + ` (${Math.max(0, grid.length - 1)})`));
+  const actions = document.createElement("div");
+  actions.className = "inspect-actions";
+  const mk = (cls: string, label: string, fn?: () => void): void => {
+    const b = document.createElement("button");
+    b.className = `panel-btn ${cls}`;
+    b.textContent = label;
+    b.addEventListener("click", () => fn?.());
+    actions.appendChild(b);
+  };
+  mk("inspect-eval-copy", t("Copy"), handlers.onEvaluationCopy);
+  mk("inspect-eval-export", t("Export CSV"), handlers.onEvaluationExport);
+  mk("inspect-eval-clear", t("Clear"), handlers.onEvaluationClear);
+  wrap.appendChild(actions);
+  const scroll = document.createElement("div");
+  scroll.className = "inspect-eval-scroll";
+  const table = document.createElement("table");
+  table.className = "inspect-eval-table";
+  grid.forEach((cells, r) => {
+    const tr = document.createElement("tr");
+    for (const c of cells) {
+      const td = document.createElement(r === 0 ? "th" : "td");
+      td.textContent = c;
+      tr.appendChild(td);
+    }
+    table.appendChild(tr);
+  });
+  scroll.appendChild(table);
+  wrap.appendChild(scroll);
+  return wrap;
 }
 
 function fmtValue(v: number | [number, number, number]): string {
@@ -234,6 +275,7 @@ export function renderInspectPanel(
     hint.className = "inspect-summary";
     hint.textContent = t("Click a node, element, or condition on the mesh to inspect it.");
     container.appendChild(hint);
+    if (state.evaluation && state.evaluation.length > 1) container.appendChild(evaluationSection(state.evaluation, handlers));
     return;
   }
 
@@ -278,4 +320,5 @@ export function renderInspectPanel(
   frameBtn.textContent = t("Frame");
   frameBtn.addEventListener("click", () => handlers.onFrame());
   container.appendChild(frameBtn);
+  if (state.evaluation && state.evaluation.length > 1) container.appendChild(evaluationSection(state.evaluation, handlers));
 }
