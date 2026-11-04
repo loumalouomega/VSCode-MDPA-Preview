@@ -1360,9 +1360,10 @@ export function registerAllTools(server: McpServer): void {
       inputSchema: {
         left: z.string().describe("First run directory, or the path of its .kkss-execution.json"),
         right: z.string().describe("Second run directory, or the path of its .kkss-execution.json"),
+        quantity: z.any().optional().describe("Optional saved-monitor definition (same JSON as case_run_quantity's monitor) evaluated once on each side; the result gets a `quantity` table with one row per run"),
       },
     },
-    run(caseCompare)
+    runCancellable(caseCompare)
   );
 
   server.registerTool(

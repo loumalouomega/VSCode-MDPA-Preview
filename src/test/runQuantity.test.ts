@@ -7,6 +7,7 @@ import * as path from "node:path";
 import test from "node:test";
 
 import { runQuantity, runQuantityToCsv } from "../problemtype/runQuantity";
+import { caseCompare } from "../mcp/tools";
 import type { MonitorDefinition } from "../problemtype/monitors";
 
 const hash = (v: string): string => createHash("sha256").update(v).digest("hex");
@@ -52,4 +53,14 @@ test("a run that is not finished, or has no receipt, is a row with a reason", as
   assert.equal(q.rows[0].values, null);
   assert.match(q.rows[0].reason!, /running/);
   assert.match(q.rows[1].reason!, /receipt/);
+});
+
+test("case_compare takes a quantity and reports one row per side", async (t) => {
+  const a = makeRun(t, ["Main_0_2.vtk", "Main_0_4.vtk"], 100);
+  const b = makeRun(t, ["Main_0_2.vtk"], 200);
+  const r = (await caseCompare({ left: a, right: b, quantity: monitor })) as { quantity: { rows: { frames: number }[] } };
+  assert.deepEqual(r.quantity.rows.map((x) => x.frames), [2, 1]);
+  const plain = (await caseCompare({ left: a, right: b })) as { quantity?: unknown };
+  assert.equal(plain.quantity, undefined);
+  await assert.rejects(caseCompare({ left: a, right: b, quantity: { nope: 1 } }), /quantity:/);
 });

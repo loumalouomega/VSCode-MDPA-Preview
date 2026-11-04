@@ -4334,7 +4334,9 @@ export async function caseCompare(args: {
   left: string;
   /** Run directory (or its `.kkss-execution.json`) of the second run. */
   right: string;
-}): Promise<object> {
+  /** Optional saved-monitor definition evaluated once per side (the case_run_quantity rule), reported beside the comparison. */
+  quantity?: unknown;
+}, execution: PlotExecution = {}): Promise<object> {
   const directory = (value: string): string => {
     const abs = path.resolve(value);
     return path.basename(abs) === EXECUTION_FILE ? path.dirname(abs) : abs;
@@ -4344,8 +4346,16 @@ export async function caseCompare(args: {
     if (!fs.existsSync(dir)) throw new Error(`The ${label} run directory does not exist: ${dir}`);
   }
   const comparison = compareRuns(left, right);
+  let quantity: object | undefined;
+  if (args.quantity !== undefined) {
+    const { monitor, problem } = validateMonitor(args.quantity);
+    if (!monitor) throw new Error(`quantity: ${problem}`);
+    quantity = await runQuantity([left, right], monitor, { signal: execution.signal });
+    throwIfCancelled(execution.signal);
+  }
   return {
     ...comparison,
+    ...(quantity ? { quantity } : {}),
     // The receipts' own schema version, stated once, so an agent does not infer
     // comparability from a successful call.
     contract: { receipt: 1, preparation: 1 },
