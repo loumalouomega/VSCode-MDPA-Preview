@@ -14,6 +14,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   - **`mesh_graph`** (MCP): the node, clique or cell connectivity graph with degree statistics and the bandwidth of the numbering, and a METIS `.graph` / Scotch `.grf` file with `outputPath`.
   - **Compressed input:** the headless readers open `.gz` and single-file `.zip` meshes; `.bz2`, `.zst` and `.xz` are refused by name with the way out. The custom editors still open uncompressed files.
   - **Length units:** a unit a file states (STEP/IGES millimetres, UNV, CGNS, MED) becomes `source.units.coords` with the exact `coordsScale`; MED, UNV and CGNS write it back. `in` and `ft` are known units. MED's per-axis padded unit string collapses to one unit.
+  - Packaged `.vsix`: 59.05 MB.
   - `optimizeVolume` keeps defaulting to `energy` although upstream now defaults to `worst`. `apply_operations`, remote URL reads and third-party format entry points are Python-only upstream and are listed in `mesh_capabilities.operations.unavailable`.
   - Documentation: new screenshots `meshio181-derive.png` and `meshio181-forms.png` (`scripts/screenshots/capture-meshio181*.mjs`), a guide section in Mesh editing, and the README/MCP tool tables.
 
