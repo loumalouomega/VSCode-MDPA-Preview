@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- **Expressions and a Parameters table in the Problemtype forms (roadmap item 27).** Numeric fields accept `10[mm]`, `20[degC]` or `L/2` (a plain number stays a number), and a new Parameters card holds the `name = expression` table with a live value for each line. Numeric inputs lose their spinner arrows.
 - **Case expressions in vector fields (roadmap item 27).** Each component of a vector3 field (a load direction, a prescribed vector) may be a number, a unit-suffixed value or an expression over the case parameters; preflight reports a dimension mismatch as a `unit-mismatch` finding of its own.
 - **A per-run quantity can be plotted against a case parameter.** `case_run_quantity` takes `plotParameter` (a dotted path, or `"auto"`) and returns an inline plot recipe of the monitor value against that recorded parameter, one point per run (roadmap item 30).
 - **`mesh_recover_flux` handles 8- and 9-node quadrilateral faces** (consistent mass, exact for a uniform traction), and `SurfaceCondition3D9N` blocks now decode as biquadratic quads (roadmap item 45).

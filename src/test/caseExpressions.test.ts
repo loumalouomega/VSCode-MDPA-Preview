@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { evaluateParameters, resolveFieldExpression } from "../problemtype/caseExpressions";
+import { evaluateParameters, parseNumericText, previewParameters, resolveFieldExpression } from "../problemtype/caseExpressions";
 import { parseCaseJson, serializeCase } from "../problemtype/caseFile";
 import { generateCase } from "../problemtype/generate";
 import { defaultCaseState } from "../problemtype/api";
@@ -116,4 +116,22 @@ test("preflight reports a dimension mismatch under its own unit-mismatch code", 
   assert.ok(f, "a unit-mismatch finding");
   assert.equal(f!.severity, "warning");
   assert.ok(!report.findings.some((x) => x.code === "generate-warning" && /unit-mismatch/.test(x.message)));
+});
+
+test("numeric form text: plain numbers stay numbers, anything else is kept as an expression, blank is 0", () => {
+  assert.equal(parseNumericText("12.5"), 12.5);
+  assert.equal(parseNumericText(" -3e2 "), -300);
+  assert.equal(parseNumericText(""), 0);
+  assert.equal(parseNumericText("10[mm]"), "10[mm]");
+  assert.equal(parseNumericText("L/2"), "L/2");
+});
+
+test("the parameters table previews each line and names the one that does not evaluate", () => {
+  const rows = previewParameters([{ name: "L", expr: "2[m]" }, { name: "H", expr: "L * 3" }, { name: "bad", expr: "nope(" }, { name: "T", expr: "20[degC]" }]);
+  assert.equal(rows[0].error, false);
+  assert.match(rows[0].text, /^= 2 \(length/);
+  assert.equal(rows[1].error, false);
+  assert.match(rows[1].text, /^= 6/);
+  assert.equal(rows[2].error, true);
+  assert.equal(rows[3].error, false, "a bad line does not break the ones after it");
 });
