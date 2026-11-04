@@ -5,6 +5,7 @@
 // constant string is enough.
 
 import { TOOLBAR_ICONS } from "./toolbarIcons";
+import { FORMS_181, form181Html } from "./parser/meshio181Forms";
 import { glyph, type UiGlyphId } from "./uiGlyphs";
 import { PLOT_PANE_HTML } from "./parser/plot/html";
 import { localizeHtml, pickCatalogue } from "./parser/i18n/messages";
@@ -1289,6 +1290,7 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
                   <div class="edit-progress-msg"></div>
                 </div>
               </div>
+${FORMS_181.map((f) => form181Html(f, ic(f.icon as never), ic("play"), ic("stop"))).join("\n")}
               <div class="edit-form collapsed" id="errest-form">
                 <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("estimateError")}<span>Error estimate</span></button>
                 <div class="edit-form-row">

@@ -864,6 +864,12 @@ body {
     width: 100%;
   }
 }
+.edit-hint {
+  font-size: var(--ui-fs-label);
+  opacity: 0.7;
+  line-height: 1.35;
+}
+
 .edit-progress-msg {
   margin-top: 3px;
   font-size: var(--ui-fs-label);

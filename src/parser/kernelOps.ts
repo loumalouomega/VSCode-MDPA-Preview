@@ -30,7 +30,7 @@ import { loadMeshio, loadMeshioFull, meshioFullInstalled, type MeshioModule } fr
 import { triangleSurfaceOf } from "./gridSample";
 import { withKratosBlockNames, legalFields, type KernelMeshResult } from "./kernelMeshes";
 
-export const KERNEL_OP_KINDS = ["extrude", "revolve", "mirror", "boundaryLayer", "tetrahedralize", "errorSize", "checkConformity", "adapt", "discretizeLevelset", "meshDomain", "metricFromHessian", "findIntersections", "tetToPoly", "convexHull", "delaunay2d", "reconstructSurface", "estimateNormals"] as const;
+export const KERNEL_OP_KINDS = ["extrude", "revolve", "mirror", "boundaryLayer", "tetrahedralize", "errorSize", "checkConformity", "adapt", "discretizeLevelset", "meshDomain", "metricFromHessian", "findIntersections", "tetToPoly", "convexHull", "delaunay2d", "reconstructSurface", "estimateNormals", "parameterize"] as const;
 /** The kinds that need MMG, which only the full artifact links (meshio++ 18.0.0). */
 export const MMG_KERNEL_KINDS: readonly KernelOpKind[] = ["adapt", "discretizeLevelset", "meshDomain"];
 export type KernelOpKind = (typeof KERNEL_OP_KINDS)[number];
@@ -222,6 +222,18 @@ export async function kernelOpModel(model: MdpaModel, spec: KernelOpSpec, diagno
           `Reconstructed a surface from ${n(r.numSamples)} sample(s): ${n(r.numTriangles)} triangle(s), ${n(r.numComponents)} component(s)` +
           (r.estimatedNormals ? ", normals estimated" : "") + (r.numUndefined > 0 ? `; ${n(r.numUndefined)} lattice node(s) undefined (an open scan stays open)` : "") + ".",
         suffix: "reconstructed",
+      };
+    }
+    case "parameterize": {
+      const r = m.parameterize(input, options);
+      // MdpaModel has no texture-coordinate slot, so the atlas rides as an ordinary 2-component nodal field.
+      return {
+        model: read(r.mesh, { uv: "UV", parameterize_parent_point: "PARAMETERIZE_PARENT_NODE", parameterize_chart: "PARAMETERIZE_CHART" }),
+        summary:
+          `UV atlas: ${n(r.numCharts)} chart(s), ${n(r.numSeamPoints)} seam point(s) split, L2 stretch ${f(r.stretch)}, packing ${f(r.packingEfficiency)}` +
+          (r.numFlipped > 0 ? `, ${n(r.numFlipped)} FLIPPED triangle(s)` : "") + ". " +
+          "The coordinates are the nodal field UV (2 components) — a .vtu or .mdpa keeps it; OBJ/glTF texture coordinates are not written by this extension.",
+        suffix: "uv",
       };
     }
     case "estimateNormals": {

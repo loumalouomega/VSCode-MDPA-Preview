@@ -88,7 +88,8 @@ test("every operation example passes the host validator and keeps all its keys",
 test("every declared parameter of an operation is a key its validator reads", () => {
   // Feed each parameter with a plausible value and look for it in the record
   // of the cheapest accepted example: catches a param name the host never reads.
-  const src = read("src/parser/operations.ts");
+  // The meshio++ 18.1.0 ops keep their keys in meshio181.ts (validated by its SPECS table).
+  const src = read("src/parser/operations.ts") + read("src/parser/meshio181.ts");
   for (const c of COMMANDS.filter((x) => x.exec.kind === "op")) {
     for (const p of c.params) {
       const re = new RegExp(`\\b${p.name}\\b`);

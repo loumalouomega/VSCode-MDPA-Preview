@@ -71,6 +71,7 @@ import {
   MeshioMesh,
   MeshioMeshInfo,
   applyMedDimensions,
+  lengthUnitName,
   meshioToModel,
   modelToMeshio,
 } from "./meshioConvert";
@@ -1721,7 +1722,9 @@ function medInfoToSource(info: MeshioMedInfo): SourceMetadata {
   for (const [name, [uni]] of Object.entries(info.fieldUnits)) {
     if (uni.trim().length > 0) fields[name] = uni;
   }
-  const coords = info.unitCoords.trim();
+  // MED stores one 16-character unit per axis ("mm  mm  mm"); equal axes collapse to the one unit.
+  const axisUnits = info.unitCoords.trim().split(/\s+/).filter(Boolean);
+  const coords = axisUnits.length > 0 && axisUnits.every((u) => u === axisUnits[0]) ? axisUnits[0] : info.unitCoords.trim();
   const time = info.unitTime.trim();
   if (coords.length > 0 || time.length > 0 || Object.keys(fields).length > 0) {
     source.units = {
@@ -1985,7 +1988,9 @@ async function readModelWith(
       if (augment) augment(mesh, diagnostics);
       const model = meshioToModel(mesh, diagnostics);
       if (medInfo) {
+        const fromFile = model.source?.units?.coordsScale;
         model.source = medInfoToSource(medInfo);
+        if (fromFile !== undefined) model.source = { ...model.source, units: { ...(model.source.units ?? {}), coordsScale: fromFile, ...(model.source.units?.coords ? {} : (lengthUnitName(fromFile) ? { coords: lengthUnitName(fromFile) } : {})) } };
         applyMedDimensions(model, medInfo.fieldUnits);
       }
       // The NURBS side channel: kept ON the model for the IGA derive kinds,
@@ -2516,6 +2521,7 @@ export async function writeMeshioBytes(
   // else it would simply drop. See modelToMeshio's `exodusAttributes`.
   const mesh = modelToMeshio(model, opts.diagnostics ?? [], {
     exodusAttributes: fmt === "exodus",
+    lengthUnit: fmt === "med" || fmt === "unv" || fmt === "cgns",
     dim: fmt === "triangle" ? 2 : 3,
     // Zone files come from the parts: no per-block cell region (a block is
     // not a zone) and face zones as side regions (former roadmap item 13, delivered 2026-10-19).
