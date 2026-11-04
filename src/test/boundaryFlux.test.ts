@@ -66,3 +66,38 @@ test("refusals: unknown part, missing field, non-surface faces", () => {
   assert.throws(() => recoverBoundaryFlux(m, { part: "Nope", variable: "REACTION" }), /No SubModelPart/);
   assert.throws(() => recoverBoundaryFlux(m, { part: "Wall", variable: "FORCE" }), /No Nodal field/);
 });
+
+// One unit-square face as an 8- and a 9-node quadrilateral (VTK order). Consistent loads of a uniform
+// traction on the unit square: serendipity corner -1/12, mid 1/3; Lagrange corner 1/36, mid 1/9, centre 4/9.
+const QUAD_NODES = `Begin Nodes
+1 0 0 0
+2 1 0 0
+3 1 1 0
+4 0 1 0
+5 0.5 0 0
+6 1 0.5 0
+7 0.5 1 0
+8 0 0.5 0
+9 0.5 0.5 0
+End Nodes
+`;
+const quadCase = (name: string, conn: string, loads: number[]): ReturnType<typeof parseMdpa> =>
+  parseMdpa(
+    QUAD_NODES +
+      `Begin Conditions ${name}\n1 0 ${conn}\nEnd Conditions\nBegin SubModelPart Wall\n  Begin SubModelPartConditions\n  1\n  End SubModelPartConditions\nEnd SubModelPart\n` +
+      nodeLoads([0, 0, 5], Object.fromEntries(loads.map((w, i) => [i + 1, w])))
+  );
+
+test("8- and 9-node quadrilateral faces recover a uniform traction exactly (item 45)", () => {
+  const cases: [string, string, number[]][] = [
+    ["SurfaceCondition3D8N", "1 2 3 4 5 6 7 8", [-1 / 12, -1 / 12, -1 / 12, -1 / 12, 1 / 3, 1 / 3, 1 / 3, 1 / 3]],
+    ["SurfaceCondition3D9N", "1 2 3 4 5 6 7 8 9", [1 / 36, 1 / 36, 1 / 36, 1 / 36, 1 / 9, 1 / 9, 1 / 9, 1 / 9, 4 / 9]],
+  ];
+  for (const [name, conn, loads] of cases) {
+    const r = recoverBoundaryFlux(quadCase(name, conn, loads), { part: "Wall", variable: "REACTION" });
+    const f = r.model.fields.find((x) => x.variable === "REACTION_RECOVERED")!;
+    for (let i = 0; i < f.ids.length; i++) assert.ok(Math.abs(f.values[i * 3 + 2] - 5) < 1e-8, `${name} node ${f.ids[i]} = ${f.values[i * 3 + 2]}`);
+    assert.ok(Math.abs(r.area - 1) < 1e-12, `${name} area ${r.area}`);
+    assert.ok(r.integralError < 1e-9);
+  }
+});

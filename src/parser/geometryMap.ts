@@ -120,6 +120,10 @@ export function decodeTypeName(rawName: string, kind?: "Elements" | "Conditions"
     const face = CONDITION_3D_FACES[decoded.vtkCellType];
     if (face !== undefined) decoded.vtkCellType = face;
   }
+  // No 9-node volume cell exists, so `SurfaceCondition3D9N` only has the face reading: a biquadratic quad.
+  if (kind === "Conditions" && decoded.dimension === 3 && decoded.vtkCellType === undefined && decoded.nodeCount === 9) {
+    decoded.vtkCellType = VtkCellType.BIQUADRATIC_QUAD;
+  }
   return decoded;
 }
 
