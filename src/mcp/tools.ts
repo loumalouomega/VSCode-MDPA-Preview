@@ -163,7 +163,7 @@ import {
 } from "../parser/constraintsParser";
 import { beamStats, defaultBeamRadius } from "../parser/beamElements";
 import { findIsolatedNodeIds } from "../parser/isolatedNodes";
-import { CaseState, JsonValue, MaterialAssignment, ProblemtypeRuntime, ProblemtypeSource } from "../problemtype/types";
+import { CaseState, FieldSpec, JsonValue, MaterialAssignment, ProblemtypeRuntime, ProblemtypeSource } from "../problemtype/types";
 import { BUILTIN_PROBLEMTYPES } from "../problemtype/builtins";
 import { generateCase, subModelPartPaths } from "../problemtype/generate";
 import { preflightCase } from "../problemtype/preflight";
@@ -177,6 +177,7 @@ import { describeMissingApplications } from "../problemtype/applications";
 import { defaultCaseState, flattenValues } from "../problemtype/api";
 import { adviseLinearSolver } from "../problemtype/solverAdvice";
 import { adviseElementSize } from "../problemtype/sizeAdvice";
+import { unitOfField } from "../problemtype/materialCatalog";
 import { runQuantityPlotRecipe } from "../problemtype/runQuantityPlot";
 import { planCaseMesh } from "../problemtype/caseMesh";
 import {
@@ -3184,7 +3185,29 @@ export async function problemtypeDescribe(args: {
   const runtime = await resolveRuntime(args.problemtype, args.workspaceDirs);
   // The declaration is JSON-able by design; the default CaseState is the
   // skeleton a client edits and feeds to case_write_state / case_generate.
-  return { declaration: runtime.decl, defaultState: defaultCaseState(runtime.decl) };
+  // The unit each numeric field really takes (a declared `unit`, a bracket in the label or a known Kratos
+  // variable), so a client can write `10[mm]` or a parameter expression knowing what it will be converted to.
+  const unitsOf = (fields: readonly FieldSpec[] | undefined): Record<string, string> => {
+    const out: Record<string, string> = {};
+    for (const f of fields ?? []) {
+      if (f.type !== "number" && f.type !== "int" && f.type !== "vector3") continue;
+      const u = unitOfField(f);
+      if (u) out[f.id] = u;
+    }
+    return out;
+  };
+  const d = runtime.decl;
+  const fieldUnits = {
+    sections: Object.fromEntries(d.sections.map((x) => [x.id, unitsOf(x.fields)])),
+    conditions: Object.fromEntries(d.conditions.map((c) => [c.id, unitsOf(c.fields)])),
+    materialLaws: Object.fromEntries(d.materialLaws.map((l) => [l.id, unitsOf(l.variables)])),
+  };
+  return {
+    declaration: runtime.decl,
+    defaultState: defaultCaseState(runtime.decl),
+    fieldUnits,
+    expressions: "Numeric and vector3 fields accept a number, a unit-suffixed value (10[mm], 20[degC]) or an expression over the case's `parameters` table ({name, expr} entries in the case state); they are resolved to numbers in the field's unit at generation.",
+  };
 }
 
 // --- case tools ---------------------------------------------------------------

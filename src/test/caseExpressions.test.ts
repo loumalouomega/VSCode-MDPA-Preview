@@ -135,3 +135,14 @@ test("the parameters table previews each line and names the one that does not ev
   assert.equal(rows[2].error, true);
   assert.equal(rows[3].error, false, "a bad line does not break the ones after it");
 });
+
+test("problemtype_describe reports the unit each numeric field takes", async () => {
+  const { problemtypeDescribe } = await import("../mcp/tools");
+  const d = (await problemtypeDescribe({ problemtype: "structural" })) as {
+    fieldUnits: { materialLaws: Record<string, Record<string, string>> };
+    expressions: string;
+  };
+  const youngUnits = Object.values(d.fieldUnits.materialLaws).flatMap((v) => Object.entries(v)).find(([k]) => k === "YOUNG_MODULUS");
+  assert.ok(youngUnits, "YOUNG_MODULUS has a known unit");
+  assert.match(d.expressions, /10\[mm\]/);
+});
