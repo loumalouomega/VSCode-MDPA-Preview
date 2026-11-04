@@ -69,7 +69,7 @@ import { DeriveSpec, DERIVE_KINDS, DERIVE_STANDALONE_KINDS, recordedDeriveParame
 import { GENERATOR_SHAPES, GeneratorShape, cadSurfaceOptionsFrom, CadSurfaceOptionsInput } from "../parser/kernelMeshes";
 import { KERNEL_OP_KINDS, KernelOpKind } from "../parser/kernelOps";
 import type { StreamSeeds } from "../parser/streamlines";
-import { writeRawMeshioBytes } from "../parser/meshio";
+import { writeRawMeshioBytes, type MeshioCadReadOptions } from "../parser/meshio";
 import { probeAlongPath, probeToCsv } from "../parser/pathProbe";
 import { partitionManifest } from "../parser/partitionExport";
 import { deriveMeshOffThread, partitionPartsOffThread } from "../parser/derivedRunner";
@@ -301,7 +301,9 @@ export async function loadMesh(
    */
   signal?: AbortSignal,
   /** Selective field read (meshio++ formats only); bypasses the cache like `piece`. */
-  fields?: string[]
+  fields?: string[],
+  /** STEP/IGES read controls (meshio++ 18.3.0, full artifact); bypasses the cache like `piece`. */
+  cadRead?: MeshioCadReadOptions
 ): Promise<{ model: MdpaModel; ext: string; sourceText?: string }> {
   if (signal?.aborted) throw new Error("cancelled");
   const abs = path.resolve(fsPath);
@@ -332,8 +334,12 @@ export async function loadMesh(
   if (fields !== undefined && !isMeshioReadExtension(ext)) {
     throw new Error(`fields is only accepted for the extended (meshio++) formats, not "${ext}".`);
   }
+  if (cadRead !== undefined && ![".step", ".stp", ".iges", ".igs"].includes(ext) && inputFormat !== "step" && inputFormat !== "iges") {
+    throw new Error(`cadRead is only accepted for STEP/IGES files, not "${ext}".`);
+  }
   const bypassCache =
     fields !== undefined ||
+    cadRead !== undefined ||
     Boolean(inputFormat) ||
     (timeStep !== undefined && timeStep !== 0) ||
     piece !== undefined ||
@@ -363,6 +369,7 @@ export async function loadMesh(
       dropGhosts,
       foamRegion: region,
       fields,
+      cadRead,
       signal,
     });
   } else {
@@ -572,6 +579,8 @@ export async function meshInfo(args: {
   region?: string;
   /** Read only these point/cell data arrays (meshio++ formats; upstream names, case-sensitive). */
   fields?: string[];
+  /** STEP/IGES read controls (triangulation deflection, shape healing). */
+  cadRead?: MeshioCadReadOptions;
 }, execution: PlotExecution = {}): Promise<object> {
   if (args.summary === true) {
     // Two combination errors only — never an ineligibility refusal.
@@ -625,7 +634,8 @@ export async function meshInfo(args: {
     args.dropGhosts,
     args.region,
     execution.signal,
-    args.fields
+    args.fields,
+    args.cadRead
   );
   // Gated on IN_FILE_TIMELINE_EXTENSIONS, not every meshio format: Exodus's
   // readMetadata always falls back to a full read
@@ -1866,6 +1876,8 @@ export async function meshConvert(args: {
   region?: string;
   /** Read only these point/cell data arrays (meshio++ formats; upstream names, case-sensitive). */
   fields?: string[];
+  /** STEP/IGES read controls (triangulation deflection, shape healing). */
+  cadRead?: MeshioCadReadOptions;
   /** The `.step` target's fit controls (see StepFitOptions); `false` writes the faceted solid only. Other targets ignore it. */
   fitCad?: StepFitOptions | false;
   provenance?: string;
@@ -1879,7 +1891,8 @@ export async function meshConvert(args: {
     args.dropGhosts,
     args.region,
     execution.signal,
-    args.fields
+    args.fields,
+    args.cadRead
   );
   const warnings: string[] = [];
   const { path: written, report } = await writeModelReported(
@@ -2015,7 +2028,9 @@ export async function meshDerive(args: {
     | "delaunay2d"
     | "reconstructSurface"
     | "estimateNormals"
-    | "parameterize";
+    | "parameterize"
+    | "cutLevelSet"
+    | "cutQuadrature";
   outputPath: string;
   outputFormat?: string;
   /** Read this step of a multi-step file instead of the first (the frame every kind works on). */

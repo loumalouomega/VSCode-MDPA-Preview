@@ -71,6 +71,7 @@ export interface MeshCapabilities {
     kahip: boolean;
     /** Netgen / MMG backends linked (meshio++ >= 18.0.0): false on the lean build, true on the full one. */
     netgen: boolean;
+    cutcells: boolean;
     mmg: boolean;
     /** MMG's ELAS library, which `move` needs: false on both artifacts (GPL-3.0). */
     mmgElas: boolean;
@@ -94,6 +95,7 @@ export interface MeshCapabilities {
       bzip2: boolean;
       kahip: boolean;
       netgen: boolean;
+      cutcells: boolean;
       mmg: boolean;
       mmgElas: boolean;
       readers: string[];
@@ -285,6 +287,7 @@ export async function getMeshCapabilities(): Promise<MeshCapabilities> {
       occt: m.hasOcct(),
       kahip: m.hasKahip(),
       netgen: m.hasNetgen(),
+      cutcells: m.hasCutcells(),
       mmg: m.hasMmg(),
       mmgElas: m.hasMmgElas(),
       zstd: m.hasZstd(),
@@ -298,9 +301,10 @@ export async function getMeshCapabilities(): Promise<MeshCapabilities> {
     unroutedReaders,
     writers: { ...MESHIO_WRITE_FORMAT },
     namedWriters: [...MESHIO_WRITER_KEYS],
-    operations: { available: ["featureEdges", "hausdorff", "qualityGate", "periodicNodes", "regionAlgebra", "resampleSequence", "segment", "refinePatches", "fitPrimitives (mesh_fit_primitives)", "octree", "octreeMesh", "meshCadSurface", "projectToCad", "extrude", "revolve", "mirror", "boundaryLayer", "tetrahedralize", "errorSize", "checkConformity", "adapt (full artifact; mesh_derive)", "discretizeLevelset (full artifact; mesh_derive)", "meshDomain (full artifact; mesh_derive)", "metricFromHessian", "findIntersections (mesh_intersections)", "thickness", "selectRegion", "tetToPoly (mesh_derive; a .vtu keeps the polyhedra)", "convexHull (mesh_derive)", "delaunay2d (mesh_derive)", "reconstructSurface (mesh_derive)", "estimateNormals (mesh_derive)", "parameterize (mesh_derive; UV as the nodal field UV)", "untangle", "morph", "registerRigid", "geodesicDistance", "laplacianEigenmodes", "convertCoordinates", "prepareMetric", "adjacency / writeGraph (mesh_graph)", "generators (rectangle, box, disk, uvSphere, icosaSphere, cylinder, referenceCells, referenceTriangle, ngon, annulus, lshape, plateWithHole, honeycomb, line, circle, helix, spherePoints, boxPoints, tetraSphere, octaSphere, cubeSphere, geoSphere, torus, moebius, tube, cone, capsule, boxSurface, platonic, ball, sphericalShell, pipe, fichera, solidTorus)"], unavailable: [
+    operations: { available: ["featureEdges", "hausdorff", "qualityGate", "periodicNodes", "regionAlgebra", "resampleSequence", "segment", "refinePatches", "fitPrimitives (mesh_fit_primitives)", "octree", "octreeMesh", "meshCadSurface", "projectToCad", "extrude", "revolve", "mirror", "boundaryLayer", "tetrahedralize", "errorSize", "checkConformity", "adapt (full artifact; mesh_derive)", "discretizeLevelset (full artifact; mesh_derive)", "meshDomain (full artifact; mesh_derive)", "metricFromHessian", "findIntersections (mesh_intersections)", "thickness", "selectRegion", "tetToPoly (mesh_derive; a .vtu keeps the polyhedra)", "convexHull (mesh_derive)", "delaunay2d (mesh_derive)", "reconstructSurface (mesh_derive)", "estimateNormals (mesh_derive)", "cutLevelSet (full artifact; mesh_derive)", "cutQuadrature (full artifact; mesh_derive)", "STEP/IGES cadRead (full artifact; mesh_info/mesh_convert cadRead)", "parameterize (mesh_derive; UV as the nodal field UV)", "untangle", "morph", "registerRigid", "geodesicDistance", "laplacianEigenmodes", "convertCoordinates", "prepareMetric", "adjacency / writeGraph (mesh_graph)", "generators (rectangle, box, disk, uvSphere, icosaSphere, cylinder, referenceCells, referenceTriangle, ngon, annulus, lshape, plateWithHole, honeycomb, line, circle, helix, spherePoints, boxPoints, tetraSphere, octaSphere, cubeSphere, geoSphere, torus, moebius, tube, cone, capsule, boxSurface, platonic, ball, sphericalShell, pipe, fichera, solidTorus)"], unavailable: [
       { name: "agglomerate", reason: "Polyhedral output cannot be preserved by the editable model." },
       { name: "move", reason: "meshio++ 18.0.0's MMG move needs MMG's ELAS library, which neither artifact links (GPL-3.0), so it always throws by name." },
+      { name: "remeshQuads", reason: "meshio++ 18.3.0's field-aligned quad remesher drives QuadriFlow or Instant Meshes as separate programs, which WebAssembly cannot run, so it always throws by name." },
       { name: "polyToTet", reason: "The extension already decomposes every polyhedron into tetrahedra when it reads a mesh (polyhedronDecompose.ts), so there is nothing polyhedral left to apply it to." },
       { name: "apply_operations / remote URL reads / third-party format entry points", reason: "Python-only in meshio++ 18.1.0 (absent from the WASM binding)." },
       { name: "retagRegions", reason: "SubModelParts do not retain native region tags or side selectors." }
@@ -344,6 +348,7 @@ async function probeFullArtifact(): Promise<MeshCapabilities["full"]> {
         bzip2: fm.hasBzip2(),
         kahip: fm.hasKahip(),
         netgen: fm.hasNetgen(),
+        cutcells: fm.hasCutcells(),
         mmg: fm.hasMmg(),
         mmgElas: fm.hasMmgElas(),
         readers: [...live.readers].sort(),

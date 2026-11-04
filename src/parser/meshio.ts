@@ -304,6 +304,15 @@ export interface MeshioModule {
   hasMmg(): boolean;
   /** MMG's ELAS library, which `move` needs: false in BOTH artifacts (GPL-3.0), so `move` always throws. */
   hasMmgElas(): boolean;
+  /**
+   * meshio++ >= 18.3.0. CutCells is linked into NEITHER artifact yet, so this is false and
+   * `cutLevelSet`/`cutQuadrature` throw naming it; `remeshQuads` needs QuadriFlow / Instant
+   * Meshes as separate programs, which WebAssembly cannot run, and always throws. None is routed.
+   */
+  hasCutcells(): boolean;
+  cutLevelSet(mesh: MeshioMesh, options?: Record<string, unknown>): unknown;
+  cutQuadrature(mesh: MeshioMesh, options?: Record<string, unknown>): unknown;
+  remeshQuads(mesh: MeshioMesh, options?: Record<string, unknown>): unknown;
 
   /**
    * meshio++ >= 18.0.0 MMG kernels (full artifact only; options are named-option objects
@@ -631,6 +640,15 @@ export interface MeshioModule {
        * every other reader ignores this option.
        */
       dropGhosts?: boolean;
+      /**
+       * meshio++ >= 18.3.0, STEP/IGES (full artifact) only: how the shape is read.
+       * `deflection` (a length, <= 0 automatic) and `angularDeflection` (radians,
+       * default 0.5) drive the triangulation; `heal` heals the shape before it is
+       * extracted, then sews at `sewTolerance` (<= 0 automatic; a positive value
+       * sews even without `heal`). The heal report is the `heal` member of the
+       * JSON in the B-rep side channel's file-level `extra` (needs `info`).
+       */
+      cadRead?: MeshioCadReadOptions | null;
     }
   ): MeshioMesh;
   readMetadata(p: string, format?: string): MeshioMetadata;
@@ -1746,10 +1764,50 @@ function medInfoToSource(info: MeshioMedInfo): SourceMetadata {
  */
 export type MeshioAugment = { kind: "openfoam"; parsed: OpenFoamParsedField[] };
 
+/** The four STEP/IGES read controls of meshio++ 18.3.0's `readMeshSelective`. */
+export interface MeshioCadReadOptions {
+  deflection?: number;
+  angularDeflection?: number;
+  heal?: boolean;
+  sewTolerance?: number;
+}
+
+/**
+ * One sentence for the heal report a STEP/IGES read with `cadRead` carries in its B-rep side
+ * channel (`info.extra` is a JSON string whose `heal` member is the report). Tolerant by design:
+ * a missing or unparsable report is simply no sentence, never an error.
+ */
+export function describeCadHeal(info: unknown): string | undefined {
+  const extra = (info as { extra?: unknown } | undefined)?.extra;
+  if (typeof extra !== "string") return undefined;
+  let heal: Record<string, unknown> | undefined;
+  try {
+    heal = (JSON.parse(extra) as { heal?: Record<string, unknown> }).heal;
+  } catch {
+    return undefined;
+  }
+  if (!heal || typeof heal !== "object") return undefined;
+  const num = (k: string) => (typeof heal![k] === "number" ? (heal![k] as number) : undefined);
+  const parts: string[] = [heal.healed === true ? "shape healed" : "shape not healed"];
+  if (heal.fixed === true) parts.push("fixes applied");
+  const tol = num("sew_tolerance");
+  if (tol !== undefined) parts.push(`sewn at ${tol}`);
+  const before = num("free_edges_before");
+  const after = num("free_edges_after");
+  if (before !== undefined && after !== undefined) parts.push(`free edges ${before} → ${after}`);
+  for (const [k, label] of [["multiple_edges", "multiple edge(s)"], ["degenerated", "degenerated"]] as const) {
+    const v = num(k);
+    if (v) parts.push(`${v} ${label}`);
+  }
+  return `CAD read: ${parts.join(", ")}.`;
+}
+
 /** Partitioned-file selection (roadmap item 3); `undefined` for both is upstream's default. */
 export interface MeshioReadOptions {
   piece?: number | null;
   dropGhosts?: boolean;
+  /** STEP/IGES read controls (meshio++ >= 18.3.0, full artifact); ignored by every other reader. */
+  cadRead?: MeshioCadReadOptions | null;
   /**
    * Read only these `point_data`/`cell_data` arrays (upstream's own names,
    * case-sensitive, before `sanitizeVariable`). `undefined` reads them all.
@@ -1953,6 +2011,7 @@ async function readModelWith(
         wantInfo ||
         opts?.piece !== undefined ||
         opts?.dropGhosts !== undefined ||
+        (opts?.cadRead != null && NURBS_INFO_FORMATS.includes(fmt)) ||
         opts?.arrays !== undefined;
       const mesh = !wantSelective
         ? m.readMesh(mainPath, fmt)
@@ -1963,6 +2022,9 @@ async function readModelWith(
             info: wantInfo,
             piece: opts?.piece,
             dropGhosts: opts?.dropGhosts,
+            // Only STEP/IGES see it; other readers would ignore it, but not sending it
+            // keeps their calls byte-identical to before.
+            cadRead: fmt === "step" || fmt === "iges" ? (opts?.cadRead ?? undefined) : undefined,
             arrays: opts?.arrays,
           });
       if (fmt !== candidates[0]) {
@@ -1984,6 +2046,10 @@ async function readModelWith(
               : `Read "${fmt}" leniently — the strict read failed (${errors[errors.length - 1]}). ` +
                 `Constructs this reader cannot represent were skipped; the mesh itself is complete.`,
         });
+      }
+      if (opts?.cadRead?.heal || opts?.cadRead?.sewTolerance) {
+        const healed = describeCadHeal(mesh.info);
+        if (healed) diagnostics.push({ line: 0, message: healed });
       }
       if (augment) augment(mesh, diagnostics);
       const model = meshioToModel(mesh, diagnostics);

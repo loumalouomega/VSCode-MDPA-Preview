@@ -1245,6 +1245,8 @@ const KERNEL_OP_EXAMPLES: Record<KernelOpKind, { description: string; options: R
   delaunay2d: { description: "Delaunay triangulation of the x, y coordinates (every point is kept)", options: {} },
   reconstructSurface: { description: "a triangle surface through an oriented point cloud (normals are estimated when absent)", options: { resolution: 64 } },
   parameterize: { description: "a UV atlas of a triangle surface: nodal field UV, points split at the seams, per-chart ids", options: { maxStretch: 2 } },
+  cutLevelSet: { description: "keep the part of the mesh a level-set field selects, cutting cells exactly (full artifact)", options: { levelSets: ["phi"], selection: "phi < 0" } },
+  cutQuadrature: { description: "quadrature rules on that cut part as a point cloud with weights (full artifact)", options: { levelSets: ["phi"], selection: "phi < 0", order: 2 } },
   estimateNormals: { description: "normals of a point cloud as point data, oriented consistently", options: { k: 12, orientation: "consistent" } },
   findIntersections: { description: "write the curve where a surface meets itself, as a line mesh", options: {} },
   metricFromHessian: { description: "turn a Hessian field and a target error into an MMG metric field", options: { hessian: "HESSIAN", error: 0.01, hmin: 0.01, hmax: 1 } },

@@ -52,7 +52,7 @@ import {
 import { finalizeModel } from "./modelBuilder";
 import { mergeManyModels, MergeSource } from "./mergeMesh";
 import { parseFoamField, OpenFoamParsedField } from "./openfoamFields";
-import { MeshioInputFile, MeshioMetadata, readMeshioMetadata, readMeshioModel, readMeshioTimeValues } from "./meshio";
+import { MeshioCadReadOptions, MeshioInputFile, MeshioMetadata, readMeshioMetadata, readMeshioModel, readMeshioTimeValues } from "./meshio";
 
 export type ProgressCallback = (
   phase: "read",
@@ -251,6 +251,11 @@ export interface ParseMeshOptions {
    * Reaches the meshio dispatch only, same as `piece`.
    */
   dropGhosts?: boolean;
+  /**
+   * STEP/IGES read controls (meshio++ >= 18.3.0, full artifact): triangulation
+   * `deflection`/`angularDeflection` and shape healing. Reaches the meshio dispatch only.
+   */
+  cadRead?: MeshioCadReadOptions;
   /**
    * Selective field read (roadmap item 7): only these `point_data`/`cell_data`
    * arrays are read, by upstream's names. Reaches the meshio dispatch only.
@@ -665,6 +670,7 @@ export async function parseMeshFile(
             dropGhosts:
               opts?.dropGhosts ?? (ext === ".pvtu" || ext === ".pvtp" ? true : undefined),
             arrays: opts?.fields,
+            cadRead: opts?.cadRead,
             signal,
           }
         );
