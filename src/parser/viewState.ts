@@ -82,6 +82,8 @@ export interface ViewState {
   curvedLevel?: number;
   /** View-only mirror expansion: axis 0|1|2 (x|y|z) and the plane position (a number, or the bbox side). Omitted = off. */
   mirror?: { axis: 0 | 1 | 2; at: number | "min" | "max" };
+  /** View-only revolve of a 2D axisymmetric result. Exclusive with `mirror`. Omitted = off. */
+  revolve?: { axis: "x" | "y"; startDeg: number; sweepDeg: number; layers: number };
   /** The Field panel was open (so the saved field overlays are drawn on restore). Omitted = closed. */
   fieldPanel?: boolean;
   /**
@@ -165,6 +167,7 @@ export function isEmptyViewState(v: ViewState): boolean {
     v.paneLayout === undefined &&
     v.curvedLevel === undefined &&
     v.mirror === undefined &&
+    v.revolve === undefined &&
     v.panes.length === 0 &&
     !v.fieldPanel &&
     v.panels.length === 0 &&
@@ -359,6 +362,18 @@ export function validateViewState(raw: unknown, colormapFallback = "Rainbow"): {
     else warnings.push("View sidecar mirror is malformed — ignored.");
   }
 
+  if (r.revolve !== undefined) {
+    const m = r.revolve as { axis?: unknown; startDeg?: unknown; sweepDeg?: unknown; layers?: unknown } | null;
+    const fin = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
+    if (m && (m.axis === "x" || m.axis === "y") && fin(m.startDeg) && fin(m.sweepDeg) && m.sweepDeg !== 0 && Math.abs(m.sweepDeg) <= 360 && fin(m.layers) && m.layers >= 1 && m.layers <= 720) {
+      view.revolve = { axis: m.axis, startDeg: m.startDeg, sweepDeg: m.sweepDeg, layers: Math.floor(m.layers) };
+      if (view.mirror) {
+        delete view.mirror;
+        warnings.push("View sidecar holds both mirror and revolve — mirror ignored.");
+      }
+    } else warnings.push("View sidecar revolve is malformed — ignored.");
+  }
+
   if (r.panes !== undefined) {
     if (!Array.isArray(r.panes)) warnings.push("View sidecar panes are not an array — ignored.");
     else {
@@ -531,6 +546,7 @@ export function serializeViewState(v: ViewState): Record<string, unknown> {
   if (v.paneLayout) out.paneLayout = v.paneLayout;
   if (v.curvedLevel) out.curvedLevel = v.curvedLevel;
   if (v.mirror) out.mirror = { axis: v.mirror.axis, at: v.mirror.at };
+  if (v.revolve) out.revolve = { ...v.revolve };
   if (v.fieldPanel) out.fieldPanel = true;
   return out;
 }

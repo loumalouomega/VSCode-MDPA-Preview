@@ -63,6 +63,7 @@ export type ViewFn =
   | "layout"
   | "clip"
   | "mirror"
+  | "revolve"
   | "opacity"
   | "theme"
   | "find"
@@ -325,6 +326,15 @@ const VIEW: CommandSpec[] = [
     "state:enum(on|off) axis:enum(x|y|z) side:enum(min|max) at:number",
     { kind: "view", fn: "mirror" },
     "mirror axis=x side=min",
+    { positional: ["state"] }
+  ),
+  cmd(
+    "revolve",
+    "view",
+    "View-only revolve of a 2D axisymmetric result about the x or y axis (nothing is written)",
+    "state:enum(on|off) axis:enum(x|y) start:number sweep:number layers:int",
+    { kind: "view", fn: "revolve" },
+    "revolve axis=y sweep=360 layers=36",
     { positional: ["state"] }
   ),
   cmd("opacity", "view", "Global model opacity (0..1)", "value:number!", { kind: "view", fn: "opacity" }, "opacity 0.6", { positional: ["value"] }),

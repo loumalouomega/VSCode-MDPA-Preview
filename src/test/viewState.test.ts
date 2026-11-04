@@ -290,6 +290,20 @@ test("mirror round trips, rejects malformed values and is omitted when off", () 
   assert.equal(isEmptyViewState({ ...emptyViewState(), mirror: { axis: 0, at: "min" } }), false);
 });
 
+test("revolve round trips, rejects malformed values, and excludes mirror", () => {
+  const spec = { axis: "y" as const, startDeg: 0, sweepDeg: 270, layers: 24 };
+  assert.deepEqual(serializeViewState({ ...emptyViewState(), revolve: spec }).revolve, spec);
+  assert.deepEqual(validateViewState({ revolve: spec }).view.revolve, spec);
+  assert.equal(validateViewState({ revolve: { ...spec, axis: "z" } }).view.revolve, undefined);
+  assert.equal(validateViewState({ revolve: { ...spec, sweepDeg: 0 } }).view.revolve, undefined);
+  assert.equal(validateViewState({ revolve: { ...spec, layers: 5000 } }).view.revolve, undefined);
+  const both = validateViewState({ revolve: spec, mirror: { axis: 0, at: "min" } });
+  assert.equal(both.view.mirror, undefined);
+  assert.ok(both.warnings.some((w) => /mirror ignored/.test(w)));
+  assert.equal("revolve" in serializeViewState(emptyViewState()), false);
+  assert.equal(isEmptyViewState({ ...emptyViewState(), revolve: spec }), false);
+});
+
 test("deformation Auto defaults on; a pre-Auto sidecar with a typed factor stays manual", () => {
   const def = validateViewState({ panes: [{ field: {} }] }).view.panes[0].field;
   assert.equal(def.deformAuto, true);
