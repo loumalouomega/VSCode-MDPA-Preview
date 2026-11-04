@@ -334,7 +334,7 @@ Seven operations arrive with meshio++ 18.1.0, all in the **Fields** group of the
 - **Cylindrical / spherical components** writes `COORDS_CYLINDRICAL` / `COORDS_SPHERICAL` and, for each named 3-vector or 9-tensor nodal field, a copy in the local basis of every point (`<field>_CYL`, `_SPH`; `_CART` with *back to Cartesian*). The Cartesian originals are kept.
 - **Prepare MMG metric** intersects metric fields (6 components in 3-D, 3 in 2-D), normalises them to a vertex budget, clamps the sizes and grades them into one field (`METRIC`), ready for **Sweep, mirror and layers ▸ adapt** (full meshio++ artifact).
 
-The point and surface kernels that make a **new** mesh are derived kinds of **Advanced ▸ Sweep, mirror and layers…** and of `mesh_derive`: `convexHull`, `delaunay2d`, `reconstructSurface`, `estimateNormals` and `parameterize`.
+The point and surface kernels that make a **new** mesh are derived kinds of **Advanced ▸ Sweep, mirror and layers…** and of `mesh_derive`: `convexHull`, `delaunay2d`, `reconstructSurface`, `estimateNormals` and `parameterize`; meshio++ 18.3.0 adds `cutLevelSet` and `cutQuadrature` (full artifact), which cut the mesh exactly on a level-set point field such as `phi < 0` and, for the second, write that part's quadrature rules as a point cloud.
 
 ![A torus surface, its convex hull and a surface reconstructed from its vertices alone](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/meshio181-derive.png)
 

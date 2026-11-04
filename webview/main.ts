@@ -188,7 +188,7 @@ import {
 import { SeriesPanelState, renderSeriesPanel } from "./seriesPanel";
 import { initPlotPane } from "./plots/pane";
 import { femPlotContext } from "../src/parser/plot/fem";
-import { findSubModelPart } from "../src/parser/subModelPartExtract";
+import { extractSubModelParts, findSubModelPart } from "../src/parser/subModelPartExtract";
 import { ProbePanelState, renderProbePanel, probeResultToCsv } from "./probePanel";
 import type { ProbeResult } from "../src/parser/pathProbe";
 import { RecordPanelState, renderRecordPanel } from "./recordPanel";
@@ -2858,6 +2858,7 @@ function setLayerVisible(layerId: string, visible: boolean): void {
   }
   layer.visible = visible;
   applyLayerVisibility(layer);
+  if (layerId.startsWith("smp:")) refreshCutCaps();
   render();
 }
 
@@ -3360,9 +3361,45 @@ function applyClipToPane(pane: Pane): void {
 // one convex polygon per sectioned element (src/parser/planeCut.ts) — and
 // rendered as two actors: the filled section and its element edges.
 
+/**
+ * The SubModelParts the pane is drawing right now (their `smp:` layers are shown), or `[]` when
+ * none is, meaning "the whole model". Clip cuts what is on view, so hiding a part keeps it out of
+ * the section; with no part shown the section keeps covering the model as before. The compare
+ * pane's peer layers carry a `compare:` prefix and are not considered.
+ */
+function visibleCutParts(pane: Pane): string[] {
+  const i = panes.indexOf(pane);
+  if (i < 0 || isComparePane(pane)) return [];
+  const paths: string[] = [];
+  for (const [id, layer] of layers) {
+    if (id.startsWith("smp:") && layerShouldDraw(layer, i)) paths.push(id.slice("smp:".length));
+  }
+  return paths;
+}
+
+let cutScopeCache: { source: MdpaModel; key: string; scope: MdpaModel } | undefined;
+/** The model the section is computed over: the visible parts' cells, else everything (memoized per parts set). */
+function cutScope(pane: Pane): MdpaModel | undefined {
+  const whole = scopeModel(pane);
+  if (!whole) return undefined;
+  const parts = visibleCutParts(pane);
+  if (parts.length === 0) return whole;
+  const key = [...parts].sort().join("\u0000");
+  if (cutScopeCache && cutScopeCache.source === whole && cutScopeCache.key === key) return cutScopeCache.scope;
+  const scope = extractSubModelParts(whole, parts);
+  if (!scope) return whole;
+  cutScopeCache = { source: whole, key, scope };
+  return scope;
+}
+
+/** Re-cuts every pane whose Clip is on - a part was shown or hidden. */
+function refreshCutCaps(): void {
+  for (const pane of panes) if (pane.clip.active) scheduleCutCapRebuild(pane);
+}
+
 function buildCutCap(pane: Pane): void {
   for (const id of CUT_CAP_LAYER_IDS) removePaneOverlay(pane, id);
-  const scope = scopeModel(pane);
+  const scope = cutScope(pane);
   if (!pane.clip.active || !scope) return;
 
   // Computed over the pane's volume cells, not the rendered layers, so the
@@ -3498,6 +3535,8 @@ document.getElementById("cut-export")?.addEventListener("click", function () {
       kind: "slice",
       origin: Array.from(pane.clipPlane.getOrigin()),
       normal: Array.from(pane.clipPlane.getNormal()),
+      // The parts on view, like the section drawn in the pane; omitted = the whole mesh.
+      ...(visibleCutParts(pane).length > 0 ? { parts: visibleCutParts(pane) } : {}),
     },
   });
 });
