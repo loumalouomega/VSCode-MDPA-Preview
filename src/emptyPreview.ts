@@ -727,6 +727,7 @@ function attachEmptyPanel(
   };
   const runFieldSeries = (msg: Record<string, unknown>): Promise<void> => seriesScans.field(msg, scanInput);
   const runFlowSeries = (msg: Record<string, unknown>): Promise<void> => seriesScans.flow(msg, scanInput);
+const runAleSeries = (msg: Record<string, unknown>): Promise<void> => seriesScans.ale(msg, scanInput);
 
   const recording = new RecordingController(context.globalStorageUri.fsPath, "", (message) => panel.webview.postMessage(message));
   let plots: ReturnType<typeof createPlotController> | undefined;
@@ -923,6 +924,10 @@ function attachEmptyPanel(
       seriesScans.cancelField();
     } else if (msg?.type === "flowSeries") {
       await runFlowSeries(msg as Record<string, unknown>);
+    } else if (msg?.type === "aleSeries") {
+      void runAleSeries(msg as Record<string, unknown>);
+    } else if (msg?.type === "aleSeriesCancel") {
+      seriesScans.cancelAle();
     } else if (session.handleLinkMessage(msg as Record<string, unknown>)) {
       // Linked previews: relayed by the hub (parser/previewLinkHub.ts).
     } else if (session.handleWindTunnelMessage(msg as Record<string, unknown>)) {

@@ -169,6 +169,7 @@ export const MENU_ACTION_COMMANDS: Readonly<Record<string, string>> = {
   integrals: "kratos.mdpa.fieldIntegrals",
   streamlines: "kratos.mdpa.streamlines",
   flowBalance: "kratos.mdpa.flowBalance",
+  aleQuality: "kratos.mdpa.aleQuality",
   linkPreviews: "kratos.mdpa.linkPreviews",
   optimizationProgress: "kratos.mdpa.optimizationProgress",
   windTunnel: "kratos.mdpa.windTunnel",
@@ -212,6 +213,7 @@ export const ADVANCED_MENU_HTML = `<div id="advanced-popup" class="hidden" role=
         <button type="button" class="file-menu-item" data-action="integrals" role="menuitem" title="Cell-measure-weighted total and mean of every cell field, per mesh and per region">${ic("average")}<span>Field integrals…</span></button>
         <button type="button" class="file-menu-item" data-action="streamlines" role="menuitem" title="Trace steady streamlines of a nodal vector field from seed points, a line, a plane or a SubModelPart, and export them as line cells">${ic("fieldQuiver")}<span>Streamlines…</span></button>
         <button type="button" class="file-menu-item" data-action="flowBalance" role="menuitem" title="Signed flux and area-weighted pressure through named SubModelPart boundaries: net flux, imbalance and pressure drop">${ic("average")}<span>Flow balance…</span></button>
+        <button type="button" class="file-menu-item" data-action="aleQuality" role="menuitem" title="Did the mesh solver keep the fluid mesh valid? Per-frame element measure and shape quality of the deformed mesh against the first frame, with the worst frame and the inverted elements">${ic("quality")}<span>ALE mesh quality…</span></button>
         <div class="file-menu-sep"></div>
         <div class="file-menu-group-label" role="presentation">Special problemtypes</div>
         <button type="button" class="file-menu-item" data-action="optimizationProgress" role="menuitem" title="Follow an optimization run: objective and constraints per iteration, read from the optimizer's summary file">${ic("results")}<span>Optimization progress…</span></button>

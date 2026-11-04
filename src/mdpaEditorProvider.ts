@@ -745,12 +745,13 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
       post: (m) => { if (!session.disposed) void webviewPanel.webview.postMessage(m); },
       appliedCount: () => session.history.appliedCount(),
     });
-    const runFlowSeries = (msg: Record<string, unknown>): Promise<void> =>
-      seriesScans.flow(msg, () => {
-        const group = session.currentGroup;
-        if (!group) return undefined;
-        return { source: { kind: "group", group: serializeGroup(group), dir: path.dirname(fsPath), rank: session.currentRank, mdpa: true } };
-      });
+    const mdpaScanInput = () => {
+      const group = session.currentGroup;
+      if (!group) return undefined;
+      return { source: { kind: "group" as const, group: serializeGroup(group), dir: path.dirname(fsPath), rank: session.currentRank, mdpa: true } };
+    };
+    const runFlowSeries = (msg: Record<string, unknown>): Promise<void> => seriesScans.flow(msg, mdpaScanInput);
+    const runAleSeries = (msg: Record<string, unknown>): Promise<void> => seriesScans.ale(msg, mdpaScanInput);
 
     let plots: ReturnType<typeof createPlotController> | undefined;
     let plotPreviewReady!: () => void;
@@ -951,6 +952,10 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
         streamlines.cancel();
       } else if (msg?.type === "flowSeries") {
         void runFlowSeries(msg as Record<string, unknown>);
+      } else if (msg?.type === "aleSeries") {
+        void runAleSeries(msg as Record<string, unknown>);
+      } else if (msg?.type === "aleSeriesCancel") {
+        seriesScans.cancelAle();
       } else if (session.handleLinkMessage(msg as Record<string, unknown>)) {
         // Linked previews: relayed by the hub (parser/previewLinkHub.ts).
       } else if (session.handleWindTunnelMessage(msg as Record<string, unknown>)) {

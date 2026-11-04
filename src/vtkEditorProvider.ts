@@ -957,6 +957,7 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
     };
     const runFieldSeries = (msg: Record<string, unknown>): Promise<void> => seriesScans.field(msg, scanInput);
     const runFlowSeries = (msg: Record<string, unknown>): Promise<void> => seriesScans.flow(msg, scanInput);
+const runAleSeries = (msg: Record<string, unknown>): Promise<void> => seriesScans.ale(msg, scanInput);
 
 
     // Steady streamlines (Advanced > Streamlines…): the trace runs in a worker
@@ -1104,6 +1105,10 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
         seriesScans.cancelField();
       } else if (msg?.type === "flowSeries") {
         void runFlowSeries(msg as Record<string, unknown>);
+      } else if (msg?.type === "aleSeries") {
+        void runAleSeries(msg as Record<string, unknown>);
+      } else if (msg?.type === "aleSeriesCancel") {
+        seriesScans.cancelAle();
       } else if (session.handleLinkMessage(msg as Record<string, unknown>)) {
         // Linked previews: relayed by the hub (parser/previewLinkHub.ts).
       } else if (session.handleWindTunnelMessage(msg as Record<string, unknown>)) {

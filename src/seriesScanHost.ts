@@ -39,8 +39,11 @@ export interface SeriesScanController {
   field(msg: Record<string, unknown>, resolve: () => SeriesScanInput | undefined): Promise<void>;
   /** `flowSeries` request. */
   flow(msg: Record<string, unknown>, resolve: () => SeriesScanInput | undefined): Promise<void>;
+  /** `aleSeries` request (ALE mesh quality over the timeline). */
+  ale(msg: Record<string, unknown>, resolve: () => SeriesScanInput | undefined): Promise<void>;
   cancelField(): void;
   cancelFlow(): void;
+  cancelAle(): void;
   /** Aborts both scans (their workers are terminated) and silences further posts. */
   dispose(): void;
 }
@@ -50,11 +53,11 @@ const FIELD_KINDS = ["Nodal", "Elemental", "Conditional"];
 export function createSeriesScanController(deps: SeriesScanHostDeps): SeriesScanController {
   const inWorker = deps.runInWorker ?? runSeriesScanInWorker;
   let disposed = false;
-  const aborts: { field?: AbortController; flow?: AbortController } = {};
+  const aborts: { field?: AbortController; flow?: AbortController; ale?: AbortController } = {};
   const killer = new AbortController();
 
   const run = async (
-    which: "field" | "flow",
+    which: "field" | "flow" | "ale",
     scan: SeriesScan,
     input: SeriesScanInput,
     labels: { progress: string; result: string }
@@ -124,6 +127,18 @@ export function createSeriesScanController(deps: SeriesScanHostDeps): SeriesScan
         result: "flowSeriesResult",
       });
     },
+    async ale(msg, resolve) {
+      const refuse = (message: string): void => {
+        if (!disposed) deps.post({ type: "aleSeriesResult", message });
+      };
+      if (aborts.ale) return refuse("An ALE quality scan is already running.");
+      const variable = msg.variable === undefined || msg.variable === "" ? undefined : String(msg.variable);
+      if (variable !== undefined && !/^[A-Za-z_][A-Za-z0-9_]*$/.test(variable)) return refuse("Invalid displacement variable name.");
+      const input = resolve();
+      if (!input || ("steps" in input && input.steps.length === 0)) return refuse("This file has no time series to analyse.");
+      await run("ale", { kind: "ale", spec: { variable } }, input, { progress: "aleSeriesProgress", result: "aleSeriesResult" });
+    },
+    cancelAle: () => aborts.ale?.abort(),
     cancelField: () => aborts.field?.abort(),
     cancelFlow: () => aborts.flow?.abort(),
     dispose() {
@@ -131,6 +146,7 @@ export function createSeriesScanController(deps: SeriesScanHostDeps): SeriesScan
       killer.abort();
       aborts.field?.abort();
       aborts.flow?.abort();
+      aborts.ale?.abort();
     },
   };
 }

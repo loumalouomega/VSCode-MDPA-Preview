@@ -14,6 +14,8 @@ import * as path from "node:path";
 import type { FieldSeries, FieldSeriesSpec, SeriesStep } from "./parser/fieldSeries";
 import { collectFieldSeries, stepsFromGroup, stepsFromInFile } from "./parser/fieldSeriesScan";
 import { flowBalanceSeries } from "./parser/flowBalance";
+import { aleQualitySeries } from "./parser/aleQuality";
+import type { AleSeries } from "./parser/aleQuality";
 import type { FlowBalanceSpec, FlowSeries } from "./parser/flowBalance";
 import { parseMdpaFile } from "./parser/mdpaParser";
 import { fileFor, VtkFileGroup } from "./parser/vtkFileGroup";
@@ -32,9 +34,10 @@ export type SeriesScanSource =
 
 export type SeriesScan =
   | { kind: "field"; spec: FieldSeriesSpec }
-  | { kind: "flow"; spec: FlowBalanceSpec };
+  | { kind: "flow"; spec: FlowBalanceSpec }
+  | { kind: "ale"; spec: { variable?: string } };
 
-export type SeriesScanResult = FieldSeries | FlowSeries;
+export type SeriesScanResult = FieldSeries | FlowSeries | AleSeries;
 
 export interface SeriesScanOptions {
   /** Cooperative cancel: the scan stops between steps and resolves the partial series. */
@@ -70,7 +73,7 @@ export function runSeriesScan(
   scan: SeriesScan,
   opts: SeriesScanOptions = {}
 ): Promise<SeriesScanResult> {
-  return scan.kind === "field"
-    ? collectFieldSeries(steps, scan.spec, opts)
-    : flowBalanceSeries(steps, scan.spec, opts);
+  if (scan.kind === "field") return collectFieldSeries(steps, scan.spec, opts);
+  if (scan.kind === "ale") return aleQualitySeries(steps, { variable: scan.spec.variable, signal: opts.signal, onProgress: opts.onProgress });
+  return flowBalanceSeries(steps, scan.spec, opts);
 }

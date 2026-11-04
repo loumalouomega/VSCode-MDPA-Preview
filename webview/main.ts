@@ -50,6 +50,8 @@ import {
 } from "../src/parser/streamlineForm";
 import { buildStreamlineTubes } from "../src/parser/streamlineTubes";
 import { renderFlowBalancePanel, FlowBalancePanelState } from "./flowBalancePanel";
+import { renderAlePanel, type AlePanelState } from "./alePanel";
+import type { AleSeries } from "../src/parser/aleQuality";
 import { renderWindTunnelPanel } from "./windTunnelPanel";
 import type { WindTunnelPanelState, WindTunnelPlanView, WindTunnelResultView } from "./windTunnelPanel";
 import { buildWindTunnelRequest, defaultWindTunnelForm, planRequestOf, WIZARD_STEPS } from "../src/problemtype/windTunnel/form";
@@ -205,7 +207,7 @@ import {
 } from "../src/parser/recordPlan";
 import { FieldSeries, seriesToCsv } from "../src/parser/fieldSeries";
 import type { FlowSeries } from "../src/parser/flowBalance";
-import { flowBalanceToCsv, flowSeriesToCsv, integralsToCsv, meshSizeToCsv, qualityToCsv } from "../src/parser/analysisExport";
+import { aleSeriesToCsv, flowBalanceToCsv, flowSeriesToCsv, integralsToCsv, meshSizeToCsv, qualityToCsv } from "../src/parser/analysisExport";
 import {
   DataTablePanelState,
   PAGE_ROWS,
@@ -569,6 +571,10 @@ const flowPanelEl = document.createElement("div");
 flowPanelEl.id = "flow-panel";
 flowPanelEl.style.display = "none";
 vtkSub.appendChild(flowPanelEl);
+const alePanelEl = document.createElement("div");
+alePanelEl.id = "ale-panel";
+alePanelEl.style.display = "none";
+vtkSub.appendChild(alePanelEl);
 const linkPanelEl = document.createElement("div");
 linkPanelEl.id = "link-panel";
 linkPanelEl.style.display = "none";
@@ -1066,6 +1072,8 @@ let streamlineState: StreamlinePanelState = {
 let flowVisible = false;
 /** Tags each request; a reply carrying an older tag is dropped. */
 let flowSeq = 0;
+let aleVisible = false;
+let aleState: AlePanelState = { variable: "", vectors: [] };
 let flowState: FlowBalancePanelState = {
   form: defaultFlowBalanceForm(),
   vectors: [],
@@ -2059,6 +2067,23 @@ function handleHostMessage(event: MessageEvent): void {
           historyNote: r.historyNote,
         };
         renderSeriesUI();
+      }
+      break;
+    }
+
+    case "aleSeriesProgress": {
+      if (aleVisible) {
+        aleState = { ...aleState, progress: msg as unknown as { done: number; total: number; label: string }, message: undefined };
+        renderAle();
+      }
+      break;
+    }
+
+    case "aleSeriesResult": {
+      const r = msg as unknown as { series?: AleSeries; message?: string; historyNote?: string };
+      if (aleVisible) {
+        aleState = { ...aleState, progress: undefined, series: r.series, message: r.message, historyNote: r.historyNote };
+        renderAle();
       }
       break;
     }
@@ -4178,6 +4203,7 @@ function dispatchToolbarAction(action: string | undefined, _target?: HTMLElement
   else if (action === "integrals") toggleIntegralPanel();
   else if (action === "streamlines") toggleStreamlinePanel();
   else if (action === "flowBalance") toggleFlowPanel();
+  else if (action === "aleQuality") toggleAlePanel();
   else if (action === "linkPreviews") toggleLinkPanel();
   else if (action === "optimizationProgress") toggleOptimizationPanel();
   else if (action === "windTunnel") toggleWindTunnelPanel();
@@ -4440,6 +4466,7 @@ const LEFT_DOCK: { action: string; dismiss: () => void }[] = [
   { action: "integrals", dismiss: () => dismissIntegralPanel() },
   { action: "streamlines", dismiss: () => dismissStreamlinePanel() },
   { action: "flowBalance", dismiss: () => dismissFlowPanel() },
+  { action: "aleQuality", dismiss: () => dismissAlePanel() },
   { action: "linkPreviews", dismiss: () => dismissLinkPanel() },
   { action: "optimizationProgress", dismiss: () => dismissOptimizationPanel() },
   { action: "windTunnel", dismiss: () => dismissWindTunnelPanel() },
@@ -5261,6 +5288,63 @@ function requestFlowSeries(): void {
   flowState = { ...flowState, series: undefined, seriesProgress: { done: 0, total: 0, label: "" }, seriesMessage: undefined, seriesHistoryNote: undefined };
   if (flowVisible) renderFlow();
   vscode.postMessage({ type: "flowSeries", flow: built.spec });
+}
+
+// ALE mesh quality (roadmap item 46): the scan walks the timeline on the host
+// (`aleSeries`, the same core as MCP mesh_ale_quality); this is only its view.
+function toggleAlePanel(): void {
+  if (aleVisible) hideAlePanel();
+  else showAlePanel();
+}
+
+function showAlePanel(): void {
+  if (!model) return;
+  closeLeftDockExcept("aleQuality");
+  alePanelEl.style.display = "";
+  aleVisible = true;
+  document.querySelector('[data-action="aleQuality"]')?.classList.add("active");
+  aleState = { ...aleState, vectors: model.fields.filter((f) => f.kind === "Nodal" && f.components >= 2).map((f) => f.variable), currentFrame: currentFrameIndex };
+  renderAle();
+}
+
+function dismissAlePanel(): void {
+  alePanelEl.style.display = "none";
+  aleVisible = false;
+  document.querySelector('[data-action="aleQuality"]')?.classList.remove("active");
+}
+
+function hideAlePanel(): void {
+  dismissAlePanel();
+  vscode.postMessage({ type: "aleSeriesCancel" });
+  aleState = { ...aleState, progress: undefined };
+}
+
+function renderAle(): void {
+  renderAlePanel(alePanelEl, aleState, {
+    onClose: hideAlePanel,
+    onScan: () => {
+      aleState = { ...aleState, series: undefined, message: undefined, historyNote: undefined, progress: { done: 0, total: 0, label: "" } };
+      renderAle();
+      vscode.postMessage({ type: "aleSeries", variable: aleState.variable });
+    },
+    onCancel: () => vscode.postMessage({ type: "aleSeriesCancel" }),
+    onPickFrame: (frameIndex) => vscode.postMessage({ type: "vtkRequestFrame", frameIndex }),
+    onWorst: () => {
+      const s = aleState.series;
+      if (s && s.worstFrame !== undefined) vscode.postMessage({ type: "vtkRequestFrame", frameIndex: s.frames[s.worstFrame].frameIndex });
+    },
+    onSelectWorst: () => {
+      const s = aleState.series;
+      const f = s && s.worstFrame !== undefined ? s.frames[s.worstFrame] : undefined;
+      if (!f) return;
+      const ids = f.invertedIds && f.invertedIds.length > 0 ? f.invertedIds : f.worstElementId !== undefined ? [f.worstElementId] : [];
+      if (ids.length === 0) { toast("No element to select."); return; }
+      applySelectionSeed({ name: "ALE worst", kinds: { Elements: ids } });
+    },
+    onExport: () => {
+      if (aleState.series) postAnalysisCsv(aleSeriesToCsv(aleState.series), "ale-quality");
+    },
+  });
 }
 
 function renderFlow(): void {
