@@ -302,3 +302,28 @@ test("two hex20 cells sharing a face weld their shared centre: no duplicated poi
   for (let i = 0; i < r.points.length; i += 3) seen.add(key([r.points[i], r.points[i + 1], r.points[i + 2]]));
   assert.equal(seen.size, r.points.length / 3, "every crossing point is unique");
 });
+
+test("pyramid13 with a field quadratic in x: the isosurface lies on the analytic plane and the sub-cells tile the pyramid", () => {
+  // Unit-square base at z = 0, apex above its centre; VTK node order (corners, base mids, apex mids).
+  const P: [number, number, number][] = [[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0], [0.5, 0.5, 1]];
+  const mids = [[0, 1], [1, 2], [2, 3], [3, 0], [0, 4], [1, 4], [2, 4], [3, 4]].map(([a, b]) => P[a].map((v, d) => (v + P[b][d]) / 2) as [number, number, number]);
+  const all = [...P, ...mids];
+  const nodes = all.map(([x, y, z], i) => [i + 1, x, y, z] as [number, number, number, number]);
+  const values = new Map<number, number>(nodes.map(([id, x]) => [id, x * x]));
+  const m = model(nodes, VtkCellType.QUADRATIC_PYRAMID, [nodes.map((n) => n[0])], values);
+  const r = computeIsoSurface(m, m.fields[0], 0.25);
+  assert.ok(r.triangles.length >= 3);
+  // Level-1 subdivision is approximate where a sub-cell edge has no node at the crossing (an apex-level
+  // edge here): within 0.07 of the plane, against 0.25 off for the corner-only surface.
+  for (let i = 0; i < r.points.length; i += 3) assert.ok(approx(r.points[i], 0.5, 0.07), `x=${r.points[i]}`);
+  // Volume of the sub-cells = the pyramid volume (1/3): sum the unsigned tet volumes of the decomposition.
+  const dec = quadraticDecomposition(VtkCellType.QUADRATIC_PYRAMID, 13)!;
+  const pos = [...all, [0.5, 0.5, 0]];
+  const vol = (t: number[]): number => {
+    const [a, b, c, d] = t.map((k) => pos[k]);
+    const u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]], v = [c[0] - a[0], c[1] - a[1], c[2] - a[2]], w = [d[0] - a[0], d[1] - a[1], d[2] - a[2]];
+    return Math.abs(u[0] * (v[1] * w[2] - v[2] * w[1]) - u[1] * (v[0] * w[2] - v[2] * w[0]) + u[2] * (v[0] * w[1] - v[1] * w[0])) / 6;
+  };
+  const total = dec.tets!.reduce((s, t) => s + vol(t), 0);
+  assert.ok(approx(total, 1 / 3, 1e-9), `sub-cell volume ${total}`);
+});

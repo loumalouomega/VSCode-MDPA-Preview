@@ -10,7 +10,7 @@
 // Node unit tests — mirroring meshQuality.ts.
 
 import { FieldData, MdpaModel } from "./types";
-import { decompositionFor, CellDecomposition, HEX_TETS, QUAD_TRIS, WEDGE_TETS } from "./cellDecomposition";
+import { decompositionFor, CellDecomposition, HEX_TETS, PYRAMID_TETS, QUAD_TRIS, WEDGE_TETS } from "./cellDecomposition";
 import { VtkCellType } from "./geometryMap";
 
 export interface IsoSurfaceResult {
@@ -118,6 +118,15 @@ const WEDGE15_SUBS = [
   [12, 15, 17, 3, 9, 11], [15, 13, 16, 9, 4, 10], [17, 16, 14, 11, 10, 5], [15, 16, 17, 9, 10, 11],
 ];
 
+// Pyramid13 (VTK): corners 0-3 base, 4 apex; mids 5:(0,1) 6:(1,2) 7:(2,3) 8:(3,0) 9:(0,4) 10:(1,4) 11:(2,4) 12:(3,4).
+// One virtual point, the base centre B (= index 13). Six sub-pyramids (four around the base corners, the small
+// top one, the middle one under it) and four tetrahedra tile the cell; orientation is irrelevant to the contour.
+const PYRAMID13_VIRTUALS: VirtualPoint[] = [faceCentre([0, 1, 2, 3], [5, 6, 7, 8])];
+const PYRAMID13_SUBS = [
+  [0, 5, 13, 8, 9], [1, 6, 13, 5, 10], [2, 7, 13, 6, 11], [3, 8, 13, 7, 12], [9, 10, 11, 12, 4], [9, 10, 11, 12, 13],
+];
+const PYRAMID13_TETS = [[13, 5, 9, 10], [13, 6, 10, 11], [13, 7, 11, 12], [13, 8, 12, 9]];
+
 export function quadraticDecomposition(cellType: number | undefined, stride: number): QuadraticDecomposition | undefined {
   if (cellType === VtkCellType.QUADRATIC_TETRA && stride >= 10) {
     return {
@@ -147,6 +156,13 @@ export function quadraticDecomposition(cellType: number | undefined, stride: num
   }
   if (cellType === VtkCellType.QUADRATIC_WEDGE && stride >= 15) {
     return { corners: 15, virtuals: WEDGE15_VIRTUALS, tets: WEDGE15_SUBS.flatMap((sub) => WEDGE_TETS.map((t) => t.map((k) => sub[k]))) };
+  }
+  if (cellType === VtkCellType.QUADRATIC_PYRAMID && stride >= 13) {
+    return {
+      corners: 13,
+      virtuals: PYRAMID13_VIRTUALS,
+      tets: [...PYRAMID13_SUBS.flatMap((sub) => PYRAMID_TETS.map((t) => t.map((k) => sub[k]))), ...PYRAMID13_TETS],
+    };
   }
   return undefined;
 }

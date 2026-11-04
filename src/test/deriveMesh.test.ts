@@ -174,3 +174,23 @@ test("tessellating a mesh with no curved cells, or with bad levels, is refused b
   await assert.rejects(deriveMesh(q, { kind: "tessellate", levels: 9 }), /integer from 0 to 5/);
   await assert.rejects(deriveMesh(q, { kind: "tessellate", levels: 1.5 }), /integer from 0 to 5/);
 });
+
+test("isosurface of a tet10 with a field quadratic in x lies on the analytic plane (roadmap item 38) and names the source cell", async () => {
+  const nodes: [number, number, number, number][] = [
+    [1, 0, 0, 0], [2, 1, 0, 0], [3, 0, 1, 0], [4, 0, 0, 1],
+    [5, 0.5, 0, 0], [6, 0.5, 0.5, 0], [7, 0, 0.5, 0], [8, 0, 0, 0.5], [9, 0.5, 0, 0.5], [10, 0, 0.5, 0.5],
+  ];
+  const coords = new Float32Array(nodes.flatMap(([, x, y, z]) => [x, y, z]));
+  const m = {
+    nodeCount: 10, nodeIds: Int32Array.from(nodes.map((n) => n[0])), coords,
+    blocks: [{ kind: "Elements", name: "Tet10", vtkCellType: 24, count: 1, stride: 10, entityIds: Int32Array.of(7), connectivity: Int32Array.from(nodes.map((n) => n[0])) }],
+    subModelParts: [], meta: [], diagnostics: [], is3D: true, bounds: { min: [0, 0, 0], max: [1, 1, 1] },
+    fields: [{ kind: "Nodal", variable: "F", components: 1, ids: Int32Array.from(nodes.map((n) => n[0])), values: Float64Array.from(nodes.map(([, x]) => x * x)) }],
+  } as unknown as MdpaModel;
+  const r = await deriveMesh(m, { kind: "isosurface", variable: "F", values: [0.25] });
+  for (let i = 0; i < r.model.nodeCount; i++) assert.ok(Math.abs(r.model.coords[3 * i] - 0.5) < 5e-3, `x = ${r.model.coords[3 * i]}`);
+  const src = field(r.model, "Elemental", "SOURCE_ENTITY_ID")!;
+  for (const v of src.values) assert.equal(v, 7, "provenance names the open mesh's cell, not a tessellated child");
+  assert.match(r.summary, /subdivided once/);
+  assert.equal(m.blocks[0].count, 1);
+});
