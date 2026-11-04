@@ -4852,15 +4852,19 @@ function hideIntegralPanel(): void {
 
 /** Ask the host, and show the pending state until it answers. */
 function requestIntegrals(): void {
-  integralState = {};
+  integralState = { revolveAbout: integralState.revolveAbout };
   renderIntegrals();
-  vscode.postMessage({ type: "meshAnalysis", kind: "integrate" });
+  vscode.postMessage({ type: "meshAnalysis", kind: "integrate", ...(integralState.revolveAbout ? { revolveAbout: integralState.revolveAbout } : {}) });
 }
 
 function renderIntegrals(): void {
   renderIntegralPanel(integralPanelEl, integralState, {
     onClose: hideIntegralPanel,
     onRefresh: requestIntegrals,
+    onRevolve: (axis) => {
+      integralState = { revolveAbout: axis };
+      requestIntegrals();
+    },
     onExport: () => {
       if (integralState.integrals) {
         postAnalysisCsv(integralsToCsv(integralState.integrals), "integrals");
@@ -4883,7 +4887,7 @@ function applyFieldIntegrals(msg: {
   // A reply that outlived its panel is dropped rather than stashed: the model
   // may have changed under it, and the panel re-asks on open anyway.
   if (!integralVisible) return;
-  integralState = { integrals: msg.integrals, message: msg.message };
+  integralState = { integrals: msg.integrals, message: msg.message, revolveAbout: integralState.revolveAbout };
   renderIntegrals();
 }
 

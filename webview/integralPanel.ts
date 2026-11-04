@@ -36,10 +36,13 @@ export interface IntegralPanelState {
   integrals?: FieldIntegral[];
   /** Set instead of `integrals` when the analysis could not run. */
   message?: string;
+  /** Revolve each planar cell about this axis (an explicit choice, never inferred). */
+  revolveAbout?: "x" | "y";
 }
 
 export interface IntegralPanelHandlers {
   onClose(): void;
+  onRevolve(axis: "x" | "y" | undefined): void;
   onRefresh(): void;
   onExport(): void;
 }
@@ -69,6 +72,26 @@ export function renderIntegralPanel(
   closeBtn.addEventListener("click", () => handlers.onClose());
   header.appendChild(closeBtn);
   container.appendChild(header);
+
+  const bar = document.createElement("div");
+  bar.className = "series-toolbar";
+  const lbl = document.createElement("label");
+  lbl.className = "field-label";
+  lbl.textContent = t("Integrate");
+  bar.appendChild(lbl);
+  const sel = document.createElement("select");
+  sel.className = "field-select";
+  sel.title = t("An axisymmetric (planar xy) mesh integrates in the r-z plane unless you ask for a revolved integral about an axis.");
+  for (const [value, text] of [["", t("In the plane")], ["y", t("Revolved about y")], ["x", t("Revolved about x")]]) {
+    const o = document.createElement("option");
+    o.value = value;
+    o.textContent = text;
+    if ((state.revolveAbout ?? "") === value) o.selected = true;
+    sel.appendChild(o);
+  }
+  sel.addEventListener("change", () => handlers.onRevolve(sel.value === "" ? undefined : (sel.value as "x" | "y")));
+  bar.appendChild(sel);
+  container.appendChild(bar);
 
   const summary = document.createElement("div");
   summary.className = "meshsize-summary";

@@ -72,3 +72,16 @@ test("mesh_field_integrate labels revolved and plane results", async () => {
   assert.match(plain.frame, /NOT revolved/);
   assert.ok(Math.abs(plain.integrals[0].domain.total[0] - R * H) < 1e-9);
 });
+
+test("the Field integrals panel's request carries the axis through runMeshAnalysis", async () => {
+  const { runMeshAnalysis } = await import("../meshAnalysis");
+  const model = parseMdpa(mdpa(0));
+  const reply = (await runMeshAnalysis({ type: "meshAnalysis", kind: "integrate", variables: ["DENSITY"], revolveAbout: "y" }, model)) as {
+    integrals: { revolvedAbout?: string; domain: { total: number[] } }[];
+    revolveAbout?: string;
+  };
+  assert.equal(reply.revolveAbout, "y");
+  assert.ok(Math.abs(reply.integrals[0].domain.total[0] - Math.PI * R * R * H) < 1e-9);
+  const plane = (await runMeshAnalysis({ type: "meshAnalysis", kind: "integrate", variables: ["DENSITY"] }, model)) as { integrals: { domain: { total: number[] } }[] };
+  assert.ok(Math.abs(plane.integrals[0].domain.total[0] - R * H) < 1e-9, "no axis: the plane integral");
+});

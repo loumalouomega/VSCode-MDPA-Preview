@@ -23,7 +23,7 @@ export const ANALYSIS_CANCELLED = "cancelled";
 /** Historical name of the same constant (the probe was the first analysis moved here). */
 export const PROBE_CANCELLED = ANALYSIS_CANCELLED;
 
-type RunOpts = { signal?: AbortSignal };
+type RunOpts = { signal?: AbortSignal; revolveAbout?: string };
 
 export function runInAnalysisWorker<K extends AnalysisKind>(
   kind: K,
@@ -71,7 +71,7 @@ export const runWatertightInWorker = (model: MdpaModel, opts?: RunOpts): Promise
   runInAnalysisWorker("watertight", model, undefined, opts) as Promise<WatertightReport | undefined>;
 
 export const runIntegrateInWorker = (model: MdpaModel, variables: string[], opts?: RunOpts): Promise<FieldIntegral[]> =>
-  runInAnalysisWorker("integrate", model, { variables }, opts) as Promise<FieldIntegral[]>;
+  runInAnalysisWorker("integrate", model, { variables, revolveAbout: opts?.revolveAbout }, opts) as Promise<FieldIntegral[]>;
 
 export const runLodInWorker = (model: MdpaModel, ratio?: number, opts?: RunOpts): Promise<LodSurface> =>
   runInAnalysisWorker("lod", model, { ratio }, opts) as Promise<LodSurface>;
