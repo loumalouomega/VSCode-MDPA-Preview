@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- **The `.step` export can refine the patches before fitting.** The fit question gains **Fit CAD surfaces — refine the patches first (rough or organic skins)** (`{refineSegmentation: true, refineTolerance: 0.002}`), also asked by **Export Optimized Geometry as CAD**. The kernel defaults leave a skin that is not a CAD tessellation almost entirely faceted — 94.7 % of the area on the 22 236-triangle hook a Structural Optimization run ends with — while refinement left 41.9 % (20 planes, 13 cylinders, 7 cones, 12 B-splines, a sphere and 3 tori) in about three minutes, with the solid up to ~0.4 % of the diagonal from the skin. The kernel defaults stay first. The `fitCad` descriptions of `mesh_convert` and `case_optimization_cad` now name `refineSegmentation`/`refineTolerance` and give this advice, and the guide records why the freeform modes are not in the pick (8-12x slower with a larger deviation on a 3 000-triangle copy; unfinished after 45 minutes on the full skin).
+
 ## [5.31.0] - 2026-11-04
 
 ### Added
