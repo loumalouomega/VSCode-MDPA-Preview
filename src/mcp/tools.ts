@@ -2047,6 +2047,8 @@ export async function meshDerive(args: {
   maxSeeds?: number;
   origin?: number[];
   normal?: number[];
+  /** slice: cut only these SubModelParts (paths, subtree included) instead of the whole mesh. */
+  parts?: string[];
   variable?: string;
   values?: number[];
   component?: number | "mag";
@@ -2134,7 +2136,7 @@ export async function meshDerive(args: {
   };
   let spec: DeriveSpec;
   if (args.kind === "slice") {
-    spec = { kind: "slice", origin: triple(args.origin, "origin"), normal: triple(args.normal, "normal") };
+    spec = { kind: "slice", origin: triple(args.origin, "origin"), normal: triple(args.normal, "normal"), ...(args.parts && args.parts.length > 0 ? { parts: args.parts } : {}) };
   } else if (args.kind === "isosurface") {
     if (!args.variable) throw new Error("An isosurface needs a `variable`.");
     spec = { kind: "isosurface", variable: args.variable, values: args.values ?? [], component: args.component };

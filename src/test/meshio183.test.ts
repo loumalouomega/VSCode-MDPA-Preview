@@ -73,3 +73,18 @@ test("describeCadHeal is tolerant of anything the kernel might send", () => {
     "CAD read: shape healed, fixes applied, sewn at 0.0001, free edges 4 → 0, 2 degenerated."
   );
 });
+
+test("a slice restricted to SubModelParts cuts only those parts", async () => {
+  const box = (await generateMesh({ kind: "generate", shape: "box", params: { dims: [4, 4, 4], size: [1, 1, 1] } })).model;
+  const ids = box.blocks.filter((b) => b.kind === "Elements").flatMap((b) => Array.from(b.entityIds).filter((_, i) => i < b.count / 2));
+  const half: MdpaModel = {
+    ...box,
+    subModelParts: [{ name: "Half", path: "Half", nodeIds: [], elementIds: ids, conditionIds: [], geometryIds: [], constraintIds: [], children: [] } as never],
+  };
+  const plane = { origin: [0.4, 0.5, 0.5] as [number, number, number], normal: [1, 0, 0] as [number, number, number] };
+  const whole = await deriveMesh(half, { kind: "slice", ...plane });
+  const part = await deriveMesh(half, { kind: "slice", ...plane, parts: ["Half"] });
+  assert.ok(cellCount(part.model) > 0);
+  assert.ok(cellCount(part.model) < cellCount(whole.model), `${cellCount(part.model)} vs ${cellCount(whole.model)}`);
+  await assert.rejects(deriveMesh(half, { kind: "slice", ...plane, parts: ["Nope"] }), /None of the requested SubModelParts/);
+});

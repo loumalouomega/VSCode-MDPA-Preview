@@ -677,6 +677,7 @@ export function registerAllTools(server: McpServer): void {
         verify: verifyArg,
         origin: z.array(z.number()).length(3).optional().describe("slice: a point on the plane; grid: the lattice origin (default 0,0,0)"),
         normal: z.array(z.number()).length(3).optional().describe("slice: the plane normal (not zero)"),
+        parts: z.array(z.string()).optional().describe("slice: cut only these SubModelParts (slash paths, each with its subtree) instead of the whole mesh - what the viewer's Clip does with the parts on screen"),
         variable: z.string().optional().describe("isosurface / threshold: the field"),
         values: z.array(z.number()).optional().describe("isosurface: one or more isovalues"),
         component: z.union([z.number().int().nonnegative(), z.literal("mag")]).optional()

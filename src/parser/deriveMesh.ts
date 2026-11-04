@@ -1,3 +1,4 @@
+import { extractSubModelParts } from "./subModelPartExtract";
 import { featureEdges, FeatureEdgeOptions } from "./analysisOps";
 /**
  * Derived meshes: a NEW mesh computed from the open one, written out as a file
@@ -40,6 +41,11 @@ export interface SliceSpec {
   origin: Vec3;
   /** The plane normal (need not be unit). */
   normal: Vec3;
+  /**
+   * Cut only these SubModelParts (paths; each includes its subtree) instead of the whole mesh -
+   * the parts the viewer has on screen. Unknown paths are ignored; none found is an error.
+   */
+  parts?: string[];
 }
 
 export interface IsosurfaceSpec {
@@ -236,7 +242,13 @@ export async function deriveMesh(
       if (!finite3(spec.origin) || !finite3(spec.normal)) throw new Error("A slice needs a finite origin and normal (3 numbers each).");
       if (spec.normal.every((v) => v === 0)) throw new Error("The slice normal must not be the zero vector.");
       if (signal?.aborted) throw new Error("cancelled");
-      const mesh = modelToMeshio(model, diagnostics, { dim: 3 });
+      let target = model;
+      if (spec.parts && spec.parts.length > 0) {
+        const sub = extractSubModelParts(model, spec.parts);
+        if (!sub) throw new Error(`None of the requested SubModelParts exist: ${spec.parts.join(", ")}.`);
+        target = sub;
+      }
+      const mesh = modelToMeshio(target, diagnostics, { dim: 3 });
       if (mesh.cells.length === 0) throw new Error("The mesh has no cells to slice.");
       if (signal?.aborted) throw new Error("cancelled");
       const m = await loadMeshio();
