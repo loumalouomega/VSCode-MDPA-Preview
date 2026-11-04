@@ -348,7 +348,22 @@ export type MeshioMeshInfo = MeshioOpenFoamInfo | MeshioMedInfo | { format: stri
  * diagnostic would fire for every Exodus file with something the user never
  * put there.
  */
-const INTERNAL_FIELD_DATA_KEYS = new Set(["exodus:time"]);
+const INTERNAL_FIELD_DATA_KEYS = new Set(["exodus:time", "meshio:length_unit"]);
+
+/** meshio++ >= 18.1.0: metres per coordinate unit, kept in `field_data` by the formats that state a unit. */
+export const LENGTH_UNIT_KEY = "meshio:length_unit";
+
+const LENGTH_UNITS: [string, number][] = [["m", 1], ["mm", 0.001], ["cm", 0.01], ["km", 1000], ["in", 0.0254], ["ft", 0.3048]];
+
+/** The common unit a metres-per-unit factor names (to a relative 1e-9), or undefined. */
+export function lengthUnitName(scale: number): string | undefined {
+  return LENGTH_UNITS.find(([, s]) => Math.abs(s - scale) <= 1e-9 * s)?.[0];
+}
+
+/** The inverse, for the units `lengthUnitName` knows. */
+export function lengthUnitScale(name: string): number | undefined {
+  return LENGTH_UNITS.find(([n]) => n === name.trim().toLowerCase())?.[1];
+}
 
 /**
  * meshio field names may contain characters Kratos variables cannot
@@ -740,6 +755,15 @@ export function meshioToModel(
   });
   const polyhedralTopology = polyhedra.build(flatExpansion);
   if (polyhedralTopology) model.polyhedra = polyhedralTopology;
+  // meshio++ >= 18.1.0: a length unit a file states (STEP/IGES: mm, UNV, CGNS, MED, Radioss, USD) becomes the
+  // coordinate unit of the model, with the exact factor kept for a unit that has no common name.
+  const lengthUnit = mesh.field_data?.[LENGTH_UNIT_KEY] as ArrayLike<number | bigint> | undefined;
+  const scale = lengthUnit && lengthUnit.length > 0 ? Number(lengthUnit[0]) : NaN;
+  if (Number.isFinite(scale) && scale > 0) {
+    const name = lengthUnitName(scale);
+    model.source = { format: "meshio", units: { ...(name ? { coords: name } : {}), coordsScale: scale } };
+    if (!name) diagnostics.push({ line: 0, message: `The file states a length unit of ${scale} m per coordinate unit (no common name).` });
+  }
   // Read-path fidelity win: `mesh.propertySets` -> `model.properties`,
   // unconditionally (not gated on carriers) — a format that genuinely
   // declares mesh-level Properties (MDPA-through-meshio, or a carry result)
@@ -849,6 +873,8 @@ export function modelToMeshio(
   opts: {
     dim?: 2 | 3;
     exodusAttributes?: boolean;
+    /** Write `meshio:length_unit` (metres per unit) when the model carries a unit from a file — only the formats that store one (MED, UNV, CGNS). */
+    lengthUnit?: boolean;
     /**
      * Emit the fidelity-carrier arrays (`mdpa:id`/`kratos:kind`/
      * `gmsh:physical` point/cell data, `propertySets`) an operation's result
@@ -1047,6 +1073,10 @@ export function modelToMeshio(
   };
   if (opts.carriers && model.properties && model.properties.length > 0) {
     mesh.propertySets = toUpstreamPropertySets(model.properties);
+  }
+  const scale = model.source?.units?.coordsScale;
+  if (opts.lengthUnit && scale !== undefined && Number.isFinite(scale) && scale > 0) {
+    mesh.field_data = { ...(mesh.field_data ?? {}), [LENGTH_UNIT_KEY]: Float64Array.from([scale]) };
   }
   return mesh;
 }

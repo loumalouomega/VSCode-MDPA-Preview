@@ -10,6 +10,7 @@
  * the `.edit-form` blocks comes for free from `initEditHistory`'s generic wiring.
  */
 
+import { FORMS_181, form181Id, type Form181 } from "../src/parser/meshio181Forms";
 import { t } from "../src/parser/i18n/runtime";
 import { fieldUnitLabel } from "../src/parser/fieldDimensions";
 import { validateSizeExpr, remeshSizeExprVars, describeUnknownRemeshVar } from "../src/parser/sizeExpr";
@@ -297,6 +298,7 @@ export function initMeshMod(postMessage: PostMessage): void {
  * is invalid and has already shown why.
  */
 const ASYNC_BUILDERS: Record<string, () => Record<string, unknown> | undefined> = {
+  ...Object.fromEntries(FORMS_181.map((f) => [f.op, () => build181Msg(f)])),
   remesh: buildRemeshMsg,
   levelset: buildLevelsetMsg,
   repairSurface: buildRepairSurfaceMsg,
@@ -1475,6 +1477,32 @@ function buildOptimizeVolumeMsg(): Record<string, unknown> | undefined {
 function updateSurfaceRemeshUI(): void {
   const metric = (document.getElementById("sr-metric") as HTMLSelectElement | null)?.value ?? "isotropic";
   document.getElementById("sr-aniso-field")?.classList.toggle("hidden", metric !== "anisotropic");
+}
+
+// --- meshio++ 18.1.0 in-place operations (forms described in meshio181Forms.ts) ---
+
+/** Reads one of the data-described forms into an `applyOp` message; undefined (with the reason shown) when a required field is blank. */
+function build181Msg(f: Form181): Record<string, unknown> | undefined {
+  const msg: Record<string, unknown> = { type: "applyOp", op: f.op };
+  for (const d of f.fields) {
+    const id = form181Id(f.op, d.key);
+    const el = document.getElementById(id) as HTMLInputElement | HTMLSelectElement | null;
+    if (!el) continue;
+    if (d.kind === "bool") {
+      const on = (el as HTMLInputElement).checked;
+      // A default-on box posts false when cleared (the kernel default is true); a default-off one posts only when ticked.
+      if (d.defaultOn ? !on : on) msg[d.key] = on;
+      continue;
+    }
+    const raw = el.value.trim();
+    if (!raw) {
+      if (d.required) { el.classList.add("invalid"); return undefined; }
+      continue;
+    }
+    el.classList.remove("invalid");
+    msg[d.key] = d.kind === "num" || d.kind === "int" ? Number(raw) : raw;
+  }
+  return msg;
 }
 
 // --- wall thickness and region selection (meshio++ 18.0.0 oracles) ------------

@@ -250,6 +250,11 @@ export interface SourceMetadata {
   description?: string;
   units?: {
     coords?: string;
+    /**
+     * Metres per coordinate unit as a file stated it (meshio++ `meshio:length_unit`, 18.1.0). Present only
+     * when a file said so; the exact factor survives where `coords` can only name a common unit.
+     */
+    coordsScale?: number;
     time?: string;
     /** Field variable name -> its unit string. */
     fields?: Record<string, string>;

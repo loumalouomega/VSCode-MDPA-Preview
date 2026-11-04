@@ -160,7 +160,7 @@ export function displayScaleFor(field: Pick<FieldData, "dimensions">, displayUni
  */
 const UNIT_NAMES: { names: string[]; exps: DimensionExponents }[] = [
   { names: ["pa", "kpa", "mpa", "gpa", "bar", "mbar", "n/m2"], exps: PRESSURE },
-  { names: ["m", "mm", "cm", "km"], exps: [0, 1, 0, 0, 0, 0, 0] },
+  { names: ["m", "mm", "cm", "km", "in", "ft"], exps: [0, 1, 0, 0, 0, 0, 0] },
   { names: ["m2", "mm2", "cm2"], exps: [0, 2, 0, 0, 0, 0, 0] },
   { names: ["m3", "mm3", "cm3"], exps: [0, 3, 0, 0, 0, 0, 0] },
   { names: ["s", "ms"], exps: [0, 0, 1, 0, 0, 0, 0] },

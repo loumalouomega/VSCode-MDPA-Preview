@@ -4,6 +4,20 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **meshio++ 18.1.0.** The kernel moves from 18.0.0 with no format change (lean 82 readers / 83 writers, full 84 / 83). All 14 new kernels are adopted:
+  - **Seven in-place operations** in the Mesh Modification sidebar (Fields), the command line and `mesh_transform`: **Untangle** (repair inverted tetrahedra/hexahedra), **Morph** (boundary-driven displacement), **Register (rigid ICP)** (applies the transform, rotating vector and tensor fields with the mesh), **Geodesic distance**, **Surface eigenmodes**, **Cylindrical / spherical components** and **Prepare MMG metric**. They keep node and entity ids, Properties, SubModelParts and fields; a miss is a gap, never 0.
+  - **Five derived-mesh kinds** (Advanced ▸ Sweep, mirror and layers…, `mesh_derive`): `convexHull`, `delaunay2d`, `reconstructSurface`, `estimateNormals` and `parameterize` (the UV atlas is the 2-component nodal field `UV`; OBJ/glTF texture coordinates are not written).
+  - **`mesh_graph`** (MCP): the node, clique or cell connectivity graph with degree statistics and the bandwidth of the numbering, and a METIS `.graph` / Scotch `.grf` file with `outputPath`.
+  - **Compressed input:** the headless readers open `.gz` and single-file `.zip` meshes; `.bz2`, `.zst` and `.xz` are refused by name with the way out. The custom editors still open uncompressed files.
+  - **Length units:** a unit a file states (STEP/IGES millimetres, UNV, CGNS, MED) becomes `source.units.coords` with the exact `coordsScale`; MED, UNV and CGNS write it back. `in` and `ft` are known units. MED's per-axis padded unit string collapses to one unit.
+  - Packaged `.vsix`: 59.05 MB.
+  - `optimizeVolume` keeps defaulting to `energy` although upstream now defaults to `worst`. `apply_operations`, remote URL reads and third-party format entry points are Python-only upstream and are listed in `mesh_capabilities.operations.unavailable`.
+  - Documentation: new screenshots `meshio181-derive.png` and `meshio181-forms.png` (`scripts/screenshots/capture-meshio181*.mjs`), a guide section in Mesh editing, and the README/MCP tool tables.
+
 ## [5.30.0] - 2026-11-04
 
 ### Added

@@ -320,6 +320,36 @@ Fields with no reconstructible definition (file fields and the like) render as l
 
 The **Optimize tetrahedra** form has an *objective*: **Energy** (the original behaviour: ODT energy with scaled-Jacobian flips and relocation, unchanged for existing recipes) or **Worst angle** (meshio++ 18.0.0: raises the least dihedral angle and never lowers it, adding edge removal over rings of up to *ring* tetrahedra, multi-face removal and worst-cell smoothing). The result message reports the counts and the least dihedral angle before and after.
 
+### meshio++ 18.1.0 operations
+
+Seven operations arrive with meshio++ 18.1.0, all in the **Fields** group of the Mesh Modification sidebar (and as `untangle`, `morph`, `registerRigid`, `geodesicDistance`, `laplacianEigenmodes`, `convertCoordinates` and `prepareMetric` in the command line and `mesh_transform`). They are *oracles*: the kernel computes a result whose shape survives exactly (moved points, one value per node, a matrix) and it is applied onto your own mesh, so node and entity ids, blocks, Properties, SubModelParts and every other field are untouched. Each runs in the cancellable oracle worker and is undoable.
+
+![The Untangle, Morph and Geodesic distance forms open in the sidebar, filled in](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/meshio181-forms.png)
+
+- **Untangle** moves nodes until no tetrahedron or hexahedron corner is inverted, keeping connectivity. *Fix boundary* holds the boundary, *frozen part* holds a SubModelPart, *rings* and *sweeps* tune the search. A mesh with nothing inverted is a no-op that says so; the message reports the inverted count and worst quality before and after.
+- **Morph** drives the mesh by a nodal displacement field: the boundary (and an optional *constrained part*) follows it, the interior follows harmonically with Jacobian-based stiffening, in *steps* increments. Inverted cells are reported. With nothing constrained it is a no-op.
+- **Register (rigid ICP)** lays the mesh onto another file by iterative closest points and applies the rotation and translation. Registering the whole mesh also rotates its 3-component vector and 9-component tensor fields; with *move only part* the fields are left as they are, and the message says so.
+- **Geodesic distance** is the heat-method distance along a linear-triangle surface from source node ids or a source part, written as a nodal field (`GEODESIC_DISTANCE`). A node no source reaches is a gap, never 0.
+- **Surface eigenmodes** writes the lowest Laplace–Beltrami eigenmodes of a triangle surface as one scalar field per mode (`LAPLACE_MODE_0`, `LAPLACE_MODE_1`, …); mode 0 is the constant and the eigenvalues are in the message.
+- **Cylindrical / spherical components** writes `COORDS_CYLINDRICAL` / `COORDS_SPHERICAL` and, for each named 3-vector or 9-tensor nodal field, a copy in the local basis of every point (`<field>_CYL`, `_SPH`; `_CART` with *back to Cartesian*). The Cartesian originals are kept.
+- **Prepare MMG metric** intersects metric fields (6 components in 3-D, 3 in 2-D), normalises them to a vertex budget, clamps the sizes and grades them into one field (`METRIC`), ready for **Sweep, mirror and layers ▸ adapt** (full meshio++ artifact).
+
+The point and surface kernels that make a **new** mesh are derived kinds of **Advanced ▸ Sweep, mirror and layers…** and of `mesh_derive`: `convexHull`, `delaunay2d`, `reconstructSurface`, `estimateNormals` and `parameterize`.
+
+![A torus surface, its convex hull and a surface reconstructed from its vertices alone](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/meshio181-derive.png)
+
+The hull keeps each vertex's 0-based input node as the nodal field `SOURCE_NODE_INDEX`. `parameterize` returns a UV atlas with the surface cut at its seams (points split, a `PARAMETERIZE_CHART` id per cell); because the editable model has no texture-coordinate slot the coordinates are the 2-component nodal field `UV`, which a `.vtu` or `.mdpa` keeps — OBJ/glTF texture coordinates are not written.
+
+### Mesh graph
+
+The MCP tool `mesh_graph` returns the connectivity graph of a mesh — `node` (nodes joined by a cell edge), `clique` (nodes sharing a cell, the finite-element sparsity pattern) or `cell` (cells sharing a facet) — with its degree range and the **bandwidth** of the current numbering, and with `outputPath` writes a METIS (`.graph`) or Scotch (`.grf`) file for a partitioner. Vertices are 0-based positions in the stored order, not Kratos ids. It is headless only; compare its bandwidth with the one `reorder` reports.
+
+### Compressed files and length units
+
+The headless readers (and every MCP tool that takes a mesh path) read `case.vtu.gz`, `part.stl.gz` and a `.zip` holding exactly one mesh file; saving writes an ordinary uncompressed file. `.bz2`, `.zst` and `.xz` are refused by name with the command that decompresses them, and a compressed multi-file set (a `.vtm`, an OpenFOAM case, an XDMF with its `.h5`) must be decompressed whole. The preview's custom editor still opens uncompressed files only.
+
+Formats that state their length unit now give the model one: STEP and IGES reads are in millimetres, and UNV, CGNS and MED carry it (MED and UNV round-trip it; `mesh_info` shows `source.units.coords` and the exact `coordsScale`, metres per unit). It labels plots and integrals; nothing is rescaled.
+
 ## Reorganizing the SubModelPart tree
 
 ![The organize menu open on a SubModelPart row: New child, Move under, the union / intersection / difference "with (new part)" groups, Merge into, and Edit membership pre-filled with kind = nodes and ids 1,2,5-8](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/organize-submodelpart.png)

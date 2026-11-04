@@ -71,6 +71,7 @@ import {
   MeshioMesh,
   MeshioMeshInfo,
   applyMedDimensions,
+  lengthUnitName,
   meshioToModel,
   modelToMeshio,
 } from "./meshioConvert";
@@ -338,6 +339,45 @@ export interface MeshioModule {
     mesh: MeshioMesh; vertexMap: Int32Array; numNewPoints: number; numBoundaryFaces: number; numSplitVertices: number;
   };
   polyToTet(mesh: MeshioMesh, recordParentIds?: boolean, returnMaps?: boolean): MeshioMesh | { mesh: MeshioMesh; numExactTets: number; numFannedCells: number } & Record<string, unknown>;
+
+  // --- meshio++ 18.1.0 kernels (options are passed through; the kernel validates keys) ---
+  /** CSR graph of the mesh (0-based): `node` (cell edges), `clique` (FEM sparsity) or `cell` (cells sharing a facet). */
+  adjacency(mesh: MeshioMesh, kind?: "node" | "clique" | "cell"): { indptr: Int32Array; indices: Int32Array };
+  /** Writes the `kind` graph to `path` in MEMFS as METIS (`.graph`) or Scotch (`.grf`). */
+  writeGraph(mesh: MeshioMesh, path: string, kind?: "node" | "clique" | "cell", format?: "metis" | "scotch"): unknown;
+  /** Metric toolbox: intersect, normalise, clamp and grade metric point arrays into `output`. */
+  prepareMetric(mesh: MeshioMesh, options: Record<string, unknown>): { mesh: MeshioMesh; complexityBefore: number; complexityAfter: number; numGraded: number; sweeps: number };
+  /** Moves nodes until every tetrahedron / hexahedron corner has positive volume; connectivity is kept. */
+  untangle(mesh: MeshioMesh, options?: Record<string, unknown>): {
+    mesh: MeshioMesh; numInvertedBefore: number; numInvertedAfter: number; minQualityBefore: number; minQualityAfter: number; sweeps: number; moves: number;
+  };
+  /** Boundary-driven morphing by a point-data displacement `array`. */
+  morph(mesh: MeshioMesh, options: Record<string, unknown>): Record<string, unknown> & { mesh: MeshioMesh };
+  /** Lowest Laplace-Beltrami eigenpairs of a triangle surface (`laplacian:modes` point data). */
+  laplacianEigenmodes(mesh: MeshioMesh, options?: Record<string, unknown>): { mesh: MeshioMesh; eigenvalues: number[]; iterations: number; maxResidual: number; converged: boolean };
+  /** Rigid ICP registration: a row-major 4x4 `matrix` that lays `source` onto `target`. */
+  registerRigid(source: MeshioMesh, target: MeshioMesh, options?: Record<string, unknown>): {
+    matrix: number[]; initialRms: number; rms: number; iterations: number; numPairs: number; converged: boolean;
+  };
+  /** Normals of a point cloud as `normals` point data. */
+  estimateNormals(mesh: MeshioMesh, options?: Record<string, unknown>): { mesh: MeshioMesh; numDegenerate: number; numComponents: number };
+  /** Triangle surface through an oriented point cloud (Hoppe). */
+  reconstructSurface(mesh: MeshioMesh, options?: Record<string, unknown>): { mesh: MeshioMesh; numSamples: number; numTriangles: number; numUndefined: number; numComponents: number; estimatedNormals: boolean };
+  /** Convex hull of the points: a closed triangle surface (3-D) or a CCW line loop (2-D); `hull:point_id` per vertex. */
+  convexHull(mesh: MeshioMesh, options?: Record<string, unknown>): { mesh: MeshioMesh; dimension: number; numVertices: number; numFacets: number; area: number; volume: number; perimeter: number };
+  /** Delaunay triangulation of the x, y coordinates. */
+  delaunay2d(mesh: MeshioMesh): { mesh: MeshioMesh; numTriangles: number; numDuplicates: number; numBoundary: number };
+  /** Cylindrical / spherical coordinates as point data; named vector / tensor arrays rewritten in the local basis. */
+  convertCoordinates(mesh: MeshioMesh, options?: Record<string, unknown>): { mesh: MeshioMesh; numArrays: number; numSingular: number };
+  /** Heat-method geodesic distance (`geodesic:distance` point data) to the source points. */
+  geodesicDistance(mesh: MeshioMesh, sources: ArrayLike<number> | number, options?: Record<string, unknown>): {
+    mesh: MeshioMesh; numSources: number; numUnreached: number; numDegenerate: number; maxDistance: number; timeStep: number;
+    heatIterations: number; poissonIterations: number; converged: boolean;
+  };
+  /** UV atlas of a triangle surface: `uv` point data, split at the seams. */
+  parameterize(mesh: MeshioMesh, options?: Record<string, unknown>): {
+    mesh: MeshioMesh; numCharts: number; numFlipped: number; stretch: number; packingEfficiency: number; numSeamPoints: number;
+  };
 
   /**
    * The older adaptive octree around a skin (17.8.0), positional arguments as
@@ -1682,7 +1722,9 @@ function medInfoToSource(info: MeshioMedInfo): SourceMetadata {
   for (const [name, [uni]] of Object.entries(info.fieldUnits)) {
     if (uni.trim().length > 0) fields[name] = uni;
   }
-  const coords = info.unitCoords.trim();
+  // MED stores one 16-character unit per axis ("mm  mm  mm"); equal axes collapse to the one unit.
+  const axisUnits = info.unitCoords.trim().split(/\s+/).filter(Boolean);
+  const coords = axisUnits.length > 0 && axisUnits.every((u) => u === axisUnits[0]) ? axisUnits[0] : info.unitCoords.trim();
   const time = info.unitTime.trim();
   if (coords.length > 0 || time.length > 0 || Object.keys(fields).length > 0) {
     source.units = {
@@ -1946,7 +1988,9 @@ async function readModelWith(
       if (augment) augment(mesh, diagnostics);
       const model = meshioToModel(mesh, diagnostics);
       if (medInfo) {
+        const fromFile = model.source?.units?.coordsScale;
         model.source = medInfoToSource(medInfo);
+        if (fromFile !== undefined) model.source = { ...model.source, units: { ...(model.source.units ?? {}), coordsScale: fromFile, ...(model.source.units?.coords ? {} : (lengthUnitName(fromFile) ? { coords: lengthUnitName(fromFile) } : {})) } };
         applyMedDimensions(model, medInfo.fieldUnits);
       }
       // The NURBS side channel: kept ON the model for the IGA derive kinds,
@@ -2477,6 +2521,7 @@ export async function writeMeshioBytes(
   // else it would simply drop. See modelToMeshio's `exodusAttributes`.
   const mesh = modelToMeshio(model, opts.diagnostics ?? [], {
     exodusAttributes: fmt === "exodus",
+    lengthUnit: fmt === "med" || fmt === "unv" || fmt === "cgns",
     dim: fmt === "triangle" ? 2 : 3,
     // Zone files come from the parts: no per-block cell region (a block is
     // not a zone) and face zones as side regions (former roadmap item 13, delivered 2026-10-19).

@@ -58,6 +58,7 @@ import { MdpaModel, EntityBlock, SubModelPart, EntityKind } from "../parser/type
 import { parseMdpa } from "../parser/mdpaParser";
 import { surfaceDefects } from "../parser/surfaceDefects";
 import { curvatureModel, gaussBonnetResidual } from "../parser/curvature";
+import { meshGraph, graphFormatOf, GRAPH_KINDS, GRAPH_FORMATS, type GraphKind, type GraphFormat } from "../parser/meshGraph";
 import { fitPrimitivesReport } from "../parser/primitiveReport";
 import { aleQualitySeries } from "../parser/aleQuality";
 import { recoverBoundaryFlux } from "../parser/boundaryFlux";
@@ -1113,6 +1114,39 @@ export async function caseEvaluateQuantity(args: {
  * without writing any field. Same core (`curvatureModel`), so the two cannot
  * disagree.
  */
+/**
+ * mesh_graph: the connectivity graph of a mesh (meshio++ >= 18.1.0) — degree statistics and bandwidth, and with
+ * `outputPath` a METIS (.graph) or Scotch (.grf) file for a partitioner. Read-only; the mesh is never written.
+ */
+export async function meshGraphTool(args: {
+  path: string;
+  kind?: GraphKind;
+  outputPath?: string;
+  outputFormat?: GraphFormat;
+}, execution: PlotExecution = {}): Promise<object> {
+  const { model } = await loadMesh(args.path, undefined, undefined, undefined, undefined, undefined, execution.signal);
+  const format = args.outputPath ? (args.outputFormat ?? graphFormatOf(path.extname(args.outputPath))) : undefined;
+  if (args.outputPath && !format) throw new Error(`Cannot tell the graph format of "${args.outputPath}": use a .graph (METIS) or .grf (Scotch) extension, or pass outputFormat (${GRAPH_FORMATS.join(" | ")}).`);
+  const g = await meshGraph(model, args.kind ?? "node", format);
+  let written: string | undefined;
+  if (args.outputPath && g.file) {
+    const abs = path.resolve(args.outputPath);
+    fs.mkdirSync(path.dirname(abs), { recursive: true });
+    fs.writeFileSync(abs, g.file.data);
+    written = abs;
+  }
+  return {
+    path: args.path,
+    kind: g.kind,
+    vertices: g.vertices,
+    edges: g.edges,
+    degree: { min: g.minDegree, max: g.maxDegree, mean: +g.meanDegree.toFixed(3) },
+    bandwidth: g.bandwidth,
+    numbering: g.kind === "cell" ? "0-based, cells in block-major storage order" : "0-based positions in the stored node order (not Kratos ids)",
+    ...(written ? { outputPath: written, format: g.file?.format } : {}),
+  };
+}
+
 export async function meshCurvature(args: {
   path: string;
   mean?: boolean;
@@ -1976,7 +2010,12 @@ export async function meshDerive(args: {
     | "meshDomain"
     | "metricFromHessian"
     | "findIntersections"
-    | "tetToPoly";
+    | "tetToPoly"
+    | "convexHull"
+    | "delaunay2d"
+    | "reconstructSurface"
+    | "estimateNormals"
+    | "parameterize";
   outputPath: string;
   outputFormat?: string;
   /** Read this step of a multi-step file instead of the first (the frame every kind works on). */

@@ -7,6 +7,9 @@ import { collectCaeFiles, caeSourcePaths } from "./caeFiles";
 
 import { parseMdpaFile } from "./mdpaParser";
 import * as fs from "node:fs";
+import * as os from "node:os";
+import * as zlib from "node:zlib";
+import { readZip } from "./zip";
 import * as path from "node:path";
 import { decode as decodeBzip } from "seek-bzip";
 import { MdpaDiagnostic, MdpaModel } from "./types";
@@ -347,11 +350,65 @@ const VTK_XML_FORMAT_KEY: Record<string, string> = {
   ".vtr": "vtr",
 };
 
+/** Formats whose bytes live in sibling files, which a decompressed single file cannot bring along. */
+const COMPRESSED_NEEDS_SIBLINGS = [".vtm", ".pvd", ".pvtu", ".pvtp", ".foam", ".xdmf", ".xmf", ".elmer", ".mfem-rank", ".node", ".ele", ".case", ".geo", ".poly", ".post.msh", ".post.res"];
+
+/**
+ * A compressed mesh file (`case.vtu.gz`, `part.stl.zip`, …): decompressed to a temporary file named as the inner
+ * file, parsed through the ordinary dispatcher and removed. `.gz` and a single-member `.zip` are read here with
+ * node:zlib and the extension's own zip reader. `.bz2`, `.zst` and `.xz` need the meshio++ full artifact's codecs
+ * (and `.xz` is built into neither artifact), so they are refused by name with the way out rather than guessed at.
+ * Multi-file formats (a `.vtm`, an OpenFOAM `.foam`, an XDMF with its `.h5`) are refused: their companions would
+ * have to be compressed with them.
+ */
+async function parseCompressedMeshFile(fsPath: string, codec: string, onProgress: ProgressCallback | undefined, opts: ParseMeshOptions | undefined): Promise<MdpaModel> {
+  const signal = opts?.signal;
+  throwIfCancelled(signal);
+  if (codec === "bz2" || codec === "zst" || codec === "xz") {
+    throw new Error(`"${path.basename(fsPath)}" is a .${codec} file: only .gz and single-file .zip are decompressed here. Decompress it first (e.g. \`${codec === "bz2" ? "bunzip2" : codec === "zst" ? "unzstd" : "unxz"} -k\`) and open the result.`);
+  }
+  const raw = await fs.promises.readFile(fsPath);
+  throwIfCancelled(signal);
+  let innerName: string;
+  let data: Buffer;
+  if (codec === "gz") {
+    innerName = path.basename(fsPath).replace(/\.gz$/i, "");
+    data = zlib.gunzipSync(raw);
+  } else {
+    const entries = readZip(raw).filter((e) => !e.name.endsWith("/"));
+    if (entries.length !== 1) throw new Error(`"${path.basename(fsPath)}" holds ${entries.length} files; only a zip with exactly one mesh file is opened. Extract it and open the mesh.`);
+    innerName = path.basename(entries[0].name);
+    data = Buffer.from(entries[0].data);
+  }
+  if (/\.(gz|zip|bz2|zst|xz)$/i.test(innerName)) throw new Error(`"${innerName}" inside "${path.basename(fsPath)}" is compressed again; decompress it fully first.`);
+  const innerExt = meshExtname(innerName);
+  if (COMPRESSED_NEEDS_SIBLINGS.includes(innerExt)) {
+    throw new Error(`${innerExt} files read companion files that would have to be decompressed beside them; decompress the whole set first.`);
+  }
+  if (!SUPPORTED_MESH_EXTENSIONS.includes(innerExt)) {
+    throw new Error(`Unsupported mesh file extension "${innerExt}" inside "${path.basename(fsPath)}" (supported: ${SUPPORTED_MESH_EXTENSIONS.join(", ")}).`);
+  }
+  const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "mdpa-compressed-"));
+  try {
+    const inner = path.join(dir, innerName);
+    await fs.promises.writeFile(inner, data);
+    data = Buffer.alloc(0);
+    const model = await parseMeshFile(inner, onProgress, opts);
+    model.diagnostics.push({ line: 0, message: `Read "${innerName}" from the compressed file "${path.basename(fsPath)}"; saving writes an ordinary, uncompressed file.` });
+    return model;
+  } finally {
+    await fs.promises.rm(dir, { recursive: true, force: true });
+  }
+}
+
 export async function parseMeshFile(
   fsPath: string,
   onProgress?: ProgressCallback,
   opts?: ParseMeshOptions
 ): Promise<MdpaModel> {
+  // libMesh's own `.xda.bz2` / `.xdr.bz2` are meshio++ formats, not a wrapper around one.
+  const compressed = /\.(xda|xdr)\.bz2$/i.test(fsPath) ? null : /\.(gz|zip|bz2|zst|xz)$/i.exec(fsPath);
+  if (compressed) return parseCompressedMeshFile(fsPath, compressed[1].toLowerCase(), onProgress, opts);
   const ext = meshExtname(fsPath);
   const signal = opts?.signal;
   throwIfCancelled(signal);

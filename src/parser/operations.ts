@@ -80,6 +80,7 @@ import {
 } from "./fieldManage";
 import { repairSurfaceModel, RepairSurfaceParams } from "./repairSurface";
 import { tessellateModel, TessellateParams, TESSELLATE_MAX_LEVELS } from "./tessellate";
+import { OPS_181, is181Op, parse181, apply181, Op181Record } from "./meshio181";
 import { thicknessModel, describeThickness, THICKNESS_DIRECTIONS, ThicknessParams, ThicknessDirection } from "./thickness";
 import { selectRegionModel, describeSelectRegion, hasSelectRegionCriterion, SELECT_REGION_KINDS, SELECT_REGION_MODES, SelectRegionParams } from "./selectRegion";
 import { curvatureModel, gaussBonnetResidual, CurvatureParams, CURVATURE_DUAL_AREAS, CurvatureDualArea } from "./curvature";
@@ -316,6 +317,8 @@ export type OpRecord =
   // meshio++ 18.0.0 oracles: wall thickness per facet (thickness.ts) and a region picked by geometry / data / a grown patch (selectRegion.ts).
   | ({ op: "thickness" } & ThicknessParams)
   | ({ op: "selectRegion" } & SelectRegionParams)
+  // meshio++ 18.1.0 oracles (meshio181.ts): untangle, morph, registerRigid, geodesicDistance, laplacianEigenmodes, convertCoordinates, prepareMetric.
+  | Op181Record
   // Coordinate-only meshio++ oracles (see deform.ts). shrinkwrap names its
   // target surface exactly like sdfDistance: a file, a SubModelPart of this
   // mesh, or its own skin — exactly one.
@@ -412,6 +415,7 @@ const ASYNC_OPS = new Set<OpName>([
   "optimizeVolume",
   "curvature",
   "thickness",
+  ...OPS_181,
   "selectRegion",
   "shrinkwrap",
   "sobolevDeform",
@@ -513,6 +517,7 @@ const ORACLE_OPS: ReadonlySet<OpName> = new Set<OpName>([
   "optimizeVolume",
   "curvature",
   "thickness",
+  ...OPS_181,
   "selectRegion",
   "shrinkwrap",
   "sobolevDeform",
@@ -1193,6 +1198,7 @@ export function applyOp(model: MdpaModel, rec: OpRecord): OpOutcome {
       // or in mergeMesh's case reading a second file off disk).
       throw new Error(`Operation "${rec.op}" must run through applyOpAsync.`);
     default: {
+      if (is181Op((rec as { op: string }).op)) throw new Error(`Operation "${(rec as { op: string }).op}" must run through applyOpAsync.`);
       // Exhaustiveness guard for unknown op names coming from a loaded recipe.
       return { model, noop: true, message: `Unknown operation.` };
     }
@@ -1292,6 +1298,9 @@ async function applyAsyncOpInProcess(
   rec: OpRecord,
   opts?: MmgRunOptions
 ): Promise<OpOutcome> {
+  if (is181Op(rec.op)) {
+    return apply181(model, rec as Op181Record, { loadTarget: parseMergeSource });
+  }
   switch (rec.op) {
     case "mergeMesh": {
       const paths = mergeSourcePaths(rec);
@@ -1799,6 +1808,7 @@ const KNOWN_OPS = new Set<OpName>([
   "optimizeVolume",
   "curvature",
   "thickness",
+  ...OPS_181,
   "selectRegion",
   "shrinkwrap",
   "sobolevDeform",
@@ -1971,6 +1981,7 @@ export function opRecordFromMessage(
     if (v === undefined || v === null) return "";
     return typeof v === "string" ? v.trim() : null;
   };
+  if (is181Op(op)) return parse181(op, msg);
   switch (op) {
     case "linearToQuadratic":
     case "removeOrphanNodes":
@@ -3229,6 +3240,7 @@ function validateParams(rec: OpRecord, warnings: string[]): boolean {
   };
   const nums = (keys: string[]): boolean =>
     keys.every((k) => typeof (rec as unknown as Record<string, unknown>)[k] === "number");
+  if (is181Op(rec.op)) return parse181(rec.op, rec as Record<string, unknown>) ? true : bad("missing or invalid parameter");
   switch (rec.op) {
     case "mergeNodes":
       return typeof rec.tolerance === "number" && rec.tolerance > 0
