@@ -84,6 +84,8 @@ export interface ViewState {
   mirror?: { axis: 0 | 1 | 2; at: number | "min" | "max" };
   /** View-only revolve of a 2D axisymmetric result. Exclusive with `mirror`. Omitted = off. */
   revolve?: { axis: "x" | "y"; startDeg: number; sweepDeg: number; layers: number };
+  /** View-only sector repeat (cyclic symmetry). Exclusive with `mirror` and `revolve`. Omitted = off. */
+  sector?: { axis: "x" | "y" | "z"; copies: number; angleDeg?: number };
   /** The Field panel was open (so the saved field overlays are drawn on restore). Omitted = closed. */
   fieldPanel?: boolean;
   /**
@@ -168,6 +170,7 @@ export function isEmptyViewState(v: ViewState): boolean {
     v.curvedLevel === undefined &&
     v.mirror === undefined &&
     v.revolve === undefined &&
+    v.sector === undefined &&
     v.panes.length === 0 &&
     !v.fieldPanel &&
     v.panels.length === 0 &&
@@ -374,6 +377,20 @@ export function validateViewState(raw: unknown, colormapFallback = "Rainbow"): {
     } else warnings.push("View sidecar revolve is malformed — ignored.");
   }
 
+  if (r.sector !== undefined) {
+    const m = r.sector as { axis?: unknown; copies?: unknown; angleDeg?: unknown } | null;
+    const fin = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
+    const angleOk = m?.angleDeg === undefined || (fin(m.angleDeg) && m.angleDeg !== 0);
+    if (m && (m.axis === "x" || m.axis === "y" || m.axis === "z") && fin(m.copies) && m.copies >= 2 && m.copies <= 360 && angleOk) {
+      view.sector = { axis: m.axis, copies: Math.floor(m.copies), ...(fin(m.angleDeg) ? { angleDeg: m.angleDeg } : {}) };
+      if (view.mirror || view.revolve) {
+        delete view.mirror;
+        delete view.revolve;
+        warnings.push("View sidecar holds a sector together with another symmetry view — the sector wins.");
+      }
+    } else warnings.push("View sidecar sector is malformed — ignored.");
+  }
+
   if (r.panes !== undefined) {
     if (!Array.isArray(r.panes)) warnings.push("View sidecar panes are not an array — ignored.");
     else {
@@ -547,6 +564,7 @@ export function serializeViewState(v: ViewState): Record<string, unknown> {
   if (v.curvedLevel) out.curvedLevel = v.curvedLevel;
   if (v.mirror) out.mirror = { axis: v.mirror.axis, at: v.mirror.at };
   if (v.revolve) out.revolve = { ...v.revolve };
+  if (v.sector) out.sector = { ...v.sector };
   if (v.fieldPanel) out.fieldPanel = true;
   return out;
 }

@@ -102,6 +102,7 @@ import { computeIsoSurface } from "../src/parser/isoSurface";
 import { computePlaneCut } from "../src/parser/planeCut";
 import { mirrorExpand } from "../src/parser/render/mirrorDisplay";
 import { revolveExpand, type RevolveSpec } from "../src/parser/render/revolveDisplay";
+import { sectorExpand, type SectorSpec } from "../src/parser/render/sectorDisplay";
 import { buildDisplayGeometry, Cell, prepareNodes, PreparedNodes } from "../src/parser/render/displayGeometry";
 import {
   hideSummaryOverlay,
@@ -1482,10 +1483,23 @@ let mirrorState: MirrorState | undefined;
 let hostModel: MdpaModel | undefined;
 /** View-only revolve of a 2D axisymmetric result (item 24, second increment); exclusive with the mirror. */
 let revolveState: RevolveSpec | undefined;
+/** View-only sector repeat (item 24, third increment); exclusive with the mirror and the revolve. */
+let sectorState: SectorSpec | undefined;
 /** The id maps of whichever expansion is on, so a pick on a copy names its source. */
 let mirrorInfo: { sourceNodeId(id: number): number; sourceEntityId(id: number): number } | undefined;
 function applyMirror(m: MdpaModel): MdpaModel {
   mirrorInfo = undefined;
+  if (sectorState) {
+    try {
+      const r = sectorExpand(m, sectorState);
+      mirrorInfo = r;
+      if (r.diagnostics.length) toast(r.diagnostics[0]);
+      return r.model;
+    } catch (e) {
+      toast(e instanceof Error ? e.message : String(e));
+      return m;
+    }
+  }
   if (revolveState) {
     try {
       const r = revolveExpand(m, revolveState);
@@ -1521,7 +1535,7 @@ function setMirror(state: MirrorState | undefined): void {
   const same = (!state && !mirrorState) || (!!state && !!mirrorState && state.axis === mirrorState.axis && state.at === mirrorState.at);
   if (same) return;
   mirrorState = state;
-  if (state) revolveState = undefined;
+  if (state) { revolveState = undefined; sectorState = undefined; }
   document.querySelector('[data-action="mirror"]')?.classList.toggle("active", !!state);
   document.querySelector('[data-action="revolve"]')?.classList.toggle("active", false);
   scheduleViewSave();
@@ -1535,9 +1549,24 @@ function setRevolve(state: RevolveSpec | undefined): void {
   const same = (!state && !revolveState) || (!!state && !!revolveState && JSON.stringify(state) === JSON.stringify(revolveState));
   if (same) return;
   revolveState = state;
-  if (state) mirrorState = undefined;
+  if (state) { mirrorState = undefined; sectorState = undefined; }
   document.querySelector('[data-action="revolve"]')?.classList.toggle("active", !!state);
   document.querySelector('[data-action="mirror"]')?.classList.toggle("active", false);
+  scheduleViewSave();
+  if (!model || !hostModel) return;
+  snapshotVisibility();
+  model = applyMirror(hostModel);
+  buildScene(false);
+  setMeshModFields(model.fields, model.globals);
+}
+
+function setSector(state: SectorSpec | undefined): void {
+  const same = (!state && !sectorState) || (!!state && !!sectorState && JSON.stringify(state) === JSON.stringify(sectorState));
+  if (same) return;
+  sectorState = state;
+  if (state) { mirrorState = undefined; revolveState = undefined; }
+  for (const a of ["mirror", "revolve"]) document.querySelector(`[data-action="${a}"]`)?.classList.toggle("active", false);
+  document.querySelector('[data-action="sector"]')?.classList.toggle("active", !!state);
   scheduleViewSave();
   if (!model || !hostModel) return;
   snapshotVisibility();
@@ -1834,7 +1863,7 @@ function handleHostMessage(event: MessageEvent): void {
       if (!st || !model || msg.stageId !== st.stageId) break; // superseded by a newer model
       let loaded = msg.field as FieldData;
       const key = `${loaded.kind}:${loaded.variable}`;
-      if ((mirrorState || revolveState) && hostModel) {
+      if ((mirrorState || revolveState || sectorState) && hostModel) {
         hostModel = { ...hostModel, fields: hostModel.fields.map((f) => (`${f.kind}:${f.variable}` === key ? loaded : f)) };
         model = applyMirror(hostModel);
         loaded = model.fields.find((f) => `${f.kind}:${f.variable}` === key) ?? loaded;
@@ -4129,6 +4158,7 @@ function dispatchToolbarAction(action: string | undefined, _target?: HTMLElement
   else if (action === "constraintLinks") setConstraintLinks(!constraintLinksOn);
   else if (action === "curved") setCurved(curvedLevel === 0);
   else if (action === "mirror") setMirror(mirrorState ? undefined : { axis: 0, at: "min" });
+  else if (action === "sector") setSector(sectorState ? undefined : { axis: "z", copies: 6 });
   else if (action === "revolve") setRevolve(revolveState ? undefined : { axis: "y", startDeg: 0, sweepDeg: 360, layers: 36 });
   else if (action === "flatParts") {
     setOutlineView({ ...outlineView, flattenSubModelParts: !outlineView.flattenSubModelParts }, true);
@@ -4204,6 +4234,7 @@ function uiToggleState(action: string): boolean | undefined {
     case "lod": return lodEnabled;
     case "mirror": return !!mirrorState;
     case "revolve": return !!revolveState;
+    case "sector": return !!sectorState;
     case "constraintLinks": return constraintLinksOn;
     case "pan": return panMode;
     case "grid": return gridVisible;
@@ -4277,6 +4308,14 @@ function runViewCommand(fn: string, args: Record<string, unknown>): string | und
       if (typeof args.flip === "boolean" && pane.clip.flipped !== args.flip) {
         document.getElementById("cut-flip")?.click();
       }
+      return undefined;
+    }
+    case "sector": {
+      if (!model) return "No mesh loaded";
+      if (args.state === "off") { setSector(undefined); return undefined; }
+      const ax = String(args.axis ?? "z");
+      if (ax !== "x" && ax !== "y" && ax !== "z") return "axis must be x, y or z";
+      setSector({ axis: ax, copies: Math.floor(typeof args.copies === "number" ? args.copies : 6), ...(typeof args.angle === "number" ? { angleDeg: args.angle } : {}) });
       return undefined;
     }
     case "revolve": {
@@ -9029,6 +9068,7 @@ function captureViewState(): ViewState {
   if (curvedLevel > 0) v.curvedLevel = curvedLevel;
   if (mirrorState) v.mirror = { axis: mirrorState.axis, at: mirrorState.at };
   if (revolveState) v.revolve = { ...revolveState };
+  if (sectorState) v.sector = { ...sectorState };
   v.panes = panes.map((p, i) => ({
     field: fieldToSaved(p.field),
     clip: clonePaneClipState(p.clip),
@@ -9112,6 +9152,7 @@ function applyPendingView(): void {
     if (view.curvedLevel !== undefined && view.curvedLevel !== curvedLevel) setCurvedLevel(view.curvedLevel);
     if (view.mirror) setMirror({ axis: view.mirror.axis, at: view.mirror.at });
     if (view.revolve) setRevolve({ ...view.revolve });
+    if (view.sector) setSector({ ...view.sector });
 
     view.panes.forEach((sp, i) => {
       const pane = panes[i];

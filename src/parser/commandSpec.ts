@@ -64,6 +64,7 @@ export type ViewFn =
   | "clip"
   | "mirror"
   | "revolve"
+  | "sector"
   | "opacity"
   | "theme"
   | "find"
@@ -335,6 +336,15 @@ const VIEW: CommandSpec[] = [
     "state:enum(on|off) axis:enum(x|y) start:number sweep:number layers:int",
     { kind: "view", fn: "revolve" },
     "revolve axis=y sweep=360 layers=36",
+    { positional: ["state"] }
+  ),
+  cmd(
+    "sector",
+    "view",
+    "View-only repeat of a cyclic-symmetry sector about the x, y or z axis (nothing is written)",
+    "state:enum(on|off) axis:enum(x|y|z) copies:int angle:number",
+    { kind: "view", fn: "sector" },
+    "sector axis=z copies=6",
     { positional: ["state"] }
   ),
   cmd("opacity", "view", "Global model opacity (0..1)", "value:number!", { kind: "view", fn: "opacity" }, "opacity 0.6", { positional: ["value"] }),
