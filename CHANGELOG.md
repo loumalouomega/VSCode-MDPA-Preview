@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [5.31.0] - 2026-11-04
+
 ### Added
 
 - **meshio++ 18.1.0.** The kernel moves from 18.0.0 with no format change (lean 82 readers / 83 writers, full 84 / 83). All 14 new kernels are adopted:
@@ -1495,7 +1497,8 @@ Four silent-correctness fixes. None of them threw, and none was visible in the m
 
 - Initial release: custom editor preview for `.mdpa` files.
 
-[Unreleased]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.30.0...HEAD
+[Unreleased]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.31.0...HEAD
+[5.31.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.30.0...v5.31.0
 [5.30.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.29.0...v5.30.0
 [5.29.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.28.0...v5.29.0
 [5.28.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.27.0...v5.28.0
