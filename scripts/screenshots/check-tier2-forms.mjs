@@ -131,6 +131,22 @@ assert.equal(await fillAndClick({ "curv-mean": false, "curv-gauss": false, "curv
 // meshio++ 18.0.0 forms: wall thickness, region selection, tetra optimization objective.
 m = await fillAndClick({ "thick-dir": "inward", "thick-max": "5", "thick-below": "0.2", "thick-out": "WALL" }, '[data-op="thickness"]');
 assert.deepEqual(m, { type: "applyOp", op: "thickness", direction: "inward", maxDistance: 5, threshold: 0.2, output: "WALL" });
+// meshio++ 18.1.0 forms (data-described in meshio181Forms.ts): the posted message is exactly the spec's keys.
+m = await fillAndClick({ "f181-untangle-fixBoundary": false, "f181-untangle-frozenPart": "Fixed", "f181-untangle-rings": "2" }, '[data-op="untangle"]');
+assert.deepEqual(m, { type: "applyOp", op: "untangle", fixBoundary: false, frozenPart: "Fixed", rings: 2 });
+m = await fillAndClick({ "f181-morph-variable": "DISPLACEMENT", "f181-morph-steps": "3", "f181-morph-allowInverted": true }, '[data-op="morph"]');
+assert.deepEqual(m, { type: "applyOp", op: "morph", variable: "DISPLACEMENT", steps: 3, allowInverted: true });
+assert.equal(await fillAndClick({ "f181-morph-variable": "" }, '[data-op="morph"]'), undefined, "a required field left blank posts nothing");
+m = await fillAndClick({ "f181-registerRigid-path": "scan.stl", "f181-registerRigid-method": "point_to_plane" }, '[data-op="registerRigid"]');
+assert.deepEqual(m, { type: "applyOp", op: "registerRigid", path: "scan.stl", method: "point_to_plane" });
+m = await fillAndClick({ "f181-geodesicDistance-sourceNodes": "1, 2", "f181-geodesicDistance-output": "D" }, '[data-op="geodesicDistance"]');
+assert.deepEqual(m, { type: "applyOp", op: "geodesicDistance", sourceNodes: "1, 2", output: "D" });
+m = await fillAndClick({ "f181-laplacianEigenmodes-numModes": "4" }, '[data-op="laplacianEigenmodes"]');
+assert.deepEqual(m, { type: "applyOp", op: "laplacianEigenmodes", numModes: 4 });
+m = await fillAndClick({ "f181-convertCoordinates-arrays": "VELOCITY", "f181-convertCoordinates-system": "spherical", "f181-convertCoordinates-axis": "0,0,1" }, '[data-op="convertCoordinates"]');
+assert.deepEqual(m, { type: "applyOp", op: "convertCoordinates", arrays: "VELOCITY", system: "spherical", axis: "0,0,1" });
+m = await fillAndClick({ "f181-prepareMetric-arrays": "M1", "f181-prepareMetric-hmin": "0.01", "f181-prepareMetric-hmax": "1" }, '[data-op="prepareMetric"]');
+assert.deepEqual(m, { type: "applyOp", op: "prepareMetric", arrays: "M1", hmin: 0.01, hmax: 1 });
 m = await fillAndClick({ "selreg-name": "Top", "selreg-kind": "cell", "selreg-mode": "centroid", "selreg-plane": "0,0,0, 0,0,1", "selreg-box": "", "selreg-sphere": "", "selreg-seed": "", "selreg-comp": "", "selreg-angle": "" }, '[data-op="selectRegion"]');
 assert.deepEqual(m, { type: "applyOp", op: "selectRegion", name: "Top", kind: "cell", mode: "centroid", plane: [0, 0, 0, 0, 0, 1] });
 m = await fillAndClick({ "selreg-name": "Face", "selreg-plane": "", "selreg-seed": "0.5,0.5,1", "selreg-angle": "20" }, '[data-op="selectRegion"]');
@@ -258,7 +274,7 @@ assert.match(await statusText(), /no surface faces/);
 assert.equal(await page.evaluate(() => document.querySelector('[data-action="lod"]').classList.contains("active")), false);
 
 // --- The forms actually rendered, and the page raised no errors ---------------------------
-const forms = await page.evaluate(() => ["fm-form", "cond-form", "cvt-form", "repair-form", "curv-form", "sw-form", "sob-form", "cmp-form", "sr-form", "vm-form", "ov-form", "thick-form", "selreg-form"].map((id) => [id, !!document.getElementById(id)]));
+const forms = await page.evaluate(() => ["fm-form", "cond-form", "cvt-form", "repair-form", "curv-form", "sw-form", "sob-form", "cmp-form", "sr-form", "vm-form", "ov-form", "thick-form", "selreg-form", "untangle-form", "morph-form", "registerRigid-form", "geodesicDistance-form", "laplacianEigenmodes-form", "convertCoordinates-form", "prepareMetric-form"].map((id) => [id, !!document.getElementById(id)]));
 for (const [id, present] of forms) assert.ok(present, `#${id} is in the sidebar`);
 assert.deepEqual(errors.filter((e) => !/WebGL|swiftshader|GPU/i.test(e)), [], "no page errors");
 

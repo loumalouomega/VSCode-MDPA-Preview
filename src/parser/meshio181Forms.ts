@@ -42,8 +42,8 @@ export const FORMS_181: Form181[] = [
     fields: [
       { key: "fixBoundary", label: "fix boundary", kind: "bool", title: "Keep the boundary nodes where they are.", defaultOn: true },
       { key: "frozenPart", label: "frozen part", kind: "text", title: "SubModelPart whose nodes are held fixed.", placeholder: "none" },
-      { key: "rings", label: "rings", kind: "int", title: "Rings of neighbouring cells optimised around each inverted one.", placeholder: "default" },
-      { key: "maxSweeps", label: "sweeps", kind: "int", title: "Most sweeps over the nodes.", placeholder: "default" },
+      { key: "rings", label: "rings", kind: "int", title: "Rings of neighbouring cells optimised around each inverted one.", placeholder: "auto" },
+      { key: "maxSweeps", label: "sweeps", kind: "int", title: "Most sweeps over the nodes.", placeholder: "auto" },
       { key: "smooth", label: "smooth", kind: "bool", title: "Smooth the quality once the mesh is untangled.", defaultOn: true },
     ],
   },
@@ -55,7 +55,7 @@ export const FORMS_181: Form181[] = [
       { key: "fixBoundary", label: "boundary follows", kind: "bool", title: "The boundary nodes are the constrained ones. Clear it and name a part to drive only that.", defaultOn: true },
       { key: "constrainedPart", label: "constrained part", kind: "text", title: "Extra SubModelPart whose nodes follow the displacement.", placeholder: "none" },
       { key: "steps", label: "steps", kind: "int", title: "Apply the displacement in this many increments.", placeholder: "1" },
-      { key: "stiffening", label: "stiffening", kind: "num", title: "Jacobian-based stiffening exponent.", placeholder: "default" },
+      { key: "stiffening", label: "stiffening", kind: "num", title: "Jacobian-based stiffening exponent.", placeholder: "auto" },
       { key: "allowInverted", label: "allow inverted", kind: "bool", title: "Return the result even when cells invert (it is reported either way)." },
     ],
   },
@@ -65,7 +65,7 @@ export const FORMS_181: Form181[] = [
     fields: [
       { key: "path", label: "target file", kind: "text", title: "The mesh to register onto (a surface, or a point cloud).", placeholder: "scan.stl", required: true },
       { key: "method", label: "method", kind: "enum", title: "point_to_plane needs the target to carry normals.", options: ["point_to_point", "point_to_plane"] },
-      { key: "maxIterations", label: "iterations", kind: "int", title: "Most ICP iterations.", placeholder: "default" },
+      { key: "maxIterations", label: "iterations", kind: "int", title: "Most ICP iterations.", placeholder: "auto" },
       { key: "maxDistance", label: "max pair distance", kind: "num", title: "Pairs farther apart than this are ignored.", placeholder: "none" },
       { key: "part", label: "move only part", kind: "text", title: "Register and move only the nodes of this SubModelPart (fields are then left alone).", placeholder: "whole mesh" },
     ],
