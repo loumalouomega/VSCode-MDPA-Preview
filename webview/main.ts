@@ -100,6 +100,7 @@ import {
 } from "./integralPanel";
 import { computeIsoSurface } from "../src/parser/isoSurface";
 import { computePlaneCut } from "../src/parser/planeCut";
+import { mirrorExpand, type MirrorResult } from "../src/parser/render/mirrorDisplay";
 import { buildDisplayGeometry, Cell, prepareNodes, PreparedNodes } from "../src/parser/render/displayGeometry";
 import {
   hideSummaryOverlay,
@@ -1470,6 +1471,50 @@ function setCurved(on: boolean): void {
   setCurvedLevel(on ? CURVED_LEVEL_ON : 0);
 }
 
+/**
+ * View-only mirror expansion (roadmap item 24; see mirrorDisplay.ts). `hostModel` is what the
+ * host posted and stays the source of truth for edits and exports; `model` is the expanded
+ * copy the scene draws while a mirror is on. Picks on a copy resolve to the source ids.
+ */
+interface MirrorState { axis: 0 | 1 | 2; at: number | "min" | "max" }
+let mirrorState: MirrorState | undefined;
+let hostModel: MdpaModel | undefined;
+let mirrorInfo: MirrorResult | undefined;
+function applyMirror(m: MdpaModel): MdpaModel {
+  mirrorInfo = undefined;
+  if (!mirrorState) return m;
+  const { axis, at } = mirrorState;
+  const o: [number, number, number] = [0, 0, 0];
+  o[axis] = at === "min" ? m.bounds.min[axis] : at === "max" ? m.bounds.max[axis] : at;
+  const n: [number, number, number] = [0, 0, 0];
+  n[axis] = 1;
+  try {
+    const r = mirrorExpand(m, { origin: o, normal: n });
+    mirrorInfo = r;
+    if (r.diagnostics.length) toast(r.diagnostics[0]);
+    return r.model;
+  } catch (e) {
+    toast(e instanceof Error ? e.message : String(e));
+    return m;
+  }
+}
+function adoptHostModel(m: MdpaModel): MdpaModel {
+  hostModel = m;
+  return applyMirror(m);
+}
+function setMirror(state: MirrorState | undefined): void {
+  const same = (!state && !mirrorState) || (!!state && !!mirrorState && state.axis === mirrorState.axis && state.at === mirrorState.at);
+  if (same) return;
+  mirrorState = state;
+  document.querySelector('[data-action="mirror"]')?.classList.toggle("active", !!state);
+  scheduleViewSave();
+  if (!model || !hostModel) return;
+  snapshotVisibility();
+  model = applyMirror(hostModel);
+  buildScene(false);
+  setMeshModFields(model.fields, model.globals);
+}
+
 function setLod(on: boolean): void {
   lodAutoDecided = true;
   lodEnabled = on;
@@ -1724,7 +1769,7 @@ function handleHostMessage(event: MessageEvent): void {
       if (msg.keepCamera) snapshotVisibility();
       delete document.body.dataset.meshSummary;
       hideSummaryOverlay(summaryOverlayEl);
-      model = msg.model as MdpaModel;
+      model = adoptHostModel(msg.model as MdpaModel);
       // Staged delivery: geometry now, fields one message each (`modelField`);
       // the scene is rebuilt once when the last one lands.
       stagedFields = msg.fieldsPending ? { stageId: msg.stageId as number, requested: new Set() } : undefined;
@@ -1756,9 +1801,16 @@ function handleHostMessage(event: MessageEvent): void {
     case "modelField": {
       const st = stagedFields;
       if (!st || !model || msg.stageId !== st.stageId) break; // superseded by a newer model
-      const loaded = msg.field as FieldData;
+      let loaded = msg.field as FieldData;
       const key = `${loaded.kind}:${loaded.variable}`;
-      model = { ...model, fields: model.fields.map((f) => (`${f.kind}:${f.variable}` === key ? loaded : f)) };
+      if (mirrorState && hostModel) {
+        hostModel = { ...hostModel, fields: hostModel.fields.map((f) => (`${f.kind}:${f.variable}` === key ? loaded : f)) };
+        model = applyMirror(hostModel);
+        loaded = model.fields.find((f) => `${f.kind}:${f.variable}` === key) ?? loaded;
+      } else {
+        if (hostModel) hostModel = { ...hostModel, fields: hostModel.fields.map((f) => (`${f.kind}:${f.variable}` === key ? loaded : f)) };
+        model = { ...model, fields: model.fields.map((f) => (`${f.kind}:${f.variable}` === key ? loaded : f)) };
+      }
       const idx = fieldInfos.findIndex((f) => f.key === key);
       if (idx >= 0) {
         const fresh = buildFieldInfo(loaded);
@@ -1811,7 +1863,7 @@ function handleHostMessage(event: MessageEvent): void {
       snapshotVisibility();
       delete document.body.dataset.meshSummary;
       hideSummaryOverlay(summaryOverlayEl);
-      model = msg.model as MdpaModel;
+      model = adoptHostModel(msg.model as MdpaModel);
       // Staged frame (initial load / edit re-render): rows follow on demand.
       stagedFields = msg.fieldsPending ? { stageId: msg.stageId as number, requested: new Set() } : undefined;
       midNodeIds = (msg.midNodes as number[] | undefined) ?? [];
@@ -4045,6 +4097,7 @@ function dispatchToolbarAction(action: string | undefined, _target?: HTMLElement
   else if (action === "lod") setLod(!lodEnabled);
   else if (action === "constraintLinks") setConstraintLinks(!constraintLinksOn);
   else if (action === "curved") setCurved(curvedLevel === 0);
+  else if (action === "mirror") setMirror(mirrorState ? undefined : { axis: 0, at: "min" });
   else if (action === "flatParts") {
     setOutlineView({ ...outlineView, flattenSubModelParts: !outlineView.flattenSubModelParts }, true);
   }
@@ -4117,6 +4170,7 @@ function uiToggleState(action: string): boolean | undefined {
     case "edges": return showEdges;
     case "nodeIds": return showNodeIds;
     case "lod": return lodEnabled;
+    case "mirror": return !!mirrorState;
     case "constraintLinks": return constraintLinksOn;
     case "pan": return panMode;
     case "grid": return gridVisible;
@@ -4190,6 +4244,17 @@ function runViewCommand(fn: string, args: Record<string, unknown>): string | und
       if (typeof args.flip === "boolean" && pane.clip.flipped !== args.flip) {
         document.getElementById("cut-flip")?.click();
       }
+      return undefined;
+    }
+    case "mirror": {
+      if (!model) return "No mesh loaded";
+      const st = args.state;
+      if (st === "off") { setMirror(undefined); return undefined; }
+      const ax = String(args.axis ?? "x");
+      const axis = ax === "x" ? 0 : ax === "y" ? 1 : ax === "z" ? 2 : -1;
+      if (axis < 0) return `axis must be x, y or z`;
+      const at = typeof args.at === "number" ? args.at : args.side === "max" ? "max" : "min";
+      setMirror({ axis: axis as 0 | 1 | 2, at });
       return undefined;
     }
     case "opacity": {
@@ -8920,6 +8985,7 @@ function captureViewState(): ViewState {
   v.bookmarks = bookmarks.map((b) => ({ name: b.name, state: b.state }));
   v.paneLayout = paneLayout;
   if (curvedLevel > 0) v.curvedLevel = curvedLevel;
+  if (mirrorState) v.mirror = { axis: mirrorState.axis, at: mirrorState.at };
   v.panes = panes.map((p, i) => ({
     field: fieldToSaved(p.field),
     clip: clonePaneClipState(p.clip),
@@ -9001,6 +9067,7 @@ function applyPendingView(): void {
     if (view.bookmarks.length > 0) bookmarks = view.bookmarks.map((b) => ({ name: b.name, state: b.state }));
     if (view.paneLayout && view.paneLayout !== paneLayout) setPaneLayout(view.paneLayout);
     if (view.curvedLevel !== undefined && view.curvedLevel !== curvedLevel) setCurvedLevel(view.curvedLevel);
+    if (view.mirror) setMirror({ axis: view.mirror.axis, at: view.mirror.at });
 
     view.panes.forEach((sp, i) => {
       const pane = panes[i];
@@ -9259,6 +9326,8 @@ interface PickResolution {
   layerId: string;
   entityId?: number;
   nodeId?: number;
+  /** Set when the pick landed on a mirror copy: the id of the entity/node it reflects. */
+  mirrorOf?: { entityId?: number; nodeId?: number };
 }
 
 /**
@@ -9356,7 +9425,14 @@ function pickAt(displayX: number, displayY: number): PickResolution | undefined 
     coordsOf,
     pickPos
   );
-  return { kind: layer.pickKind, layerId: layer.id, entityId: result.entityId, nodeId: result.nodeId };
+  const mi = mirrorInfo;
+  let mirrorOf: PickResolution["mirrorOf"];
+  if (mi) {
+    const se = result.entityId !== undefined ? mi.sourceEntityId(result.entityId) : undefined;
+    const sn = result.nodeId !== undefined ? mi.sourceNodeId(result.nodeId) : undefined;
+    if (se !== result.entityId || sn !== result.nodeId) mirrorOf = { entityId: se, nodeId: sn };
+  }
+  return { kind: layer.pickKind, layerId: layer.id, entityId: result.entityId, nodeId: result.nodeId, mirrorOf };
 }
 
 function handleInspectPick(displayX: number, displayY: number): void {
@@ -9425,6 +9501,10 @@ function handleInspectPick(displayX: number, displayY: number): void {
   }
 
   inspectSelection = selection;
+  if (pick.mirrorOf) {
+    const mo = pick.mirrorOf;
+    toast(`Mirror copy of ${mo.entityId !== undefined ? `${entityKind} ${mo.entityId}` : `node ${mo.nodeId}`} (view only)`);
+  }
   recordEvaluationRow(selection, pick.kind);
   if(selection.node)plotPane.pick("Nodal",selection.node.id);
 

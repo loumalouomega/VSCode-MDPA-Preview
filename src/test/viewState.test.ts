@@ -280,6 +280,16 @@ test("curvedLevel round trips, clamps and is omitted when off", () => {
   assert.equal(isEmptyViewState({ ...emptyViewState(), curvedLevel: 1 }), false);
 });
 
+test("mirror round trips, rejects malformed values and is omitted when off", () => {
+  const out = serializeViewState({ ...emptyViewState(), mirror: { axis: 1, at: "max" } });
+  assert.deepEqual(out.mirror, { axis: 1, at: "max" });
+  assert.deepEqual(validateViewState({ mirror: { axis: 0, at: 2.5 } }).view.mirror, { axis: 0, at: 2.5 });
+  assert.equal(validateViewState({ mirror: { axis: 3, at: "min" } }).view.mirror, undefined);
+  assert.ok(validateViewState({ mirror: { axis: 0, at: "mid" } }).warnings.length > 0);
+  assert.equal("mirror" in serializeViewState(emptyViewState()), false);
+  assert.equal(isEmptyViewState({ ...emptyViewState(), mirror: { axis: 0, at: "min" } }), false);
+});
+
 test("deformation Auto defaults on; a pre-Auto sidecar with a typed factor stays manual", () => {
   const def = validateViewState({ panes: [{ field: {} }] }).view.panes[0].field;
   assert.equal(def.deformAuto, true);

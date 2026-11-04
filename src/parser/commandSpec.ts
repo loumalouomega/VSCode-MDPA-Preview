@@ -62,6 +62,7 @@ export type ViewFn =
   | "standardView"
   | "layout"
   | "clip"
+  | "mirror"
   | "opacity"
   | "theme"
   | "find"
@@ -315,6 +316,15 @@ const VIEW: CommandSpec[] = [
     "state:enum(on|off) axis:enum(x|y|z|free) pos:number normal:vec3 flip:bool",
     { kind: "view", fn: "clip" },
     "clip on axis=x pos=0.5",
+    { positional: ["state"] }
+  ),
+  cmd(
+    "mirror",
+    "view",
+    "View-only mirror of the mesh about an axis-aligned plane (nothing is written)",
+    "state:enum(on|off) axis:enum(x|y|z) side:enum(min|max) at:number",
+    { kind: "view", fn: "mirror" },
+    "mirror axis=x side=min",
     { positional: ["state"] }
   ),
   cmd("opacity", "view", "Global model opacity (0..1)", "value:number!", { kind: "view", fn: "opacity" }, "opacity 0.6", { positional: ["value"] }),

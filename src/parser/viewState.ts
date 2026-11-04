@@ -80,6 +80,8 @@ export interface ViewState {
   panes: SavedPane[];
   /** Curved display of quadratic cells, 1..3 (segments per edge 2^n). Omitted = off. */
   curvedLevel?: number;
+  /** View-only mirror expansion: axis 0|1|2 (x|y|z) and the plane position (a number, or the bbox side). Omitted = off. */
+  mirror?: { axis: 0 | 1 | 2; at: number | "min" | "max" };
   /** The Field panel was open (so the saved field overlays are drawn on restore). Omitted = closed. */
   fieldPanel?: boolean;
   /**
@@ -162,6 +164,7 @@ export function isEmptyViewState(v: ViewState): boolean {
     v.bookmarks.length === 0 &&
     v.paneLayout === undefined &&
     v.curvedLevel === undefined &&
+    v.mirror === undefined &&
     v.panes.length === 0 &&
     !v.fieldPanel &&
     v.panels.length === 0 &&
@@ -348,6 +351,14 @@ export function validateViewState(raw: unknown, colormapFallback = "Rainbow"): {
     } else warnings.push("View sidecar curvedLevel is not a number — ignored.");
   }
 
+  if (r.mirror !== undefined) {
+    const m = r.mirror as { axis?: unknown; at?: unknown } | null;
+    const axisOk = !!m && (m.axis === 0 || m.axis === 1 || m.axis === 2);
+    const atOk = !!m && (m.at === "min" || m.at === "max" || (typeof m.at === "number" && Number.isFinite(m.at)));
+    if (axisOk && atOk) view.mirror = { axis: m!.axis as 0 | 1 | 2, at: m!.at as number | "min" | "max" };
+    else warnings.push("View sidecar mirror is malformed — ignored.");
+  }
+
   if (r.panes !== undefined) {
     if (!Array.isArray(r.panes)) warnings.push("View sidecar panes are not an array — ignored.");
     else {
@@ -519,6 +530,7 @@ export function serializeViewState(v: ViewState): Record<string, unknown> {
   if (v.panels.length > 0) out.panels = [...v.panels];
   if (v.paneLayout) out.paneLayout = v.paneLayout;
   if (v.curvedLevel) out.curvedLevel = v.curvedLevel;
+  if (v.mirror) out.mirror = { axis: v.mirror.axis, at: v.mirror.at };
   if (v.fieldPanel) out.fieldPanel = true;
   return out;
 }
