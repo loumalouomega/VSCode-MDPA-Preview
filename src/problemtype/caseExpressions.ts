@@ -131,6 +131,22 @@ export function resolveStateExpressions(decl: ProblemtypeDeclaration, state: Cas
     let copy: Record<string, JsonValue> | undefined;
     for (const f of fields) {
       const v = values[f.id];
+      // A vector3 holds three components, each a number or an expression (`[1[kN], "L/2", 0]`).
+      if (f.type === "vector3" && Array.isArray(v) && v.some((c) => typeof c === "string")) {
+        const comps = v.map((c, i) => {
+          if (typeof c !== "string" || c.trim() === "") return c;
+          try {
+            const r = resolveFieldExpression(c.trim(), unitOfField(f), params);
+            if (r.warning) warnings.push(`${where} ${f.label}[${"xyz"[i] ?? i}]: ${r.warning}`);
+            return r.value;
+          } catch (err) {
+            problems.push(`${where} ${f.label}[${"xyz"[i] ?? i}]: ${err instanceof Error ? err.message : String(err)}.`);
+            return c;
+          }
+        });
+        (copy ??= { ...values })[f.id] = comps as JsonValue;
+        continue;
+      }
       if (typeof v !== "string" || !isNumeric(f)) continue;
       const t = v.trim();
       if (t === "") continue;

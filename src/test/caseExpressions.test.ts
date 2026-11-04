@@ -8,6 +8,7 @@ import { generateCase } from "../problemtype/generate";
 import { defaultCaseState } from "../problemtype/api";
 import { structural } from "../problemtype/builtins/structural";
 import { parseMdpa } from "../parser/mdpaParser";
+import { preflightCase } from "../problemtype/preflight";
 
 const none = new Map();
 
@@ -89,4 +90,30 @@ test("parameters persist in the case file, and a case without them opens unchang
   const s = state(1, [{ name: "L", expr: "2[m]" }]);
   assert.deepEqual(parseCaseJson(serializeCase(s)).state!.parameters, [{ name: "L", expr: "2[m]" }]);
   assert.equal(parseCaseJson(serializeCase(state(1))).state!.parameters, undefined);
+});
+
+test("vector3 components accept expressions and units, one component at a time", async () => {
+  const model = parseMdpa(MDPA);
+  const s = state(1);
+  const load = structural.decl.conditions.find((c) => (c.fields ?? []).some((f) => f.type === "vector3"));
+  assert.ok(load, "the structural declaration has a vector3 condition field");
+  const field = load!.fields!.find((f) => f.type === "vector3")!;
+  s.parameters = [{ name: "F", expr: "4" }];
+  s.assignments = [
+    { conditionId: "parts", smpPath: "Solid", values: {} },
+    { conditionId: load!.id, smpPath: "Solid", values: { [field.id]: ["F * 2", 0, "1[m]"] as never } },
+  ];
+  const out = await generateCase(structural, model, s, "m");
+  assert.equal(out.warnings.some((w) => /expression problems/.test(w)), false);
+  assert.ok(out.projectParameters.includes("8"), "the first component resolved to 8");
+  s.assignments[1].values[field.id] = ["nonsense(", 0, 0] as never;
+  await assert.rejects(generateCase(structural, model, s, "m"), /\[x\]/);
+});
+
+test("preflight reports a dimension mismatch under its own unit-mismatch code", async () => {
+  const report = await preflightCase(structural, parseMdpa(MDPA), state("5[s]"), "m");
+  const f = report.findings.find((x) => x.code === "unit-mismatch");
+  assert.ok(f, "a unit-mismatch finding");
+  assert.equal(f!.severity, "warning");
+  assert.ok(!report.findings.some((x) => x.code === "generate-warning" && /unit-mismatch/.test(x.message)));
 });
