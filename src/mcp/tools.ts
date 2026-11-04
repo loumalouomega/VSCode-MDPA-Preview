@@ -1437,6 +1437,10 @@ export interface StepFitOptions {
   faceDeviation?: boolean;
   /** meshio++ 17.13.0: how patches no primitive explains are treated (default "legacy", every output as before). */
   freeformMode?: "legacy" | "adaptive" | "network" | "auto";
+  /** Refine the patches before fitting (meshio++ 17.11.0) — the first thing to try on a rough or organic skin. */
+  refineSegmentation?: boolean;
+  /** With `refineSegmentation`: the refinement tolerance as a fraction of the bounding-box diagonal (kernel default 1e-3). */
+  refineTolerance?: number;
   freeformParameterization?: "auto" | "projection" | "lscm" | "harmonic";
   /** A patch network's continuity at an extraordinary vertex (default "g1x"). */
   extraordinaryVertex?: "g0" | "g1" | "g1x" | "g1xx";

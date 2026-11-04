@@ -15,6 +15,7 @@ import { once } from "node:events";
 import { MdpaModel } from "./parser/types";
 import { meshExtname, meshStem, SUPPORTED_MESH_EXTENSIONS } from "./parser/meshFormats";
 import type { FitCadOptions } from "@meshioplusplus/wasm";
+import { REFINE_PATCHES_FIT } from "./parser/fitCadChoices";
 import { wouldOverwriteOpenFoamCase } from "./parser/openfoamCase";
 import {
   applyInPlacePlan,
@@ -732,6 +733,15 @@ export async function pickStepFit(): Promise<FitCadOptions | false | undefined> 
           "Analytic faces where a primitive fits (plane/sphere/cylinder/cone/torus, fillets, threads); " +
           "freeform patches or facets where none does. Needs a closed, consistently wound triangle skin. " +
           "The fit measures the solid against that skin and reports the deviation and whether it is closed.",
+      },
+      {
+        label: "Fit CAD surfaces — refine the patches first (rough or organic skins)",
+        fit: { ...REFINE_PATCHES_FIT } as FitCadOptions,
+        detail:
+          "For a skin that is not a CAD tessellation — a topology optimizer's output, a scan — where the defaults leave " +
+          "almost everything faceted: moves patch boundaries onto the surfaces before fitting (tolerance 0.2 % of the " +
+          "diagonal). On a 22k-triangle optimized hook the faceted area fell from 95 % to 42 % in about three minutes; the " +
+          "solid may lie up to ~0.4 % of the diagonal from the skin.",
       },
       {
         label: "Fit — analytic primitives only",
