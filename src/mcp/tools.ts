@@ -177,6 +177,7 @@ import { describeMissingApplications } from "../problemtype/applications";
 import { defaultCaseState, flattenValues } from "../problemtype/api";
 import { adviseLinearSolver } from "../problemtype/solverAdvice";
 import { adviseElementSize } from "../problemtype/sizeAdvice";
+import { runQuantityPlotRecipe } from "../problemtype/runQuantityPlot";
 import { planCaseMesh } from "../problemtype/caseMesh";
 import {
   BUILTIN_PRESETS,
@@ -4374,6 +4375,8 @@ export async function caseRunQuantity(args: {
   runs: string[];
   monitor: unknown;
   outputPath?: string;
+  /** Dotted case-parameter path (or "auto" for the first numeric one): also return a plot recipe of the value against it. */
+  plotParameter?: string;
 }, execution: PlotExecution = {}): Promise<object> {
   if (!Array.isArray(args.runs) || args.runs.length === 0) throw new Error("Give at least one run directory.");
   if (args.outputPath && path.extname(args.outputPath).toLowerCase() !== ".csv") throw new Error("outputPath must end in .csv.");
@@ -4390,7 +4393,10 @@ export async function caseRunQuantity(args: {
     written = path.resolve(args.outputPath);
     fs.writeFileSync(written, runQuantityToCsv(q), "utf8");
   }
-  return { ...q, ...(written ? { csv: written } : {}), note: "Each value is the monitor's last evaluated frame of a terminal run; a run still going, or without a receipt, has a row with a reason and no value." };
+  const plot = args.plotParameter
+    ? runQuantityPlotRecipe(q, args.plotParameter === "auto" ? undefined : args.plotParameter, `${q.monitor} against ${args.plotParameter === "auto" ? "the first numeric parameter" : args.plotParameter}`)
+    : undefined;
+  return { ...q, ...(written ? { csv: written } : {}), ...(plot ? { plot } : {}), note: "Each value is the monitor's last evaluated frame of a terminal run; a run still going, or without a receipt, has a row with a reason and no value." };
 }
 
 function briefConvergence(parsed: Parameters<typeof summarizeConvergence>[0], status?: string): object {

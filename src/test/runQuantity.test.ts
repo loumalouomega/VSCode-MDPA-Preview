@@ -7,7 +7,10 @@ import * as path from "node:path";
 import test from "node:test";
 
 import { runQuantity, runQuantityToCsv } from "../problemtype/runQuantity";
-import { caseCompare } from "../mcp/tools";
+import { caseCompare, caseRunQuantity } from "../mcp/tools";
+import { numericParameterPaths, runQuantityPlotRecipe } from "../problemtype/runQuantityPlot";
+import { collectPlot } from "../parser/plot/sources";
+import { validatePlotRecipe } from "../parser/plot/recipe";
 import type { MonitorDefinition } from "../problemtype/monitors";
 
 const hash = (v: string): string => createHash("sha256").update(v).digest("hex");
@@ -63,4 +66,40 @@ test("case_compare takes a quantity and reports one row per side", async (t) => 
   const plain = (await caseCompare({ left: a, right: b })) as { quantity?: unknown };
   assert.equal(plain.quantity, undefined);
   await assert.rejects(caseCompare({ left: a, right: b, quantity: { nope: 1 } }), /quantity:/);
+});
+
+test("a three-run sweep draws one point per run against its recorded parameter (roadmap item 30)", async (t) => {
+  const a = makeRun(t, ["Main_0_2.vtk", "Main_0_4.vtk", "Main_0_6.vtk"], 300);
+  const b = makeRun(t, ["Main_0_2.vtk", "Main_0_4.vtk"], 100);
+  const c = makeRun(t, ["Main_0_2.vtk"], 200);
+  const q = await runQuantity([a, b, c], monitor);
+  const path = "assignments.0.values.modulus";
+  assert.deepEqual(numericParameterPaths(q).filter((p) => p === path), [path]);
+  const { recipe, parameter } = runQuantityPlotRecipe(q, path, "Pressure vs modulus");
+  assert.equal(parameter, path);
+  const dataset = await collectPlot(validatePlotRecipe(recipe));
+  assert.equal(dataset.series.length, 1);
+  assert.deepEqual(dataset.series[0].points.map((p) => p.x), [100, 200, 300], "sorted by the parameter");
+  assert.equal(dataset.series[0].points.filter((p) => p.y !== null).length, 3);
+  assert.throws(() => runQuantityPlotRecipe(q, "problem.nope", "t"), /not a numeric parameter/);
+});
+
+test("a run with no value is a gap on the curve, never zero", async (t) => {
+  const live = makeRun(t, ["Main_0_2.vtk"], 100, "running");
+  const done = makeRun(t, ["Main_0_2.vtk", "Main_0_4.vtk"], 200);
+  const q = await runQuantity([live, done], monitor);
+  const { recipe, notes } = runQuantityPlotRecipe(q, "assignments.0.values.modulus", "t");
+  assert.ok(notes.some((n) => /no evaluated value/.test(n)));
+  const dataset = await collectPlot(validatePlotRecipe(recipe));
+  assert.deepEqual(dataset.series[0].points.map((p) => p.y === null), [true, false]);
+});
+
+test("case_run_quantity returns the plot recipe when asked", async (t) => {
+  const a = makeRun(t, ["Main_0_2.vtk"], 100);
+  const b = makeRun(t, ["Main_0_2.vtk", "Main_0_4.vtk"], 200);
+  const r = (await caseRunQuantity({ runs: [a, b], monitor, plotParameter: "auto" })) as { plot: { parameter: string; recipe: { series: unknown[] } } };
+  assert.equal(r.plot.parameter, "assignments.0.values.modulus");
+  assert.equal(r.plot.recipe.series.length, 1);
+  const none = (await caseRunQuantity({ runs: [a, b], monitor })) as { plot?: unknown };
+  assert.equal(none.plot, undefined);
 });

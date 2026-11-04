@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- **A per-run quantity can be plotted against a case parameter.** `case_run_quantity` takes `plotParameter` (a dotted path, or `"auto"`) and returns an inline plot recipe of the monitor value against that recorded parameter, one point per run (roadmap item 30).
 - **`mesh_recover_flux` handles 8- and 9-node quadrilateral faces** (consistent mass, exact for a uniform traction), and `SurfaceCondition3D9N` blocks now decode as biquadratic quads (roadmap item 45).
 - **Isosurfaces follow more quadratic cells (roadmap item 38).** The viewer now contours 13-node pyramids through their mid-side values, and `mesh_derive`/Export isosurface subdivides quadratic tetrahedra, triangles, quads and 27-node hexahedra once before contouring, so the exported surface agrees with the drawn one; `SOURCE_ENTITY_ID` still names the cell of the open mesh.
 - **ALE mesh quality panel (roadmap item 46).** Advanced ▸ **ALE mesh quality…** scans every frame of a time series (in the series-scan worker) and compares each element's signed measure and shape quality on the deformed mesh with the first frame: a worst-shape-ratio curve, a frame table, **Go to worst frame**, **Select worst elements** and CSV export. The same core as MCP `mesh_ale_quality`.

@@ -1343,6 +1343,7 @@ export function registerAllTools(server: McpServer): void {
         runs: z.array(z.string()).min(1).describe("Run directories (or their .kkss-execution.json files)"),
         monitor: z.any().describe("A monitor definition: {id, name?, source:{type:'history'|'point'|'region', ...}}"),
         outputPath: z.string().optional().describe("Write the table as .csv"),
+        plotParameter: z.string().optional().describe("Dotted path of a numeric case parameter (e.g. assignments.0.values.modulus), or \"auto\" for the first one: also returns `plot`, an inline plot recipe of the value against it (open it with plot_dataset or the Plots pane)"),
       },
     },
     runCancellable(caseRunQuantity)
