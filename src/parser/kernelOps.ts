@@ -7,6 +7,7 @@
  * The MMG kernels are the kernel's OWN MMG (5.8.0, linked into the FULL artifact only), a
  * separate path from the extension's in-place `remesh`/`levelset` ops, which keep running on
  * `@loumalouomega/mmg-wasm` and carry block/SubModelPart identity. These write a new mesh.
+ * `cutLevelSet` / `cutQuadrature` (18.3.0, CutCells, full artifact only) cut the mesh on level-set point data.
  * `move` is deliberately not routed: it needs MMG's ELAS library, linked into neither artifact.
  *
  * Like `kernelMeshes.ts` these are DERIVED meshes (a new file, never an edit of
@@ -30,9 +31,11 @@ import { loadMeshio, loadMeshioFull, meshioFullInstalled, type MeshioModule } fr
 import { triangleSurfaceOf } from "./gridSample";
 import { withKratosBlockNames, legalFields, type KernelMeshResult } from "./kernelMeshes";
 
-export const KERNEL_OP_KINDS = ["extrude", "revolve", "mirror", "boundaryLayer", "tetrahedralize", "errorSize", "checkConformity", "adapt", "discretizeLevelset", "meshDomain", "metricFromHessian", "findIntersections", "tetToPoly", "convexHull", "delaunay2d", "reconstructSurface", "estimateNormals", "parameterize"] as const;
+export const KERNEL_OP_KINDS = ["extrude", "revolve", "mirror", "boundaryLayer", "tetrahedralize", "errorSize", "checkConformity", "adapt", "discretizeLevelset", "meshDomain", "metricFromHessian", "findIntersections", "tetToPoly", "convexHull", "delaunay2d", "reconstructSurface", "estimateNormals", "parameterize", "cutLevelSet", "cutQuadrature"] as const;
 /** The kinds that need MMG, which only the full artifact links (meshio++ 18.0.0). */
 export const MMG_KERNEL_KINDS: readonly KernelOpKind[] = ["adapt", "discretizeLevelset", "meshDomain"];
+/** The kinds that need CutCells, which only the full artifact links (meshio++ 18.3.0). */
+export const CUT_KERNEL_KINDS: readonly KernelOpKind[] = ["cutLevelSet", "cutQuadrature"];
 export type KernelOpKind = (typeof KERNEL_OP_KINDS)[number];
 
 export interface KernelOpSpec {
@@ -70,6 +73,12 @@ async function moduleFor(spec: KernelOpSpec, options: Record<string, unknown>): 
   if (MMG_KERNEL_KINDS.includes(spec.kind)) {
     if (!meshioFullInstalled()) {
       throw new Error(`${spec.kind} runs on the MMG library that only the full meshio++ artifact links, and this install ships the lean one. Use the in-place Remesh (MMG) operation instead.`);
+    }
+    return loadMeshioFull();
+  }
+  if (CUT_KERNEL_KINDS.includes(spec.kind)) {
+    if (!meshioFullInstalled()) {
+      throw new Error(`${spec.kind} runs on the CutCells library that only the full meshio++ artifact links, and this install ships the lean one. Use Crop or the Clip export instead.`);
     }
     return loadMeshioFull();
   }
@@ -253,6 +262,26 @@ export async function kernelOpModel(model: MdpaModel, spec: KernelOpSpec, diagno
         model: read(r.segments),
         summary: `Intersection curve: ${n(r.numSegments)} segment(s) from ${n(r.numPairs)} intersecting facet pair(s)${r.numCoplanar > 0 ? ` (${n(r.numCoplanar)} coplanar)` : ""}.` + warn(r.warnings),
         suffix: "intersections",
+      };
+    }
+    case "cutLevelSet": {
+      const r = m.cutLevelSet(input, options) as { mesh: Mesh; numCells: number; numCutCells: number; numUncutCells: number; numPieces: number; dimension: number; measure: number; selection: string; backend: string };
+      return {
+        model: read(r.mesh),
+        summary:
+          `Level-set cut (${r.selection}, ${r.backend}): ${n(r.numPieces)} piece(s) of ${n(r.numCutCells)} cut cell(s)` +
+          (r.numUncutCells > 0 ? ` and ${n(r.numUncutCells)} whole cell(s)` : "") + `, ${r.dimension}-D measure ${f(r.measure)}.`,
+        suffix: "cut",
+      };
+    }
+    case "cutQuadrature": {
+      const r = m.cutQuadrature(input, options) as { mesh: Mesh; numRules: number; numPoints: number; sumWeights: number; dimension: number; selection: string; backend: string };
+      return {
+        model: read(r.mesh, { quadrature_weight: "QUADRATURE_WEIGHT", quadrature_reference: "QUADRATURE_REFERENCE", quadrature_rule: "QUADRATURE_RULE", quadrature_parent_cell: "QUADRATURE_PARENT_CELL" }),
+        summary:
+          `Cut-cell quadrature (${r.selection}, ${r.backend}): ${n(r.numPoints)} point(s) in ${n(r.numRules)} rule(s), weights sum to ${f(r.sumWeights)}. ` +
+          "A point cloud: QUADRATURE_WEIGHT, QUADRATURE_REFERENCE, QUADRATURE_RULE and QUADRATURE_PARENT_CELL are nodal fields.",
+        suffix: "quadrature",
       };
     }
     case "checkConformity": {

@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- **meshio++ 18.3.0.** The kernel moves from 18.1.0 with no format change expected (the live key sets are checked by the existing audits). Adopted:
+  - **Level-set cutting** (full artifact only): `cutLevelSet` and `cutQuadrature` are new derived-mesh kinds in Advanced ▸ Sweep, mirror and layers… and MCP `mesh_derive`. The first keeps the part of the mesh a level-set point field selects (`phi < 0`), cutting cells exactly with CutCells; the second writes the quadrature rules of that part as a point cloud with `QUADRATURE_WEIGHT`, `QUADRATURE_REFERENCE`, `QUADRATURE_RULE` and `QUADRATURE_PARENT_CELL`. The lean artifact refuses by name.
+  - **STEP/IGES read controls**: MCP `mesh_info` and `mesh_convert` take `cadRead` (`deflection`, `angularDeflection`, `heal`, `sewTolerance`). A healed read states what was healed in the diagnostics.
+  - **Clip cuts what is on view**: when SubModelPart layers are shown, the section cap and Export slice… cover only those parts (a part you hide drops out of the cut); with none shown the whole mesh is cut as before. MCP `mesh_derive` slice takes the same `parts`.
+  - `mesh_capabilities` reports `build.cutcells` and lists `remeshQuads` (QuadriFlow / Instant Meshes are separate programs WebAssembly cannot run) under unavailable operations.
+
 ## [5.31.0] - 2026-11-04
 
 ### Added

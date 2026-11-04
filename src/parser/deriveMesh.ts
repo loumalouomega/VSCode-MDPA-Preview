@@ -1,3 +1,4 @@
+import { extractSubModelParts } from "./subModelPartExtract";
 import { featureEdges, FeatureEdgeOptions } from "./analysisOps";
 /**
  * Derived meshes: a NEW mesh computed from the open one, written out as a file
@@ -40,6 +41,11 @@ export interface SliceSpec {
   origin: Vec3;
   /** The plane normal (need not be unit). */
   normal: Vec3;
+  /**
+   * Cut only these SubModelParts (paths; each includes its subtree) instead of the whole mesh -
+   * the parts the viewer has on screen. Unknown paths are ignored; none found is an error.
+   */
+  parts?: string[];
 }
 
 export interface IsosurfaceSpec {
@@ -94,7 +100,7 @@ export type TessellateSpec = { kind: "tessellate" } & TessellateParams;
 export type StreamlineSpec = { kind: "streamlines"; frame?: string } & StreamlineParams;
 
 export type DeriveSpec = ({ kind: "featureEdges" } & FeatureEdgeOptions) | SliceSpec | IsosurfaceSpec | ThresholdSpec | DecimateSpec | TessellateSpec | GridSampleSpec | StreamlineSpec | IgaRefineSpec | IgaSampleSpec | GenerateSpec | OctreeMeshSpec | OctreeSpec | CadSurfaceSpec | KernelOpSpec;
-export const DERIVE_KINDS = ["featureEdges", "slice", "isosurface", "threshold", "decimate", "tessellate", "grid", "voxelize", "sdfVolume", "streamlines", "igaRefine", "igaSample", "generate", "octreeMesh", "octree", "cadSurface", "extrude", "revolve", "mirror", "boundaryLayer", "tetrahedralize", "errorSize", "checkConformity", "adapt", "discretizeLevelset", "meshDomain", "metricFromHessian", "findIntersections", "tetToPoly", "convexHull", "delaunay2d", "reconstructSurface", "estimateNormals", "parameterize"] as const;
+export const DERIVE_KINDS = ["featureEdges", "slice", "isosurface", "threshold", "decimate", "tessellate", "grid", "voxelize", "sdfVolume", "streamlines", "igaRefine", "igaSample", "generate", "octreeMesh", "octree", "cadSurface", "extrude", "revolve", "mirror", "boundaryLayer", "tetrahedralize", "errorSize", "checkConformity", "adapt", "discretizeLevelset", "meshDomain", "metricFromHessian", "findIntersections", "tetToPoly", "convexHull", "delaunay2d", "reconstructSurface", "estimateNormals", "parameterize", "cutLevelSet", "cutQuadrature"] as const;
 /** Kinds that need no input mesh at all (a grid is made from nothing). */
 export const DERIVE_STANDALONE_KINDS: readonly string[] = ["grid", "generate"];
 
@@ -236,7 +242,13 @@ export async function deriveMesh(
       if (!finite3(spec.origin) || !finite3(spec.normal)) throw new Error("A slice needs a finite origin and normal (3 numbers each).");
       if (spec.normal.every((v) => v === 0)) throw new Error("The slice normal must not be the zero vector.");
       if (signal?.aborted) throw new Error("cancelled");
-      const mesh = modelToMeshio(model, diagnostics, { dim: 3 });
+      let target = model;
+      if (spec.parts && spec.parts.length > 0) {
+        const sub = extractSubModelParts(model, spec.parts);
+        if (!sub) throw new Error(`None of the requested SubModelParts exist: ${spec.parts.join(", ")}.`);
+        target = sub;
+      }
+      const mesh = modelToMeshio(target, diagnostics, { dim: 3 });
       if (mesh.cells.length === 0) throw new Error("The mesh has no cells to slice.");
       if (signal?.aborted) throw new Error("cancelled");
       const m = await loadMeshio();
@@ -349,7 +361,9 @@ export async function deriveMesh(
     case "delaunay2d":
     case "reconstructSurface":
     case "estimateNormals":
-    case "parameterize": {
+    case "parameterize":
+    case "cutLevelSet":
+    case "cutQuadrature": {
       if (signal?.aborted) throw new Error("cancelled");
       const r = await kernelOpModel(model, spec, diagnostics);
       if (signal?.aborted) throw new Error("cancelled");
