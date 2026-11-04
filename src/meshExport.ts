@@ -1241,6 +1241,10 @@ const KERNEL_OP_EXAMPLES: Record<KernelOpKind, { description: string; options: R
   discretizeLevelset: { description: "insert a level-set isovalue as a conforming interface (full meshio++ build only; a new mesh)", options: { levelSet: "SDF_DISTANCE", isovalue: 0 } },
   meshDomain: { description: "mesh a planar domain from its boundary lines, holes named by a point inside each (full meshio++ build only)", options: { hsiz: 0.1, holes: [] } },
   tetToPoly: { description: "the polyhedral median dual of a tetrahedral mesh (a .vtu keeps the polyhedra)", options: { featureAngle: 1 } },
+  convexHull: { description: "the convex hull of the points: a closed triangle surface (3-D) or a line loop (2-D); each vertex records its input point", options: {} },
+  delaunay2d: { description: "Delaunay triangulation of the x, y coordinates (every point is kept)", options: {} },
+  reconstructSurface: { description: "a triangle surface through an oriented point cloud (normals are estimated when absent)", options: { resolution: 64 } },
+  estimateNormals: { description: "normals of a point cloud as point data, oriented consistently", options: { k: 12, orientation: "consistent" } },
   findIntersections: { description: "write the curve where a surface meets itself, as a line mesh", options: {} },
   metricFromHessian: { description: "turn a Hessian field and a target error into an MMG metric field", options: { hessian: "HESSIAN", error: 0.01, hmin: 0.01, hmax: 1 } },
 };

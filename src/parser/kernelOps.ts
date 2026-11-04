@@ -30,7 +30,7 @@ import { loadMeshio, loadMeshioFull, meshioFullInstalled, type MeshioModule } fr
 import { triangleSurfaceOf } from "./gridSample";
 import { withKratosBlockNames, legalFields, type KernelMeshResult } from "./kernelMeshes";
 
-export const KERNEL_OP_KINDS = ["extrude", "revolve", "mirror", "boundaryLayer", "tetrahedralize", "errorSize", "checkConformity", "adapt", "discretizeLevelset", "meshDomain", "metricFromHessian", "findIntersections", "tetToPoly"] as const;
+export const KERNEL_OP_KINDS = ["extrude", "revolve", "mirror", "boundaryLayer", "tetrahedralize", "errorSize", "checkConformity", "adapt", "discretizeLevelset", "meshDomain", "metricFromHessian", "findIntersections", "tetToPoly", "convexHull", "delaunay2d", "reconstructSurface", "estimateNormals"] as const;
 /** The kinds that need MMG, which only the full artifact links (meshio++ 18.0.0). */
 export const MMG_KERNEL_KINDS: readonly KernelOpKind[] = ["adapt", "discretizeLevelset", "meshDomain"];
 export type KernelOpKind = (typeof KERNEL_OP_KINDS)[number];
@@ -191,6 +191,45 @@ export async function kernelOpModel(model: MdpaModel, spec: KernelOpSpec, diagno
           `Polyhedral dual: ${n(out.polyhedra?.count ?? 0)} polyhedra, ${n(r.numNewPoints)} new point(s), ${n(r.numBoundaryFaces)} boundary face(s)${r.numSplitVertices > 0 ? `, ${n(r.numSplitVertices)} vertex(es) split across blocks` : ""}. ` +
           "Only a .vtu keeps the polyhedra; every other format receives their tetrahedral decomposition.",
         suffix: "dual",
+      };
+    }
+    case "convexHull": {
+      const r = m.convexHull(input, options);
+      return {
+        model: read(r.mesh, { hull_point_id: "SOURCE_NODE_INDEX" }),
+        summary:
+          `Convex hull (${r.dimension}-D): ${n(r.numVertices)} vertex(es), ${n(r.numFacets)} facet(s)` +
+          (r.dimension === 3 ? `, area ${f(r.area)}, volume ${f(r.volume)}` : `, perimeter ${f(r.perimeter)}, area ${f(r.area)}`) + ". " +
+          "SOURCE_NODE_INDEX is each vertex's 0-based position in the input node list.",
+        suffix: "hull",
+      };
+    }
+    case "delaunay2d": {
+      const r = m.delaunay2d(input);
+      return {
+        model: read(r.mesh),
+        summary:
+          `Delaunay triangulation of the x, y plane: ${n(r.numTriangles)} triangle(s), ${n(r.numBoundary)} boundary edge(s)` +
+          (r.numDuplicates > 0 ? `; ${n(r.numDuplicates)} point(s) coincide in x, y with an earlier one and are in no triangle` : "") + ".",
+        suffix: "delaunay",
+      };
+    }
+    case "reconstructSurface": {
+      const r = m.reconstructSurface(input, options);
+      return {
+        model: read(r.mesh),
+        summary:
+          `Reconstructed a surface from ${n(r.numSamples)} sample(s): ${n(r.numTriangles)} triangle(s), ${n(r.numComponents)} component(s)` +
+          (r.estimatedNormals ? ", normals estimated" : "") + (r.numUndefined > 0 ? `; ${n(r.numUndefined)} lattice node(s) undefined (an open scan stays open)` : "") + ".",
+        suffix: "reconstructed",
+      };
+    }
+    case "estimateNormals": {
+      const r = m.estimateNormals(input, options);
+      return {
+        model: read(r.mesh),
+        summary: `Estimated normals for ${n(input.points.length / 3)} point(s) (${n(r.numComponents)} piece(s))` + (r.numDegenerate > 0 ? `; ${n(r.numDegenerate)} degenerate neighbourhood(s) read NaN` : "") + ".",
+        suffix: "normals",
       };
     }
     case "findIntersections": {

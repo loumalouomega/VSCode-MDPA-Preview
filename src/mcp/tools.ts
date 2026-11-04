@@ -1976,7 +1976,11 @@ export async function meshDerive(args: {
     | "meshDomain"
     | "metricFromHessian"
     | "findIntersections"
-    | "tetToPoly";
+    | "tetToPoly"
+    | "convexHull"
+    | "delaunay2d"
+    | "reconstructSurface"
+    | "estimateNormals";
   outputPath: string;
   outputFormat?: string;
   /** Read this step of a multi-step file instead of the first (the frame every kind works on). */

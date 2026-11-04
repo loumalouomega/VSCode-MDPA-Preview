@@ -339,6 +339,45 @@ export interface MeshioModule {
   };
   polyToTet(mesh: MeshioMesh, recordParentIds?: boolean, returnMaps?: boolean): MeshioMesh | { mesh: MeshioMesh; numExactTets: number; numFannedCells: number } & Record<string, unknown>;
 
+  // --- meshio++ 18.1.0 kernels (options are passed through; the kernel validates keys) ---
+  /** CSR graph of the mesh (0-based): `node` (cell edges), `clique` (FEM sparsity) or `cell` (cells sharing a facet). */
+  adjacency(mesh: MeshioMesh, kind?: "node" | "clique" | "cell"): { indptr: Int32Array; indices: Int32Array };
+  /** Writes the `kind` graph to `path` in MEMFS as METIS (`.graph`) or Scotch (`.grf`). */
+  writeGraph(mesh: MeshioMesh, path: string, kind?: "node" | "clique" | "cell", format?: "metis" | "scotch"): unknown;
+  /** Metric toolbox: intersect, normalise, clamp and grade metric point arrays into `output`. */
+  prepareMetric(mesh: MeshioMesh, options: Record<string, unknown>): { mesh: MeshioMesh; complexityBefore: number; complexityAfter: number; numGraded: number; sweeps: number };
+  /** Moves nodes until every tetrahedron / hexahedron corner has positive volume; connectivity is kept. */
+  untangle(mesh: MeshioMesh, options?: Record<string, unknown>): {
+    mesh: MeshioMesh; numInvertedBefore: number; numInvertedAfter: number; minQualityBefore: number; minQualityAfter: number; sweeps: number; moves: number;
+  };
+  /** Boundary-driven morphing by a point-data displacement `array`. */
+  morph(mesh: MeshioMesh, options: Record<string, unknown>): Record<string, unknown> & { mesh: MeshioMesh };
+  /** Lowest Laplace-Beltrami eigenpairs of a triangle surface (`laplacian:modes` point data). */
+  laplacianEigenmodes(mesh: MeshioMesh, options?: Record<string, unknown>): { mesh: MeshioMesh; eigenvalues: number[]; iterations: number; maxResidual: number; converged: boolean };
+  /** Rigid ICP registration: a row-major 4x4 `matrix` that lays `source` onto `target`. */
+  registerRigid(source: MeshioMesh, target: MeshioMesh, options?: Record<string, unknown>): {
+    matrix: number[]; initialRms: number; rms: number; iterations: number; numPairs: number; converged: boolean;
+  };
+  /** Normals of a point cloud as `normals` point data. */
+  estimateNormals(mesh: MeshioMesh, options?: Record<string, unknown>): { mesh: MeshioMesh; numDegenerate: number; numComponents: number };
+  /** Triangle surface through an oriented point cloud (Hoppe). */
+  reconstructSurface(mesh: MeshioMesh, options?: Record<string, unknown>): { mesh: MeshioMesh; numSamples: number; numTriangles: number; numUndefined: number; numComponents: number; estimatedNormals: boolean };
+  /** Convex hull of the points: a closed triangle surface (3-D) or a CCW line loop (2-D); `hull:point_id` per vertex. */
+  convexHull(mesh: MeshioMesh, options?: Record<string, unknown>): { mesh: MeshioMesh; dimension: number; numVertices: number; numFacets: number; area: number; volume: number; perimeter: number };
+  /** Delaunay triangulation of the x, y coordinates. */
+  delaunay2d(mesh: MeshioMesh): { mesh: MeshioMesh; numTriangles: number; numDuplicates: number; numBoundary: number };
+  /** Cylindrical / spherical coordinates as point data; named vector / tensor arrays rewritten in the local basis. */
+  convertCoordinates(mesh: MeshioMesh, options?: Record<string, unknown>): { mesh: MeshioMesh; numArrays: number; numSingular: number };
+  /** Heat-method geodesic distance (`geodesic:distance` point data) to the source points. */
+  geodesicDistance(mesh: MeshioMesh, sources: ArrayLike<number> | number, options?: Record<string, unknown>): {
+    mesh: MeshioMesh; numSources: number; numUnreached: number; numDegenerate: number; maxDistance: number; timeStep: number;
+    heatIterations: number; poissonIterations: number; converged: boolean;
+  };
+  /** UV atlas of a triangle surface: `uv` point data, split at the seams. */
+  parameterize(mesh: MeshioMesh, options?: Record<string, unknown>): {
+    mesh: MeshioMesh; numCharts: number; numFlipped: number; stretch: number; packingEfficiency: number; numSeamPoints: number;
+  };
+
   /**
    * The older adaptive octree around a skin (17.8.0), positional arguments as
    * the typings declare them; `null` takes the default.

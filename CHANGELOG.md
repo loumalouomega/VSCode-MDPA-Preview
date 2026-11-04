@@ -4,6 +4,12 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **meshio++ 18.1.0.** The kernel moves from 18.0.0 with no format change (lean 82 readers / 83 writers, full 84 / 83). Four of its new kernels are derived-mesh kinds, shared by Advanced ▸ Sweep, mirror and layers… and MCP `mesh_derive`: `convexHull` (a closed triangle surface, or a line loop in 2-D; each vertex records its input node in `SOURCE_NODE_INDEX`), `delaunay2d`, `reconstructSurface` (a surface through an oriented point cloud, normals estimated when absent) and `estimateNormals`. All 14 new kernels are typed in `MeshioModule`; the other ten (`untangle`, `morph`, `registerRigid`, `geodesicDistance`, `laplacianEigenmodes`, `prepareMetric`, `convertCoordinates`, `parameterize`, `adjacency`, `writeGraph`) are listed in `mesh_capabilities.operations.unavailable` until they get ID-preserving adapters. `optimizeVolume` keeps defaulting to `energy` although upstream now defaults to `worst`.
+
 ## [5.30.0] - 2026-11-04
 
 ### Added
