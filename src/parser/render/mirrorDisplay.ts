@@ -13,8 +13,9 @@
  *    copy with id `id + entityOffset` (ONE offset across Elements/Conditions/Geometries, so
  *    an Elemental field spanning several id spaces still maps consistently);
  *  - a reflection reverses orientation, so linear cells are re-wound by a permutation
- *    (a mirrored tetrahedron would otherwise have negative volume). Cell types without a
- *    table (quadratic, ...) are copied un-wound and reported;
+ *    (a mirrored tetrahedron would otherwise have negative volume). Quadratic cells
+ *    use the same permutation extended over their mid-edge/face nodes; other types without a
+ *    table are copied un-wound and reported;
  *  - vectors reflect as `v - 2 (v.n) n` (the normal component flips), 3x3 tensors as
  *    `R T R`; other widths are copied unchanged and reported, never guessed;
  *  - SubModelParts, Properties and constraints stay the source's; the copy appears as
@@ -56,6 +57,19 @@ const REWIND: Record<number, number[]> = {
   [VtkCellType.HEXAHEDRON]: [0, 3, 2, 1, 4, 7, 6, 5],
   [VtkCellType.WEDGE]: [0, 2, 1, 3, 5, 4],
   [VtkCellType.PYRAMID]: [0, 3, 2, 1, 4],
+  // Quadratic cells (VTK node order): the corners permute like the linear cell and every
+  // mid-edge node follows its edge, i.e. new edge (a, b) takes the old node on edge
+  // (perm[a], perm[b]). Face and body centres of the bi/tri-quadratic cells follow their face.
+  [VtkCellType.QUADRATIC_TRIANGLE]: [0, 2, 1, 5, 4, 3],
+  [VtkCellType.QUADRATIC_QUAD]: [0, 3, 2, 1, 7, 6, 5, 4],
+  [VtkCellType.BIQUADRATIC_QUAD]: [0, 3, 2, 1, 7, 6, 5, 4, 8],
+  [VtkCellType.QUADRATIC_TETRA]: [0, 2, 1, 3, 6, 5, 4, 7, 9, 8],
+  [VtkCellType.QUADRATIC_HEXAHEDRON]: [0, 3, 2, 1, 4, 7, 6, 5, 11, 10, 9, 8, 15, 14, 13, 12, 16, 19, 18, 17],
+  [VtkCellType.TRIQUADRATIC_HEXAHEDRON]: [
+    0, 3, 2, 1, 4, 7, 6, 5, 11, 10, 9, 8, 15, 14, 13, 12, 16, 19, 18, 17, 22, 23, 20, 21, 24, 25, 26,
+  ],
+  [VtkCellType.QUADRATIC_WEDGE]: [0, 2, 1, 3, 5, 4, 8, 7, 6, 11, 10, 9, 12, 14, 13],
+  [VtkCellType.QUADRATIC_PYRAMID]: [0, 3, 2, 1, 4, 8, 7, 6, 5, 9, 12, 11, 10],
 };
 /** Cells whose orientation a reflection does not change. */
 const NO_REWIND = new Set<number>([VtkCellType.VERTEX, VtkCellType.LINE, VtkCellType.QUADRATIC_EDGE]);

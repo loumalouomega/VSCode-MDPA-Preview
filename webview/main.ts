@@ -100,7 +100,7 @@ import {
   IntegralPanelState,
   renderIntegralPanel,
 } from "./integralPanel";
-import { computeIsoSurface } from "../src/parser/isoSurface";
+import { computeIsoSurface, isoLabelAnchor } from "../src/parser/isoSurface";
 import { computePlaneCut } from "../src/parser/planeCut";
 import { mirrorExpand } from "../src/parser/render/mirrorDisplay";
 import { revolveExpand, type RevolveSpec } from "../src/parser/render/revolveDisplay";
@@ -514,6 +514,30 @@ const labelsEl = document.createElement("div");
 labelsEl.id = "labels";
 vtkSub.appendChild(labelsEl);
 
+// Contour-level labels for the iso overlay (roadmap item 38): one DOM label per
+// level, re-projected on every render through its own pane's camera.
+const isoLabelsEl = document.createElement("div");
+isoLabelsEl.id = "iso-labels";
+vtkSub.appendChild(isoLabelsEl);
+const isoLabels: { pane: Pane; pos: [number, number, number]; el: HTMLElement }[] = [];
+
+function clearIsoLabels(pane?: Pane): void {
+  for (let i = isoLabels.length - 1; i >= 0; i--) {
+    if (pane && isoLabels[i].pane !== pane) continue;
+    isoLabels[i].el.remove();
+    isoLabels.splice(i, 1);
+  }
+}
+
+function positionIsoLabels(): void {
+  if (!backend) return;
+  for (const l of isoLabels) {
+    const [left, top] = backend.worldToDisplay(l.pane.view, l.pos[0], l.pos[1], l.pos[2]);
+    l.el.style.left = `${left}px`;
+    l.el.style.top = `${top}px`;
+  }
+}
+
 const summaryOverlayEl = document.createElement("div");
 summaryOverlayEl.id = "summary-overlay";
 summaryOverlayEl.hidden = true;
@@ -782,6 +806,7 @@ let pendingLinkIdentity: SavedLink | undefined;
 function render(): void {
   captureSceneRevision++;
   backend?.render();
+  positionIsoLabels();
   scheduleViewSave();
   scheduleLinkSync();
 }
@@ -6415,10 +6440,12 @@ function clearPaneFieldOverlays(pane: Pane): void {
   for (const id of [...pane.overlays.keys()].filter(isFieldLayerId)) {
     removePaneOverlay(pane, id);
   }
+  clearIsoLabels(pane);
 }
 
 /** Removes everything this pane draws of its own. */
 function clearPaneOverlays(pane: Pane): void {
+  clearIsoLabels(pane);
   for (const id of [...pane.overlays.keys()]) removePaneOverlay(pane, id);
 }
 
@@ -6789,7 +6816,16 @@ function buildIsoLayer(pane: Pane, info: FieldInfo, srcModel: MdpaModel): void {
     prop.setStyle({ color: c, edgeVisible: false });
     if (result.is2D) prop.setStyle({ lineWidth: 2 });
     registerPaneOverlay(pane, `${FIELD_ISO_PREFIX}${idx}`, prop);
+    const anchor = isoLabelAnchor(result);
+    if (anchor) {
+      const el = document.createElement("div");
+      el.className = "iso-label";
+      el.textContent = String(Number(shown.toPrecision(4)));
+      isoLabelsEl.appendChild(el);
+      isoLabels.push({ pane, pos: anchor, el });
+    }
   });
+  positionIsoLabels();
 }
 
 // The mesh surface restricted to cells passing the threshold window — see

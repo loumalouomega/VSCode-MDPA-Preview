@@ -438,3 +438,32 @@ function marchTri(
   if (p0 === undefined || p1 === undefined) return;
   out.push(p0, p1);
 }
+
+/**
+ * One label anchor for an iso level (roadmap item 38): the midpoint of the
+ * segment (iso-lines) or the centroid of the triangle (isosurface) whose centre
+ * is nearest to the middle of the level's crossing points. Every crossing point
+ * lies on the level and the field is interpolated linearly along the cell, so
+ * the anchor lies on the level too. `undefined` when the level crosses nothing.
+ */
+export function isoLabelAnchor(result: IsoSurfaceResult): Vec3 | undefined {
+  const pts = result.points;
+  const n = Math.floor(pts.length / 3);
+  if (n === 0) return undefined;
+  const mid: Vec3 = [0, 0, 0];
+  for (let i = 0; i < n; i++) for (let k = 0; k < 3; k++) mid[k] += pts[i * 3 + k] / n;
+  const idx = result.is2D ? result.lines : result.triangles;
+  const per = result.is2D ? 2 : 3;
+  let best: Vec3 | undefined;
+  let bestD = Infinity;
+  for (let c = 0; c + per <= idx.length; c += per) {
+    const a: Vec3 = [0, 0, 0];
+    for (let j = 0; j < per; j++) for (let k = 0; k < 3; k++) a[k] += pts[idx[c + j] * 3 + k] / per;
+    const d = (a[0] - mid[0]) ** 2 + (a[1] - mid[1]) ** 2 + (a[2] - mid[2]) ** 2;
+    if (d < bestD) {
+      bestD = d;
+      best = a;
+    }
+  }
+  return best;
+}

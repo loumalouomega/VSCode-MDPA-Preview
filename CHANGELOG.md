@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- **Mirror view re-winds quadratic cells** (roadmap item 24): tri6, quad8/9, tet10, hex20/27, wedge15 and pyramid13 copies keep their mid-edge and face-centre nodes attached to the right edge or face instead of being copied un-wound.
+- **Contour level labels** on the iso overlay (roadmap item 38): one label per level, anchored on the level and re-projected through each pane's camera.
+- **Wavelength element-size rule** (roadmap item 33): `adviseWavelengthSize` gives h ≤ λ/n from an explicit wavelength or a frequency and wave speed.
+- **Symmetry views guide** (`doc/guide/symmetry-views.md`) covering Mirror, Revolve and Sector repeat.
+
 ## [5.32.0] - 2026-11-05
 
 ### Added

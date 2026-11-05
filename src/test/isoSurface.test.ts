@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { computeIsoSurface, quadraticDecomposition } from "../parser/isoSurface";
+import { computeIsoSurface, isoLabelAnchor, quadraticDecomposition } from "../parser/isoSurface";
 import { FieldData, MdpaModel } from "../parser/types";
 import { VtkCellType } from "../parser/geometryMap";
 
@@ -326,4 +326,26 @@ test("pyramid13 with a field quadratic in x: the isosurface lies on the analytic
   };
   const total = dec.tets!.reduce((s, t) => s + vol(t), 0);
   assert.ok(approx(total, 1 / 3, 1e-9), `sub-cell volume ${total}`);
+});
+
+test("label anchor lies on the level: isosurface plane and iso-line segment (item 38)", () => {
+  const nodes: [number, number, number, number][] = [
+    [1, 0, 0, 0], [2, 1, 0, 0], [3, 1, 1, 0], [4, 0, 1, 0],
+    [5, 0, 0, 1], [6, 1, 0, 1], [7, 1, 1, 1], [8, 0, 1, 1],
+  ];
+  const values = new Map<number, number>();
+  for (const n of nodes) values.set(n[0], n[1]);
+  const hex = model(nodes, VtkCellType.HEXAHEDRON, [[1, 2, 3, 4, 5, 6, 7, 8]], values);
+  const a = isoLabelAnchor(computeIsoSurface(hex, hex.fields[0], 0.25))!;
+  assert.ok(approx(a[0], 0.25), `anchor x ${a[0]}`);
+
+  const tri = model(
+    [[1, 0, 0, 0], [2, 1, 0, 0], [3, 0, 1, 0]],
+    VtkCellType.TRIANGLE,
+    [[1, 2, 3]],
+    new Map([[1, 0], [2, 1], [3, 0]])
+  );
+  const b = isoLabelAnchor(computeIsoSurface(tri, tri.fields[0], 0.5))!;
+  assert.ok(approx(b[0], 0.5));
+  assert.equal(isoLabelAnchor(computeIsoSurface(tri, tri.fields[0], 5)), undefined);
 });
