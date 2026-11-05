@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [5.32.0] - 2026-11-05
+
 ### Added
 
 - **Field integrals can be revolved (roadmap item 44).** The panel gets an Integrate selector (in the plane, revolved about y, revolved about x) for planar axisymmetric meshes; the axis is always the user's choice.
@@ -1519,7 +1521,8 @@ Four silent-correctness fixes. None of them threw, and none was visible in the m
 
 - Initial release: custom editor preview for `.mdpa` files.
 
-[Unreleased]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.31.0...HEAD
+[Unreleased]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.32.0...HEAD
+[5.32.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.31.0...v5.32.0
 [5.31.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.30.0...v5.31.0
 [5.30.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.29.0...v5.30.0
 [5.29.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.28.0...v5.29.0
