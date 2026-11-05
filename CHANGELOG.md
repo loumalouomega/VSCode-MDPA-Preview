@@ -11,6 +11,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **Mirror view re-winds quadratic cells** (roadmap item 24): tri6, quad8/9, tet10, hex20/27, wedge15 and pyramid13 copies keep their mid-edge and face-centre nodes attached to the right edge or face instead of being copied un-wound.
 - **Contour level labels** on the iso overlay (roadmap item 38): one label per level, anchored on the level and re-projected through each pane's camera.
 - **Wavelength element-size rule** (roadmap item 33): `adviseWavelengthSize` gives h ≤ λ/n from an explicit wavelength or a frequency and wave speed.
+- **Mirrored SubModelParts** (roadmap item 24): the Mirror view adds a `<name>_mirror` copy of every SubModelPart (children included) with mirrored node and entity ids.
+- **Wavelength advice in `case_validate`** (roadmap item 33): `wavelength`, or `frequency` with `waveSpeed`, and `pointsPerWavelength` return `wavelengthAdvice` (h ≤ λ/n).
+- **Revolved integrals of Nodal fields** (roadmap item 44): `mesh_field_integrate` and the Field integrals panel accept a Nodal field with `revolveAbout`, using exact lumped nodal weights that stay positive on the axis.
 - **Symmetry views guide** (`doc/guide/symmetry-views.md`) covering Mirror, Revolve and Sector repeat.
 
 ## [5.32.0] - 2026-11-05

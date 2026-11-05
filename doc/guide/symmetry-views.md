@@ -14,6 +14,7 @@ Reflects the mesh about a plane.
 Nodes on the plane are shared, so a symmetric half-plate becomes one connected plate.
 Vectors flip their normal component and 3×3 tensors reflect as `R T Rᵀ`; other field widths are copied unchanged and reported.
 Linear and quadratic cells are re-wound so the copy keeps positive volume, with mid-edge and face-centre nodes following their edge or face.
+Every SubModelPart also gains a `<name>_mirror` copy that holds the mirrored nodes and entities.
 The menu item mirrors about the x-min plane; the command line takes `mirror axis= side=` or `at=` for other planes, and `mirror off` turns it off.
 
 ## Revolve
@@ -29,5 +30,5 @@ Axis nodes are shared; seam nodes are not welded.
 
 ## Not in the view
 
-Mirrored SubModelParts and welding of seam nodes are not done yet.
+Welding of seam nodes is not done yet, and mirrored SubModelParts exist only for the Mirror view (each part gains a `_mirror` copy).
 For a written, expanded mesh use `mesh_derive` with the `mirror` or `revolve` kind.

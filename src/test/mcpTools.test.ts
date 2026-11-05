@@ -3444,6 +3444,22 @@ test("case_write_state + case_validate round-trip; bad paths become issues", asy
   assert.ok(invalid.issues.some((i) => i.includes("Missing/Part")));
 });
 
+test("case_validate publishes the wavelength rule only from explicit inputs (roadmap item 33)", async () => {
+  const dir = tmpDir();
+  const src = writeFixture(dir);
+  const none = (await caseValidate({ meshPath: src, state: structuralState() })) as Record<string, unknown>;
+  assert.equal("wavelengthAdvice" in none, false);
+  const withF = (await caseValidate({ meshPath: src, state: structuralState(), frequency: 100, waveSpeed: 340 })) as {
+    wavelengthAdvice: { maxElementSize: number; inputs: { wavelength: number; pointsPerWavelength: number } };
+  };
+  assert.ok(Math.abs(withF.wavelengthAdvice.maxElementSize - 0.68) < 1e-12);
+  assert.equal(withF.wavelengthAdvice.inputs.wavelength, 3.4);
+  const direct = (await caseValidate({ meshPath: src, state: structuralState(), wavelength: 2, pointsPerWavelength: 10 })) as {
+    wavelengthAdvice: { maxElementSize: number };
+  };
+  assert.ok(Math.abs(direct.wavelengthAdvice.maxElementSize - 0.2) < 1e-12);
+});
+
 test("case_validate returns structured findings; ok means Generate would succeed", async () => {
   const dir = tmpDir();
   const src = writeFixture(dir);

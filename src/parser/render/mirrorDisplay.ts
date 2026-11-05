@@ -18,13 +18,14 @@
  *    table are copied un-wound and reported;
  *  - vectors reflect as `v - 2 (v.n) n` (the normal component flips), 3x3 tensors as
  *    `R T R`; other widths are copied unchanged and reported, never guessed;
- *  - SubModelParts, Properties and constraints stay the source's; the copy appears as
- *    blocks named `<name>_mirror`.
+ *  - Properties and constraints stay the source's; the copy appears as blocks named
+ *    `<name>_mirror`, and every SubModelPart gains a `<name>_mirror` copy (children included)
+ *    whose node/entity ids follow the copies; constraint ids are not copied.
  *
  * Pure: no vscode/DOM/wasm, bundled by the webview.
  */
 import { VtkCellType } from "../geometryMap";
-import type { EntityBlock, FieldData, MdpaModel } from "../types";
+import type { EntityBlock, FieldData, MdpaModel, SubModelPart } from "../types";
 import { carryFieldMeta } from "../fieldDimensions";
 
 export interface MirrorPlane {
@@ -161,6 +162,31 @@ export function mirrorExpand(model: MdpaModel, plane: MirrorPlane): MirrorResult
       `Mirror: cell type(s) ${[...unwound].join(", ")} have no re-winding table; their copies keep the source node order and may have reversed orientation.`
     );
 
+  // SubModelParts: the source parts stay as they are and each gains a mirrored copy named
+  // `<name>_mirror` (children included, paths rebuilt under the copy). Node lists go through
+  // `mapNode` (on-plane nodes keep their id), entity lists are offset like the blocks'. Constraint
+  // ids are dropped on the copy: constraints are not mirrored, so a copied id would name nothing.
+  const mapIds = (a: Int32Array, f: (id: number) => number): Int32Array => {
+    const out = new Int32Array(a.length);
+    for (let i = 0; i < a.length; i++) out[i] = f(a[i]);
+    return out;
+  };
+  const mirrorSmp = (p: SubModelPart, parentPath: string): SubModelPart => {
+    const name = `${p.name}_mirror`;
+    const path = parentPath ? `${parentPath}/${name}` : name;
+    return {
+      name,
+      path,
+      nodeIds: mapIds(p.nodeIds, mapNode),
+      elementIds: mapIds(p.elementIds, (id) => id + entityOffset),
+      conditionIds: mapIds(p.conditionIds, (id) => id + entityOffset),
+      geometryIds: mapIds(p.geometryIds, (id) => id + entityOffset),
+      constraintIds: new Int32Array(0),
+      children: p.children.map((c) => mirrorSmp(c, path)),
+    };
+  };
+  const subModelParts: SubModelPart[] = [...model.subModelParts, ...model.subModelParts.map((p) => mirrorSmp(p, ""))];
+
   // Fields.
   const fields: FieldData[] = model.fields.map((f) => mirrorField(f, onPlane, idToIndex, nodeOffset, entityOffset, [nx, ny, nz], diagnostics));
 
@@ -179,6 +205,7 @@ export function mirrorExpand(model: MdpaModel, plane: MirrorPlane): MirrorResult
     nodeIds,
     coords,
     blocks,
+    subModelParts,
     fields,
     bounds: total ? { min, max } : model.bounds,
     is3D: model.is3D || max[2] - min[2] > 0,

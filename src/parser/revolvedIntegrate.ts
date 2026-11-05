@@ -6,7 +6,11 @@
  * natively and exactly for piecewise-constant cell fields: a surface cell
  * weighs 2*pi * integral(r dA) (sum over its triangle decomposition of
  * area * mean corner r), a line cell 2*pi * L * mean(r) (the area of the
- * surface of revolution). The axis is NEVER inferred: the caller names it
+ * surface of revolution). A NODAL field is integrated with exact lumped nodal weights
+ * (`nodalRevolvedWeights`): for phi linear over a cell, integral(2*pi*r*phi dA) =
+ * sum_j w_j phi_j with w_j = 2*pi*A/12 * (sum_i r_i + r_j) on a triangle and
+ * 2*pi*L/6 * (2 r_j + r_other) on a line, so a node ON the axis (r = 0) still gets a
+ * positive weight from its neighbours' radii. The axis is NEVER inferred: the caller names it
  * ("x": r = y; "y": r = x), a mesh with z != 0 (3D) or a node on the wrong
  * side of the axis is refused by name. Pure; no wasm.
  */
@@ -26,6 +30,18 @@ export function parseRevolveAxis(v: unknown): RevolveAxis {
     `revolveAbout must be "x" or "y" (the axis of revolution of a planar xy mesh), got ${JSON.stringify(v)}. ` +
       `Other axes are not supported; the axis is never inferred.`
   );
+}
+
+/**
+ * Revolved lumped nodal weights of one linear cell: `radii` are the corner radii, `size`
+ * the triangle area (3 corners) or the segment length (2 corners). Exact for a field that
+ * is linear over the cell; the weights sum to the cell's revolved measure 2*pi*integral(r).
+ */
+export function nodalRevolvedWeights(radii: number[], size: number): number[] {
+  const sum = radii.reduce((a, b) => a + b, 0);
+  if (radii.length === 3) return radii.map((r) => (2 * Math.PI * size * (sum + r)) / 12);
+  if (radii.length === 2) return [(2 * Math.PI * size * (2 * radii[0] + radii[1])) / 6, (2 * Math.PI * size * (radii[0] + 2 * radii[1])) / 6];
+  return radii.map(() => 0);
 }
 
 const KIND_OF_FIELD: Record<string, EntityKind> = { Elemental: "Elements", Conditional: "Conditions" };
@@ -58,16 +74,8 @@ export async function integrateRevolved(
   }
 
   const wanted = variables.map((v) => v.trim()).filter((v) => v.length > 0);
-  for (const v of wanted) {
-    const f = model.fields.find((x) => x.variable === v);
-    if (f && f.kind === "Nodal") {
-      throw new Error(
-        `"${v}" is a Nodal field. Integration is cell-measure weighted, so move it to the cells first with the Average field operation (nodalToElemental), then integrate.`
-      );
-    }
-  }
   const fields: FieldData[] = model.fields.filter(
-    (f) => KIND_OF_FIELD[f.kind] && (wanted.length === 0 || wanted.includes(f.variable))
+    (f) => (KIND_OF_FIELD[f.kind] || f.kind === "Nodal") && (wanted.length === 0 || wanted.includes(f.variable))
   );
 
   const idx = new Map<number, number>();
@@ -79,6 +87,12 @@ export async function integrateRevolved(
 
   // Per kind: entity id -> revolved weight, only for the kind's top dimension.
   const weights: Record<EntityKind, Map<number, number>> = {
+    Elements: new Map(),
+    Conditions: new Map(),
+    Geometries: new Map(),
+  };
+  // Per kind: entity id -> its corner node ids and their lumped revolved weights (Nodal fields).
+  const nodeWeights: Record<EntityKind, Map<number, { ids: number[]; w: number[] }>> = {
     Elements: new Map(),
     Conditions: new Map(),
     Geometries: new Map(),
@@ -107,6 +121,7 @@ export async function integrateRevolved(
         }
         if (!ok) continue;
         let w = 0;
+        const nw = new Array<number>(ids.length).fill(0);
         if (d === 2 && dec.tris) {
           for (const t of dec.tris) {
             const a = pt(ids[t[0]]);
@@ -114,13 +129,20 @@ export async function integrateRevolved(
             const cc = pt(ids[t[2]]);
             const area = 0.5 * Math.abs((bb[0] - a[0]) * (cc[1] - a[1]) - (cc[0] - a[0]) * (bb[1] - a[1]));
             w += (area * (a[rOff] + bb[rOff] + cc[rOff])) / 3;
+            const tw = nodalRevolvedWeights([a[rOff], bb[rOff], cc[rOff]], area);
+            for (let j = 0; j < 3; j++) nw[t[j]] += tw[j];
           }
         } else if (d === 1) {
           const a = pt(ids[0]);
           const e = pt(ids[1]);
-          w = (Math.hypot(e[0] - a[0], e[1] - a[1]) * (a[rOff] + e[rOff])) / 2;
+          const len = Math.hypot(e[0] - a[0], e[1] - a[1]);
+          w = (len * (a[rOff] + e[rOff])) / 2;
+          const lw = nodalRevolvedWeights([a[rOff], e[rOff]], len);
+          nw[0] = lw[0];
+          nw[1] = lw[1];
         } else continue;
         weights[kind].set(b.entityIds[c], 2 * Math.PI * w);
+        nodeWeights[kind].set(b.entityIds[c], { ids, w: nw });
       }
     }
   }
@@ -149,6 +171,10 @@ export async function integrateRevolved(
 
   const result: FieldIntegral[] = [];
   for (const f of fields) {
+    if (f.kind === "Nodal") {
+      result.push(integrateNodal(f, nodeWeights, regionsFor, axis));
+      continue;
+    }
     const kind = KIND_OF_FIELD[f.kind];
     const wmap = weights[kind];
     const comps = f.components;
@@ -184,4 +210,53 @@ export async function integrateRevolved(
     result.push({ variable: f.variable, components: comps, domain, regions, revolvedAbout: axis });
   }
   return result;
+}
+
+/**
+ * A Nodal field over the kind's top-dimension cells (Elements, else Conditions): each cell
+ * contributes sum_j w_j * phi_j with its lumped revolved weights, and the measure of a
+ * component is the sum of the weights of the nodes that HAD a value for it — a node with no
+ * (or a non-finite) value is a gap, excluded from numerator and measure, never read as 0.
+ */
+function integrateNodal(
+  f: FieldData,
+  nodeWeights: Record<EntityKind, Map<number, { ids: number[]; w: number[] }>>,
+  regionsFor: (kind: EntityKind) => { name: string; ids: Set<number> }[],
+  axis: RevolveAxis
+): FieldIntegral {
+  const kind: EntityKind = nodeWeights.Elements.size > 0 ? "Elements" : "Conditions";
+  const cells = nodeWeights[kind];
+  const comps = f.components;
+  const rowOf = new Map<number, number>();
+  for (let i = 0; i < f.ids.length; i++) rowOf.set(f.ids[i], i);
+  const accumulate = (ids: Iterable<number>): IntegralTotals => {
+    const total = new Array<number>(comps).fill(0);
+    const measure = new Array<number>(comps).fill(0);
+    let numCells = 0;
+    let numSkipped = 0;
+    for (const id of ids) {
+      const cell = cells.get(id);
+      if (!cell) continue;
+      numCells++;
+      let any = false;
+      for (let j = 0; j < cell.ids.length; j++) {
+        const row = rowOf.get(cell.ids[j]);
+        if (row === undefined) continue;
+        for (let k = 0; k < comps; k++) {
+          const v = f.values[row * comps + k];
+          if (!Number.isFinite(v)) continue;
+          total[k] += v * cell.w[j];
+          measure[k] += cell.w[j];
+          any = true;
+        }
+      }
+      if (!any) numSkipped++;
+    }
+    return { numCells, numSkipped, total, mean: total.map((t, k) => (measure[k] > 0 ? t / measure[k] : NaN)), measure };
+  };
+  const domain = accumulate(cells.keys());
+  const regions = regionsFor(kind)
+    .map((r) => ({ ...accumulate(r.ids), name: r.name }))
+    .filter((r) => r.numCells > 0);
+  return { variable: f.variable, components: comps, domain, regions, revolvedAbout: axis };
 }

@@ -235,3 +235,32 @@ test("quadratic cells: mid nodes follow their edge/face after re-winding (item 2
     });
   }
 });
+
+test("SubModelParts gain mirrored copies with offset ids and rebuilt child paths (item 24)", () => {
+  const m = model({
+    pts: [[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]],
+    cells: [{ type: VtkCellType.TETRA, nodes: [1, 2, 3, 4] }],
+  });
+  const child = {
+    name: "Inner", path: "Outer/Inner", nodeIds: Int32Array.of(2), elementIds: new Int32Array(0),
+    conditionIds: new Int32Array(0), geometryIds: new Int32Array(0), constraintIds: new Int32Array(0), children: [],
+  };
+  const outer = {
+    name: "Outer", path: "Outer", nodeIds: Int32Array.of(1, 2, 3, 4), elementIds: Int32Array.of(1),
+    conditionIds: new Int32Array(0), geometryIds: new Int32Array(0), constraintIds: Int32Array.of(7), children: [child],
+  };
+  m.subModelParts = [outer];
+  const r = mirrorExpand(m, X);
+  // Nodes 1, 3, 4 lie on x = 0 and keep their ids; node 2 gets a reflected copy.
+  assert.equal(r.model.subModelParts.length, 2);
+  assert.strictEqual(r.model.subModelParts[0], outer, "source part untouched");
+  const copy = r.model.subModelParts[1];
+  assert.equal(copy.name, "Outer_mirror");
+  assert.equal(copy.path, "Outer_mirror");
+  assert.deepEqual(Array.from(copy.nodeIds), [1, 2 + r.nodeOffset, 3, 4]);
+  assert.deepEqual(Array.from(copy.elementIds), [1 + r.entityOffset]);
+  assert.equal(copy.constraintIds.length, 0);
+  assert.equal(copy.children[0].path, "Outer_mirror/Inner_mirror");
+  assert.deepEqual(Array.from(copy.children[0].nodeIds), [2 + r.nodeOffset]);
+  assert.deepEqual(Array.from(outer.nodeIds), [1, 2, 3, 4], "source ids not mutated");
+});
