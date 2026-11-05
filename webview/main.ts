@@ -50,6 +50,8 @@ import {
 } from "../src/parser/streamlineForm";
 import { buildStreamlineTubes } from "../src/parser/streamlineTubes";
 import { renderFlowBalancePanel, FlowBalancePanelState } from "./flowBalancePanel";
+import { renderAlePanel, type AlePanelState } from "./alePanel";
+import type { AleSeries } from "../src/parser/aleQuality";
 import { renderWindTunnelPanel } from "./windTunnelPanel";
 import type { WindTunnelPanelState, WindTunnelPlanView, WindTunnelResultView } from "./windTunnelPanel";
 import { buildWindTunnelRequest, defaultWindTunnelForm, planRequestOf, WIZARD_STEPS } from "../src/problemtype/windTunnel/form";
@@ -100,6 +102,9 @@ import {
 } from "./integralPanel";
 import { computeIsoSurface } from "../src/parser/isoSurface";
 import { computePlaneCut } from "../src/parser/planeCut";
+import { mirrorExpand } from "../src/parser/render/mirrorDisplay";
+import { revolveExpand, type RevolveSpec } from "../src/parser/render/revolveDisplay";
+import { sectorExpand, type SectorSpec } from "../src/parser/render/sectorDisplay";
 import { buildDisplayGeometry, Cell, prepareNodes, PreparedNodes } from "../src/parser/render/displayGeometry";
 import {
   hideSummaryOverlay,
@@ -202,7 +207,7 @@ import {
 } from "../src/parser/recordPlan";
 import { FieldSeries, seriesToCsv } from "../src/parser/fieldSeries";
 import type { FlowSeries } from "../src/parser/flowBalance";
-import { flowBalanceToCsv, flowSeriesToCsv, integralsToCsv, meshSizeToCsv, qualityToCsv } from "../src/parser/analysisExport";
+import { aleSeriesToCsv, flowBalanceToCsv, flowSeriesToCsv, integralsToCsv, meshSizeToCsv, qualityToCsv } from "../src/parser/analysisExport";
 import {
   DataTablePanelState,
   PAGE_ROWS,
@@ -566,6 +571,10 @@ const flowPanelEl = document.createElement("div");
 flowPanelEl.id = "flow-panel";
 flowPanelEl.style.display = "none";
 vtkSub.appendChild(flowPanelEl);
+const alePanelEl = document.createElement("div");
+alePanelEl.id = "ale-panel";
+alePanelEl.style.display = "none";
+vtkSub.appendChild(alePanelEl);
 const linkPanelEl = document.createElement("div");
 linkPanelEl.id = "link-panel";
 linkPanelEl.style.display = "none";
@@ -1063,6 +1072,8 @@ let streamlineState: StreamlinePanelState = {
 let flowVisible = false;
 /** Tags each request; a reply carrying an older tag is dropped. */
 let flowSeq = 0;
+let aleVisible = false;
+let aleState: AlePanelState = { variable: "", vectors: [] };
 let flowState: FlowBalancePanelState = {
   form: defaultFlowBalanceForm(),
   vectors: [],
@@ -1470,6 +1481,108 @@ function setCurved(on: boolean): void {
   setCurvedLevel(on ? CURVED_LEVEL_ON : 0);
 }
 
+/**
+ * View-only mirror expansion (roadmap item 24; see mirrorDisplay.ts). `hostModel` is what the
+ * host posted and stays the source of truth for edits and exports; `model` is the expanded
+ * copy the scene draws while a mirror is on. Picks on a copy resolve to the source ids.
+ */
+interface MirrorState { axis: 0 | 1 | 2; at: number | "min" | "max" }
+let mirrorState: MirrorState | undefined;
+let hostModel: MdpaModel | undefined;
+/** View-only revolve of a 2D axisymmetric result (item 24, second increment); exclusive with the mirror. */
+let revolveState: RevolveSpec | undefined;
+/** View-only sector repeat (item 24, third increment); exclusive with the mirror and the revolve. */
+let sectorState: SectorSpec | undefined;
+/** The id maps of whichever expansion is on, so a pick on a copy names its source. */
+let mirrorInfo: { sourceNodeId(id: number): number; sourceEntityId(id: number): number } | undefined;
+function applyMirror(m: MdpaModel): MdpaModel {
+  mirrorInfo = undefined;
+  if (sectorState) {
+    try {
+      const r = sectorExpand(m, sectorState);
+      mirrorInfo = r;
+      if (r.diagnostics.length) toast(r.diagnostics[0]);
+      return r.model;
+    } catch (e) {
+      toast(e instanceof Error ? e.message : String(e));
+      return m;
+    }
+  }
+  if (revolveState) {
+    try {
+      const r = revolveExpand(m, revolveState);
+      mirrorInfo = r;
+      if (r.diagnostics.length) toast(r.diagnostics[0]);
+      return r.model;
+    } catch (e) {
+      toast(e instanceof Error ? e.message : String(e));
+      return m;
+    }
+  }
+  if (!mirrorState) return m;
+  const { axis, at } = mirrorState;
+  const o: [number, number, number] = [0, 0, 0];
+  o[axis] = at === "min" ? m.bounds.min[axis] : at === "max" ? m.bounds.max[axis] : at;
+  const n: [number, number, number] = [0, 0, 0];
+  n[axis] = 1;
+  try {
+    const r = mirrorExpand(m, { origin: o, normal: n });
+    mirrorInfo = r;
+    if (r.diagnostics.length) toast(r.diagnostics[0]);
+    return r.model;
+  } catch (e) {
+    toast(e instanceof Error ? e.message : String(e));
+    return m;
+  }
+}
+function adoptHostModel(m: MdpaModel): MdpaModel {
+  hostModel = m;
+  return applyMirror(m);
+}
+function setMirror(state: MirrorState | undefined): void {
+  const same = (!state && !mirrorState) || (!!state && !!mirrorState && state.axis === mirrorState.axis && state.at === mirrorState.at);
+  if (same) return;
+  mirrorState = state;
+  if (state) { revolveState = undefined; sectorState = undefined; }
+  document.querySelector('[data-action="mirror"]')?.classList.toggle("active", !!state);
+  document.querySelector('[data-action="revolve"]')?.classList.toggle("active", false);
+  scheduleViewSave();
+  if (!model || !hostModel) return;
+  snapshotVisibility();
+  model = applyMirror(hostModel);
+  buildScene(false);
+  setMeshModFields(model.fields, model.globals);
+}
+function setRevolve(state: RevolveSpec | undefined): void {
+  const same = (!state && !revolveState) || (!!state && !!revolveState && JSON.stringify(state) === JSON.stringify(revolveState));
+  if (same) return;
+  revolveState = state;
+  if (state) { mirrorState = undefined; sectorState = undefined; }
+  document.querySelector('[data-action="revolve"]')?.classList.toggle("active", !!state);
+  document.querySelector('[data-action="mirror"]')?.classList.toggle("active", false);
+  scheduleViewSave();
+  if (!model || !hostModel) return;
+  snapshotVisibility();
+  model = applyMirror(hostModel);
+  buildScene(false);
+  setMeshModFields(model.fields, model.globals);
+}
+
+function setSector(state: SectorSpec | undefined): void {
+  const same = (!state && !sectorState) || (!!state && !!sectorState && JSON.stringify(state) === JSON.stringify(sectorState));
+  if (same) return;
+  sectorState = state;
+  if (state) { mirrorState = undefined; revolveState = undefined; }
+  for (const a of ["mirror", "revolve"]) document.querySelector(`[data-action="${a}"]`)?.classList.toggle("active", false);
+  document.querySelector('[data-action="sector"]')?.classList.toggle("active", !!state);
+  scheduleViewSave();
+  if (!model || !hostModel) return;
+  snapshotVisibility();
+  model = applyMirror(hostModel);
+  buildScene(false);
+  setMeshModFields(model.fields, model.globals);
+}
+
 function setLod(on: boolean): void {
   lodAutoDecided = true;
   lodEnabled = on;
@@ -1724,7 +1837,7 @@ function handleHostMessage(event: MessageEvent): void {
       if (msg.keepCamera) snapshotVisibility();
       delete document.body.dataset.meshSummary;
       hideSummaryOverlay(summaryOverlayEl);
-      model = msg.model as MdpaModel;
+      model = adoptHostModel(msg.model as MdpaModel);
       // Staged delivery: geometry now, fields one message each (`modelField`);
       // the scene is rebuilt once when the last one lands.
       stagedFields = msg.fieldsPending ? { stageId: msg.stageId as number, requested: new Set() } : undefined;
@@ -1756,9 +1869,16 @@ function handleHostMessage(event: MessageEvent): void {
     case "modelField": {
       const st = stagedFields;
       if (!st || !model || msg.stageId !== st.stageId) break; // superseded by a newer model
-      const loaded = msg.field as FieldData;
+      let loaded = msg.field as FieldData;
       const key = `${loaded.kind}:${loaded.variable}`;
-      model = { ...model, fields: model.fields.map((f) => (`${f.kind}:${f.variable}` === key ? loaded : f)) };
+      if ((mirrorState || revolveState || sectorState) && hostModel) {
+        hostModel = { ...hostModel, fields: hostModel.fields.map((f) => (`${f.kind}:${f.variable}` === key ? loaded : f)) };
+        model = applyMirror(hostModel);
+        loaded = model.fields.find((f) => `${f.kind}:${f.variable}` === key) ?? loaded;
+      } else {
+        if (hostModel) hostModel = { ...hostModel, fields: hostModel.fields.map((f) => (`${f.kind}:${f.variable}` === key ? loaded : f)) };
+        model = { ...model, fields: model.fields.map((f) => (`${f.kind}:${f.variable}` === key ? loaded : f)) };
+      }
       const idx = fieldInfos.findIndex((f) => f.key === key);
       if (idx >= 0) {
         const fresh = buildFieldInfo(loaded);
@@ -1811,7 +1931,7 @@ function handleHostMessage(event: MessageEvent): void {
       snapshotVisibility();
       delete document.body.dataset.meshSummary;
       hideSummaryOverlay(summaryOverlayEl);
-      model = msg.model as MdpaModel;
+      model = adoptHostModel(msg.model as MdpaModel);
       // Staged frame (initial load / edit re-render): rows follow on demand.
       stagedFields = msg.fieldsPending ? { stageId: msg.stageId as number, requested: new Set() } : undefined;
       midNodeIds = (msg.midNodes as number[] | undefined) ?? [];
@@ -1947,6 +2067,23 @@ function handleHostMessage(event: MessageEvent): void {
           historyNote: r.historyNote,
         };
         renderSeriesUI();
+      }
+      break;
+    }
+
+    case "aleSeriesProgress": {
+      if (aleVisible) {
+        aleState = { ...aleState, progress: msg as unknown as { done: number; total: number; label: string }, message: undefined };
+        renderAle();
+      }
+      break;
+    }
+
+    case "aleSeriesResult": {
+      const r = msg as unknown as { series?: AleSeries; message?: string; historyNote?: string };
+      if (aleVisible) {
+        aleState = { ...aleState, progress: undefined, series: r.series, message: r.message, historyNote: r.historyNote };
+        renderAle();
       }
       break;
     }
@@ -4045,6 +4182,9 @@ function dispatchToolbarAction(action: string | undefined, _target?: HTMLElement
   else if (action === "lod") setLod(!lodEnabled);
   else if (action === "constraintLinks") setConstraintLinks(!constraintLinksOn);
   else if (action === "curved") setCurved(curvedLevel === 0);
+  else if (action === "mirror") setMirror(mirrorState ? undefined : { axis: 0, at: "min" });
+  else if (action === "sector") setSector(sectorState ? undefined : { axis: "z", copies: 6 });
+  else if (action === "revolve") setRevolve(revolveState ? undefined : { axis: "y", startDeg: 0, sweepDeg: 360, layers: 36 });
   else if (action === "flatParts") {
     setOutlineView({ ...outlineView, flattenSubModelParts: !outlineView.flattenSubModelParts }, true);
   }
@@ -4063,6 +4203,7 @@ function dispatchToolbarAction(action: string | undefined, _target?: HTMLElement
   else if (action === "integrals") toggleIntegralPanel();
   else if (action === "streamlines") toggleStreamlinePanel();
   else if (action === "flowBalance") toggleFlowPanel();
+  else if (action === "aleQuality") toggleAlePanel();
   else if (action === "linkPreviews") toggleLinkPanel();
   else if (action === "optimizationProgress") toggleOptimizationPanel();
   else if (action === "windTunnel") toggleWindTunnelPanel();
@@ -4117,6 +4258,9 @@ function uiToggleState(action: string): boolean | undefined {
     case "edges": return showEdges;
     case "nodeIds": return showNodeIds;
     case "lod": return lodEnabled;
+    case "mirror": return !!mirrorState;
+    case "revolve": return !!revolveState;
+    case "sector": return !!sectorState;
     case "constraintLinks": return constraintLinksOn;
     case "pan": return panMode;
     case "grid": return gridVisible;
@@ -4190,6 +4334,34 @@ function runViewCommand(fn: string, args: Record<string, unknown>): string | und
       if (typeof args.flip === "boolean" && pane.clip.flipped !== args.flip) {
         document.getElementById("cut-flip")?.click();
       }
+      return undefined;
+    }
+    case "sector": {
+      if (!model) return "No mesh loaded";
+      if (args.state === "off") { setSector(undefined); return undefined; }
+      const ax = String(args.axis ?? "z");
+      if (ax !== "x" && ax !== "y" && ax !== "z") return "axis must be x, y or z";
+      setSector({ axis: ax, copies: Math.floor(typeof args.copies === "number" ? args.copies : 6), ...(typeof args.angle === "number" ? { angleDeg: args.angle } : {}) });
+      return undefined;
+    }
+    case "revolve": {
+      if (!model) return "No mesh loaded";
+      if (args.state === "off") { setRevolve(undefined); return undefined; }
+      const ax = String(args.axis ?? "y");
+      if (ax !== "x" && ax !== "y") return "axis must be x or y";
+      const num = (v: unknown, d: number): number => (typeof v === "number" ? v : d);
+      setRevolve({ axis: ax, startDeg: num(args.start, 0), sweepDeg: num(args.sweep, 360), layers: Math.floor(num(args.layers, 36)) });
+      return undefined;
+    }
+    case "mirror": {
+      if (!model) return "No mesh loaded";
+      const st = args.state;
+      if (st === "off") { setMirror(undefined); return undefined; }
+      const ax = String(args.axis ?? "x");
+      const axis = ax === "x" ? 0 : ax === "y" ? 1 : ax === "z" ? 2 : -1;
+      if (axis < 0) return `axis must be x, y or z`;
+      const at = typeof args.at === "number" ? args.at : args.side === "max" ? "max" : "min";
+      setMirror({ axis: axis as 0 | 1 | 2, at });
       return undefined;
     }
     case "opacity": {
@@ -4294,6 +4466,7 @@ const LEFT_DOCK: { action: string; dismiss: () => void }[] = [
   { action: "integrals", dismiss: () => dismissIntegralPanel() },
   { action: "streamlines", dismiss: () => dismissStreamlinePanel() },
   { action: "flowBalance", dismiss: () => dismissFlowPanel() },
+  { action: "aleQuality", dismiss: () => dismissAlePanel() },
   { action: "linkPreviews", dismiss: () => dismissLinkPanel() },
   { action: "optimizationProgress", dismiss: () => dismissOptimizationPanel() },
   { action: "windTunnel", dismiss: () => dismissWindTunnelPanel() },
@@ -4679,15 +4852,19 @@ function hideIntegralPanel(): void {
 
 /** Ask the host, and show the pending state until it answers. */
 function requestIntegrals(): void {
-  integralState = {};
+  integralState = { revolveAbout: integralState.revolveAbout };
   renderIntegrals();
-  vscode.postMessage({ type: "meshAnalysis", kind: "integrate" });
+  vscode.postMessage({ type: "meshAnalysis", kind: "integrate", ...(integralState.revolveAbout ? { revolveAbout: integralState.revolveAbout } : {}) });
 }
 
 function renderIntegrals(): void {
   renderIntegralPanel(integralPanelEl, integralState, {
     onClose: hideIntegralPanel,
     onRefresh: requestIntegrals,
+    onRevolve: (axis) => {
+      integralState = { revolveAbout: axis };
+      requestIntegrals();
+    },
     onExport: () => {
       if (integralState.integrals) {
         postAnalysisCsv(integralsToCsv(integralState.integrals), "integrals");
@@ -4710,7 +4887,7 @@ function applyFieldIntegrals(msg: {
   // A reply that outlived its panel is dropped rather than stashed: the model
   // may have changed under it, and the panel re-asks on open anyway.
   if (!integralVisible) return;
-  integralState = { integrals: msg.integrals, message: msg.message };
+  integralState = { integrals: msg.integrals, message: msg.message, revolveAbout: integralState.revolveAbout };
   renderIntegrals();
 }
 
@@ -5115,6 +5292,63 @@ function requestFlowSeries(): void {
   flowState = { ...flowState, series: undefined, seriesProgress: { done: 0, total: 0, label: "" }, seriesMessage: undefined, seriesHistoryNote: undefined };
   if (flowVisible) renderFlow();
   vscode.postMessage({ type: "flowSeries", flow: built.spec });
+}
+
+// ALE mesh quality (roadmap item 46): the scan walks the timeline on the host
+// (`aleSeries`, the same core as MCP mesh_ale_quality); this is only its view.
+function toggleAlePanel(): void {
+  if (aleVisible) hideAlePanel();
+  else showAlePanel();
+}
+
+function showAlePanel(): void {
+  if (!model) return;
+  closeLeftDockExcept("aleQuality");
+  alePanelEl.style.display = "";
+  aleVisible = true;
+  document.querySelector('[data-action="aleQuality"]')?.classList.add("active");
+  aleState = { ...aleState, vectors: model.fields.filter((f) => f.kind === "Nodal" && f.components >= 2).map((f) => f.variable), currentFrame: currentFrameIndex };
+  renderAle();
+}
+
+function dismissAlePanel(): void {
+  alePanelEl.style.display = "none";
+  aleVisible = false;
+  document.querySelector('[data-action="aleQuality"]')?.classList.remove("active");
+}
+
+function hideAlePanel(): void {
+  dismissAlePanel();
+  vscode.postMessage({ type: "aleSeriesCancel" });
+  aleState = { ...aleState, progress: undefined };
+}
+
+function renderAle(): void {
+  renderAlePanel(alePanelEl, aleState, {
+    onClose: hideAlePanel,
+    onScan: () => {
+      aleState = { ...aleState, series: undefined, message: undefined, historyNote: undefined, progress: { done: 0, total: 0, label: "" } };
+      renderAle();
+      vscode.postMessage({ type: "aleSeries", variable: aleState.variable });
+    },
+    onCancel: () => vscode.postMessage({ type: "aleSeriesCancel" }),
+    onPickFrame: (frameIndex) => vscode.postMessage({ type: "vtkRequestFrame", frameIndex }),
+    onWorst: () => {
+      const s = aleState.series;
+      if (s && s.worstFrame !== undefined) vscode.postMessage({ type: "vtkRequestFrame", frameIndex: s.frames[s.worstFrame].frameIndex });
+    },
+    onSelectWorst: () => {
+      const s = aleState.series;
+      const f = s && s.worstFrame !== undefined ? s.frames[s.worstFrame] : undefined;
+      if (!f) return;
+      const ids = f.invertedIds && f.invertedIds.length > 0 ? f.invertedIds : f.worstElementId !== undefined ? [f.worstElementId] : [];
+      if (ids.length === 0) { toast("No element to select."); return; }
+      applySelectionSeed({ name: "ALE worst", kinds: { Elements: ids } });
+    },
+    onExport: () => {
+      if (aleState.series) postAnalysisCsv(aleSeriesToCsv(aleState.series), "ale-quality");
+    },
+  });
 }
 
 function renderFlow(): void {
@@ -8920,6 +9154,9 @@ function captureViewState(): ViewState {
   v.bookmarks = bookmarks.map((b) => ({ name: b.name, state: b.state }));
   v.paneLayout = paneLayout;
   if (curvedLevel > 0) v.curvedLevel = curvedLevel;
+  if (mirrorState) v.mirror = { axis: mirrorState.axis, at: mirrorState.at };
+  if (revolveState) v.revolve = { ...revolveState };
+  if (sectorState) v.sector = { ...sectorState };
   v.panes = panes.map((p, i) => ({
     field: fieldToSaved(p.field),
     clip: clonePaneClipState(p.clip),
@@ -9001,6 +9238,9 @@ function applyPendingView(): void {
     if (view.bookmarks.length > 0) bookmarks = view.bookmarks.map((b) => ({ name: b.name, state: b.state }));
     if (view.paneLayout && view.paneLayout !== paneLayout) setPaneLayout(view.paneLayout);
     if (view.curvedLevel !== undefined && view.curvedLevel !== curvedLevel) setCurvedLevel(view.curvedLevel);
+    if (view.mirror) setMirror({ axis: view.mirror.axis, at: view.mirror.at });
+    if (view.revolve) setRevolve({ ...view.revolve });
+    if (view.sector) setSector({ ...view.sector });
 
     view.panes.forEach((sp, i) => {
       const pane = panes[i];
@@ -9259,6 +9499,8 @@ interface PickResolution {
   layerId: string;
   entityId?: number;
   nodeId?: number;
+  /** Set when the pick landed on a mirror copy: the id of the entity/node it reflects. */
+  mirrorOf?: { entityId?: number; nodeId?: number };
 }
 
 /**
@@ -9356,7 +9598,14 @@ function pickAt(displayX: number, displayY: number): PickResolution | undefined 
     coordsOf,
     pickPos
   );
-  return { kind: layer.pickKind, layerId: layer.id, entityId: result.entityId, nodeId: result.nodeId };
+  const mi = mirrorInfo;
+  let mirrorOf: PickResolution["mirrorOf"];
+  if (mi) {
+    const se = result.entityId !== undefined ? mi.sourceEntityId(result.entityId) : undefined;
+    const sn = result.nodeId !== undefined ? mi.sourceNodeId(result.nodeId) : undefined;
+    if (se !== result.entityId || sn !== result.nodeId) mirrorOf = { entityId: se, nodeId: sn };
+  }
+  return { kind: layer.pickKind, layerId: layer.id, entityId: result.entityId, nodeId: result.nodeId, mirrorOf };
 }
 
 function handleInspectPick(displayX: number, displayY: number): void {
@@ -9425,6 +9674,10 @@ function handleInspectPick(displayX: number, displayY: number): void {
   }
 
   inspectSelection = selection;
+  if (pick.mirrorOf) {
+    const mo = pick.mirrorOf;
+    toast(`Symmetry copy of ${mo.entityId !== undefined ? `${entityKind} ${mo.entityId}` : `node ${mo.nodeId}`} (view only)`);
+  }
   recordEvaluationRow(selection, pick.kind);
   if(selection.node)plotPane.pick("Nodal",selection.node.id);
 

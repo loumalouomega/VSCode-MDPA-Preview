@@ -178,3 +178,19 @@ test("controller: an in-process steps input (resampled timeline) scans without a
   const res = posted.find((m) => m.type === "flowSeriesResult")!;
   assert.equal((res.series as FlowSeries).rows.length, STEPS);
 });
+
+test("controller: the ALE scan validates its variable, runs in the worker and posts aleSeries messages", async () => {
+  const { source } = makeSeries(3);
+  const posted: Record<string, unknown>[] = [];
+  const c = createSeriesScanController({ post: (m) => posted.push(m), appliedCount: () => 0 });
+  await c.ale({ variable: "bad name!" }, () => ({ source }));
+  assert.match(String(posted.pop()!.message), /Invalid displacement/);
+  await c.ale({}, () => undefined);
+  assert.match(String(posted.pop()!.message), /no time series/);
+  // The Duct fixtures carry no MESH_DISPLACEMENT: every frame is recorded with an error, none is fatal.
+  await c.ale({ variable: "" }, () => ({ source }));
+  const result = posted.find((m) => m.type === "aleSeriesResult" && m.series) as { series: { frames: unknown[] } } | undefined;
+  assert.ok(result, "the scan still completes");
+  assert.equal(result!.series.frames.length, 3);
+  assert.ok(posted.some((m) => m.type === "aleSeriesProgress"));
+});

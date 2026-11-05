@@ -478,6 +478,7 @@ export function activate(context: vscode.ExtensionContext): void {
         ["streamlines", "trace streamlines"],
         ["exportReport", "inspect the last export report"],
         ["flowBalance", "compute a flow balance"],
+        ["aleQuality", "analyse ALE mesh quality"],
         ["linkPreviews", "link previews"],
         ["optimizationProgress", "follow an optimization run"],
         ["windTunnel", "build a virtual wind tunnel"],

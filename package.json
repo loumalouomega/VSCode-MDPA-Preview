@@ -624,6 +624,11 @@
         "category": "%category.KratosMdpa%"
       },
       {
+        "command": "kratos.mdpa.aleQuality",
+        "title": "%command.kratos.mdpa.aleQuality.title%",
+        "category": "%category.KratosMdpa%"
+      },
+      {
         "command": "kratos.mdpa.linkPreviews",
         "title": "%command.kratos.mdpa.linkPreviews.title%",
         "category": "%category.KratosMdpa%"

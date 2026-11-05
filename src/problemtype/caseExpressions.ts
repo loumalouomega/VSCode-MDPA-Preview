@@ -38,7 +38,7 @@ const TEMPERATURE: Record<string, { toK: (v: number) => number; fromK: (k: numbe
 const NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const RESERVED = new Set(["pi", "e", "min", "max", "clamp", "abs", "sqrt", "sin", "cos", "tan", "exp", "log", "pow", "floor", "ceil", "round"]);
 
-interface Evaluated { value: number; quantity?: string; temperature?: boolean; unit?: string }
+export interface Evaluated { value: number; quantity?: string; temperature?: boolean; unit?: string }
 
 /** A canonical value for `value unit`, with its quantity; throws on an unknown unit. */
 function literalValue(value: number, unit: string): Evaluated {
@@ -116,6 +116,35 @@ export function resolveFieldExpression(text: string, targetUnit: string | undefi
   };
 }
 
+/**
+ * What a numeric form input holds after the user types: a plain number stays a number (the
+ * case file of a user who never types an expression is unchanged), anything else is kept as
+ * the expression text for `resolveStateExpressions`. Blank means 0, like the old number input.
+ */
+export function parseNumericText(text: string): number | string {
+  const t = text.trim();
+  if (t === "") return 0;
+  if (/^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/.test(t)) return Number(t);
+  return t;
+}
+
+/** One line per parameter for the sidebar table: its value (canonical unit shown) or the reason it does not evaluate. */
+export function previewParameters(parameters: readonly CaseParameter[]): { name: string; text: string; error: boolean }[] {
+  const out: { name: string; text: string; error: boolean }[] = [];
+  const done: CaseParameter[] = [];
+  for (const p of parameters) {
+    done.push(p);
+    try {
+      const ev = evaluateParameters(done).get(p.name.toLowerCase())!;
+      out.push({ name: p.name, text: `= ${Number(ev.value.toPrecision(10))}${ev.quantity ? ` (${ev.quantity}, canonical unit)` : ""}`, error: false });
+    } catch (err) {
+      done.pop();
+      out.push({ name: p.name, text: err instanceof Error ? err.message : String(err), error: true });
+    }
+  }
+  return out;
+}
+
 const isNumeric = (f: FieldSpec): boolean => f.type === "number" || f.type === "int";
 
 /**
@@ -131,6 +160,22 @@ export function resolveStateExpressions(decl: ProblemtypeDeclaration, state: Cas
     let copy: Record<string, JsonValue> | undefined;
     for (const f of fields) {
       const v = values[f.id];
+      // A vector3 holds three components, each a number or an expression (`[1[kN], "L/2", 0]`).
+      if (f.type === "vector3" && Array.isArray(v) && v.some((c) => typeof c === "string")) {
+        const comps = v.map((c, i) => {
+          if (typeof c !== "string" || c.trim() === "") return c;
+          try {
+            const r = resolveFieldExpression(c.trim(), unitOfField(f), params);
+            if (r.warning) warnings.push(`${where} ${f.label}[${"xyz"[i] ?? i}]: ${r.warning}`);
+            return r.value;
+          } catch (err) {
+            problems.push(`${where} ${f.label}[${"xyz"[i] ?? i}]: ${err instanceof Error ? err.message : String(err)}.`);
+            return c;
+          }
+        });
+        (copy ??= { ...values })[f.id] = comps as JsonValue;
+        continue;
+      }
       if (typeof v !== "string" || !isNumeric(f)) continue;
       const t = v.trim();
       if (t === "") continue;

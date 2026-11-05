@@ -49,6 +49,8 @@ export interface MeshAnalysisMessage extends FeatureEdgeOptions {
   type: "meshAnalysis";
   kind?: string;
   variables?: string[];
+  /** Integrate kind: revolve each planar cell about this axis (explicit, never inferred; see revolvedIntegrate.ts). */
+  revolveAbout?: string;
   /** Probe kind: the polyline's vertices (≥2), a nodal variable and the
    *  equidistant sample count along it (pathProbe.ts's own defaults). */
   points?: number[][];
@@ -88,7 +90,7 @@ export async function runMeshAnalysis(
     probeRunner?: (model: MdpaModel, params: ProbeParams, opts?: { signal?: AbortSignal }) => Promise<ProbeResult>;
     /** Worker seams for the other wasm-backed analyses (roadmap item 2): the providers pass the `run*InWorker` wrappers. */
     watertightRunner?: (model: MdpaModel, opts?: { signal?: AbortSignal }) => Promise<WatertightReport | undefined>;
-    integrateRunner?: (model: MdpaModel, variables: string[], opts?: { signal?: AbortSignal }) => Promise<FieldIntegral[]>;
+    integrateRunner?: (model: MdpaModel, variables: string[], opts?: { signal?: AbortSignal; revolveAbout?: string }) => Promise<FieldIntegral[]>;
     lodRunner?: (model: MdpaModel, ratio: number | undefined, opts?: { signal?: AbortSignal }) => Promise<LodSurface>;
     qualityGateRunner?: (model: MdpaModel, params: { require?: string; maxInverted?: number; maxDegenerate?: number }, opts?: { signal?: AbortSignal }) => ReturnType<typeof qualityGate>;
     hausdorffRunner?: (model: MdpaModel, other: MdpaModel, faceSamples: number | undefined, opts?: { signal?: AbortSignal }) => ReturnType<typeof hausdorff>;
@@ -153,8 +155,9 @@ export async function runMeshAnalysis(
         : { type: "meshAnalysisResult", kind, seq: msg.seq, message: "The mesh has no cells to check." };
     }
     if (kind === "integrate") {
-      const integrals = await (opts.integrateRunner ?? ((m: MdpaModel, v: string[]) => integrateFields(m, v)))(model, msg.variables ?? [], { signal: opts.signal });
-      return { type: "meshAnalysisResult", kind, seq: msg.seq, integrals };
+      const run = opts.integrateRunner ?? ((m: MdpaModel, v: string[], o?: { revolveAbout?: string }) => integrateFields(m, v, [], { revolveAbout: o?.revolveAbout }));
+      const integrals = await run(model, msg.variables ?? [], { signal: opts.signal, revolveAbout: msg.revolveAbout });
+      return { type: "meshAnalysisResult", kind, seq: msg.seq, integrals, ...(msg.revolveAbout ? { revolveAbout: msg.revolveAbout } : {}) };
     }
     if (kind === "lod") {
       // The preview level of detail: a decimated surface to draw in place of the

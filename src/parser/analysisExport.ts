@@ -164,6 +164,15 @@ export function flowBalanceToCsv(r: FlowBalance): string {
 }
 
 /** A series as CSV: one row per step with a flux column per section, net, imbalance and pressure drop. */
+export function aleSeriesToCsv(series: { frames: { label: string; elements?: number; inverted?: number; minMeasureRatio?: number; minShapeRatio?: number; worstElementId?: number; error?: string }[] }): string {
+  const lines = ["frame,elements,inverted,min_measure_ratio,min_shape_ratio,worst_element,error"];
+  const c = (v: number | undefined): string => (v === undefined || !Number.isFinite(v) ? "" : String(v));
+  for (const f of series.frames)
+    lines.push([csvField(f.label), c(f.elements), c(f.inverted), c(f.minMeasureRatio), c(f.minShapeRatio), c(f.worstElementId), csvField(f.error ?? "")].join(","));
+  return lines.join("\n") + "\n";
+}
+
+/** A series as CSV: one row per step with a flux column per section, net, imbalance and pressure drop. */
 export function flowSeriesToCsv(series: FlowSeries): string {
   const first = series.rows.find((r) => r.result)?.result;
   if (!first) return "step\n";

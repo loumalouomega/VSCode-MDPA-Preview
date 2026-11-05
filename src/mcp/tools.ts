@@ -163,7 +163,7 @@ import {
 } from "../parser/constraintsParser";
 import { beamStats, defaultBeamRadius } from "../parser/beamElements";
 import { findIsolatedNodeIds } from "../parser/isolatedNodes";
-import { CaseState, JsonValue, MaterialAssignment, ProblemtypeRuntime, ProblemtypeSource } from "../problemtype/types";
+import { CaseState, FieldSpec, JsonValue, MaterialAssignment, ProblemtypeRuntime, ProblemtypeSource } from "../problemtype/types";
 import { BUILTIN_PROBLEMTYPES } from "../problemtype/builtins";
 import { generateCase, subModelPartPaths } from "../problemtype/generate";
 import { preflightCase } from "../problemtype/preflight";
@@ -177,6 +177,8 @@ import { describeMissingApplications } from "../problemtype/applications";
 import { defaultCaseState, flattenValues } from "../problemtype/api";
 import { adviseLinearSolver } from "../problemtype/solverAdvice";
 import { adviseElementSize } from "../problemtype/sizeAdvice";
+import { unitOfField } from "../problemtype/materialCatalog";
+import { runQuantityPlotRecipe } from "../problemtype/runQuantityPlot";
 import { planCaseMesh } from "../problemtype/caseMesh";
 import {
   BUILTIN_PRESETS,
@@ -3183,7 +3185,29 @@ export async function problemtypeDescribe(args: {
   const runtime = await resolveRuntime(args.problemtype, args.workspaceDirs);
   // The declaration is JSON-able by design; the default CaseState is the
   // skeleton a client edits and feeds to case_write_state / case_generate.
-  return { declaration: runtime.decl, defaultState: defaultCaseState(runtime.decl) };
+  // The unit each numeric field really takes (a declared `unit`, a bracket in the label or a known Kratos
+  // variable), so a client can write `10[mm]` or a parameter expression knowing what it will be converted to.
+  const unitsOf = (fields: readonly FieldSpec[] | undefined): Record<string, string> => {
+    const out: Record<string, string> = {};
+    for (const f of fields ?? []) {
+      if (f.type !== "number" && f.type !== "int" && f.type !== "vector3") continue;
+      const u = unitOfField(f);
+      if (u) out[f.id] = u;
+    }
+    return out;
+  };
+  const d = runtime.decl;
+  const fieldUnits = {
+    sections: Object.fromEntries(d.sections.map((x) => [x.id, unitsOf(x.fields)])),
+    conditions: Object.fromEntries(d.conditions.map((c) => [c.id, unitsOf(c.fields)])),
+    materialLaws: Object.fromEntries(d.materialLaws.map((l) => [l.id, unitsOf(l.variables)])),
+  };
+  return {
+    declaration: runtime.decl,
+    defaultState: defaultCaseState(runtime.decl),
+    fieldUnits,
+    expressions: "Numeric and vector3 fields accept a number, a unit-suffixed value (10[mm], 20[degC]) or an expression over the case's `parameters` table ({name, expr} entries in the case state); they are resolved to numbers in the field's unit at generation.",
+  };
 }
 
 // --- case tools ---------------------------------------------------------------
@@ -4334,7 +4358,9 @@ export async function caseCompare(args: {
   left: string;
   /** Run directory (or its `.kkss-execution.json`) of the second run. */
   right: string;
-}): Promise<object> {
+  /** Optional saved-monitor definition evaluated once per side (the case_run_quantity rule), reported beside the comparison. */
+  quantity?: unknown;
+}, execution: PlotExecution = {}): Promise<object> {
   const directory = (value: string): string => {
     const abs = path.resolve(value);
     return path.basename(abs) === EXECUTION_FILE ? path.dirname(abs) : abs;
@@ -4344,8 +4370,16 @@ export async function caseCompare(args: {
     if (!fs.existsSync(dir)) throw new Error(`The ${label} run directory does not exist: ${dir}`);
   }
   const comparison = compareRuns(left, right);
+  let quantity: object | undefined;
+  if (args.quantity !== undefined) {
+    const { monitor, problem } = validateMonitor(args.quantity);
+    if (!monitor) throw new Error(`quantity: ${problem}`);
+    quantity = await runQuantity([left, right], monitor, { signal: execution.signal });
+    throwIfCancelled(execution.signal);
+  }
   return {
     ...comparison,
+    ...(quantity ? { quantity } : {}),
     // The receipts' own schema version, stated once, so an agent does not infer
     // comparability from a successful call.
     contract: { receipt: 1, preparation: 1 },
@@ -4364,6 +4398,8 @@ export async function caseRunQuantity(args: {
   runs: string[];
   monitor: unknown;
   outputPath?: string;
+  /** Dotted case-parameter path (or "auto" for the first numeric one): also return a plot recipe of the value against it. */
+  plotParameter?: string;
 }, execution: PlotExecution = {}): Promise<object> {
   if (!Array.isArray(args.runs) || args.runs.length === 0) throw new Error("Give at least one run directory.");
   if (args.outputPath && path.extname(args.outputPath).toLowerCase() !== ".csv") throw new Error("outputPath must end in .csv.");
@@ -4380,7 +4416,10 @@ export async function caseRunQuantity(args: {
     written = path.resolve(args.outputPath);
     fs.writeFileSync(written, runQuantityToCsv(q), "utf8");
   }
-  return { ...q, ...(written ? { csv: written } : {}), note: "Each value is the monitor's last evaluated frame of a terminal run; a run still going, or without a receipt, has a row with a reason and no value." };
+  const plot = args.plotParameter
+    ? runQuantityPlotRecipe(q, args.plotParameter === "auto" ? undefined : args.plotParameter, `${q.monitor} against ${args.plotParameter === "auto" ? "the first numeric parameter" : args.plotParameter}`)
+    : undefined;
+  return { ...q, ...(written ? { csv: written } : {}), ...(plot ? { plot } : {}), note: "Each value is the monitor's last evaluated frame of a terminal run; a run still going, or without a receipt, has a row with a reason and no value." };
 }
 
 function briefConvergence(parsed: Parameters<typeof summarizeConvergence>[0], status?: string): object {

@@ -16,8 +16,10 @@
  * cut does not split a node's load between the two sides.
  *
  * Faces: 3-node and 6-node triangles (consistent, straight-sided: the area is
- * taken from the corner nodes) and 4-node quadrilaterals (lumped: area/4 per
- * node, an approximation for non-parallelogram faces). Any other face is
+ * taken from the corner nodes), 8-node (serendipity) and 9-node (Lagrange)
+ * quadrilaterals (consistent, 3x3 Gauss on the bilinear map of the corner
+ * nodes) and 4-node quadrilaterals (lumped: area/4 per node, an approximation
+ * for non-parallelogram faces). Any other face is
  * refused by name. The result is a derived field, never written into the source
  * data, and is labelled as recovered.
  */
@@ -74,6 +76,22 @@ function shapes(n: 3 | 6, l: number[]): number[] {
   return [l[0] * (2 * l[0] - 1), l[1] * (2 * l[1] - 1), l[2] * (2 * l[2] - 1), 4 * l[0] * l[1], 4 * l[1] * l[2], 4 * l[2] * l[0]];
 }
 
+// 3x3 Gauss rule on [-1,1]^2 and the quadrilateral shape functions (VTK order: corners, then mids
+// 4:(0,-1) 5:(1,0) 6:(0,1) 7:(-1,0), then the centre 8).
+const G1 = [-Math.sqrt(0.6), 0, Math.sqrt(0.6)];
+const GW = [5 / 9, 8 / 9, 5 / 9];
+const CORNERS: [number, number][] = [[-1, -1], [1, -1], [1, 1], [-1, 1]];
+function quadShapes(n: 8 | 9, xi: number, eta: number): number[] {
+  const L = (k: -1 | 0 | 1, t: number): number => (k === -1 ? (t * (t - 1)) / 2 : k === 0 ? 1 - t * t : (t * (t + 1)) / 2);
+  if (n === 9) {
+    const ks: [number, number][] = [...CORNERS, [0, -1], [1, 0], [0, 1], [-1, 0], [0, 0]];
+    return ks.map(([a, b]) => L(a as -1 | 0 | 1, xi) * L(b as -1 | 0 | 1, eta));
+  }
+  const out: number[] = CORNERS.map(([a, b]) => 0.25 * (1 + xi * a) * (1 + eta * b) * (xi * a + eta * b - 1));
+  out.push(0.5 * (1 - xi * xi) * (1 - eta), 0.5 * (1 + xi) * (1 - eta * eta), 0.5 * (1 - xi * xi) * (1 + eta), 0.5 * (1 - xi) * (1 - eta * eta));
+  return out;
+}
+
 const cross = (a: number[], b: number[]): number[] => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
 
 export function recoverBoundaryFlux(model: MdpaModel, params: RecoverFluxParams): RecoverFluxResult {
@@ -94,13 +112,13 @@ export function recoverBoundaryFlux(model: MdpaModel, params: RecoverFluxParams)
     return [model.coords[i * 3], model.coords[i * 3 + 1], model.coords[i * 3 + 2]];
   };
 
-  interface Face { nodes: number[]; area: number; kind: "tri3" | "tri6" | "quad4" }
+  interface Face { nodes: number[]; area: number; kind: "tri3" | "tri6" | "quad4" | "quad8" | "quad9"; corners?: number[][] }
   const faces: Face[] = [];
   const refused = new Set<string>();
   for (const b of model.blocks) {
     if (b.kind !== "Conditions") continue;
     const type = b.vtkCellType;
-    const supported = type === VtkCellType.TRIANGLE || type === VtkCellType.QUADRATIC_TRIANGLE || type === VtkCellType.QUAD;
+    const supported = type === VtkCellType.TRIANGLE || type === VtkCellType.QUADRATIC_TRIANGLE || type === VtkCellType.QUAD || type === VtkCellType.QUADRATIC_QUAD || type === VtkCellType.BIQUADRATIC_QUAD;
     for (let c = 0; c < b.count; c++) {
       if (!sets.conditions.has(b.entityIds[c])) continue;
       if (!supported) {
@@ -109,7 +127,14 @@ export function recoverBoundaryFlux(model: MdpaModel, params: RecoverFluxParams)
       }
       const ids = Array.from(b.connectivity.subarray(c * b.stride, (c + 1) * b.stride));
       if (ids.some((n) => !coordIndex.has(n))) continue;
-      if (type === VtkCellType.QUAD) {
+      if (type === VtkCellType.QUADRATIC_QUAD || type === VtkCellType.BIQUADRATIC_QUAD) {
+        const p = ids.slice(0, 4).map(xyz);
+        const d1 = [p[2][0] - p[0][0], p[2][1] - p[0][1], p[2][2] - p[0][2]], d2 = [p[3][0] - p[1][0], p[3][1] - p[1][1], p[3][2] - p[1][2]];
+        const cr = cross(d1, d2);
+        const need = type === VtkCellType.QUADRATIC_QUAD ? 8 : 9;
+        if (ids.length < need) { refused.add(b.name); continue; }
+        faces.push({ nodes: ids.slice(0, need), area: 0.5 * Math.hypot(cr[0], cr[1], cr[2]), kind: need === 8 ? "quad8" : "quad9", corners: p });
+      } else if (type === VtkCellType.QUAD) {
         const p = ids.slice(0, 4).map(xyz);
         const d1 = [p[2][0] - p[0][0], p[2][1] - p[0][1], p[2][2] - p[0][2]], d2 = [p[3][0] - p[1][0], p[3][1] - p[1][1], p[3][2] - p[1][2]];
         const cr = cross(d1, d2);
@@ -121,7 +146,7 @@ export function recoverBoundaryFlux(model: MdpaModel, params: RecoverFluxParams)
       }
     }
   }
-  if (refused.size > 0) throw new Error(`Boundary flux recovery handles 3/6-node triangles and 4-node quadrilaterals; "${[...refused].join('", "')}" in this part is another face type.`);
+  if (refused.size > 0) throw new Error(`Boundary flux recovery handles 3/6-node triangles and 4/8/9-node quadrilaterals; "${[...refused].join('", "')}" in this part is another face type.`);
   if (faces.length === 0) throw new Error(`SubModelPart "${params.part}" has no surface Conditions to recover a flux on.`);
 
   // Local numbering of the part's nodes and the sparse consistent mass matrix.
@@ -138,6 +163,28 @@ export function recoverBoundaryFlux(model: MdpaModel, params: RecoverFluxParams)
     const add = (a: number, b: number, v: number): void => { rows[a].set(b, (rows[a].get(b) ?? 0) + v); };
     if (f.kind === "quad4") {
       for (const i of idx) { add(i, i, f.area / 4); weight[i] += f.area / 4; }
+      continue;
+    }
+    if (f.kind === "quad8" || f.kind === "quad9") {
+      const n = f.kind === "quad8" ? 8 : 9;
+      const P = f.corners!;
+      let area = 0;
+      for (let gi = 0; gi < 3; gi++)
+        for (let gj = 0; gj < 3; gj++) {
+          const xi = G1[gi], eta = G1[gj];
+          // Bilinear map of the corner nodes: tangent vectors and the area element |t_xi x t_eta|.
+          const txi = [0, 1, 2].map((d) => 0.25 * CORNERS.reduce((a, [cx, cy], k) => a + cx * (1 + eta * cy) * P[k][d], 0));
+          const teta = [0, 1, 2].map((d) => 0.25 * CORNERS.reduce((a, [cx, cy], k) => a + cy * (1 + xi * cx) * P[k][d], 0));
+          const cr = cross(txi, teta);
+          const dA = Math.hypot(cr[0], cr[1], cr[2]) * GW[gi] * GW[gj];
+          area += dA;
+          const s = quadShapes(n, xi, eta);
+          for (let a = 0; a < n; a++) {
+            weight[idx[a]] += dA * s[a];
+            for (let b2 = 0; b2 < n; b2++) add(idx[a], idx[b2], dA * s[a] * s[b2]);
+          }
+        }
+      totalArea += area - f.area; // the exact (bilinear) area replaces the diagonal estimate
       continue;
     }
     const n = f.kind === "tri3" ? 3 : 6;

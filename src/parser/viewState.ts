@@ -80,6 +80,12 @@ export interface ViewState {
   panes: SavedPane[];
   /** Curved display of quadratic cells, 1..3 (segments per edge 2^n). Omitted = off. */
   curvedLevel?: number;
+  /** View-only mirror expansion: axis 0|1|2 (x|y|z) and the plane position (a number, or the bbox side). Omitted = off. */
+  mirror?: { axis: 0 | 1 | 2; at: number | "min" | "max" };
+  /** View-only revolve of a 2D axisymmetric result. Exclusive with `mirror`. Omitted = off. */
+  revolve?: { axis: "x" | "y"; startDeg: number; sweepDeg: number; layers: number };
+  /** View-only sector repeat (cyclic symmetry). Exclusive with `mirror` and `revolve`. Omitted = off. */
+  sector?: { axis: "x" | "y" | "z"; copies: number; angleDeg?: number };
   /** The Field panel was open (so the saved field overlays are drawn on restore). Omitted = closed. */
   fieldPanel?: boolean;
   /**
@@ -162,6 +168,9 @@ export function isEmptyViewState(v: ViewState): boolean {
     v.bookmarks.length === 0 &&
     v.paneLayout === undefined &&
     v.curvedLevel === undefined &&
+    v.mirror === undefined &&
+    v.revolve === undefined &&
+    v.sector === undefined &&
     v.panes.length === 0 &&
     !v.fieldPanel &&
     v.panels.length === 0 &&
@@ -348,6 +357,40 @@ export function validateViewState(raw: unknown, colormapFallback = "Rainbow"): {
     } else warnings.push("View sidecar curvedLevel is not a number — ignored.");
   }
 
+  if (r.mirror !== undefined) {
+    const m = r.mirror as { axis?: unknown; at?: unknown } | null;
+    const axisOk = !!m && (m.axis === 0 || m.axis === 1 || m.axis === 2);
+    const atOk = !!m && (m.at === "min" || m.at === "max" || (typeof m.at === "number" && Number.isFinite(m.at)));
+    if (axisOk && atOk) view.mirror = { axis: m!.axis as 0 | 1 | 2, at: m!.at as number | "min" | "max" };
+    else warnings.push("View sidecar mirror is malformed — ignored.");
+  }
+
+  if (r.revolve !== undefined) {
+    const m = r.revolve as { axis?: unknown; startDeg?: unknown; sweepDeg?: unknown; layers?: unknown } | null;
+    const fin = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
+    if (m && (m.axis === "x" || m.axis === "y") && fin(m.startDeg) && fin(m.sweepDeg) && m.sweepDeg !== 0 && Math.abs(m.sweepDeg) <= 360 && fin(m.layers) && m.layers >= 1 && m.layers <= 720) {
+      view.revolve = { axis: m.axis, startDeg: m.startDeg, sweepDeg: m.sweepDeg, layers: Math.floor(m.layers) };
+      if (view.mirror) {
+        delete view.mirror;
+        warnings.push("View sidecar holds both mirror and revolve — mirror ignored.");
+      }
+    } else warnings.push("View sidecar revolve is malformed — ignored.");
+  }
+
+  if (r.sector !== undefined) {
+    const m = r.sector as { axis?: unknown; copies?: unknown; angleDeg?: unknown } | null;
+    const fin = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
+    const angleOk = m?.angleDeg === undefined || (fin(m.angleDeg) && m.angleDeg !== 0);
+    if (m && (m.axis === "x" || m.axis === "y" || m.axis === "z") && fin(m.copies) && m.copies >= 2 && m.copies <= 360 && angleOk) {
+      view.sector = { axis: m.axis, copies: Math.floor(m.copies), ...(fin(m.angleDeg) ? { angleDeg: m.angleDeg } : {}) };
+      if (view.mirror || view.revolve) {
+        delete view.mirror;
+        delete view.revolve;
+        warnings.push("View sidecar holds a sector together with another symmetry view — the sector wins.");
+      }
+    } else warnings.push("View sidecar sector is malformed — ignored.");
+  }
+
   if (r.panes !== undefined) {
     if (!Array.isArray(r.panes)) warnings.push("View sidecar panes are not an array — ignored.");
     else {
@@ -519,6 +562,9 @@ export function serializeViewState(v: ViewState): Record<string, unknown> {
   if (v.panels.length > 0) out.panels = [...v.panels];
   if (v.paneLayout) out.paneLayout = v.paneLayout;
   if (v.curvedLevel) out.curvedLevel = v.curvedLevel;
+  if (v.mirror) out.mirror = { axis: v.mirror.axis, at: v.mirror.at };
+  if (v.revolve) out.revolve = { ...v.revolve };
+  if (v.sector) out.sector = { ...v.sector };
   if (v.fieldPanel) out.fieldPanel = true;
   return out;
 }

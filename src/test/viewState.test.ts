@@ -280,6 +280,44 @@ test("curvedLevel round trips, clamps and is omitted when off", () => {
   assert.equal(isEmptyViewState({ ...emptyViewState(), curvedLevel: 1 }), false);
 });
 
+test("mirror round trips, rejects malformed values and is omitted when off", () => {
+  const out = serializeViewState({ ...emptyViewState(), mirror: { axis: 1, at: "max" } });
+  assert.deepEqual(out.mirror, { axis: 1, at: "max" });
+  assert.deepEqual(validateViewState({ mirror: { axis: 0, at: 2.5 } }).view.mirror, { axis: 0, at: 2.5 });
+  assert.equal(validateViewState({ mirror: { axis: 3, at: "min" } }).view.mirror, undefined);
+  assert.ok(validateViewState({ mirror: { axis: 0, at: "mid" } }).warnings.length > 0);
+  assert.equal("mirror" in serializeViewState(emptyViewState()), false);
+  assert.equal(isEmptyViewState({ ...emptyViewState(), mirror: { axis: 0, at: "min" } }), false);
+});
+
+test("revolve round trips, rejects malformed values, and excludes mirror", () => {
+  const spec = { axis: "y" as const, startDeg: 0, sweepDeg: 270, layers: 24 };
+  assert.deepEqual(serializeViewState({ ...emptyViewState(), revolve: spec }).revolve, spec);
+  assert.deepEqual(validateViewState({ revolve: spec }).view.revolve, spec);
+  assert.equal(validateViewState({ revolve: { ...spec, axis: "z" } }).view.revolve, undefined);
+  assert.equal(validateViewState({ revolve: { ...spec, sweepDeg: 0 } }).view.revolve, undefined);
+  assert.equal(validateViewState({ revolve: { ...spec, layers: 5000 } }).view.revolve, undefined);
+  const both = validateViewState({ revolve: spec, mirror: { axis: 0, at: "min" } });
+  assert.equal(both.view.mirror, undefined);
+  assert.ok(both.warnings.some((w) => /mirror ignored/.test(w)));
+  assert.equal("revolve" in serializeViewState(emptyViewState()), false);
+  assert.equal(isEmptyViewState({ ...emptyViewState(), revolve: spec }), false);
+});
+
+test("sector round trips, rejects malformed values and wins over the other symmetry views", () => {
+  const spec = { axis: "z" as const, copies: 6, angleDeg: 60 };
+  assert.deepEqual(serializeViewState({ ...emptyViewState(), sector: spec }).sector, spec);
+  assert.deepEqual(validateViewState({ sector: spec }).view.sector, spec);
+  assert.equal(validateViewState({ sector: { ...spec, copies: 1 } }).view.sector, undefined);
+  assert.equal(validateViewState({ sector: { ...spec, axis: "q" } }).view.sector, undefined);
+  assert.equal(validateViewState({ sector: { ...spec, angleDeg: 0 } }).view.sector, undefined);
+  const both = validateViewState({ sector: spec, mirror: { axis: 0, at: "min" } });
+  assert.equal(both.view.mirror, undefined);
+  assert.ok(both.warnings.length > 0);
+  assert.equal("sector" in serializeViewState(emptyViewState()), false);
+  assert.equal(isEmptyViewState({ ...emptyViewState(), sector: spec }), false);
+});
+
 test("deformation Auto defaults on; a pre-Auto sidecar with a typed factor stays manual", () => {
   const def = validateViewState({ panes: [{ field: {} }] }).view.panes[0].field;
   assert.equal(def.deformAuto, true);

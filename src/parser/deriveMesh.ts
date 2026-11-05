@@ -25,7 +25,7 @@ import { thresholdCells, ThresholdRule } from "./thresholdCells";
 import { restrictToElements, elementMeasures } from "./selectCells";
 import { extractSkinModel } from "./extractSkin";
 import { decimateModel, DecimateParams } from "./decimate";
-import { tessellateModel, withTessellateSourceFields, TessellateParams, TESSELLATE_MAX_LEVELS } from "./tessellate";
+import { tessellateModel, withTessellateSourceFields, TessellateParams, TessellateParents, TESSELLATE_MAX_LEVELS } from "./tessellate";
 import { sampleGrid, GridSampleSpec } from "./gridSample";
 import { kernelOpModel, KernelOpSpec } from "./kernelOps";
 import { generateMesh, octreeMeshModel, octreeModel, cadSurfaceModel, GenerateSpec, OctreeMeshSpec, OctreeSpec, CadSurfaceSpec, CadSurfaceReport } from "./kernelMeshes";
@@ -175,6 +175,18 @@ export function recordedDeriveParameters(spec: DeriveSpec): Record<string, unkno
 const finite3 = (v: unknown): v is Vec3 => Array.isArray(v) && v.length === 3 && v.every((x) => typeof x === "number" && Number.isFinite(x));
 
 /** Replaces the colon-named upstream provenance fields of a read-back result with our own. */
+/** After a tessellation pass: SOURCE_ENTITY_ID names the tessellated child; point it back at the open mesh's cell. */
+function mapSourceToOriginal(result: MdpaModel, parents: TessellateParents): MdpaModel {
+  const idField = result.fields.find((f) => f.kind === "Elemental" && f.variable === "SOURCE_ENTITY_ID");
+  const kindField = result.fields.find((f) => f.kind === "Elemental" && f.variable === "SOURCE_ENTITY_KIND");
+  if (!idField || !kindField) return result;
+  const parentOf = new Map<string, number>();
+  for (const [code, table] of parents)
+    for (const [parent, children] of table) for (const c of children) parentOf.set(`${code}:${c}`, parent);
+  const values = Float64Array.from(idField.values, (v, i) => parentOf.get(`${kindField.values[i]}:${v}`) ?? v);
+  return { ...result, fields: result.fields.map((f) => (f === idField ? { ...f, values } : f)) };
+}
+
 function withSourceFields(source: MdpaModel, result: MdpaModel, parentFieldName: string, extra: Record<string, string> = {}): MdpaModel {
   const parent = result.fields.find((f) => f.kind === "Elemental" && f.variable === parentFieldName);
   const order = meshioBlockOrder(source);
@@ -281,7 +293,22 @@ export async function deriveMesh(
       const comp = spec.component ?? "mag";
       if (comp !== "mag" && (comp < 0 || comp >= field.components)) throw new Error(`"${spec.variable}" has no component ${comp}.`);
       if (signal?.aborted) throw new Error("cancelled");
-      const mesh = modelToMeshio(model, diagnostics, { dim: 3 });
+      // Quadratic cells: the kernel contours corner nodes only, so the mid-side values the solver
+      // computed would play no part (roadmap item 38). Tessellate once at level 1 — the same
+      // subdivision the viewer draws — and contour the linear result. The tessellated copy exists
+      // only for this call; the open mesh and its ids are untouched, and provenance
+      // (SOURCE_ENTITY_ID) therefore names the TESSELLATED cells' ids unless tagged below.
+      let source = model;
+      let tessellatedNote = "";
+      let tessParents: TessellateParents | undefined;
+      const tess = await tessellateModel(model, { levels: 1 }, diagnostics);
+      if (tess.changed) {
+        source = tess.model;
+        tessParents = tess.parents;
+        tessellatedNote = " Quadratic cells were subdivided once first so the mid-side values shape the surface.";
+      }
+      if (signal?.aborted) throw new Error("cancelled");
+      const mesh = modelToMeshio(source, diagnostics, { dim: 3 });
       if (mesh.cells.length === 0) throw new Error("The mesh has no cells to contour.");
       if (signal?.aborted) throw new Error("cancelled");
       const m = await loadMeshio();
@@ -291,14 +318,15 @@ export async function deriveMesh(
       if (surf.cells.length === 0 || surf.cells.every((c) => "data" in c && c.data.length === 0)) {
         throw new Error(`No isosurface: ${spec.variable} never crosses ${spec.values.join(", ")}.`);
       }
-      const read = withSourceFields(model, meshioToModel(surf, diagnostics), "iso_parent_cell", {
+      let read = withSourceFields(source, meshioToModel(surf, diagnostics), "iso_parent_cell", {
         iso_value: "ISO_VALUE",
         iso_index: "ISO_INDEX",
       });
+      if (tessParents) read = mapSourceToOriginal(read, tessParents);
       const n = read.blocks.reduce((s, b) => s + b.count, 0);
       return {
         model: read,
-        summary: `Isosurface of ${spec.variable}${comp === "mag" ? "" : `[${comp}]`} at ${spec.values.join(", ")}: ${n} cell(s), carrying ISO_VALUE, ISO_INDEX and the interpolated nodal fields${comp === "mag" && field.components > 1 ? " (magnitude contours are approximate)" : ""}.`,
+        summary: `Isosurface of ${spec.variable}${comp === "mag" ? "" : `[${comp}]`} at ${spec.values.join(", ")}: ${n} cell(s), carrying ISO_VALUE, ISO_INDEX and the interpolated nodal fields${comp === "mag" && field.components > 1 ? " (magnitude contours are approximate)" : ""}.${tessellatedNote}`,
         suffix: "iso",
       };
     }

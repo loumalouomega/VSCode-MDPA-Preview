@@ -27,6 +27,7 @@ import {
   ProblemtypeDeclaration,
 } from "../src/problemtype/types";
 import { defaultCaseState, fieldDefault, flattenValues } from "../src/problemtype/api";
+import { parseNumericText, previewParameters } from "../src/problemtype/caseExpressions";
 import {
   collectionProblems,
   entriesOf,
@@ -612,12 +613,14 @@ function fieldInput(
     const vec = Array.isArray(value) ? [...value] : [0, 0, 0];
     for (let i = 0; i < 3; i++) {
       const input = document.createElement("input");
-      input.type = "number";
+      // Text, not number: a component may be an expression (`F * 2`, `1[kN]`); see caseExpressions.ts.
+      input.type = "text";
+      input.inputMode = "decimal";
       input.className = "edit-num";
-      input.step = "0.1";
       input.value = String(vec[i] ?? 0);
+      input.title = t("A number, a value with a unit such as 10[mm], or an expression over the case parameters");
       input.addEventListener("change", () => {
-        vec[i] = Number(input.value) || 0;
+        vec[i] = parseNumericText(input.value);
         onChange([...vec] as JsonValue);
       });
       wrap.appendChild(input);
@@ -646,18 +649,17 @@ function fieldInput(
   } else {
     const input = document.createElement("input");
     input.className = "edit-num edit-num-wide";
-    input.type = f.type === "string" ? "text" : "number";
-    if (f.type === "int") input.step = "1";
-    // Advisory bounds from the declaration: they steer the spinner and the
-    // browser's own validity state, but nothing clamps what the user types.
+    // Numeric fields are text inputs: they accept a number, a unit-suffixed value (`10[mm]`) or an
+    // expression over the case parameters, all resolved at generation (caseExpressions.ts).
+    input.type = "text";
     if (f.type !== "string") {
-      if (f.step !== undefined) input.step = String(f.step);
-      if (f.min !== undefined) input.min = String(f.min);
-      if (f.max !== undefined) input.max = String(f.max);
+      input.inputMode = "decimal";
+      input.title = t("A number, a value with a unit such as 10[mm], or an expression over the case parameters");
+      if (f.min !== undefined || f.max !== undefined) input.dataset.range = `${f.min ?? ""}..${f.max ?? ""}`;
     }
     input.value = String(value ?? "");
     input.addEventListener("change", () => {
-      onChange(f.type === "string" ? input.value : Number(input.value) || 0);
+      onChange(f.type === "string" ? input.value : parseNumericText(input.value));
     });
     wrap.appendChild(input);
   }
@@ -735,6 +737,59 @@ function renderSections(decl: ProblemtypeDeclaration): void {
     applyVisibility(body, s.fields, values);
     host.appendChild(form);
   });
+  host.appendChild(parametersCard(decl));
+}
+
+/** The case-level Parameters table: `name = expression`, usable by name in any numeric field. */
+function parametersCard(decl: ProblemtypeDeclaration): HTMLElement {
+  const params = (state!.parameters ??= []);
+  const { form, body } = cardBlock({
+    key: `${decl.id}:parameters`,
+    title: t("Parameters"),
+    collapsed: params.length === 0,
+    icon: "problemtype",
+    count: params.length,
+  });
+  const hint = document.createElement("div");
+  hint.className = "pt-hint";
+  hint.textContent = t("Named values for the numeric fields: L = 2[m], then type L/2 in a field. Units in brackets convert to the field's unit.");
+  body.appendChild(hint);
+  const list = document.createElement("div");
+  body.appendChild(list);
+  const redraw = (): void => {
+    list.textContent = "";
+    const previews = previewParameters(params);
+    params.forEach((p, i) => {
+      const row = document.createElement("div");
+      row.className = "pt-param-row";
+      const name = document.createElement("input");
+      name.type = "text"; name.className = "edit-num"; name.placeholder = "name"; name.value = p.name;
+      const expr = document.createElement("input");
+      expr.type = "text"; expr.className = "edit-num edit-num-wide"; expr.placeholder = "2[m]"; expr.value = p.expr;
+      const result = document.createElement("span");
+      const show = (): void => {
+        const pv = previewParameters(params)[i];
+        result.textContent = pv ? pv.text : "";
+        result.className = pv?.error ? "pt-issue pt-param-result" : "pt-unit pt-param-result";
+      };
+      show();
+      const commit = (): void => { p.name = name.value.trim(); p.expr = expr.value; show(); scheduleSend(); };
+      name.addEventListener("change", commit);
+      expr.addEventListener("change", commit);
+      const del = document.createElement("button");
+      del.type = "button"; del.className = "panel-icon-btn"; del.title = t("Remove parameter"); del.textContent = "×";
+      del.addEventListener("click", () => { params.splice(i, 1); redraw(); scheduleSend(); });
+      row.append(name, document.createTextNode(" = "), expr, del, result);
+      list.appendChild(row);
+    });
+    void previews;
+  };
+  redraw();
+  const add = document.createElement("button");
+  add.type = "button"; add.className = "panel-btn"; add.textContent = t("Add parameter");
+  add.addEventListener("click", () => { params.push({ name: `p${params.length + 1}`, expr: "0" }); redraw(); scheduleSend(); });
+  body.appendChild(add);
+  return form;
 }
 
 /** An `<option>` with text set safely. */

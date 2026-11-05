@@ -62,6 +62,9 @@ export type ViewFn =
   | "standardView"
   | "layout"
   | "clip"
+  | "mirror"
+  | "revolve"
+  | "sector"
   | "opacity"
   | "theme"
   | "find"
@@ -317,6 +320,33 @@ const VIEW: CommandSpec[] = [
     "clip on axis=x pos=0.5",
     { positional: ["state"] }
   ),
+  cmd(
+    "mirror",
+    "view",
+    "View-only mirror of the mesh about an axis-aligned plane (nothing is written)",
+    "state:enum(on|off) axis:enum(x|y|z) side:enum(min|max) at:number",
+    { kind: "view", fn: "mirror" },
+    "mirror axis=x side=min",
+    { positional: ["state"] }
+  ),
+  cmd(
+    "revolve",
+    "view",
+    "View-only revolve of a 2D axisymmetric result about the x or y axis (nothing is written)",
+    "state:enum(on|off) axis:enum(x|y) start:number sweep:number layers:int",
+    { kind: "view", fn: "revolve" },
+    "revolve axis=y sweep=360 layers=36",
+    { positional: ["state"] }
+  ),
+  cmd(
+    "sector",
+    "view",
+    "View-only repeat of a cyclic-symmetry sector about the x, y or z axis (nothing is written)",
+    "state:enum(on|off) axis:enum(x|y|z) copies:int angle:number",
+    { kind: "view", fn: "sector" },
+    "sector axis=z copies=6",
+    { positional: ["state"] }
+  ),
   cmd("opacity", "view", "Global model opacity (0..1)", "value:number!", { kind: "view", fn: "opacity" }, "opacity 0.6", { positional: ["value"] }),
   cmd("theme", "view", "Scene theme by name", "name!", { kind: "view", fn: "theme" }, "theme dark", { positional: ["name"] }),
   cmd(
@@ -345,6 +375,7 @@ const PANELS: CommandSpec[] = [
   ui("integrals", "panel", "Field integrals panel", "integrals"),
   ui("streamlines", "panel", "Streamlines panel", "streamlines"),
   ui("flowBalance", "panel", "Boundary flow balance panel", "flowBalance"),
+  ui("aleQuality", "panel", "ALE mesh quality panel (per-frame element quality of the deformed mesh)", "aleQuality"),
   ui("windTunnel", "panel", "Virtual wind tunnel wizard: body, tunnel, flow, mesh, generate", "windTunnel"),
   ui("linkPreviews", "panel", "Link two previews", "linkPreviews"),
   ui("compareSplit", "panel", "Compare a second mesh in a split pane", "compareSplit"),

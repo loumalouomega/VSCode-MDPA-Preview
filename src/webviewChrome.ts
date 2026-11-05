@@ -169,6 +169,7 @@ export const MENU_ACTION_COMMANDS: Readonly<Record<string, string>> = {
   integrals: "kratos.mdpa.fieldIntegrals",
   streamlines: "kratos.mdpa.streamlines",
   flowBalance: "kratos.mdpa.flowBalance",
+  aleQuality: "kratos.mdpa.aleQuality",
   linkPreviews: "kratos.mdpa.linkPreviews",
   optimizationProgress: "kratos.mdpa.optimizationProgress",
   windTunnel: "kratos.mdpa.windTunnel",
@@ -212,6 +213,7 @@ export const ADVANCED_MENU_HTML = `<div id="advanced-popup" class="hidden" role=
         <button type="button" class="file-menu-item" data-action="integrals" role="menuitem" title="Cell-measure-weighted total and mean of every cell field, per mesh and per region">${ic("average")}<span>Field integrals…</span></button>
         <button type="button" class="file-menu-item" data-action="streamlines" role="menuitem" title="Trace steady streamlines of a nodal vector field from seed points, a line, a plane or a SubModelPart, and export them as line cells">${ic("fieldQuiver")}<span>Streamlines…</span></button>
         <button type="button" class="file-menu-item" data-action="flowBalance" role="menuitem" title="Signed flux and area-weighted pressure through named SubModelPart boundaries: net flux, imbalance and pressure drop">${ic("average")}<span>Flow balance…</span></button>
+        <button type="button" class="file-menu-item" data-action="aleQuality" role="menuitem" title="Did the mesh solver keep the fluid mesh valid? Per-frame element measure and shape quality of the deformed mesh against the first frame, with the worst frame and the inverted elements">${ic("quality")}<span>ALE mesh quality…</span></button>
         <div class="file-menu-sep"></div>
         <div class="file-menu-group-label" role="presentation">Special problemtypes</div>
         <button type="button" class="file-menu-item" data-action="optimizationProgress" role="menuitem" title="Follow an optimization run: objective and constraints per iteration, read from the optimizer's summary file">${ic("results")}<span>Optimization progress…</span></button>
@@ -260,6 +262,9 @@ export const VIEW_MENU_HTML = `<div id="view-popup" class="hidden" role="menu">
         <button type="button" class="file-menu-item" data-action="lod" role="menuitemcheckbox" title="Draw a decimated surface in place of the full layers — for navigating a big mesh. The mesh itself is untouched; picking is off while it shows">${ic("wireframe")}<span>Level of detail</span></button>
         <button type="button" class="file-menu-item" data-action="constraintLinks" role="menuitemcheckbox" title="Draw a line from every slave node to its masters for the multi-point constraints (hanging nodes, tied dofs)">${ic("normals")}<span>Constraint links</span></button>
         <button type="button" class="file-menu-item" data-action="curved" role="menuitemcheckbox" title="Draw quadratic cells with their mid-side nodes (curved edges and faces). Display only: the stored cells and every export are unchanged">${ic("wireframe")}<span>Curved quadratic cells</span></button>
+        <button type="button" class="file-menu-item" data-action="mirror" role="menuitemcheckbox" title="Show the mesh mirrored about its x-minimum plane (symmetry result expansion). Display only: nothing is edited or written; use the command line for other axes">${ic("wireframe")}<span>Mirror view</span></button>
+        <button type="button" class="file-menu-item" data-action="revolve" role="menuitemcheckbox" title="Show a 2D axisymmetric result as a solid of revolution about the y axis (36 layers). Display only: nothing is edited or written; use the command line for other axes and sweeps">${ic("wireframe")}<span>Revolve view</span></button>
+        <button type="button" class="file-menu-item" data-action="sector" role="menuitemcheckbox" title="Repeat a cyclic-symmetry sector six times about the z axis. Display only: nothing is edited or written; use the command line for other axes and counts">${ic("wireframe")}<span>Sector repeat</span></button>
         <button type="button" class="file-menu-item" data-action="flatParts" role="menuitemcheckbox" title="List every SubModelPart as one flat row labelled with its full path, instead of the nested tree. View-only: layers, visibility and the mesh are untouched">${ic("tree")}<span>Flat SubModelPart list</span></button>
         <div class="file-menu-sep"></div>
         <button type="button" class="file-menu-item active" data-action="layout:1x1" role="menuitemcheckbox" title="One viewport">${ic("grid")}<span>Layout: Single</span></button>

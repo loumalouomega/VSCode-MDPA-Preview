@@ -261,7 +261,8 @@ export async function preflightCase(
     generatedParameters = out.projectParameters;
     for (const w of out.warnings) {
       if (COVERED_GENERATOR_WARNING.some((re) => re.test(w))) continue;
-      add("warning", "generate-warning", w);
+      // A dimension mismatch in a typed value has its own code so the card can group it.
+      add("warning", /unit-mismatch:/.test(w) ? "unit-mismatch" : "generate-warning", w);
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

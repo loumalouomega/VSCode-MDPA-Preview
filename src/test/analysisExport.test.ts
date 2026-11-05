@@ -9,7 +9,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import {
+import { aleSeriesToCsv,
   ANALYSIS_EXPORT_ID_LIMIT,
   exportIdList,
   integralsToCsv,
@@ -170,4 +170,16 @@ test("integrals CSV tuples vectors and quotes names with commas", () => {
 test("empty inputs still emit a header, never throw", () => {
   assert.equal(integralsToCsv([]), "variable,components,region,total,mean,measure,cells,skipped\n");
   assert.equal(qualityToCsv(report({ metrics: [] })).split("\n").length, 2);
+});
+
+test("aleSeriesToCsv: one row per frame, a gap stays blank and an error is quoted", () => {
+  const csv = aleSeriesToCsv({
+    frames: [
+      { label: "0", elements: 4, inverted: 0, minMeasureRatio: 1, minShapeRatio: 1, worstElementId: 2 },
+      { label: "1", error: "frame, broken" },
+    ],
+  }).split("\n");
+  assert.equal(csv[0], "frame,elements,inverted,min_measure_ratio,min_shape_ratio,worst_element,error");
+  assert.equal(csv[1], "0,4,0,1,1,2,");
+  assert.equal(csv[2], '1,,,,,,"frame, broken"');
 });

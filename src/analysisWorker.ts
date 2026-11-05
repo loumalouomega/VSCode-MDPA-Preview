@@ -33,7 +33,7 @@ markSingleOperationThread();
 export interface AnalysisParams {
   probe: ProbeParams;
   watertight: undefined;
-  integrate: { variables: string[] };
+  integrate: { variables: string[]; revolveAbout?: string };
   lod: { ratio?: number };
   qualityGate: { require?: string; maxInverted?: number; maxDegenerate?: number };
   /** `other` is read on the host (file I/O) and structured-cloned in. */
@@ -58,7 +58,7 @@ async function execute(req: AnalysisWorkRequest): Promise<unknown> {
   switch (req.type) {
     case "probe": return probeAlongPath(req.model, req.params);
     case "watertight": return watertightReport(req.model);
-    case "integrate": return integrateFields(req.model, req.params.variables);
+    case "integrate": return integrateFields(req.model, req.params.variables, [], { revolveAbout: req.params.revolveAbout });
     case "lod": return lodSurface(req.model, req.params.ratio);
     case "qualityGate": return qualityGate(req.model, req.params.require, req.params.maxInverted, req.params.maxDegenerate);
     case "hausdorff": return hausdorff(req.model, req.params.other, req.params.faceSamples);
