@@ -53,3 +53,42 @@ export function adviseElementSize(
     note: "Flat-plate estimate over the mesh's longest side; a guide for the first wall cell, not a prediction for the actual geometry.",
   };
 }
+
+export interface WavelengthAdvice {
+  rule: "wavelength";
+  /** Largest element size that still resolves the wave at `pointsPerWavelength`. */
+  maxElementSize: number;
+  inputs: { wavelength: number; pointsPerWavelength: number; frequency?: number; waveSpeed?: number };
+  basis: string;
+}
+
+/**
+ * Wave resolution rule: h <= wavelength / n (default n = 5). Everything is
+ * supplied by the caller — a wavelength, or a frequency with a wave speed
+ * (lambda = c / f) — and nothing is inferred from the mesh or a problemtype;
+ * a missing or non-positive input publishes nothing.
+ */
+export function adviseWavelengthSize(
+  input: { wavelength?: number; frequency?: number; waveSpeed?: number },
+  pointsPerWavelength = 5
+): WavelengthAdvice | undefined {
+  if (!(pointsPerWavelength > 0) || !Number.isFinite(pointsPerWavelength)) return undefined;
+  let wavelength = input.wavelength;
+  const fromSpeed = wavelength === undefined;
+  if (fromSpeed) {
+    const { frequency, waveSpeed } = input;
+    if (frequency === undefined || waveSpeed === undefined || !(frequency > 0) || !(waveSpeed > 0)) return undefined;
+    wavelength = waveSpeed / frequency;
+  }
+  if (!(wavelength! > 0) || !Number.isFinite(wavelength!)) return undefined;
+  return {
+    rule: "wavelength",
+    maxElementSize: wavelength! / pointsPerWavelength,
+    inputs: {
+      wavelength: wavelength!,
+      pointsPerWavelength,
+      ...(fromSpeed ? { frequency: input.frequency, waveSpeed: input.waveSpeed } : {}),
+    },
+    basis: `h <= lambda / ${pointsPerWavelength}` + (fromSpeed ? ", lambda = c / f" : ""),
+  };
+}

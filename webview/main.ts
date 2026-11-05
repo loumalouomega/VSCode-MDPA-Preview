@@ -100,9 +100,10 @@ import {
   IntegralPanelState,
   renderIntegralPanel,
 } from "./integralPanel";
-import { computeIsoSurface } from "../src/parser/isoSurface";
+import { computeIsoSurface, isoLabelAnchor } from "../src/parser/isoSurface";
 import { computePlaneCut } from "../src/parser/planeCut";
 import { mirrorExpand } from "../src/parser/render/mirrorDisplay";
+import { MIRROR_PLANES, mirrorPlaneAt, parseMirrorAction } from "../src/parser/render/mirrorPlanes";
 import { revolveExpand, type RevolveSpec } from "../src/parser/render/revolveDisplay";
 import { sectorExpand, type SectorSpec } from "../src/parser/render/sectorDisplay";
 import { buildDisplayGeometry, Cell, prepareNodes, PreparedNodes } from "../src/parser/render/displayGeometry";
@@ -514,6 +515,30 @@ const labelsEl = document.createElement("div");
 labelsEl.id = "labels";
 vtkSub.appendChild(labelsEl);
 
+// Contour-level labels for the iso overlay (roadmap item 38): one DOM label per
+// level, re-projected on every render through its own pane's camera.
+const isoLabelsEl = document.createElement("div");
+isoLabelsEl.id = "iso-labels";
+vtkSub.appendChild(isoLabelsEl);
+const isoLabels: { pane: Pane; pos: [number, number, number]; el: HTMLElement }[] = [];
+
+function clearIsoLabels(pane?: Pane): void {
+  for (let i = isoLabels.length - 1; i >= 0; i--) {
+    if (pane && isoLabels[i].pane !== pane) continue;
+    isoLabels[i].el.remove();
+    isoLabels.splice(i, 1);
+  }
+}
+
+function positionIsoLabels(): void {
+  if (!backend) return;
+  for (const l of isoLabels) {
+    const [left, top] = backend.worldToDisplay(l.pane.view, l.pos[0], l.pos[1], l.pos[2]);
+    l.el.style.left = `${left}px`;
+    l.el.style.top = `${top}px`;
+  }
+}
+
 const summaryOverlayEl = document.createElement("div");
 summaryOverlayEl.id = "summary-overlay";
 summaryOverlayEl.hidden = true;
@@ -782,6 +807,7 @@ let pendingLinkIdentity: SavedLink | undefined;
 function render(): void {
   captureSceneRevision++;
   backend?.render();
+  positionIsoLabels();
   scheduleViewSave();
   scheduleLinkSync();
 }
@@ -1539,12 +1565,19 @@ function adoptHostModel(m: MdpaModel): MdpaModel {
   hostModel = m;
   return applyMirror(m);
 }
+/** Ticks the one View-menu row that matches the current plane (the original row is x-min). */
+function syncMirrorMenu(): void {
+  const side = mirrorState && (mirrorState.at === "min" || mirrorState.at === "max") ? mirrorState.at : undefined;
+  const current = mirrorState ? `mirror:${"xyz"[mirrorState.axis]}:${side ?? "center"}` : "";
+  document.querySelector('[data-action="mirror"]')?.classList.toggle("active", current === "mirror:x:min");
+  for (const p of MIRROR_PLANES) document.querySelector(`[data-action="${p.action}"]`)?.classList.toggle("active", p.action === current);
+}
 function setMirror(state: MirrorState | undefined): void {
   const same = (!state && !mirrorState) || (!!state && !!mirrorState && state.axis === mirrorState.axis && state.at === mirrorState.at);
   if (same) return;
   mirrorState = state;
   if (state) { revolveState = undefined; sectorState = undefined; }
-  document.querySelector('[data-action="mirror"]')?.classList.toggle("active", !!state);
+  syncMirrorMenu();
   document.querySelector('[data-action="revolve"]')?.classList.toggle("active", false);
   scheduleViewSave();
   if (!model || !hostModel) return;
@@ -1559,7 +1592,7 @@ function setRevolve(state: RevolveSpec | undefined): void {
   revolveState = state;
   if (state) { mirrorState = undefined; sectorState = undefined; }
   document.querySelector('[data-action="revolve"]')?.classList.toggle("active", !!state);
-  document.querySelector('[data-action="mirror"]')?.classList.toggle("active", false);
+  syncMirrorMenu();
   scheduleViewSave();
   if (!model || !hostModel) return;
   snapshotVisibility();
@@ -1573,7 +1606,8 @@ function setSector(state: SectorSpec | undefined): void {
   if (same) return;
   sectorState = state;
   if (state) { mirrorState = undefined; revolveState = undefined; }
-  for (const a of ["mirror", "revolve"]) document.querySelector(`[data-action="${a}"]`)?.classList.toggle("active", false);
+  syncMirrorMenu();
+  document.querySelector('[data-action="revolve"]')?.classList.toggle("active", false);
   document.querySelector('[data-action="sector"]')?.classList.toggle("active", !!state);
   scheduleViewSave();
   if (!model || !hostModel) return;
@@ -4183,6 +4217,12 @@ function dispatchToolbarAction(action: string | undefined, _target?: HTMLElement
   else if (action === "constraintLinks") setConstraintLinks(!constraintLinksOn);
   else if (action === "curved") setCurved(curvedLevel === 0);
   else if (action === "mirror") setMirror(mirrorState ? undefined : { axis: 0, at: "min" });
+  else if (parseMirrorAction(action)) {
+    const pl = parseMirrorAction(action)!;
+    const st: MirrorState = { axis: pl.axis, at: hostModel ? mirrorPlaneAt(pl.side, pl.axis, hostModel.bounds) : "min" };
+    const on = !!mirrorState && mirrorState.axis === st.axis && mirrorState.at === st.at;
+    setMirror(on ? undefined : st);
+  }
   else if (action === "sector") setSector(sectorState ? undefined : { axis: "z", copies: 6 });
   else if (action === "revolve") setRevolve(revolveState ? undefined : { axis: "y", startDeg: 0, sweepDeg: 360, layers: 36 });
   else if (action === "flatParts") {
@@ -6415,10 +6455,12 @@ function clearPaneFieldOverlays(pane: Pane): void {
   for (const id of [...pane.overlays.keys()].filter(isFieldLayerId)) {
     removePaneOverlay(pane, id);
   }
+  clearIsoLabels(pane);
 }
 
 /** Removes everything this pane draws of its own. */
 function clearPaneOverlays(pane: Pane): void {
+  clearIsoLabels(pane);
   for (const id of [...pane.overlays.keys()]) removePaneOverlay(pane, id);
 }
 
@@ -6789,7 +6831,16 @@ function buildIsoLayer(pane: Pane, info: FieldInfo, srcModel: MdpaModel): void {
     prop.setStyle({ color: c, edgeVisible: false });
     if (result.is2D) prop.setStyle({ lineWidth: 2 });
     registerPaneOverlay(pane, `${FIELD_ISO_PREFIX}${idx}`, prop);
+    const anchor = isoLabelAnchor(result);
+    if (anchor) {
+      const el = document.createElement("div");
+      el.className = "iso-label";
+      el.textContent = String(Number(shown.toPrecision(4)));
+      isoLabelsEl.appendChild(el);
+      isoLabels.push({ pane, pos: anchor, el });
+    }
   });
+  positionIsoLabels();
 }
 
 // The mesh surface restricted to cells passing the threshold window — see

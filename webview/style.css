@@ -4875,3 +4875,21 @@ button.pt-preflight-row:hover,
   top: 0;
   background: inherit;
 }
+
+/* Contour level labels on the iso overlay (roadmap item 38). */
+#iso-labels {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.iso-label {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  padding: 0 var(--ui-s-2);
+  color: var(--ds-fg);
+  background: var(--ds-header-bg);
+  font-size: var(--ui-fs-label);
+  font-variant-numeric: tabular-nums;
+}

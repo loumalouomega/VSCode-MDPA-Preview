@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { computeIsoSurface, quadraticDecomposition } from "../parser/isoSurface";
+import { computeIsoSurface, isoLabelAnchor, quadraticDecomposition, symmetricDecomposition } from "../parser/isoSurface";
 import { FieldData, MdpaModel } from "../parser/types";
 import { VtkCellType } from "../parser/geometryMap";
 
@@ -326,4 +326,71 @@ test("pyramid13 with a field quadratic in x: the isosurface lies on the analytic
   };
   const total = dec.tets!.reduce((s, t) => s + vol(t), 0);
   assert.ok(approx(total, 1 / 3, 1e-9), `sub-cell volume ${total}`);
+});
+
+test("label anchor lies on the level: isosurface plane and iso-line segment (item 38)", () => {
+  const nodes: [number, number, number, number][] = [
+    [1, 0, 0, 0], [2, 1, 0, 0], [3, 1, 1, 0], [4, 0, 1, 0],
+    [5, 0, 0, 1], [6, 1, 0, 1], [7, 1, 1, 1], [8, 0, 1, 1],
+  ];
+  const values = new Map<number, number>();
+  for (const n of nodes) values.set(n[0], n[1]);
+  const hex = model(nodes, VtkCellType.HEXAHEDRON, [[1, 2, 3, 4, 5, 6, 7, 8]], values);
+  const a = isoLabelAnchor(computeIsoSurface(hex, hex.fields[0], 0.25))!;
+  assert.ok(approx(a[0], 0.25), `anchor x ${a[0]}`);
+
+  const tri = model(
+    [[1, 0, 0, 0], [2, 1, 0, 0], [3, 0, 1, 0]],
+    VtkCellType.TRIANGLE,
+    [[1, 2, 3]],
+    new Map([[1, 0], [2, 1], [3, 0]])
+  );
+  const b = isoLabelAnchor(computeIsoSurface(tri, tri.fields[0], 0.5))!;
+  assert.ok(approx(b[0], 0.5));
+  assert.equal(isoLabelAnchor(computeIsoSurface(tri, tri.fields[0], 5)), undefined);
+});
+
+test("linear hexes sharing a face with different diagonals give a crack-free isosurface", () => {
+  const nodes: [number, number, number, number][] = [
+    [1, 0, 0, 0], [2, 1, 0, 0], [3, 1, 1, 0], [4, 0, 1, 0], [5, 0, 0, 1], [6, 1, 0, 1], [7, 1, 1, 1], [8, 0, 1, 1],
+    [9, 2, 0, 0], [10, 2, 1, 0], [11, 2, 1, 1], [12, 2, 0, 1],
+  ];
+  const values = new Map<number, number>();
+  for (const n of nodes) values.set(n[0], n[2] + n[3]); // y + z, independent of x
+  // The second cell is turned so its own 0-6 diagonal on the shared x = 1 face is the other one.
+  for (let rot = 0; rot < 4; rot++) {
+  const base = [2, 3, 7, 6];
+  const top = [9, 10, 11, 12];
+  const second = [...base.map((_, i) => base[(i + rot) % 4]), ...top.map((_, i) => top[(i + rot) % 4])];
+  const m = model(nodes, VtkCellType.HEXAHEDRON, [[1, 2, 3, 4, 5, 6, 7, 8], second], values);
+  const r = computeIsoSurface(m, m.fields[0], 0.8);
+  assert.ok(r.triangles.length > 0);
+  const P = r.points;
+  const edges = new Map<string, number>();
+  let area = 0;
+  for (let t = 0; t < r.triangles.length; t += 3) {
+    const [a, b, c] = [r.triangles[t], r.triangles[t + 1], r.triangles[t + 2]];
+    for (const [u, v] of [[a, b], [b, c], [c, a]]) {
+      const k = u < v ? `${u}_${v}` : `${v}_${u}`;
+      edges.set(k, (edges.get(k) ?? 0) + 1);
+    }
+    const ux = P[b * 3] - P[a * 3], uy = P[b * 3 + 1] - P[a * 3 + 1], uz = P[b * 3 + 2] - P[a * 3 + 2];
+    const vx = P[c * 3] - P[a * 3], vy = P[c * 3 + 1] - P[a * 3 + 1], vz = P[c * 3 + 2] - P[a * 3 + 2];
+    area += 0.5 * Math.hypot(uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx);
+  }
+  for (const [k, n] of edges) {
+    if (n !== 1) continue;
+    const [u, v] = k.split("_").map(Number);
+    const onSeam = Math.abs(P[u * 3] - 1) < 1e-6 && Math.abs(P[v * 3] - 1) < 1e-6;
+    assert.ok(!onSeam, "no boundary edge on the shared face: " + k);
+  }
+  assert.ok(Math.abs(area - 2 * Math.SQRT2 * 0.8) < 1e-5, `area ${area}`);
+  }
+});
+
+test("symmetricDecomposition covers only linear hexahedra and wedges", () => {
+  assert.equal(symmetricDecomposition(VtkCellType.HEXAHEDRON, 8)!.tets!.length, 24);
+  assert.equal(symmetricDecomposition(VtkCellType.WEDGE, 6)!.tets!.length, 14);
+  assert.equal(symmetricDecomposition(VtkCellType.TETRA, 4), undefined);
+  assert.equal(symmetricDecomposition(VtkCellType.QUADRATIC_HEXAHEDRON, 20), undefined);
 });

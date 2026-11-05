@@ -167,6 +167,32 @@ export function quadraticDecomposition(cellType: number | undefined, stride: num
   return undefined;
 }
 
+/**
+ * Linear hexahedra and wedges are split about face and body centres instead of through the 0-6 diagonal:
+ * a shared quad face then triangulates identically from both neighbours (four triangles about its centre),
+ * so the isosurface has no hairline cracks where the fixed-diagonal split disagreed. The centres are plain
+ * corner averages, welded by sorted node ids like the quadratic virtuals.
+ */
+const mean = (sources: number[]): VirtualPoint => ({ sources, weights: sources.map(() => 1 / sources.length) });
+const WEDGE_QUADS = [[0, 1, 4, 3], [1, 2, 5, 4], [2, 0, 3, 5]];
+const aboutCentres = (corners: number, quads: number[][], tris: number[][]): { virtuals: VirtualPoint[]; tets: number[][] } => {
+  const body = corners + quads.length;
+  const tets = quads.flatMap((q, j) => q.map((c, i) => [c, q[(i + 1) % 4], corners + j, body]));
+  return {
+    virtuals: [...quads.map(mean), mean([...Array(corners).keys()])],
+    tets: [...tets, ...tris.map((t) => [...t, body])],
+  };
+};
+const HEX_SYMMETRIC = aboutCentres(8, HEX_FACES, []);
+const WEDGE_SYMMETRIC = aboutCentres(6, WEDGE_QUADS, [[0, 1, 2], [3, 4, 5]]);
+
+/** Crack-free subdivision of a LINEAR hexahedron or wedge; undefined for every other cell type. */
+export function symmetricDecomposition(cellType: number | undefined, stride: number): QuadraticDecomposition | undefined {
+  if (cellType === VtkCellType.HEXAHEDRON && stride >= 8) return { corners: 8, ...HEX_SYMMETRIC };
+  if (cellType === VtkCellType.WEDGE && stride >= 6) return { corners: 6, ...WEDGE_SYMMETRIC };
+  return undefined;
+}
+
 // Welded virtual points of one contouring run: a negative id per distinct set of contributing nodes, so two cells
 // sharing a face share its centre. Value and position are the same weighted mix of the contributors.
 interface VirtualRegistry {
@@ -296,7 +322,8 @@ function marchVolumes(
   virtual: VirtualRegistry
 ): void {
   for (const block of model.blocks) {
-    const t: QuadraticDecomposition = quadraticDecomposition(block.vtkCellType, block.stride) ?? decompositionFor(block.vtkCellType);
+    const t: QuadraticDecomposition =
+      symmetricDecomposition(block.vtkCellType, block.stride) ?? quadraticDecomposition(block.vtkCellType, block.stride) ?? decompositionFor(block.vtkCellType);
     if (!t.tets) continue;
     for (let i = 0; i < block.count; i++) {
       const base = i * block.stride;
@@ -437,4 +464,33 @@ function marchTri(
   const p1 = crossing(apex, others[1]);
   if (p0 === undefined || p1 === undefined) return;
   out.push(p0, p1);
+}
+
+/**
+ * One label anchor for an iso level (roadmap item 38): the midpoint of the
+ * segment (iso-lines) or the centroid of the triangle (isosurface) whose centre
+ * is nearest to the middle of the level's crossing points. Every crossing point
+ * lies on the level and the field is interpolated linearly along the cell, so
+ * the anchor lies on the level too. `undefined` when the level crosses nothing.
+ */
+export function isoLabelAnchor(result: IsoSurfaceResult): Vec3 | undefined {
+  const pts = result.points;
+  const n = Math.floor(pts.length / 3);
+  if (n === 0) return undefined;
+  const mid: Vec3 = [0, 0, 0];
+  for (let i = 0; i < n; i++) for (let k = 0; k < 3; k++) mid[k] += pts[i * 3 + k] / n;
+  const idx = result.is2D ? result.lines : result.triangles;
+  const per = result.is2D ? 2 : 3;
+  let best: Vec3 | undefined;
+  let bestD = Infinity;
+  for (let c = 0; c + per <= idx.length; c += per) {
+    const a: Vec3 = [0, 0, 0];
+    for (let j = 0; j < per; j++) for (let k = 0; k < 3; k++) a[k] += pts[idx[c + j] * 3 + k] / per;
+    const d = (a[0] - mid[0]) ** 2 + (a[1] - mid[1]) ** 2 + (a[2] - mid[2]) ** 2;
+    if (d < bestD) {
+      bestD = d;
+      best = a;
+    }
+  }
+  return best;
 }

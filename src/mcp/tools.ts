@@ -176,7 +176,7 @@ import { probeKratosApplications } from "../problemtype/kratosAppProbe";
 import { describeMissingApplications } from "../problemtype/applications";
 import { defaultCaseState, flattenValues } from "../problemtype/api";
 import { adviseLinearSolver } from "../problemtype/solverAdvice";
-import { adviseElementSize } from "../problemtype/sizeAdvice";
+import { adviseElementSize, adviseWavelengthSize } from "../problemtype/sizeAdvice";
 import { unitOfField } from "../problemtype/materialCatalog";
 import { runQuantityPlotRecipe } from "../problemtype/runQuantityPlot";
 import { planCaseMesh } from "../problemtype/caseMesh";
@@ -880,7 +880,7 @@ export async function meshFieldIntegrate(args: {
     frame:
       args.revolveAbout === undefined
         ? "plane integral (cell area/length weighted, NOT revolved)"
-        : `revolved about ${args.revolveAbout} (each cell weighted by 2*pi*r; planar xy mesh)`,
+        : `revolved about ${args.revolveAbout} (each cell weighted by 2*pi*r, Nodal fields by lumped nodal weights; planar xy mesh)`,
     integrals,
     // Regions are not a partition — a cell in two of them contributes fully to
     // both — so the region totals need not sum to the domain total. Said here
@@ -3248,6 +3248,12 @@ export async function caseValidate(args: {
   python?: string;
   installPath?: string;
   extraEnv?: Record<string, string>;
+  /** Wave resolution rule inputs (never inferred from the case): a wavelength, or a frequency with a wave speed. */
+  wavelength?: number;
+  frequency?: number;
+  waveSpeed?: number;
+  /** Points per wavelength for the rule h <= lambda / n (default 5). */
+  pointsPerWavelength?: number;
 }, execution: PlotExecution = {}): Promise<object> {
   const { model } = await loadMesh(args.meshPath, undefined, undefined, undefined, undefined, undefined, execution.signal);
   const { state, warnings, from } = readState(args);
@@ -3311,6 +3317,14 @@ export async function caseValidate(args: {
     ...(() => {
       const a = adviseElementSize(runtime.decl.id, flattenValues(runtime.decl, state), state.materials, model.bounds.min, model.bounds.max);
       return a ? { sizeAdvice: a } : {};
+    })(),
+    // Wave resolution rule, only when the caller supplied its inputs.
+    ...(() => {
+      const w = adviseWavelengthSize(
+        { wavelength: args.wavelength, frequency: args.frequency, waveSpeed: args.waveSpeed },
+        args.pointsPerWavelength
+      );
+      return w ? { wavelengthAdvice: w } : {};
     })(),
     // Per assignment: every property of its law, marked provided / preset /
     // defaulted / missing, from the same rulebook generation uses.

@@ -156,10 +156,111 @@ test("id maps resolve copies to their source", () => {
 
 test("unsupported cell types are copied and reported; the zero normal is refused", () => {
   const m = model({
-    pts: [[1, 0, 0], [2, 0, 0], [1, 1, 0], [1.5, 0, 0], [1.5, 0.5, 0], [1, 0.5, 0]],
-    cells: [{ type: VtkCellType.QUADRATIC_TRIANGLE, nodes: [1, 2, 3, 4, 5, 6] }],
+    pts: Array.from({ length: 18 }, (_, i) => [1 + i, 0, 0] as [number, number, number]),
+    cells: [{ type: VtkCellType.QUADRATIC_WEDGE_18, nodes: Array.from({ length: 18 }, (_, i) => i + 1) }],
   });
   const r = mirrorExpand(m, X);
   assert.ok(r.diagnostics.some((d) => /re-winding/.test(d)));
   assert.throws(() => mirrorExpand(m, { origin: [0, 0, 0], normal: [0, 0, 0] }), /zero vector/);
+});
+
+// VTK mid-edge tables: node index -> the two corners it bisects (face/body centres: the corners it averages).
+const MID: Record<number, { corners: number; mids: number[][] }> = {
+  [VtkCellType.QUADRATIC_TRIANGLE]: { corners: 3, mids: [[0, 1], [1, 2], [2, 0]] },
+  [VtkCellType.QUADRATIC_QUAD]: { corners: 4, mids: [[0, 1], [1, 2], [2, 3], [3, 0]] },
+  [VtkCellType.BIQUADRATIC_QUAD]: { corners: 4, mids: [[0, 1], [1, 2], [2, 3], [3, 0], [0, 1, 2, 3]] },
+  [VtkCellType.QUADRATIC_TETRA]: { corners: 4, mids: [[0, 1], [1, 2], [2, 0], [0, 3], [1, 3], [2, 3]] },
+  [VtkCellType.QUADRATIC_HEXAHEDRON]: {
+    corners: 8,
+    mids: [[0, 1], [1, 2], [2, 3], [3, 0], [4, 5], [5, 6], [6, 7], [7, 4], [0, 4], [1, 5], [2, 6], [3, 7]],
+  },
+  [VtkCellType.TRIQUADRATIC_HEXAHEDRON]: {
+    corners: 8,
+    mids: [
+      [0, 1], [1, 2], [2, 3], [3, 0], [4, 5], [5, 6], [6, 7], [7, 4], [0, 4], [1, 5], [2, 6], [3, 7],
+      [0, 4, 7, 3], [1, 2, 6, 5], [0, 1, 5, 4], [3, 7, 6, 2], [0, 3, 2, 1], [4, 5, 6, 7], [0, 1, 2, 3, 4, 5, 6, 7],
+    ],
+  },
+  [VtkCellType.QUADRATIC_WEDGE]: {
+    corners: 6,
+    mids: [[0, 1], [1, 2], [2, 0], [3, 4], [4, 5], [5, 3], [0, 3], [1, 4], [2, 5]],
+  },
+  [VtkCellType.QUADRATIC_PYRAMID]: {
+    corners: 5,
+    mids: [[0, 1], [1, 2], [2, 3], [3, 0], [0, 4], [1, 4], [2, 4], [3, 4]],
+  },
+};
+const REF: Record<number, [number, number, number][]> = {
+  3: [[1, 0, 0], [2, 0, 0], [1, 1, 0]],
+  4: [[1, 0, 0], [2, 0, 0], [2, 1, 0], [1, 1, 0]],
+};
+
+test("quadratic cells: mid nodes follow their edge/face after re-winding (item 24)", () => {
+  const hexRef: [number, number, number][] = [
+    [1, 0, 0], [2, 0, 0], [2, 1, 0], [1, 1, 0], [1, 0, 1], [2, 0, 1], [2, 1, 1], [1, 1, 1],
+  ];
+  const corners = (type: number, n: number): [number, number, number][] => {
+    if (n === 8) return hexRef;
+    if (type === VtkCellType.QUADRATIC_TETRA) return [[1, 0, 0], [2, 0, 0], [1, 1, 0], [1, 0, 1]];
+    if (type === VtkCellType.QUADRATIC_WEDGE) return [[1, 0, 0], [2, 0, 0], [1, 1, 0], [1, 0, 1], [2, 0, 1], [1, 1, 1]];
+    if (type === VtkCellType.QUADRATIC_PYRAMID) return [[1, 0, 0], [2, 0, 0], [2, 1, 0], [1, 1, 0], [1.5, 0.5, 1]];
+    return REF[n];
+  };
+  for (const [typeStr, spec] of Object.entries(MID)) {
+    const type = Number(typeStr);
+    const cs = corners(type, spec.corners);
+    const mids = spec.mids.map((ids) => {
+      const p = [0, 0, 0];
+      for (const i of ids) for (let k = 0; k < 3; k++) p[k] += cs[i][k] / ids.length;
+      return p as [number, number, number];
+    });
+    const pts = [...cs, ...mids];
+    const m = model({ pts, cells: [{ type, nodes: pts.map((_, i) => i + 1) }] });
+    const r = mirrorExpand(m, X);
+    assert.equal(r.diagnostics.filter((d) => /re-winding/.test(d)).length, 0, `type ${type} has a table`);
+    const conn = Array.from(r.model.blocks[1].connectivity);
+    const at = (id: number): number[] => {
+      const i = r.model.nodeIds.indexOf(id);
+      return [r.model.coords[3 * i], r.model.coords[3 * i + 1], r.model.coords[3 * i + 2]];
+    };
+    // Every mid node of the copy sits at the centroid of the copy's own corner nodes it belongs to.
+    spec.mids.forEach((ids, j) => {
+      const got = at(conn[spec.corners + j]);
+      const want = [0, 0, 0];
+      for (const i of ids) {
+        const c = at(conn[i]);
+        for (let k = 0; k < 3; k++) want[k] += c[k] / ids.length;
+      }
+      for (let k = 0; k < 3; k++) assert.ok(Math.abs(got[k] - want[k]) < 1e-5, `type ${type} mid ${j} axis ${k}: ${got[k]} vs ${want[k]}`);
+    });
+  }
+});
+
+test("SubModelParts gain mirrored copies with offset ids and rebuilt child paths (item 24)", () => {
+  const m = model({
+    pts: [[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]],
+    cells: [{ type: VtkCellType.TETRA, nodes: [1, 2, 3, 4] }],
+  });
+  const child = {
+    name: "Inner", path: "Outer/Inner", nodeIds: Int32Array.of(2), elementIds: new Int32Array(0),
+    conditionIds: new Int32Array(0), geometryIds: new Int32Array(0), constraintIds: new Int32Array(0), children: [],
+  };
+  const outer = {
+    name: "Outer", path: "Outer", nodeIds: Int32Array.of(1, 2, 3, 4), elementIds: Int32Array.of(1),
+    conditionIds: new Int32Array(0), geometryIds: new Int32Array(0), constraintIds: Int32Array.of(7), children: [child],
+  };
+  m.subModelParts = [outer];
+  const r = mirrorExpand(m, X);
+  // Nodes 1, 3, 4 lie on x = 0 and keep their ids; node 2 gets a reflected copy.
+  assert.equal(r.model.subModelParts.length, 2);
+  assert.strictEqual(r.model.subModelParts[0], outer, "source part untouched");
+  const copy = r.model.subModelParts[1];
+  assert.equal(copy.name, "Outer_mirror");
+  assert.equal(copy.path, "Outer_mirror");
+  assert.deepEqual(Array.from(copy.nodeIds), [1, 2 + r.nodeOffset, 3, 4]);
+  assert.deepEqual(Array.from(copy.elementIds), [1 + r.entityOffset]);
+  assert.equal(copy.constraintIds.length, 0);
+  assert.equal(copy.children[0].path, "Outer_mirror/Inner_mirror");
+  assert.deepEqual(Array.from(copy.children[0].nodeIds), [2 + r.nodeOffset]);
+  assert.deepEqual(Array.from(outer.nodeIds), [1, 2, 3, 4], "source ids not mutated");
 });
