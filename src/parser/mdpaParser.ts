@@ -129,16 +129,40 @@ function stripComment(line: string): string {
   return idx === -1 ? line : line.slice(0, idx);
 }
 
+/**
+ * Kratos rule: an entity listed in a SubModelPart also belongs to every
+ * ancestor, even when the parent's own blocks do not list it. Files often
+ * define entities only in leaf parts, so each parent gets the sorted,
+ * deduplicated union of its own ids and its children's (post-order).
+ */
+function unionWithChildren(
+  own: number[],
+  children: SubModelPart[],
+  pick: (c: SubModelPart) => Int32Array,
+): Int32Array {
+  if (children.length === 0) return new Int32Array(own);
+  const set = new Set<number>(own);
+  for (const c of children) for (const id of pick(c)) set.add(id);
+  const out = new Int32Array(set.size);
+  let i = 0;
+  for (const id of set) out[i++] = id;
+  // Keep the file's own order when nothing was inherited.
+  return set.size === own.length && own.length === new Set(own).size
+    ? new Int32Array(own)
+    : out.sort();
+}
+
 function stagingToSubModelPart(s: StagingSubModelPart): SubModelPart {
+  const children = s.children.map(stagingToSubModelPart);
   return {
     name: s.name,
-    nodeIds: new Int32Array(s.nodeIds),
-    elementIds: new Int32Array(s.elementIds),
-    conditionIds: new Int32Array(s.conditionIds),
-    geometryIds: new Int32Array(s.geometryIds),
-    constraintIds: new Int32Array(s.constraintIds),
+    nodeIds: unionWithChildren(s.nodeIds, children, (c) => c.nodeIds),
+    elementIds: unionWithChildren(s.elementIds, children, (c) => c.elementIds),
+    conditionIds: unionWithChildren(s.conditionIds, children, (c) => c.conditionIds),
+    geometryIds: unionWithChildren(s.geometryIds, children, (c) => c.geometryIds),
+    constraintIds: unionWithChildren(s.constraintIds, children, (c) => c.constraintIds),
     path: s.path,
-    children: s.children.map(stagingToSubModelPart),
+    children,
   };
 }
 

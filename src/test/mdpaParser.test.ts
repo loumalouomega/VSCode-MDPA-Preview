@@ -67,9 +67,9 @@ test("builds the nested SubModelPart tree", () => {
   const inlets = findPart(model.subModelParts, "Inlets");
   assert.ok(inlets, "Inlets present at root");
   assert.equal(inlets!.path, "Inlets");
-  assert.deepEqual(Array.from(inlets!.nodeIds), [1, 2]);
+  assert.deepEqual(Array.from(inlets!.nodeIds), [1, 2, 3]);
   assert.deepEqual(Array.from(inlets!.elementIds), [1]);
-  assert.deepEqual(Array.from(inlets!.conditionIds), [1, 1800]);
+  assert.deepEqual(Array.from(inlets!.conditionIds), [1, 1800, 1801]);
   assert.equal(inlets!.children.length, 2);
 
   const inlet1 = inlets!.children.find((c) => c.name === "Inlet1");
@@ -256,4 +256,43 @@ test("performance: parses the large cube fixture quickly", () => {
   assert.ok(model.nodeCount > 100, "node count");
   assert.ok(totalEntities > 1000, "large entity count");
   assert.ok(elapsed < 2000, `parsed in ${elapsed}ms`);
+});
+
+test("a parent SubModelPart contains the entities of its descendants", () => {
+  const text = `Begin Nodes
+1 0 0 0
+2 1 0 0
+3 2 0 0
+End Nodes
+Begin Elements Element2D2N
+1 0 1 2
+2 0 2 3
+End Elements
+Begin SubModelPart Parent
+  Begin SubModelPartNodes
+  1
+  End SubModelPartNodes
+  Begin SubModelPart Mid
+    Begin SubModelPart Leaf
+      Begin SubModelPartNodes
+      2
+      3
+      End SubModelPartNodes
+      Begin SubModelPartElements
+      2
+      End SubModelPartElements
+    End SubModelPart
+    Begin SubModelPartElements
+    1
+    2
+    End SubModelPartElements
+  End SubModelPart
+End SubModelPart
+`;
+  const parent = parseMdpa(text).subModelParts[0];
+  const mid = parent.children[0];
+  assert.deepEqual(Array.from(mid.nodeIds), [2, 3]);
+  assert.deepEqual(Array.from(parent.nodeIds), [1, 2, 3]);
+  assert.deepEqual(Array.from(mid.elementIds), [1, 2]);
+  assert.deepEqual(Array.from(parent.elementIds), [1, 2]);
 });
