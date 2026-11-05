@@ -7,6 +7,7 @@
 import { TOOLBAR_ICONS } from "./toolbarIcons";
 import { FORMS_181, form181Html } from "./parser/meshio181Forms";
 import { glyph, type UiGlyphId } from "./uiGlyphs";
+import { MIRROR_PLANES } from "./parser/render/mirrorPlanes";
 import { PLOT_PANE_HTML } from "./parser/plot/html";
 import { localizeHtml, pickCatalogue } from "./parser/i18n/messages";
 export { PLOT_PANE_HTML };
@@ -263,6 +264,7 @@ export const VIEW_MENU_HTML = `<div id="view-popup" class="hidden" role="menu">
         <button type="button" class="file-menu-item" data-action="constraintLinks" role="menuitemcheckbox" title="Draw a line from every slave node to its masters for the multi-point constraints (hanging nodes, tied dofs)">${ic("normals")}<span>Constraint links</span></button>
         <button type="button" class="file-menu-item" data-action="curved" role="menuitemcheckbox" title="Draw quadratic cells with their mid-side nodes (curved edges and faces). Display only: the stored cells and every export are unchanged">${ic("wireframe")}<span>Curved quadratic cells</span></button>
         <button type="button" class="file-menu-item" data-action="mirror" role="menuitemcheckbox" title="Show the mesh mirrored about its x-minimum plane (symmetry result expansion). Display only: nothing is edited or written; use the command line for other axes">${ic("wireframe")}<span>Mirror view</span></button>
+        ${MIRROR_PLANES.map((p) => `<button type="button" class="file-menu-item" data-action="${p.action}" role="menuitemcheckbox" title="Show the mesh mirrored about the ${p.label.slice(14)} plane of its bounding box. Display only: nothing is edited or written">${ic("wireframe")}<span>${p.label}</span></button>`).join("\n        ")}
         <button type="button" class="file-menu-item" data-action="revolve" role="menuitemcheckbox" title="Show a 2D axisymmetric result as a solid of revolution about the y axis (36 layers). Display only: nothing is edited or written; use the command line for other axes and sweeps">${ic("wireframe")}<span>Revolve view</span></button>
         <button type="button" class="file-menu-item" data-action="sector" role="menuitemcheckbox" title="Repeat a cyclic-symmetry sector six times about the z axis. Display only: nothing is edited or written; use the command line for other axes and counts">${ic("wireframe")}<span>Sector repeat</span></button>
         <button type="button" class="file-menu-item" data-action="flatParts" role="menuitemcheckbox" title="List every SubModelPart as one flat row labelled with its full path, instead of the nested tree. View-only: layers, visibility and the mesh are untouched">${ic("tree")}<span>Flat SubModelPart list</span></button>

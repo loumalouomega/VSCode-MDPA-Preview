@@ -167,6 +167,32 @@ export function quadraticDecomposition(cellType: number | undefined, stride: num
   return undefined;
 }
 
+/**
+ * Linear hexahedra and wedges are split about face and body centres instead of through the 0-6 diagonal:
+ * a shared quad face then triangulates identically from both neighbours (four triangles about its centre),
+ * so the isosurface has no hairline cracks where the fixed-diagonal split disagreed. The centres are plain
+ * corner averages, welded by sorted node ids like the quadratic virtuals.
+ */
+const mean = (sources: number[]): VirtualPoint => ({ sources, weights: sources.map(() => 1 / sources.length) });
+const WEDGE_QUADS = [[0, 1, 4, 3], [1, 2, 5, 4], [2, 0, 3, 5]];
+const aboutCentres = (corners: number, quads: number[][], tris: number[][]): { virtuals: VirtualPoint[]; tets: number[][] } => {
+  const body = corners + quads.length;
+  const tets = quads.flatMap((q, j) => q.map((c, i) => [c, q[(i + 1) % 4], corners + j, body]));
+  return {
+    virtuals: [...quads.map(mean), mean([...Array(corners).keys()])],
+    tets: [...tets, ...tris.map((t) => [...t, body])],
+  };
+};
+const HEX_SYMMETRIC = aboutCentres(8, HEX_FACES, []);
+const WEDGE_SYMMETRIC = aboutCentres(6, WEDGE_QUADS, [[0, 1, 2], [3, 4, 5]]);
+
+/** Crack-free subdivision of a LINEAR hexahedron or wedge; undefined for every other cell type. */
+export function symmetricDecomposition(cellType: number | undefined, stride: number): QuadraticDecomposition | undefined {
+  if (cellType === VtkCellType.HEXAHEDRON && stride >= 8) return { corners: 8, ...HEX_SYMMETRIC };
+  if (cellType === VtkCellType.WEDGE && stride >= 6) return { corners: 6, ...WEDGE_SYMMETRIC };
+  return undefined;
+}
+
 // Welded virtual points of one contouring run: a negative id per distinct set of contributing nodes, so two cells
 // sharing a face share its centre. Value and position are the same weighted mix of the contributors.
 interface VirtualRegistry {
@@ -296,7 +322,8 @@ function marchVolumes(
   virtual: VirtualRegistry
 ): void {
   for (const block of model.blocks) {
-    const t: QuadraticDecomposition = quadraticDecomposition(block.vtkCellType, block.stride) ?? decompositionFor(block.vtkCellType);
+    const t: QuadraticDecomposition =
+      symmetricDecomposition(block.vtkCellType, block.stride) ?? quadraticDecomposition(block.vtkCellType, block.stride) ?? decompositionFor(block.vtkCellType);
     if (!t.tets) continue;
     for (let i = 0; i < block.count; i++) {
       const base = i * block.stride;

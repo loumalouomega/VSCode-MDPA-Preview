@@ -14,6 +14,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **Mirrored SubModelParts** (roadmap item 24): the Mirror view adds a `<name>_mirror` copy of every SubModelPart (children included) with mirrored node and entity ids.
 - **Wavelength advice in `case_validate`** (roadmap item 33): `wavelength`, or `frequency` with `waveSpeed`, and `pointsPerWavelength` return `wavelengthAdvice` (h ≤ λ/n).
 - **Revolved integrals of Nodal fields** (roadmap item 44): `mesh_field_integrate` and the Field integrals panel accept a Nodal field with `revolveAbout`, using exact lumped nodal weights that stay positive on the axis.
+- **Crack-free isosurfaces on hexahedra and wedges** (roadmap item 38): linear hex and wedge cells are split about face and body centres, so neighbouring cells triangulate a shared quad face the same way.
+- **Mirror plane picker** (roadmap item 24): View ▾ lists the y and z planes and the maximum and centre planes of the bounding box beside the x-min Mirror view.
 - **Symmetry views guide** (`doc/guide/symmetry-views.md`) covering Mirror, Revolve and Sector repeat.
 
 ## [5.32.0] - 2026-11-05

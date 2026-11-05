@@ -15,7 +15,7 @@ Nodes on the plane are shared, so a symmetric half-plate becomes one connected p
 Vectors flip their normal component and 3×3 tensors reflect as `R T Rᵀ`; other field widths are copied unchanged and reported.
 Linear and quadratic cells are re-wound so the copy keeps positive volume, with mid-edge and face-centre nodes following their edge or face.
 Every SubModelPart also gains a `<name>_mirror` copy that holds the mirrored nodes and entities.
-The menu item mirrors about the x-min plane; the command line takes `mirror axis= side=` or `at=` for other planes, and `mirror off` turns it off.
+The **Mirror view** item mirrors about the x-min plane; the **Mirror plane** rows below it pick the minimum, maximum or centre of the bounding box on any axis, and the command line takes `mirror axis= side=` or `at=`; `mirror off` turns it off.
 
 ## Revolve
 
