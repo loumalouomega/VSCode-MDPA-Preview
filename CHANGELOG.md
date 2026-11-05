@@ -6,10 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
-### Fixed
-- A parent SubModelPart now contains the entities of all its descendants, as in Kratos. Parents that only had children defined no longer show 0 entities.
+## [5.34.0] - 2026-11-05
 
-## [Unreleased]
+### Fixed
+
+- A parent SubModelPart now contains the entities of all its descendants, as in Kratos. Parents that only had children defined no longer show 0 entities.
 
 ## [5.33.0] - 2026-11-05
 
@@ -1540,7 +1541,8 @@ Four silent-correctness fixes. None of them threw, and none was visible in the m
 
 - Initial release: custom editor preview for `.mdpa` files.
 
-[Unreleased]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.33.0...HEAD
+[Unreleased]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.34.0...HEAD
+[5.34.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.33.0...v5.34.0
 [5.33.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.32.0...v5.33.0
 [5.32.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.31.0...v5.32.0
 [5.31.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.30.0...v5.31.0
