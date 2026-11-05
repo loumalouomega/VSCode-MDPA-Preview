@@ -105,7 +105,7 @@ export function setupOrientationCube(
       const yNorm = displayY / rect.height;
 
       const vp = widget.computeViewport(); // [left, bottom, right, top] in [0,1]
-      if (xNorm >= vp[0] && xNorm <= vp[2] && yNorm >= vp[1] && yNorm <= vp[3]) {
+      if (vp && xNorm >= vp[0] && xNorm <= vp[2] && yNorm >= vp[1] && yNorm <= vp[3]) {
         // Prevent VTK from starting a rotate/pan in the widget area.
         ev.stopImmediatePropagation();
 
