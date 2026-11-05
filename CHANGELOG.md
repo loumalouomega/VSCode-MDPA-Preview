@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [5.33.0] - 2026-11-05
+
 ### Added
 
 - **Mirror view re-winds quadratic cells** (roadmap item 24): tri6, quad8/9, tet10, hex20/27, wedge15 and pyramid13 copies keep their mid-edge and face-centre nodes attached to the right edge or face instead of being copied un-wound.
@@ -1533,7 +1535,8 @@ Four silent-correctness fixes. None of them threw, and none was visible in the m
 
 - Initial release: custom editor preview for `.mdpa` files.
 
-[Unreleased]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.32.0...HEAD
+[Unreleased]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.33.0...HEAD
+[5.33.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.32.0...v5.33.0
 [5.32.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.31.0...v5.32.0
 [5.31.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.30.0...v5.31.0
 [5.30.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.29.0...v5.30.0
