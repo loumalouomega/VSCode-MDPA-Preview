@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed
+- A parent SubModelPart now contains the entities of all its descendants, as in Kratos. Parents that only had children defined no longer show 0 entities.
+
+## [Unreleased]
+
 ## [5.33.0] - 2026-11-05
 
 ### Added

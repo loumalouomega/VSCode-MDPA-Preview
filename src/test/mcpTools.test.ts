@@ -1786,7 +1786,7 @@ test("mesh_export_table returns bounded JSON rows with field values", async () =
     membership: true,
   })) as { columns: string[]; rows: (number | string | null)[][] };
   assert.deepEqual(elems.columns, ["id", "block", "nodes", "SubModelParts"]);
-  assert.deepEqual(elems.rows[0], [1, "Element3D4N", "1 2 3 4", "Parts/Solid"]);
+  assert.deepEqual(elems.rows[0], [1, "Element3D4N", "1 2 3 4", "Parts;Parts/Solid"]);
 });
 
 test("mesh_export_table writes CSV and XLSX, and names a bad kind or extension", async () => {
@@ -3364,7 +3364,7 @@ test("mesh_find_entity locates nodes and elements with SMP membership", async ()
   };
   assert.deepEqual(node.coordinates, [0, 0, 1]);
   // The "Parts" container lists no nodes of its own — only its child does.
-  assert.deepEqual(node.subModelParts, ["Parts/Solid", "Loaded"]);
+  assert.deepEqual(node.subModelParts, ["Parts", "Parts/Solid", "Loaded"]);
   const elem = (await meshFindEntity({ path: src, entityType: "Element", entityId: 1 })) as {
     block: string;
     nodeIds: number[];
@@ -3372,7 +3372,7 @@ test("mesh_find_entity locates nodes and elements with SMP membership", async ()
   };
   assert.equal(elem.block, "Element3D4N");
   assert.deepEqual(elem.nodeIds, [1, 2, 3, 4]);
-  assert.deepEqual(elem.subModelParts, ["Parts/Solid"]);
+  assert.deepEqual(elem.subModelParts, ["Parts", "Parts/Solid"]);
   await assert.rejects(meshFindEntity({ path: src, entityType: "Node", entityId: 99 }), /not found/);
 });
 

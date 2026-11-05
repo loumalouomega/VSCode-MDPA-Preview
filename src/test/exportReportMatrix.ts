@@ -80,6 +80,22 @@ Begin Constraints LinearMasterSlaveConstraint DISPLACEMENT_X
 End Constraints
 
 Begin SubModelPart Outer
+  Begin SubModelPartNodes
+  1
+  2
+  3
+  4
+  5
+  6
+  7
+  8
+  End SubModelPartNodes
+  Begin SubModelPartElements
+  1
+  End SubModelPartElements
+  Begin SubModelPartConditions
+  1
+  End SubModelPartConditions
   Begin SubModelPart Inner
     Begin SubModelPartNodes
     1
@@ -145,7 +161,13 @@ End ConditionalData
     ...model,
     blocks: model.blocks.filter((b) => b.kind !== kind),
     fields: model.fields.filter((f) => f.kind !== fieldKind),
-    subModelParts: model.subModelParts.map((p) => ({ ...p, elementIds: new Int32Array(), conditionIds: new Int32Array(), children: p.children.map((c) => ({ ...c, elementIds: kind === "Elements" ? new Int32Array() : c.elementIds, conditionIds: kind === "Conditions" ? new Int32Array() : c.conditionIds })) })),
+    // A parent holds its children's entities (the Kratos rule), so it is emptied alongside them.
+    subModelParts: model.subModelParts.map((p) => ({
+      ...p,
+      elementIds: kind === "Elements" ? new Int32Array() : p.elementIds,
+      conditionIds: kind === "Conditions" ? new Int32Array() : p.conditionIds,
+      children: p.children.map((c) => ({ ...c, elementIds: kind === "Elements" ? new Int32Array() : c.elementIds, conditionIds: kind === "Conditions" ? new Int32Array() : c.conditionIds })),
+    })),
   });
   const triangle = without("Elements", "Elemental");
   // A genuinely 2D triangle (no unused point above its plane).
@@ -154,7 +176,7 @@ End ConditionalData
   triangle.coords = triangle.coords.slice(0, 9);
   triangle.bounds = { min: [0, 0, 0], max: [1, 1, 0] };
   triangle.fields = triangle.fields.map((f) => f.kind === "Nodal" ? { ...f, ids: f.ids.slice(0, 3), values: f.values.slice(0, 3 * f.components) } : f);
-  triangle.subModelParts = triangle.subModelParts.map((p) => ({ ...p, children: p.children.map((c) => ({ ...c, nodeIds: c.nodeIds.slice(0, 3) })) }));
+  triangle.subModelParts = triangle.subModelParts.map((p) => ({ ...p, nodeIds: p.nodeIds.slice(0, 3), children: p.children.map((c) => ({ ...c, nodeIds: c.nodeIds.slice(0, 3) })) }));
   return { hex: referenceModel(), simplicial: model, tetra: without("Conditions", "Conditional"), triangle };
 }
 
