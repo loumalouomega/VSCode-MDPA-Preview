@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- `engines.vscode` is now `^1.144.0`, matching the `@types/vscode` typings from Dependabot's bump (`vsce` refuses typings newer than the declared minimum), so VS Code 1.140 to 1.143 are no longer supported.
+
 ## [5.34.0] - 2026-11-05
 
 ### Fixed
