@@ -4967,7 +4967,8 @@ body.ribbon-collapsed #ribbon-body { display: none; }
   cursor: pointer;
   font: inherit;
 }
-.ribbon-btn .toolbar-icon { font-size: 22px; display: inline-flex; }
+.ribbon-btn .toolbar-icon { display: inline-flex; }
+.ribbon-btn .toolbar-icon svg { width: 22px; height: 22px; }
 .ribbon-btn:hover { background: var(--vscode-toolbar-hoverBackground); }
 .ribbon-btn.active, .ribbon-btn[aria-pressed="true"] {
   background: var(--vscode-button-background);
