@@ -624,6 +624,11 @@
         "category": "%category.KratosMdpa%"
       },
       {
+        "command": "kratos.mdpa.recoverFlux",
+        "title": "%command.kratos.mdpa.recoverFlux.title%",
+        "category": "%category.KratosMdpa%"
+      },
+      {
         "command": "kratos.mdpa.aleQuality",
         "title": "%command.kratos.mdpa.aleQuality.title%",
         "category": "%category.KratosMdpa%"

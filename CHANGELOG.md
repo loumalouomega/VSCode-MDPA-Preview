@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- **Recovered flux in the viewer** (roadmap item 45, viewer half): Advanced ▸ **Recovered flux…** recovers a per-area traction or flux from the nodal reactions on a SubModelPart's faces and shows it in the Field panel as a field labelled "recovered". It is a derived, display-only field: never saved, exported or edited, and refused if its name matches an existing Nodal field. The panel and `recoverFlux` command line entry share the core behind MCP `mesh_recover_flux`.
+
 ## [5.35.0] - 2026-11-06
 
 ### Changed

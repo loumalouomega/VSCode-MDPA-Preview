@@ -42,6 +42,7 @@
   "command.kratos.mdpa.fieldIntegrals.title": "Field Integrals…",
   "command.kratos.mdpa.streamlines.title": "Streamlines…",
   "command.kratos.mdpa.flowBalance.title": "Flow Balance…",
+  "command.kratos.mdpa.recoverFlux.title": "Recovered Flux…",
   "command.kratos.mdpa.aleQuality.title": "ALE Mesh Quality…",
   "command.kratos.mdpa.windTunnel.title": "Virtual Wind Tunnel…",
   "command.kratos.mdpa.optimizationProgress.title": "Optimization Progress…",

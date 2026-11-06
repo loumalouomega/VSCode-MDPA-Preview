@@ -38,6 +38,7 @@
   "command.kratos.mdpa.fieldIntegrals.title": "Integrales de campo…",
   "command.kratos.mdpa.streamlines.title": "Líneas de corriente…",
   "command.kratos.mdpa.flowBalance.title": "Balance de flujo…",
+  "command.kratos.mdpa.recoverFlux.title": "Flujo recuperado…",
   "command.kratos.mdpa.aleQuality.title": "Calidad de malla ALE…",
   "command.kratos.mdpa.windTunnel.title": "Túnel de viento virtual…",
   "command.kratos.mdpa.optimizationProgress.title": "Progreso de la optimización…",

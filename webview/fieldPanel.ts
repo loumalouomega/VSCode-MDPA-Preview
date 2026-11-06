@@ -228,6 +228,12 @@ export function renderFieldPanel(
 
   // --- variable dropdown (+ reveal in Variables when the field has a row) ---
   container.appendChild(labeledRow("Variable", buildVariableSelect(state, handlers)));
+  if (info?.recovered) {
+    const rn = document.createElement("div");
+    rn.className = "field-summary";
+    rn.textContent = t("Recovered from nodal reactions: a derived field, never saved or exported.");
+    container.appendChild(rn);
+  }
   if (info?.hasVariableRow) {
     const reveal = document.createElement("button");
     reveal.className = "field-range-reset";
@@ -323,7 +329,7 @@ function buildVariableSelect(state: FieldPanelState, handlers: FieldPanelHandler
     // A ● marks fields claimed by a Variables row — the two panels share one
     // inventory (see webview/fieldRegistry.ts), so the lists cannot disagree.
     opt.textContent =
-      `${labelWithUnit(info.field)} (${info.field.kind}, ${tag})` + (info.hasVariableRow ? " ●" : "");
+      `${labelWithUnit(info.field)} (${info.field.kind}, ${tag}${info.recovered ? ", recovered" : ""})` + (info.hasVariableRow ? " ●" : "");
     if (info.key === state.selectedKey) opt.selected = true;
     sel.appendChild(opt);
   }

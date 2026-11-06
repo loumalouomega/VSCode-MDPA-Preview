@@ -59,6 +59,7 @@ import { emptyOptimizationPanelState, renderOptimizationPanel, OptimizationPanel
 import { optimizationSummaryToCsv } from "../src/problemtype/optimization/summaryLog";
 import { buildFlowBalanceRequest, defaultFlowBalanceForm } from "../src/parser/flowBalanceForm";
 import type { FlowBalance } from "../src/parser/flowBalance";
+import { renderRecoverFluxPanel, type RecoverFluxPanelState, type RecoverFluxReport } from "./recoverFluxPanel";
 
 import { EntityBlock, EntityKind, FieldData, MdpaModel, SubModelPart } from "../src/parser/types";
 import { constraintNodeIds } from "../src/parser/constraintsParser";
@@ -596,6 +597,10 @@ const flowPanelEl = document.createElement("div");
 flowPanelEl.id = "flow-panel";
 flowPanelEl.style.display = "none";
 vtkSub.appendChild(flowPanelEl);
+const recoverPanelEl = document.createElement("div");
+recoverPanelEl.id = "recover-panel";
+recoverPanelEl.style.display = "none";
+vtkSub.appendChild(recoverPanelEl);
 const alePanelEl = document.createElement("div");
 alePanelEl.id = "ale-panel";
 alePanelEl.style.display = "none";
@@ -1100,6 +1105,12 @@ let flowVisible = false;
 let flowSeq = 0;
 let aleVisible = false;
 let aleState: AlePanelState = { variable: "", vectors: [] };
+// Recovered flux (roadmap item 45): a DISPLAY-ONLY nodal field. It is held here, appended to
+// `fieldInfos` and never put in `model`/`hostModel`, so no save, export or op ever sees it.
+let recoverVisible = false;
+let recoverSeq = 0;
+let recoveredField: FieldData | undefined;
+let recoverState: RecoverFluxPanelState = { parts: [], loads: [], part: "", variable: "", output: "", busy: false };
 let flowState: FlowBalancePanelState = {
   form: defaultFlowBalanceForm(),
   vectors: [],
@@ -2209,6 +2220,7 @@ function handleHostMessage(event: MessageEvent): void {
       else if (r.kind === "probe") applyProbeResult(msg as Parameters<typeof applyProbeResult>[0]);
       else if (r.kind === "streamlines") applyStreamlineResult(msg as Parameters<typeof applyStreamlineResult>[0]);
       else if (r.kind === "flowBalance") applyFlowBalanceResult(msg as Parameters<typeof applyFlowBalanceResult>[0]);
+      else if (r.kind === "recoverFlux") applyRecoverFluxResult(msg as Parameters<typeof applyRecoverFluxResult>[0]);
       break;
     }
     case "mergeMeshPicked": {
@@ -2643,6 +2655,14 @@ function buildScene(resetCam = true): void {
   // Rebuild field lookups; keep each pane's selection if its variable still
   // exists. Per pane, since the panes need not be showing the same field.
   fieldInfos = model.fields.map(buildFieldInfo);
+  // A recovered field belongs to the frame it was computed for: keep it only while its panel is
+  // open (the tail re-asks), otherwise drop it with the frame.
+  if (recoveredField && !recoverVisible) { recoveredField = undefined; recoverState = { ...recoverState, report: undefined, summary: undefined }; }
+  if (recoveredField && !model.fields.some((f) => f.kind === "Nodal" && f.variable === recoveredField!.variable)) {
+    const info = buildFieldInfo(recoveredField);
+    info.recovered = true;
+    fieldInfos.push(info);
+  }
   // Shared inventory with the Variables panel (fieldRegistry.ts): mark the
   // fields claimed by a Variables row so the Field panel's selector can badge
   // them — the two lists are built from the same model message, so they agree.
@@ -2737,6 +2757,9 @@ function buildScene(resetCam = true): void {
   // ...and the flow balance: its numbers belong to the frame just replaced.
   refreshFlowChoices();
   if (flowVisible && flowState.result) requestFlowBalance();
+  // ...and the recovered flux, whose reactions belong to the frame just replaced.
+  refreshRecoverChoices();
+  if (recoverVisible && recoverState.report) requestRecoverFlux();
 
   // Always repaint so an in-place rebuild (e.g. applying an edit with the camera
   // preserved) shows immediately instead of waiting for the next interaction.
@@ -4243,6 +4266,7 @@ function dispatchToolbarAction(action: string | undefined, _target?: HTMLElement
   else if (action === "integrals") toggleIntegralPanel();
   else if (action === "streamlines") toggleStreamlinePanel();
   else if (action === "flowBalance") toggleFlowPanel();
+  else if (action === "recoverFlux") toggleRecoverPanel();
   else if (action === "aleQuality") toggleAlePanel();
   else if (action === "linkPreviews") toggleLinkPanel();
   else if (action === "optimizationProgress") toggleOptimizationPanel();
@@ -4506,6 +4530,7 @@ const LEFT_DOCK: { action: string; dismiss: () => void }[] = [
   { action: "integrals", dismiss: () => dismissIntegralPanel() },
   { action: "streamlines", dismiss: () => dismissStreamlinePanel() },
   { action: "flowBalance", dismiss: () => dismissFlowPanel() },
+  { action: "recoverFlux", dismiss: () => dismissRecoverPanel() },
   { action: "aleQuality", dismiss: () => dismissAlePanel() },
   { action: "linkPreviews", dismiss: () => dismissLinkPanel() },
   { action: "optimizationProgress", dismiss: () => dismissOptimizationPanel() },
@@ -5332,6 +5357,115 @@ function requestFlowSeries(): void {
   flowState = { ...flowState, series: undefined, seriesProgress: { done: 0, total: 0, label: "" }, seriesMessage: undefined, seriesHistoryNote: undefined };
   if (flowVisible) renderFlow();
   vscode.postMessage({ type: "flowSeries", flow: built.spec });
+}
+
+// --- Recovered flux (roadmap item 45) -------------------------------------
+//
+// A traction recovered from nodal reactions on a SubModelPart's faces, computed on the host
+// (`meshAnalysis` kind "recoverFlux", the core behind MCP `mesh_recover_flux`) and held HERE as a
+// display-only nodal field (`recoveredField`), never in the model.
+
+function refreshRecoverChoices(): void {
+  const loads = model?.fields.filter((f) => f.kind === "Nodal").map((f) => f.variable) ?? [];
+  const parts = collectSubModelPartPaths();
+  let { part, variable } = recoverState;
+  if (!parts.includes(part)) part = "";
+  if (!loads.includes(variable)) variable = loads.includes("REACTION") ? "REACTION" : loads.includes("REACTION_FLUX") ? "REACTION_FLUX" : "";
+  recoverState = { ...recoverState, parts, loads, part, variable };
+  if (recoverVisible) renderRecover();
+}
+
+function toggleRecoverPanel(): void {
+  if (recoverVisible) hideRecoverPanel();
+  else showRecoverPanel();
+}
+
+function showRecoverPanel(): void {
+  if (!model) return;
+  closeLeftDockExcept("recoverFlux");
+  recoverPanelEl.style.display = "";
+  recoverVisible = true;
+  document.querySelector('[data-action="recoverFlux"]')?.classList.add("active");
+  refreshRecoverChoices();
+}
+
+/** Off screen only; the recovered field is dropped by the next rebuild unless the panel is open. */
+function dismissRecoverPanel(): void {
+  recoverPanelEl.style.display = "none";
+  recoverVisible = false;
+  document.querySelector('[data-action="recoverFlux"]')?.classList.remove("active");
+}
+
+function hideRecoverPanel(): void {
+  dismissRecoverPanel();
+  recoverSeq += 1;
+  vscode.postMessage({ type: "meshAnalysisCancel", kind: "recoverFlux" });
+  clearRecoveredField();
+}
+
+/** Drops the derived field; any pane colouring by it falls back to a real field. */
+function clearRecoveredField(): void {
+  const had = recoveredField;
+  recoveredField = undefined;
+  recoverState = { ...recoverState, busy: false, report: undefined, summary: undefined, isError: false };
+  if (recoverVisible) renderRecover();
+  if (!had || !model) return;
+  fieldInfos = fieldInfos.filter((i) => !i.recovered);
+  eachPane((p) => {
+    const infos = scopeInfos(p);
+    if (!infos.some((i) => i.key === p.field.selectedKey)) {
+      p.field.selectedKey = infos[0]?.key ?? "";
+      resetFieldStateForSelection(p);
+    }
+  });
+  if (fieldVisible) renderFieldPanelUI();
+  applyFieldModeAll();
+}
+
+function requestRecoverFlux(): void {
+  if (!model || compareBlocksAnalysis()) return;
+  const s = recoverState;
+  if (!s.part || !s.variable) {
+    recoverState = { ...s, busy: false, summary: "Choose the SubModelPart of faces and the reaction field.", isError: true };
+    if (recoverVisible) renderRecover();
+    return;
+  }
+  recoverSeq += 1;
+  recoverState = { ...s, busy: true, summary: "Computing…", isError: false };
+  if (recoverVisible) renderRecover();
+  vscode.postMessage({ type: "meshAnalysis", kind: "recoverFlux", part: s.part, variable: s.variable, output: s.output.trim() || undefined, seq: recoverSeq });
+}
+
+function renderRecover(): void {
+  renderRecoverFluxPanel(recoverPanelEl, recoverState, {
+    onClose: hideRecoverPanel,
+    onCompute: requestRecoverFlux,
+    onClear: clearRecoveredField,
+  });
+}
+
+function applyRecoverFluxResult(msg: { seq?: number; cancelled?: boolean; message?: string; recovered?: { field: FieldData; report: RecoverFluxReport } }): void {
+  if (msg.seq !== undefined && msg.seq !== recoverSeq) return;
+  if (msg.cancelled) {
+    recoverState = { ...recoverState, busy: false, summary: recoverState.report ? recoverState.summary : undefined, isError: false };
+    if (recoverVisible) renderRecover();
+    return;
+  }
+  if (!recoverVisible) return;
+  if (!msg.recovered || !model) {
+    recoverState = { ...recoverState, busy: false, summary: msg.message ?? "The recovery could not run.", isError: true };
+    renderRecover();
+    return;
+  }
+  const { field, report } = msg.recovered;
+  // Typed arrays survive structured clone, but be defensive about plain arrays.
+  recoveredField = { ...field, ids: Int32Array.from(field.ids), values: Float64Array.from(field.values) };
+  const info = buildFieldInfo(recoveredField);
+  info.recovered = true;
+  fieldInfos = [...fieldInfos.filter((i) => i.key !== info.key), info];
+  recoverState = { ...recoverState, busy: false, report, summary: undefined, isError: false };
+  renderRecover();
+  focusVariableField(info.key);
 }
 
 // ALE mesh quality (roadmap item 46): the scan walks the timeline on the host

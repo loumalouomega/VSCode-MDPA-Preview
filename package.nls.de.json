@@ -38,6 +38,7 @@
   "command.kratos.mdpa.fieldIntegrals.title": "Feldintegrale…",
   "command.kratos.mdpa.streamlines.title": "Stromlinien…",
   "command.kratos.mdpa.flowBalance.title": "Durchflussbilanz…",
+  "command.kratos.mdpa.recoverFlux.title": "Rückgerechneter Fluss…",
   "command.kratos.mdpa.aleQuality.title": "ALE-Netzqualität…",
   "command.kratos.mdpa.windTunnel.title": "Virtueller Windkanal…",
   "command.kratos.mdpa.optimizationProgress.title": "Optimierungsfortschritt…",
