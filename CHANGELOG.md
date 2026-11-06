@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [5.37.0] - 2026-11-06
+
 ### Added
 
 - **Ribbon** (optional): tabs of the most common actions (View, Results, Inspect, Mesh, Tools) under the menu bar, in the style of the CAD-Preview ribbon. Every button runs the same action as the toolbar / menu entry of the same name. Off by default; turn it on with the new `kratos.preview.ribbon` setting. The tab, icons-only mode and collapsed state are remembered per mesh in `<stem>.kratosview.json`.
@@ -1559,7 +1561,8 @@ Four silent-correctness fixes. None of them threw, and none was visible in the m
 
 - Initial release: custom editor preview for `.mdpa` files.
 
-[Unreleased]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.36.0...HEAD
+[Unreleased]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.37.0...HEAD
+[5.37.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.36.0...v5.37.0
 [5.36.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.35.0...v5.36.0
 [5.35.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.34.0...v5.35.0
 [5.34.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.33.0...v5.34.0
