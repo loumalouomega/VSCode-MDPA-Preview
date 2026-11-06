@@ -79,6 +79,7 @@
   "command.kratos.runs.showHromElements.title": "Afficher les éléments HROM",
   "command.kratos.runs.revealCase.title": "Afficher le dossier du cas",
   "command.kratos.runs.compare.title": "Comparer avec une autre exécution…",
+  "command.kratos.runs.quantityAcrossRuns.title": "Grandeur sur les exécutions…",
   "command.kratos.preview.openEmpty.title": "Ouvrir un aperçu vide",
   "command.kratos.recent.open.title": "Ouvrir un maillage récent",
   "command.kratos.recent.remove.title": "Retirer des maillages récents",

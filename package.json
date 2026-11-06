@@ -830,6 +830,11 @@
         "category": "%category.KratosRuns%"
       },
       {
+        "command": "kratos.runs.quantityAcrossRuns",
+        "title": "%command.kratos.runs.quantityAcrossRuns.title%",
+        "category": "%category.KratosRuns%"
+      },
+      {
         "command": "kratos.preview.openEmpty",
         "title": "%command.kratos.preview.openEmpty.title%",
         "category": "%category.KratosMesh%"
@@ -1202,6 +1207,10 @@
           "when": "(view == kratos.runs || view == kratos.runsSidebar) && viewItem =~ /^kratosRun\\.(finished|failed|cancelled)$/"
         },
         {
+          "command": "kratos.runs.quantityAcrossRuns",
+          "when": "(view == kratos.runs || view == kratos.runsSidebar) && viewItem =~ /^kratosRun\\.(finished|failed|cancelled)$/"
+        },
+        {
           "command": "kratos.runs.remove",
           "when": "(view == kratos.runs || view == kratos.runsSidebar) && viewItem =~ /^kratosRun\\.(finished|failed|cancelled|orphaned)$/"
         },
@@ -1234,6 +1243,10 @@
         },
         {
           "command": "kratos.runs.compare",
+          "when": "false"
+        },
+        {
+          "command": "kratos.runs.quantityAcrossRuns",
           "when": "false"
         },
         {

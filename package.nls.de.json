@@ -79,6 +79,7 @@
   "command.kratos.runs.showHromElements.title": "HROM-Elemente anzeigen",
   "command.kratos.runs.revealCase.title": "Fallordner anzeigen",
   "command.kratos.runs.compare.title": "Mit anderer Ausführung vergleichen…",
+  "command.kratos.runs.quantityAcrossRuns.title": "Größe über alle Läufe…",
   "command.kratos.preview.openEmpty.title": "Leere Vorschau öffnen",
   "command.kratos.recent.open.title": "Zuletzt verwendetes Netz öffnen",
   "command.kratos.recent.remove.title": "Aus zuletzt verwendeten Netzen entfernen",

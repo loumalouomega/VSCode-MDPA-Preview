@@ -79,6 +79,7 @@
   "command.kratos.runs.showHromElements.title": "Mostrar elementos HROM",
   "command.kratos.runs.revealCase.title": "Mostrar carpeta del caso",
   "command.kratos.runs.compare.title": "Comparar con otra ejecución…",
+  "command.kratos.runs.quantityAcrossRuns.title": "Magnitud entre ejecuciones…",
   "command.kratos.preview.openEmpty.title": "Abrir vista previa vacía",
   "command.kratos.recent.open.title": "Abrir malla reciente",
   "command.kratos.recent.remove.title": "Quitar de mallas recientes",
