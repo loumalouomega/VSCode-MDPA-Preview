@@ -323,7 +323,7 @@ const THEME_VARS = `
 
 async function main() {
   fs.mkdirSync(OUT_DIR, { recursive: true });
-  const { SIDEBAR_HTML, MENUBAR_HTML, STATUSBAR_HTML, COMMANDLINE_HTML, ADVANCED_MENU_HTML, VIEW_MENU_HTML, TOOLBAR_HTML, CUT_PANEL_HTML, LOADING_HTML, FLOWGRAPH_PANE_HTML, PLOT_PANE_HTML, buildCsp, localizeHtml, pickCatalogue } =
+  const { SIDEBAR_HTML, MENUBAR_HTML, RIBBON_HTML, STATUSBAR_HTML, COMMANDLINE_HTML, ADVANCED_MENU_HTML, VIEW_MENU_HTML, TOOLBAR_HTML, CUT_PANEL_HTML, LOADING_HTML, FLOWGRAPH_PANE_HTML, PLOT_PANE_HTML, buildCsp, localizeHtml, pickCatalogue } =
     await loadChrome();
 
   // HARNESS_SCENE=spheres swaps in the particle mesh from issue #63, with a
@@ -504,7 +504,8 @@ async function main() {
     ? `<meta http-equiv="Content-Security-Policy" content="${buildCsp({ cspSource: "'self'", nonce, renderer })}" />`
     : "";
   const bodyAttrs =
-    renderer === "vtkwasm" ? ` data-renderer="vtkwasm" data-vtk-wasm-base="${MEDIA_REL}/vtk-wasm"` : "";
+    (renderer === "vtkwasm" ? ` data-renderer="vtkwasm" data-vtk-wasm-base="${MEDIA_REL}/vtk-wasm"` : "") +
+    (process.env.HARNESS_RIBBON === "1" ? ` data-ribbon="1"` : "");
   const html = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -527,6 +528,7 @@ async function main() {
   ${LOADING_HTML}
   <div id="app" style="display:none">
     ${MENUBAR_HTML}
+    ${RIBBON_HTML}
     <div id="main">
     ${SIDEBAR_HTML.replace('<aside id="sidebar">', '<aside id="sidebar" style="width:320px">')}
     <div id="sidebar-resizer" role="separator" aria-orientation="vertical" tabindex="0" title="Drag or press ArrowLeft/ArrowRight to resize the sidebar"></div>

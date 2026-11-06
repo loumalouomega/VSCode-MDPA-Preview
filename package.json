@@ -1047,6 +1047,12 @@
           "scope": "window",
           "markdownDescription": "%config.kratos.preview.renderer.markdownDescription%"
         },
+        "kratos.preview.ribbon": {
+          "type": "boolean",
+          "default": false,
+          "scope": "window",
+          "markdownDescription": "%config.kratos.preview.ribbon.markdownDescription%"
+        },
         "kratos.run.launchMode": {
           "type": "string",
           "enum": [

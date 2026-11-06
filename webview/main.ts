@@ -116,6 +116,8 @@ import {
 import type { MeshSummary } from "../src/parser/meshSummary";
 import { OutlineCounts, OutlineExportUI, OutlineNode, renderOutline } from "./outline";
 import { TOOLBAR_ICONS } from "../src/toolbarIcons";
+import { setupRibbon, type RibbonHandle, type RibbonState } from "./ribbon";
+import { DEFAULT_RIBBON_TAB, sanitizeRibbonTab } from "../src/parser/ribbonSpec";
 import {
   EXPORT_FORMAT_LABELS,
   EXPORT_MENU_GROUPS,
@@ -4227,6 +4229,38 @@ toolbarEl?.addEventListener("click", (e) => {
   const button = (e.target as HTMLElement).closest<HTMLElement>("button[data-action]");
   if (button) dispatchToolbarAction(button.dataset.action, button);
 });
+
+// ── Optional ribbon (kratos.preview.ribbon / host default) ──────────────
+// Emitted only when the host sets <body data-ribbon="1">. A ribbon button runs
+// the same dispatchToolbarAction as the toolbar/menu entry of that id.
+let ribbon: RibbonHandle | undefined;
+let pendingRibbonState: Partial<RibbonState> | undefined;
+{
+  const ribbonRoot = document.getElementById("ribbon");
+  if (ribbonRoot && document.body.dataset.ribbon === "1") {
+    ribbon = setupRibbon({
+      root: ribbonRoot,
+      dispatch: (a) => dispatchToolbarAction(a),
+      isPressed: (a) => uiToggleState(a),
+      onChange: () => scheduleViewSave(),
+    });
+    if (pendingRibbonState) ribbon.setState(pendingRibbonState);
+    // Toggle state lives in many places (menu `.active`, nav dock, panels);
+    // re-read it when any class in the viewport changes.
+    let ribbonRefresh = 0;
+    new MutationObserver(() => {
+      if (ribbonRefresh) return;
+      ribbonRefresh = requestAnimationFrame(() => {
+        ribbonRefresh = 0;
+        ribbon?.refresh();
+      });
+    }).observe(document.getElementById("viewport") ?? document.body, {
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["class"],
+    });
+  }
+}
 
 function dispatchToolbarAction(action: string | undefined, _target?: HTMLElement): void {
   if (recordingActive && action !== "record") return;
@@ -9339,6 +9373,12 @@ function captureViewState(): ViewState {
   v.bookmarks = bookmarks.map((b) => ({ name: b.name, state: b.state }));
   v.paneLayout = paneLayout;
   if (curvedLevel > 0) v.curvedLevel = curvedLevel;
+  if (ribbon) {
+    const rs = ribbon.getState();
+    if (rs.tab !== DEFAULT_RIBBON_TAB) v.ribbonTab = rs.tab;
+    if (rs.compact) v.ribbonCompact = true;
+    if (rs.hidden) v.ribbonHidden = true;
+  }
   if (mirrorState) v.mirror = { axis: mirrorState.axis, at: mirrorState.at };
   if (revolveState) v.revolve = { ...revolveState };
   if (sectorState) v.sector = { ...sectorState };
@@ -9423,6 +9463,15 @@ function applyPendingView(): void {
     if (view.bookmarks.length > 0) bookmarks = view.bookmarks.map((b) => ({ name: b.name, state: b.state }));
     if (view.paneLayout && view.paneLayout !== paneLayout) setPaneLayout(view.paneLayout);
     if (view.curvedLevel !== undefined && view.curvedLevel !== curvedLevel) setCurvedLevel(view.curvedLevel);
+    {
+      const rs: Partial<RibbonState> = {
+        tab: sanitizeRibbonTab(view.ribbonTab),
+        compact: view.ribbonCompact === true,
+        hidden: view.ribbonHidden === true,
+      };
+      if (ribbon) ribbon.setState(rs);
+      else pendingRibbonState = rs;
+    }
     if (view.mirror) setMirror({ axis: view.mirror.axis, at: view.mirror.at });
     if (view.revolve) setRevolve({ ...view.revolve });
     if (view.sector) setSector({ ...view.sector });

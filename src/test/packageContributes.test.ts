@@ -13,6 +13,7 @@ const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8"))
 const contributes = pkg.contributes as Record<string, any>;
 
 import { SUMMARY_THRESHOLD_MB_DEFAULT } from "../parser/meshSummary";
+import { DEFAULT_RIBBON } from "../parser/ribbonSpec";
 import { DEFAULT_RENDERER, RENDERER_SETTING_VALUES } from "../parser/render/rendererSelect";
 
 test("the activity-bar container's icon is a real, shipped SVG", () => {
@@ -147,6 +148,13 @@ test("the renderer setting's manifest matches rendererSelect.ts (values, default
   assert.equal(prop.default, DEFAULT_RENDERER);
   assert.equal(prop.enumDescriptions.length, prop.enum.length);
   assert.ok(prop.tags.includes("experimental"), "VTK-wasm stays labelled experimental until the default switch");
+});
+
+test("the ribbon setting's manifest default matches ribbonSpec.ts", () => {
+  const prop = contributes.configuration.properties["kratos.preview.ribbon"];
+  assert.ok(prop, "the setting is declared");
+  assert.equal(prop.type, "boolean");
+  assert.equal(prop.default, DEFAULT_RIBBON);
 });
 
 // ---- Keybindings ---------------------------------------------------------------

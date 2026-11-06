@@ -16,6 +16,7 @@ import * as vscode from "vscode";
 
 import { buildPreviewHtml, getNonce } from "./webviewChrome";
 import { parseRendererSetting, selectRendererAtHost } from "./parser/render/rendererSelect";
+import { parseRibbonSetting } from "./parser/ribbonSpec";
 
 export interface PreviewHtmlContext {
   webview: vscode.Webview;
@@ -71,6 +72,7 @@ export function renderPreviewHtml(ctx: PreviewHtmlContext): string {
           .get<string>("splitOrientation", "horizontal")
       : undefined,
     startEmpty: ctx.startEmpty,
+    ribbon: parseRibbonSetting(vscode.workspace.getConfiguration("kratos.preview").get<boolean>("ribbon")),
   });
 }
 

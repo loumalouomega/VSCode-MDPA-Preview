@@ -4897,3 +4897,83 @@ button.pt-preflight-row:hover,
   font-size: var(--ui-fs-label);
   font-variant-numeric: tabular-nums;
 }
+
+/* ── Ribbon (optional; <body data-ribbon="1">) ─────────────────────────────
+   An in-flow row between #menubar and #main, so it takes height off the
+   viewport by layout — no offset arithmetic. Tabs on top, the active tab's
+   groups below; `ribbon-collapsed` leaves only the tab strip, `ribbon-compact`
+   shows icons only. */
+#ribbon {
+  flex-shrink: 0;
+  background: var(--ds-header-bg);
+  border-bottom: 1px solid var(--ds-header-border);
+  font-family: var(--ds-font);
+  z-index: 19;
+}
+body:not([data-ribbon]) #ribbon { display: none; }
+#ribbon[hidden] { display: none; }
+#ribbon-tabs {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-s-1);
+  padding: 0 var(--ui-s-2);
+  height: 26px;
+}
+.ribbon-tabs-spacer { flex: 1 1 auto; }
+.ribbon-tab, .ribbon-tool {
+  background: transparent;
+  color: var(--vscode-foreground);
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: 0 var(--ui-s-2);
+  height: 100%;
+  cursor: pointer;
+  font: inherit;
+}
+.ribbon-tab.active { border-bottom-color: var(--vscode-focusBorder); }
+.ribbon-tab:hover, .ribbon-tool:hover { background: var(--vscode-toolbar-hoverBackground); }
+.ribbon-tool { display: inline-flex; align-items: center; }
+.ribbon-tool[aria-pressed="true"] { color: var(--vscode-focusBorder); }
+body.ribbon-collapsed #ribbon-body { display: none; }
+#ribbon-body {
+  display: flex;
+  align-items: stretch;
+  gap: var(--ui-s-2);
+  padding: var(--ui-s-1) var(--ui-s-2) 0;
+  overflow-x: auto;
+}
+.ribbon-group {
+  display: flex;
+  flex-direction: column;
+  padding-right: var(--ui-s-2);
+  border-right: 1px solid var(--ds-header-border);
+}
+.ribbon-group-items { display: flex; gap: 2px; flex: 1 1 auto; }
+.ribbon-group-label {
+  text-align: center;
+  color: var(--vscode-descriptionForeground);
+  padding: 2px 0;
+}
+.ribbon-btn {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-width: 52px;
+  padding: var(--ui-s-1);
+  background: transparent;
+  color: var(--vscode-foreground);
+  border: 1px solid transparent;
+  cursor: pointer;
+  font: inherit;
+}
+.ribbon-btn .toolbar-icon { display: inline-flex; }
+.ribbon-btn .toolbar-icon svg { width: 22px; height: 22px; }
+.ribbon-btn:hover { background: var(--vscode-toolbar-hoverBackground); }
+.ribbon-btn.active, .ribbon-btn[aria-pressed="true"] {
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+}
+body.ribbon-compact .ribbon-btn { min-width: 0; }
+body.ribbon-compact .ribbon-btn-label,
+body.ribbon-compact .ribbon-group-label { display: none; }
