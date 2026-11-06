@@ -375,6 +375,7 @@ const PANELS: CommandSpec[] = [
   ui("integrals", "panel", "Field integrals panel", "integrals"),
   ui("streamlines", "panel", "Streamlines panel", "streamlines"),
   ui("flowBalance", "panel", "Boundary flow balance panel", "flowBalance"),
+  ui("recoverFlux", "panel", "Recovered flux panel (traction from nodal reactions)", "recoverFlux"),
   ui("aleQuality", "panel", "ALE mesh quality panel (per-frame element quality of the deformed mesh)", "aleQuality"),
   ui("windTunnel", "panel", "Virtual wind tunnel wizard: body, tunnel, flow, mesh, generate", "windTunnel"),
   ui("linkPreviews", "panel", "Link two previews", "linkPreviews"),

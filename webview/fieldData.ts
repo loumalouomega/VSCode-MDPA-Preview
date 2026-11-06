@@ -17,6 +17,8 @@ export interface FieldInfo {
   rangeCache: [number, number][];
   /** Set by main.ts per model message: does a Variables row claim this field? */
   hasVariableRow?: boolean;
+  /** A viewer-only field recovered from nodal reactions (roadmap item 45): not in the model, never saved. */
+  recovered?: boolean;
   /** Staged delivery: the rows have not arrived yet; lookups are empty and the range is a placeholder. */
   pending?: boolean;
 }

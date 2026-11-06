@@ -4,6 +4,9 @@ import test from "node:test";
 
 import { recoverBoundaryFlux } from "../parser/boundaryFlux";
 import { parseMdpa } from "../parser/mdpaParser";
+import { recoverBoundaryFluxField } from "../parser/boundaryFlux";
+import { runMeshAnalysis } from "../meshAnalysis";
+import { runRecoverFluxInWorker } from "../analysisWorkerClient";
 
 // Two straight-sided six-node triangles forming the unit square (area 1) in z = 0.
 const SRC = `Begin Nodes
@@ -100,4 +103,40 @@ test("8- and 9-node quadrilateral faces recover a uniform traction exactly (item
     assert.ok(Math.abs(r.area - 1) < 1e-12, `${name} area ${r.area}`);
     assert.ok(r.integralError < 1e-9);
   }
+});
+
+// Viewer half (item 45): the recovered field travels as a slim reply and never shadows a real field.
+const uniformModel = () => {
+  const A = 0.5, third = A / 3;
+  const loads: Record<number, number> = { 1: 0, 2: 0, 3: 0, 4: 0, 5: third, 6: third, 7: 2 * third, 8: third, 9: third };
+  return parseMdpa(SRC + nodeLoads([0, 0, 5], loads));
+};
+
+test("recoverBoundaryFluxField returns the field without the model and refuses to shadow a real field", () => {
+  const m = uniformModel();
+  const r = recoverBoundaryFluxField(m, { part: "Wall", variable: "REACTION" });
+  assert.equal("model" in r, false);
+  assert.equal(r.field.variable, "REACTION_RECOVERED");
+  assert.ok(r.integralError < 1e-9);
+  assert.throws(() => recoverBoundaryFluxField(m, { part: "Wall", variable: "REACTION", output: "REACTION" }), /already exists/);
+  // MCP semantics are unchanged: the core still replaces its own previous output.
+  assert.doesNotThrow(() => recoverBoundaryFlux(m, { part: "Wall", variable: "REACTION", output: "REACTION" }));
+});
+
+test("the recoverFlux analysis equals the direct core, echoes seq on refusal and failure, and the worker agrees", async () => {
+  const m = uniformModel();
+  const direct = recoverBoundaryFluxField(m, { part: "Wall", variable: "REACTION" });
+  const ok = (await runMeshAnalysis({ type: "meshAnalysis", kind: "recoverFlux", part: "Wall", variable: "REACTION", seq: 3 }, m)) as { seq: number; recovered: { field: { values: Float64Array }; report: { integral: number[] } } };
+  assert.equal(ok.seq, 3);
+  assert.deepEqual(ok.recovered.report.integral, direct.integral);
+  assert.deepEqual(Array.from(ok.recovered.field.values), Array.from(direct.field.values));
+  const noPart = (await runMeshAnalysis({ type: "meshAnalysis", kind: "recoverFlux", variable: "REACTION", seq: 4 }, m)) as { seq: number; message?: string };
+  assert.equal(noPart.seq, 4);
+  assert.ok(noPart.message);
+  const bad = (await runMeshAnalysis({ type: "meshAnalysis", kind: "recoverFlux", part: "Nope", variable: "REACTION", seq: 5 }, m)) as { seq: number; message?: string };
+  assert.equal(bad.seq, 5);
+  assert.match(bad.message ?? "", /No SubModelPart/);
+  const w = await runRecoverFluxInWorker(m, { part: "Wall", variable: "REACTION" });
+  assert.deepEqual(Array.from(w.field.values), Array.from(direct.field.values));
+  assert.deepEqual(w.integral, direct.integral);
 });

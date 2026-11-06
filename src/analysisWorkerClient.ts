@@ -16,6 +16,7 @@ import type { LodSurface } from "./parser/lodSurface";
 import type { FeatureEdgeOptions, PeriodicOptions } from "./parser/analysisOps";
 import type { featureEdges, findIntersectionsReport, hausdorff, periodicNodes, qualityGate } from "./parser/analysisOps";
 import type { FlowBalance, FlowBalanceSpec } from "./parser/flowBalance";
+import type { RecoverFluxParams, RecoveredFlux } from "./parser/boundaryFlux";
 import type { AnalysisKind, AnalysisParams, AnalysisWorkRequest, AnalysisWorkResponse } from "./analysisWorker";
 
 /** The rejection message of an analysis that was cancelled (superseded, closed or disposed). */
@@ -111,6 +112,9 @@ export const runIntersectionsInWorker = (
   opts?: RunOpts
 ): Promise<Awaited<ReturnType<typeof findIntersectionsReport>>> =>
   runInAnalysisWorker("intersections", model, params, opts) as Promise<Awaited<ReturnType<typeof findIntersectionsReport>>>;
+
+export const runRecoverFluxInWorker = (model: MdpaModel, params: RecoverFluxParams, opts?: RunOpts): Promise<RecoveredFlux> =>
+  runInAnalysisWorker("recoverFlux", model, params, opts) as Promise<RecoveredFlux>;
 
 export const runFlowBalanceInWorker = (model: MdpaModel, spec: FlowBalanceSpec, opts?: RunOpts): Promise<FlowBalance> =>
   runInAnalysisWorker("flowBalance", model, { spec }, opts) as Promise<FlowBalance>;

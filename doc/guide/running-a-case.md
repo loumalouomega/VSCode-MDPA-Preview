@@ -78,6 +78,8 @@ Each workspace keeps the evidence that makes a run comparable after a reload:
 
 The row in the **Kratos Runs** view is labelled **Run workspace** instead of **Case folder**, and its tooltip names the case mesh it belongs to. `case_status`, `plot_runs` and `plot_run_bind` read the same receipt; `case_compare` compares two such runs (see the [MCP guide](./mcp)), and **Compare With Another Run…** on a finished run's context menu opens the same comparison as a Markdown report.
 
+**Quantity Across Runs…** on a finished, failed or cancelled run reads one saved monitor from every terminal isolated run of the same case and opens a Markdown table: one row per run, the recorded case settings that differ between the runs as columns, and the monitor's value at the last evaluated frame of each. A run that is not finished, has no receipt or wrote no frame shows — instead of a value, with its reason listed below the table; it is never read as 0. The monitor's unit is only the label you gave it. Afterwards you can plot the quantity against a numeric case parameter in the Plots workspace. MCP `case_run_quantity` returns the same table.
+
 A run started in the extension and one started through MCP `case_run { isolate: true }` use the same layout and the same receipt contract. `case_run` derives `<case folder>/runs/<stem>-<requestId>` from the request identity (the MCP tool has no workspace setting, so it always uses the default `runs` folder), and a retry with the same `requestId` finds its own workspace and never dispatches a second solver.
 
 ## CAD handoff

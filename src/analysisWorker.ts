@@ -23,6 +23,8 @@ import { featureEdges, findIntersectionsReport, hausdorff, periodicNodes, qualit
 import type { FeatureEdgeOptions, IntersectionOptions, PeriodicOptions } from "./parser/analysisOps";
 import { flowBalance } from "./parser/flowBalance";
 import type { FlowBalanceSpec } from "./parser/flowBalance";
+import { recoverBoundaryFluxField } from "./parser/boundaryFlux";
+import type { RecoverFluxParams } from "./parser/boundaryFlux";
 import type { MdpaModel } from "./parser/types";
 import { markSingleOperationThread } from "./parser/meshio";
 
@@ -43,6 +45,7 @@ export interface AnalysisParams {
   /** `other` (a second surface) is read on the host and structured-cloned in. */
   intersections: IntersectionOptions;
   flowBalance: { spec: FlowBalanceSpec };
+  recoverFlux: RecoverFluxParams;
 }
 export type AnalysisKind = keyof AnalysisParams;
 
@@ -66,6 +69,7 @@ async function execute(req: AnalysisWorkRequest): Promise<unknown> {
     case "featureEdges": return featureEdges(req.model, req.params);
     case "intersections": return findIntersectionsReport(req.model, req.params);
     case "flowBalance": return flowBalance(req.model, req.params.spec);
+    case "recoverFlux": return recoverBoundaryFluxField(req.model, req.params);
     default: throw new Error(`Unknown analysis "${(req as { type: string }).type}".`);
   }
 }

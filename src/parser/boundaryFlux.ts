@@ -34,6 +34,11 @@ export interface RecoverFluxParams {
   variable: string;
   /** Output variable name (default `<variable>_RECOVERED`). */
   output?: string;
+  /**
+   * Refuse when a Nodal field named `output` already exists instead of replacing it. The viewer
+   * sets it: its recovered field is display-only and must never shadow a real field.
+   */
+  refuseExisting?: boolean;
 }
 
 export interface RecoverFluxResult {
@@ -56,6 +61,16 @@ export interface RecoverFluxResult {
   /** Nodes of the part with no load value (counted as zero load, reported). */
   nodesWithoutLoad: number;
   message: string;
+}
+
+/** What the viewer needs: the report and the recovered field, never the model copy. */
+export type RecoveredFlux = Omit<RecoverFluxResult, "model"> & { field: FieldData };
+
+/** `recoverBoundaryFlux` for the viewer: refuses to shadow a field and drops the model copy. */
+export function recoverBoundaryFluxField(model: MdpaModel, params: RecoverFluxParams): RecoveredFlux {
+  const { model: out, ...report } = recoverBoundaryFlux(model, { ...params, refuseExisting: true });
+  const field = out.fields.find((f) => f.kind === "Nodal" && f.variable === report.output)!;
+  return { ...report, field };
 }
 
 // Radon 7-point rule, exact to degree 5 on a triangle (barycentric weights sum to 1).
@@ -99,6 +114,10 @@ export function recoverBoundaryFlux(model: MdpaModel, params: RecoverFluxParams)
   if (!part) throw new Error(`No SubModelPart "${params.part}".`);
   const load = model.fields.find((f) => f.kind === "Nodal" && f.variable === params.variable);
   if (!load) throw new Error(`No Nodal field "${params.variable}" (the nodal reactions to recover a flux from).`);
+  const wanted = params.output ?? `${params.variable}_RECOVERED`;
+  if (params.refuseExisting && model.fields.some((f) => f.kind === "Nodal" && f.variable === wanted)) {
+    throw new Error(`A Nodal field named "${wanted}" already exists; choose another output name.`);
+  }
   const comps = load.components;
   const loadRow = new Map<number, number>();
   for (let i = 0; i < load.ids.length; i++) loadRow.set(load.ids[i], i);

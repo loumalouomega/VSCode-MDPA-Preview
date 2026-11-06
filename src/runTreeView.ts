@@ -34,6 +34,9 @@ import { isRomCase, readRomResults } from "./problemtype/rom/romResultsFile";
 import { deliverToPreview } from "./previewSession";
 import { compareRuns } from "./problemtype/runCompare";
 import { renderRunComparisonMarkdown } from "./problemtype/runComparisonReport";
+import { runQuantity } from "./problemtype/runQuantity";
+import { renderRunQuantityMarkdown } from "./problemtype/runQuantityReport";
+import { numericParameterPaths, runQuantityPlotRecipe } from "./problemtype/runQuantityPlot";
 import { runExportOptimizedCad } from "./optimizationCadCommand";
 import { viewTypeForMesh } from "./meshExport";
 import { evaluateMonitors, readMonitors } from "./problemtype/monitorsFile";
@@ -405,6 +408,64 @@ export function registerRunTreeView(runs: RunManager, context: vscode.ExtensionC
         content: renderRunComparisonMarkdown(comparison),
       });
       await vscode.window.showTextDocument(document, { preview: true });
+    }),
+    vscode.commands.registerCommand("kratos.runs.quantityAcrossRuns", async (node?: Node) => {
+      if (node?.kind !== "run") return;
+      const source = node.record;
+      const sourceMesh = source.sourceMeshFsPath ?? source.meshFsPath;
+      // The runs of ONE case: same source mesh, isolated (they carry a receipt), terminal.
+      const sameCase = runs.list().filter(
+        (r) =>
+          r.runDirectory &&
+          (r.sourceMeshFsPath ?? r.meshFsPath) === sourceMesh &&
+          (r.status === "finished" || r.status === "failed" || r.status === "cancelled")
+      );
+      if (sameCase.length === 0) {
+        void vscode.window.showInformationMessage(
+          "This needs isolated run workspaces: turn on kratos.run.isolate (or run with case_run {isolate:true}) and run the case more than once."
+        );
+        return;
+      }
+      const read = readMonitors(sourceMesh);
+      for (const w of read.parsed.warnings) void vscode.window.showWarningMessage(w);
+      if (read.parsed.monitors.length === 0) {
+        void vscode.window.showInformationMessage("No monitors are saved for this case. Add one with the case_monitors MCP tool or the Inspect panel's Monitor button.");
+        return;
+      }
+      const pick = await vscode.window.showQuickPick(
+        read.parsed.monitors.map((m) => ({ label: m.name ?? m.id, description: m.id, monitor: m })),
+        { placeHolder: `Quantity to read from each of the ${sameCase.length} run(s) of "${source.stem}"` }
+      );
+      if (!pick) return;
+      const quantity = await vscode.window.withProgress(
+        { location: vscode.ProgressLocation.Notification, title: "Evaluating the quantity across runs…", cancellable: true },
+        async (_progress, token) => {
+          const abort = new AbortController();
+          token.onCancellationRequested(() => abort.abort());
+          try {
+            return await runQuantity(sameCase.map((r) => r.runDirectory as string), pick.monitor, { signal: abort.signal });
+          } catch (err) {
+            if (!abort.signal.aborted) void vscode.window.showErrorMessage(`Quantity across runs failed: ${err instanceof Error ? err.message : String(err)}`);
+            return undefined;
+          }
+        }
+      );
+      if (!quantity) return;
+      const document = await vscode.workspace.openTextDocument({
+        language: "markdown",
+        content: renderRunQuantityMarkdown(quantity, { caseName: source.stem, unit: pick.monitor.unit }),
+      });
+      await vscode.window.showTextDocument(document, { preview: true });
+      const parameters = numericParameterPaths(quantity);
+      if (parameters.length === 0 || quantity.rows.every((r) => r.values === null)) return;
+      const action = await vscode.window.showInformationMessage("Plot the quantity against a case parameter?", "Plot");
+      if (action !== "Plot") return;
+      const parameter = parameters.length === 1 ? parameters[0] : await vscode.window.showQuickPick(parameters, { placeHolder: "Case parameter for the x axis" });
+      if (!parameter) return;
+      const title = `${pick.monitor.name ?? pick.monitor.id} against ${parameter}`;
+      const plot = runQuantityPlotRecipe(quantity, parameter, title);
+      openPlotBuilder(context, undefined, plot.recipe, title);
+      for (const note of plot.notes) void vscode.window.showWarningMessage(note);
     }),
   ];
   return vscode.Disposable.from(...subs);

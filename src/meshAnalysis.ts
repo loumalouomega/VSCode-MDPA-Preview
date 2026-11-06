@@ -23,6 +23,8 @@ import * as fs from "node:fs/promises";
 import { watertightReport, watertightSummary } from "./parser/watertight";
 import { integrateFields } from "./parser/fieldIntegrate";
 import { describeFlowBalance, flowBalance, FlowBalance, FlowBalanceSpec } from "./parser/flowBalance";
+import { recoverBoundaryFluxField } from "./parser/boundaryFlux";
+import type { RecoverFluxParams, RecoveredFlux } from "./parser/boundaryFlux";
 import { lodSurface } from "./parser/lodSurface";
 import { probeAlongPath } from "./parser/pathProbe";
 import type { ProbeParams, ProbeResult } from "./parser/pathProbe";
@@ -37,7 +39,7 @@ import { MdpaModel } from "./parser/types";
 /** The `meshAnalysis` kinds whose wasm work runs in the analysis worker (and are therefore cancellable). */
 export const WORKER_KINDS: ReadonlySet<string> = new Set([
   "probe", "watertight", "integrate", "lod",
-  "qualityGate", "hausdorff", "periodicNodes", "featureEdges", "flowBalance", "intersections",
+  "qualityGate", "hausdorff", "periodicNodes", "featureEdges", "flowBalance", "intersections", "recoverFlux",
 ]);
 
 export interface MeshAnalysisMessage extends FeatureEdgeOptions {
@@ -69,6 +71,9 @@ export interface MeshAnalysisMessage extends FeatureEdgeOptions {
   maxSeeds?: number;
   /** Flow-balance kind: the sections, fields and conventions — see flowBalance.ts. `seq` is echoed like the probe's. */
   flow?: FlowBalanceSpec;
+  /** Recover-flux kind: the SubModelPart of faces and the output name (`variable` names the nodal reactions) — see boundaryFlux.ts. */
+  part?: string;
+  output?: string;
 }
 
 /**
@@ -98,6 +103,7 @@ export async function runMeshAnalysis(
     featureEdgesRunner?: (model: MdpaModel, params: FeatureEdgeOptions, opts?: { signal?: AbortSignal }) => ReturnType<typeof featureEdges>;
     intersectionsRunner?: (model: MdpaModel, params: IntersectionOptions, opts?: { signal?: AbortSignal }) => ReturnType<typeof findIntersectionsReport>;
     flowBalanceRunner?: (model: MdpaModel, spec: FlowBalanceSpec, opts?: { signal?: AbortSignal }) => Promise<FlowBalance>;
+    recoverFluxRunner?: (model: MdpaModel, params: RecoverFluxParams, opts?: { signal?: AbortSignal }) => Promise<RecoveredFlux>;
   } = {}
 ): Promise<Record<string, unknown>> {
   const kind = msg.kind ?? "";
@@ -233,6 +239,18 @@ export async function runMeshAnalysis(
       if (!msg.flow) return { type: "meshAnalysisResult", kind, message: "Choose the sections to balance.", seq: msg.seq };
       const result = await (opts.flowBalanceRunner ?? (async (m, f) => flowBalance(m, f)))(model, msg.flow, signal);
       return { type: "meshAnalysisResult", kind, seq: msg.seq, summary: describeFlowBalance(result), flow: result };
+    }
+    if (kind === "recoverFlux") {
+      // A per-area traction recovered from nodal reactions on a SubModelPart's faces. The reply
+      // carries the field and the report, never the model: the viewer shows it as a derived field.
+      if (!msg.part) return { type: "meshAnalysisResult", kind, message: "Choose the SubModelPart of faces.", seq: msg.seq };
+      if (!msg.variable) return { type: "meshAnalysisResult", kind, message: "Choose the nodal reaction field.", seq: msg.seq };
+      const { field, ...report } = await (opts.recoverFluxRunner ?? (async (m, p) => recoverBoundaryFluxField(m, p)))(
+        model,
+        { part: msg.part, variable: msg.variable, output: msg.output || undefined },
+        signal
+      );
+      return { type: "meshAnalysisResult", kind, seq: msg.seq, summary: report.message, recovered: { field, report } };
     }
     return { type: "meshAnalysisResult", kind, message: `Unknown analysis "${kind}".` };
   } catch (err) {
