@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [5.36.0] - 2026-11-06
+
 ### Added
 
 - **Quantity Across Runs…** (roadmap item 25, viewer half): a Kratos Runs command that evaluates one saved monitor over the isolated runs of a case and opens a Markdown table with the varied case settings as columns, with an optional plot against a numeric parameter. A run without a value shows a dash and its reason, never 0. It uses the same core as MCP `case_run_quantity`.
@@ -1553,7 +1555,8 @@ Four silent-correctness fixes. None of them threw, and none was visible in the m
 
 - Initial release: custom editor preview for `.mdpa` files.
 
-[Unreleased]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.35.0...HEAD
+[Unreleased]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.36.0...HEAD
+[5.36.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.35.0...v5.36.0
 [5.35.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.34.0...v5.35.0
 [5.34.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.33.0...v5.34.0
 [5.33.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.32.0...v5.33.0
