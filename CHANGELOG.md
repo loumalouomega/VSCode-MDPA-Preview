@@ -6,8 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [5.35.0] - 2026-11-06
+
 ### Changed
 
+- `@kitware/vtk.js` moves from 37.4.6 to 38.0.4. The orientation cube now null-checks the viewport `computeViewport()` returns, as its typings make it optional; no behaviour change. The npm minor-and-patch group also refreshed `mediabunny` (1.65.0), `plotly.js-strict-dist-min` (4.2.0), `@types/node` (26.6.6) and `@types/vscode` (1.144.0).
 - `engines.vscode` is now `^1.144.0`, matching the `@types/vscode` typings from Dependabot's bump (`vsce` refuses typings newer than the declared minimum), so VS Code 1.140 to 1.143 are no longer supported.
 
 ## [5.34.0] - 2026-11-05
@@ -1545,7 +1548,8 @@ Four silent-correctness fixes. None of them threw, and none was visible in the m
 
 - Initial release: custom editor preview for `.mdpa` files.
 
-[Unreleased]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.34.0...HEAD
+[Unreleased]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.35.0...HEAD
+[5.35.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.34.0...v5.35.0
 [5.34.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.33.0...v5.34.0
 [5.33.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.32.0...v5.33.0
 [5.32.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.31.0...v5.32.0
