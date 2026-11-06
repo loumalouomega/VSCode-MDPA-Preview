@@ -30,6 +30,7 @@
  * degrades instead of failing an open.
  */
 
+import { DEFAULT_RIBBON_TAB, sanitizeRibbonTab } from "./ribbonSpec";
 import { CameraState, isCameraState } from "./cameraState";
 import { FieldComponent } from "./fieldScalars";
 import { PaneLayoutId, isPaneLayout, paneCount } from "./paneLayout";
@@ -80,6 +81,10 @@ export interface ViewState {
   panes: SavedPane[];
   /** Curved display of quadratic cells, 1..3 (segments per edge 2^n). Omitted = off. */
   curvedLevel?: number;
+  /** Ribbon tab (omitted at the default tab), compact strip, and an explicit show/hide choice (tri-state: absent = follow the setting). */
+  ribbonTab?: string;
+  ribbonCompact?: true;
+  ribbonHidden?: boolean;
   /** View-only mirror expansion: axis 0|1|2 (x|y|z) and the plane position (a number, or the bbox side). Omitted = off. */
   mirror?: { axis: 0 | 1 | 2; at: number | "min" | "max" };
   /** View-only revolve of a 2D axisymmetric result. Exclusive with `mirror`. Omitted = off. */
@@ -168,6 +173,9 @@ export function isEmptyViewState(v: ViewState): boolean {
     v.bookmarks.length === 0 &&
     v.paneLayout === undefined &&
     v.curvedLevel === undefined &&
+    v.ribbonTab === undefined &&
+    v.ribbonCompact === undefined &&
+    v.ribbonHidden === undefined &&
     v.mirror === undefined &&
     v.revolve === undefined &&
     v.sector === undefined &&
@@ -350,6 +358,9 @@ export function validateViewState(raw: unknown, colormapFallback = "Rainbow"): {
     else warnings.push("View sidecar paneLayout is unknown — layout left as opened.");
   }
 
+  if (typeof r.ribbonTab === "string" && sanitizeRibbonTab(r.ribbonTab) === r.ribbonTab && r.ribbonTab !== DEFAULT_RIBBON_TAB) view.ribbonTab = r.ribbonTab;
+  if (r.ribbonCompact === true) view.ribbonCompact = true;
+  if (typeof r.ribbonHidden === "boolean") view.ribbonHidden = r.ribbonHidden;
   if (r.curvedLevel !== undefined) {
     if (typeof r.curvedLevel === "number" && Number.isFinite(r.curvedLevel)) {
       const lvl = Math.max(0, Math.min(3, Math.floor(r.curvedLevel)));
@@ -562,6 +573,9 @@ export function serializeViewState(v: ViewState): Record<string, unknown> {
   if (v.panels.length > 0) out.panels = [...v.panels];
   if (v.paneLayout) out.paneLayout = v.paneLayout;
   if (v.curvedLevel) out.curvedLevel = v.curvedLevel;
+  if (v.ribbonTab && v.ribbonTab !== DEFAULT_RIBBON_TAB) out.ribbonTab = v.ribbonTab;
+  if (v.ribbonCompact) out.ribbonCompact = true;
+  if (typeof v.ribbonHidden === "boolean") out.ribbonHidden = v.ribbonHidden;
   if (v.mirror) out.mirror = { axis: v.mirror.axis, at: v.mirror.at };
   if (v.revolve) out.revolve = { ...v.revolve };
   if (v.sector) out.sector = { ...v.sector };

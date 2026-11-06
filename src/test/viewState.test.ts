@@ -344,3 +344,17 @@ test("symmetric/showExtremes round-trip; bad values warn", () => {
   assert.equal(bad.view.panes[0].field.symmetric, false);
   assert.equal(bad.warnings.length, 1);
 });
+
+test("ribbon keys round trip and are omitted at their defaults", () => {
+  const def = serializeViewState({ ...emptyViewState(), ribbonTab: "view" });
+  assert.equal(def.ribbonTab, undefined);
+  const on = serializeViewState({ ...emptyViewState(), ribbonTab: "mesh", ribbonCompact: true, ribbonHidden: true });
+  assert.equal(on.ribbonTab, "mesh");
+  assert.equal(on.ribbonCompact, true);
+  assert.equal(on.ribbonHidden, true);
+  const back = validateViewState(on).view;
+  assert.equal(back.ribbonTab, "mesh");
+  assert.equal(back.ribbonCompact, true);
+  assert.equal(back.ribbonHidden, true);
+  assert.equal(validateViewState({ ribbonTab: "bogus" }).view.ribbonTab, undefined);
+});

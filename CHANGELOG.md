@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- **Ribbon** (optional): tabs of the most common actions (View, Results, Inspect, Mesh, Tools) under the menu bar, in the style of the CAD-Preview ribbon. Every button runs the same action as the toolbar / menu entry of the same name. Off by default; turn it on with the new `kratos.preview.ribbon` setting. The tab, icons-only mode and collapsed state are remembered per mesh in `<stem>.kratosview.json`.
+
 ## [5.36.0] - 2026-11-06
 
 ### Added

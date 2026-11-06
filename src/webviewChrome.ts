@@ -99,6 +99,18 @@ export const MENUBAR_HTML = `<div id="menubar">
     </div>`;
 
 /**
+ * The optional ribbon's empty container, between `#menubar` and `#main`. It
+ * ships `hidden` and is filled by `webview/ribbon.ts` from
+ * `src/parser/ribbonSpec.ts` only when `<body data-ribbon="1">` (the
+ * `kratos.preview.ribbon` setting, or a host default such as KKSS). The strip
+ * is an in-flow row, so it pushes `#main` down by layout.
+ */
+export const RIBBON_HTML = `<div id="ribbon" hidden>
+      <div id="ribbon-tabs" role="tablist" aria-label="Ribbon tabs"></div>
+      <div id="ribbon-body" role="tabpanel"></div>
+    </div>`;
+
+/**
  * The full-width status bar: the last child of `#app`, after `#main`, so it
  * takes a row off the bottom of the viewport and everything anchored to that
  * edge (the timeline bar, the nav card, the toast) rises with it by layout, not
@@ -1539,6 +1551,8 @@ export interface PreviewHtmlOptions {
   renderer?: "vtkjs" | "vtkwasm";
   /** `media/vtk-wasm/` as a webview-safe URI (VTK-wasm only). */
   vtkWasmBaseUri?: string;
+  /** Show the ribbon (`kratos.preview.ribbon`). Absent/false = off: no attribute. */
+  ribbon?: boolean;
   /** Why the host already fell back to vtk.js (a fallback reason id), shown by the webview. */
   rendererFallback?: string;
 }
@@ -1595,6 +1609,7 @@ export function buildPreviewHtml(o: PreviewHtmlOptions): string {
   const rendererAttr =
     (o.renderer === "vtkwasm" ? ` data-renderer="vtkwasm" data-vtk-wasm-base="${o.vtkWasmBaseUri ?? ""}"` : "") +
     (o.rendererFallback ? ` data-renderer-fallback="${o.rendererFallback}"` : "");
+  const ribbonAttr = o.ribbon ? ` data-ribbon="1"` : "";
   const emptyHint = o.startEmpty ? EMPTY_HINT_HTML : "";
 
   const localeAttr = o.locale && o.locale.toLowerCase() !== "en" ? ` data-locale="${o.locale.replace(/[^A-Za-z0-9_-]/g, "")}"` : "";
@@ -1609,10 +1624,11 @@ export function buildPreviewHtml(o: PreviewHtmlOptions): string {
    ${o.plotStyleUri ? `<link href="${o.plotStyleUri}" rel="stylesheet" />` : ""}
   <title>${o.title}</title>
 </head>
-<body data-theme="${o.theme}"${localeAttr}${orientationAttr}${startEmptyAttr}${rendererAttr}>
+<body data-theme="${o.theme}"${localeAttr}${orientationAttr}${startEmptyAttr}${rendererAttr}${ribbonAttr}>
   ${LOADING_HTML}
   <div id="app" style="display:none">
     ${MENUBAR_HTML}
+    ${RIBBON_HTML}
     <div id="main">
     ${SIDEBAR_HTML}
     <div id="sidebar-resizer" role="separator" aria-orientation="vertical" tabindex="0" title="Drag or press ArrowLeft/ArrowRight to resize the sidebar"></div>

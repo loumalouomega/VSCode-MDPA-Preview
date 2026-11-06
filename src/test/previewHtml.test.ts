@@ -281,3 +281,16 @@ test("the Clip controls keep every id the cut logic wires, in dock-then-popover 
   // The old card's captioned wrapper rows are gone (the dock has no column groups).
   assert.ok(!cut.includes("nav-row"));
 });
+
+test("the ribbon container always ships (hidden) between the menubar and #main; data-ribbon only when on", () => {
+  const off = buildPreviewHtml(base);
+  assert.ok(!off.includes("data-ribbon"));
+  const on = buildPreviewHtml({ ...base, ribbon: true });
+  assert.match(on, /<body[^>]*data-ribbon="1"/);
+  for (const html of [off, on]) {
+    const a = html.indexOf('id="menubar"');
+    const r = html.indexOf('id="ribbon"');
+    const m = html.indexOf('id="main"');
+    assert.ok(a > 0 && r > a && m > r, "menubar < ribbon < main");
+  }
+});
