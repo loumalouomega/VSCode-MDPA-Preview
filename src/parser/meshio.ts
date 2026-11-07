@@ -338,6 +338,11 @@ export interface MeshioModule {
     numTrianglePairs: number; numCoplanar: number; numSegments: number; numCellsA: number; numCellsB: number;
     truncated: boolean; clean: boolean; warnings: string[];
   };
+  /** Inverted, degenerate and overlapping tetrahedra of `tetra`/`tetra10` cells; the mesh is unchanged (19.0.0). */
+  checkTetrahedra(mesh: MeshioMesh, options?: { zeroVolumeFactor?: number }): {
+    numTetrahedra: number; numInverted: number; numDegenerate: number; numOverlaps: number;
+    minVolume: number; maxVolume: number; valid: boolean; warnings: string[];
+  };
   /** Wall thickness (inward) or clearance (outward) per facet by ray casting (18.0.0). */
   thickness(mesh: MeshioMesh, options?: Record<string, unknown>): {
     mesh: MeshioMesh; direction: "inward" | "outward"; numCells: number; numHit: number; numMissed: number; numBelow: number;

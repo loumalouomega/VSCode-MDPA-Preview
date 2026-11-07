@@ -14,7 +14,7 @@ import type { WatertightReport } from "./parser/watertight";
 import type { FieldIntegral } from "./parser/fieldIntegrate";
 import type { LodSurface } from "./parser/lodSurface";
 import type { FeatureEdgeOptions, PeriodicOptions } from "./parser/analysisOps";
-import type { featureEdges, findIntersectionsReport, hausdorff, periodicNodes, qualityGate } from "./parser/analysisOps";
+import type { checkTetrahedraReport, featureEdges, findIntersectionsReport, hausdorff, periodicNodes, qualityGate } from "./parser/analysisOps";
 import type { FlowBalance, FlowBalanceSpec } from "./parser/flowBalance";
 import type { RecoverFluxParams, RecoveredFlux } from "./parser/boundaryFlux";
 import type { AnalysisKind, AnalysisParams, AnalysisWorkRequest, AnalysisWorkResponse } from "./analysisWorker";
@@ -112,6 +112,13 @@ export const runIntersectionsInWorker = (
   opts?: RunOpts
 ): Promise<Awaited<ReturnType<typeof findIntersectionsReport>>> =>
   runInAnalysisWorker("intersections", model, params, opts) as Promise<Awaited<ReturnType<typeof findIntersectionsReport>>>;
+
+export const runCheckTetrahedraInWorker = (
+  model: MdpaModel,
+  params: AnalysisParams["checkTetrahedra"],
+  opts?: RunOpts
+): Promise<Awaited<ReturnType<typeof checkTetrahedraReport>>> =>
+  runInAnalysisWorker("checkTetrahedra", model, params, opts) as Promise<Awaited<ReturnType<typeof checkTetrahedraReport>>>;
 
 export const runRecoverFluxInWorker = (model: MdpaModel, params: RecoverFluxParams, opts?: RunOpts): Promise<RecoveredFlux> =>
   runInAnalysisWorker("recoverFlux", model, params, opts) as Promise<RecoveredFlux>;

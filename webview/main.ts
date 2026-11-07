@@ -2201,7 +2201,7 @@ function handleHostMessage(event: MessageEvent): void {
 
     case "meshAnalysisResult": {
       const r = msg as { kind?: string; seq?: number; cancelled?: boolean; edges?: { points: number[]; lines: number[] }; selection?: Record<string, unknown> };
-      if (["qualityGate","hausdorff","periodicNodes","featureEdges","intersections"].includes(r.kind ?? "")) {
+      if (["qualityGate","hausdorff","periodicNodes","featureEdges","intersections","checkTetrahedra"].includes(r.kind ?? "")) {
         // A cancelled or superseded worker run must not overwrite the current report.
         if (isStaleAnalysisReply(r)) break;
         showAnalysisResult(msg);

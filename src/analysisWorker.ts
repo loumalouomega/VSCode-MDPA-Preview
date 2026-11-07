@@ -19,8 +19,8 @@ import { probeAlongPath, ProbeParams } from "./parser/pathProbe";
 import { watertightReport } from "./parser/watertight";
 import { integrateFields } from "./parser/fieldIntegrate";
 import { lodSurface } from "./parser/lodSurface";
-import { featureEdges, findIntersectionsReport, hausdorff, periodicNodes, qualityGate } from "./parser/analysisOps";
-import type { FeatureEdgeOptions, IntersectionOptions, PeriodicOptions } from "./parser/analysisOps";
+import { checkTetrahedraReport, featureEdges, findIntersectionsReport, hausdorff, periodicNodes, qualityGate } from "./parser/analysisOps";
+import type { FeatureEdgeOptions, IntersectionOptions, PeriodicOptions, TetrahedraCheckParams } from "./parser/analysisOps";
 import { flowBalance } from "./parser/flowBalance";
 import type { FlowBalanceSpec } from "./parser/flowBalance";
 import { recoverBoundaryFluxField } from "./parser/boundaryFlux";
@@ -44,6 +44,7 @@ export interface AnalysisParams {
   featureEdges: FeatureEdgeOptions;
   /** `other` (a second surface) is read on the host and structured-cloned in. */
   intersections: IntersectionOptions;
+  checkTetrahedra: TetrahedraCheckParams;
   flowBalance: { spec: FlowBalanceSpec };
   recoverFlux: RecoverFluxParams;
 }
@@ -68,6 +69,7 @@ async function execute(req: AnalysisWorkRequest): Promise<unknown> {
     case "periodicNodes": return periodicNodes(req.model, req.params);
     case "featureEdges": return featureEdges(req.model, req.params);
     case "intersections": return findIntersectionsReport(req.model, req.params);
+    case "checkTetrahedra": return checkTetrahedraReport(req.model, req.params);
     case "flowBalance": return flowBalance(req.model, req.params.spec);
     case "recoverFlux": return recoverBoundaryFluxField(req.model, req.params);
     default: throw new Error(`Unknown analysis "${(req as { type: string }).type}".`);

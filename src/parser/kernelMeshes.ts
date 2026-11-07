@@ -364,6 +364,17 @@ export interface OctreeMeshSpec {
 
 const defined = (o: Record<string, unknown>) => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined && v !== null));
 
+/** The 19.0.0 volume-fix counters of an octree/tetrahedralize result, as one sentence (empty when nothing was fixed). */
+export function volumeFixSentence(r: Partial<Record<"numGapsFilled" | "numGapsSkipped" | "numCollapsed" | "numReordered" | "numOverlaps" | "numCapsRemoved" | "numSplit" | "numSlivers" | "numUntangled", number>>): string {
+  const items: [string, number | undefined][] = [
+    ["gap(s) filled", r.numGapsFilled], ["gap(s) left open", r.numGapsSkipped], ["degenerate tetrahedra collapsed", r.numCollapsed],
+    ["inverted tetrahedra reordered", r.numReordered], ["flat cap(s) removed", r.numCapsRemoved], ["tetrahedra split", r.numSplit],
+    ["sliver(s) removed", r.numSlivers], ["untangled", r.numUntangled], ["overlapping pair(s) remain", r.numOverlaps],
+  ];
+  const shown = items.filter(([, v]) => typeof v === "number" && v > 0).map(([l, v]) => `${v!.toLocaleString("en-US")} ${l}`);
+  return shown.length ? `Volume fix: ${shown.join(", ")}.` : "";
+}
+
 /** A volume mesh of the inside of a skin on a balanced octree. */
 export async function octreeMeshModel(model: MdpaModel, spec: OctreeMeshSpec, diagnostics: MdpaDiagnostic[] = []): Promise<KernelMeshResult> {
   const { surface, note } = triangleSurfaceOf(model);
@@ -381,6 +392,8 @@ export async function octreeMeshModel(model: MdpaModel, spec: OctreeMeshSpec, di
   if (r.numBoundaryEdgesOpen > 0 || r.numNonManifoldBoundaryEdges > 0) {
     parts.push(`Boundary is not watertight (${r.numBoundaryEdgesOpen} open, ${r.numNonManifoldBoundaryEdges} non-manifold edge(s)).`);
   }
+  const fix = volumeFixSentence(r);
+  if (fix) parts.push(fix);
   if (r.output === "castellated") parts.push(`${r.numSurrogateFaces.toLocaleString("en-US")} surrogate boundary face(s), ${r.numHanging.toLocaleString("en-US")} hanging node(s).`);
   if (r.warnings.length) parts.push(r.warnings.join(" "));
   let out = read;
@@ -491,7 +504,9 @@ export interface CadSurfaceSpec {
   virtualEdges?: boolean;
   /** Mesh a face whose metric's condition number passes this in a flattening (0 = off, otherwise above 1; order 1 only). */
   reparamConditionNumber?: number;
+  /** Kernel default is true since 19.0.0; this extension passes false when omitted so recorded results keep their bytes. */
   modelTolerances?: boolean;
+  /** As `modelTolerances`. */
   virtualFaces?: boolean;
   /** Lop acute corners in place of concentric shells; effective only with `minAngle` above 0. */
   lopCorners?: boolean;
@@ -638,7 +653,8 @@ export async function cadSurfaceModel(model: MdpaModel, spec: CadSurfaceSpec, di
     throw new Error(`The side channel is ${channel.format}; a CAD surface mesh needs a B-rep (a .cad.json, or a STEP/IGES read).`);
   }
   const { kind: _kind, backgroundModel, backgroundArray, backgroundLabel: _label, metricBackgroundModel, metricBackgroundLabel: _mlabel, ...options } = spec;
-  const kernelOptions: Record<string, unknown> = { ...options };
+  // meshio++ 19.0.0 flipped these two to true; recorded recipes that omit them keep their pre-19 result.
+  const kernelOptions: Record<string, unknown> = { modelTolerances: false, virtualFaces: false, ...options };
   if (backgroundModel) {
     const name = backgroundArray ?? "size";
     const mesh = modelToMeshio(backgroundModel, diagnostics, { dim: 3 });

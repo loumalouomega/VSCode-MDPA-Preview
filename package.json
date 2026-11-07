@@ -1362,7 +1362,7 @@
     "@kitware/vtk.js": "^38.0.4",
     "@kratos-flowgraph/flowgraph": "^1.0.2",
     "@loumalouomega/mmg-wasm": "^0.1.0",
-    "@meshioplusplus/wasm": "^18.3.0",
+    "@meshioplusplus/wasm": "^19.0.0",
     "@modelcontextprotocol/sdk": "^1.32.2",
     "cors": "^2.8.5",
     "ejs": "^7.0.2",

@@ -5,7 +5,7 @@ let renderAnalysisResult: (message: unknown) => void = () => {};
 // The host runs these analyses in a cancellable worker (roadmap item 2): each
 // request carries a sequence tag, the newest of a kind wins, and a reply that
 // is stale (an older tag) or cancelled must not overwrite what is on screen.
-const TOOL_KINDS = ['qualityGate','hausdorff','periodicNodes','featureEdges','intersections'] as const;
+const TOOL_KINDS = ['qualityGate','hausdorff','periodicNodes','featureEdges','intersections','checkTetrahedra'] as const;
 const latestSeq = new Map<string, number>();
 let nextSeq = 0;
 let rawPost: Post = () => {};
@@ -53,6 +53,7 @@ export function initAnalysisTools(post: Post): void {
   const other=text('Comparison mesh path'), samples=text('Hausdorff face samples','0');
   button('Compare surfaces',()=>requestAnalysis({kind:'hausdorff',path:other.value,faceSamples:Number(samples.value)}));
   button('Find intersections (self, or with the comparison mesh)',()=>requestAnalysis({kind:'intersections',path:other.value.trim()||undefined}));
+  button('Check tetrahedra (inverted, degenerate, overlapping)',()=>requestAnalysis({kind:'checkTetrahedra'}));
   const angle=text('Feature angle (degrees)','30');
   const categories = ['feature','boundary','nonManifold','inconsistent'].map(name => {const label=document.createElement('label');const input=document.createElement('input');input.type='checkbox';input.checked=true;label.append(input,name);host.append(label);return {name,input};});
   const edgeOptions=()=>({featureAngle:Number(angle.value),...Object.fromEntries(categories.map(c=>[c.name,c.input.checked]))});
