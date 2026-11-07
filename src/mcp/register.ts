@@ -25,6 +25,7 @@ import {
   meshCurvature,
   meshGraphTool,
   meshIntersections,
+  meshCheckTetrahedra,
   meshFitPrimitives,
   meshAleQuality,
   meshRecoverFlux,
@@ -464,6 +465,19 @@ export function registerAllTools(server: McpServer): void {
   );
 
   server.registerTool(
+    "mesh_check_tetrahedra",
+    {
+      description:
+        "Counts the inverted (negative volume), degenerate (volume ~ 0) and overlapping tetrahedra of a mesh's Tetrahedra3D4N / Tetrahedra3D10N cells (meshio++ >= 19.0.0), with the smallest and largest signed volume and valid (true = none of the three). Counts only: the kernel does not name the cells. Read-only; a mesh without tetrahedra is refused. To repair inverted tetrahedra use mesh_transform untangle, or regenerate with octreeMesh/tetrahedralize (volumeFix is on by default).",
+      inputSchema: {
+        path: meshPath,
+        zeroVolumeFactor: z.number().nonnegative().optional().describe("A volume under this fraction of the longest edge cubed counts as zero (default 1e-6)"),
+      },
+    },
+    runCancellable(meshCheckTetrahedra)
+  );
+
+  server.registerTool(
     "mesh_graph",
     {
       description:
@@ -728,7 +742,7 @@ export function registerAllTools(server: McpServer): void {
         shape: z.enum(GENERATOR_SHAPES as [string, ...string[]]).optional().describe("generate: rectangle, box, disk, uvSphere, icosaSphere, cylinder, referenceTriangle, ngon, annulus, lshape, plateWithHole, honeycomb or referenceCells"),
         params: z.record(z.string(), z.unknown()).optional().describe("generate: the shape's arguments by name, e.g. rectangle {dims:[20,10], size:[2,1], cellType:\"triangle\"}, box {dims, size, origin, cellType: hexahedron|tetra|wedge}, disk {radius, n}, uvSphere {radius, nu, nv}, cylinder {radius, height, nxy, nz}, annulus {innerRadius, outerRadius, ntheta, nr, angle}; every omitted one takes the kernel default; `order: 2` gives quadratic cells; at most 5 million cells. Side regions arrive as SubModelParts"),
         hangingConstraints: z.union([z.boolean(), z.array(z.string())]).optional().describe("octreeMesh: tie the hanging nodes of the hexahedral leaves with LinearMasterSlaveConstraints (true = DISPLACEMENT, or the dof variables to tie: scalars such as TEMPERATURE as is, vectors such as VELOCITY expanded to _X/_Y/_Z); parents are recovered from the geometry, listed in SubModelPart HangingNodes. Same as the addHangingNodeConstraints op."),
-        options: z.record(z.string(), z.unknown()).optional().describe("extrude/revolve/mirror/boundaryLayer/tetrahedralize/errorSize/checkConformity: that kernel's meshio++ options verbatim (e.g. extrude {numLayers, direction, ratio}; revolve {axis, axisPoint, angle, numLayers}; mirror {origin, normal, keepOriginal, weld}; boundaryLayer {firstHeight, numLayers, growth}; tetrahedralize {backend, maxSize, grading}; errorSize {targetError, errorArray}; adapt {hsiz|size|metric, hmin, hmax, hausd, hgrad, frozen, required, local} / discretizeLevelset {levelSet, isovalue, materials, removeSmallComponents} / meshDomain {hsiz|size, holes} — the MMG kernels of the FULL meshio++ artifact only, writing a NEW mesh (use mesh_transform remesh for the in-place MMG edit); metricFromHessian {hessian, error, hmin, hmax, output} works on both artifacts and writes the metric field adapt takes; findIntersections writes the intersection CURVE of a surface with itself as a line mesh — use mesh_intersections for the report; tetToPoly {featureAngle, pointDataToCellData} builds the polyhedral median DUAL of a tetrahedral mesh — only a .vtu output keeps the polyhedra, every other format gets their tetrahedral decomposition). octreeMesh: meshio++ OctreeMeshOptions — output (tet|castellated|hex), minSize, maxSize, maxLevel, padding/paddingRelative, curvatureAngle, featureAngle, gapCells, skinGrading (graded|uniform), conformity (stuffing|cleaving), fill, keepOutside, pillow, fitIterations, maxCells, maxTets, … Unknown keys are refused by the kernel"),
+        options: z.record(z.string(), z.unknown()).optional().describe("extrude/revolve/mirror/boundaryLayer/tetrahedralize/errorSize/checkConformity: that kernel's meshio++ options verbatim (e.g. extrude {numLayers, direction, ratio}; revolve {axis, axisPoint, angle, numLayers}; mirror {origin, normal, keepOriginal, weld}; boundaryLayer {firstHeight, numLayers, growth}; tetrahedralize {backend, maxSize, grading}; errorSize {targetError, errorArray}; adapt {hsiz|size|metric, hmin, hmax, hausd, hgrad, frozen, required, local} / discretizeLevelset {levelSet, isovalue, materials, removeSmallComponents} / meshDomain {hsiz|size, holes} — the MMG kernels of the FULL meshio++ artifact only, writing a NEW mesh (use mesh_transform remesh for the in-place MMG edit); metricFromHessian {hessian, error, hmin, hmax, output} works on both artifacts and writes the metric field adapt takes; findIntersections writes the intersection CURVE of a surface with itself as a line mesh — use mesh_intersections for the report; tetToPoly {featureAngle, pointDataToCellData} builds the polyhedral median DUAL of a tetrahedral mesh — only a .vtu output keeps the polyhedra, every other format gets their tetrahedral decomposition). octreeMesh: meshio++ OctreeMeshOptions — output (tet|castellated|hex), minSize, maxSize, maxLevel, padding/paddingRelative, curvatureAngle, featureAngle, gapCells, skinGrading (graded|uniform), conformity (stuffing|cleaving), fill, keepOutside, pillow, fitIterations, maxCells, maxTets, volumeFix (default true since 19.0.0: repairs gaps, degenerate/inverted tetrahedra, flat caps and slivers; false restores the 18.x output), zeroVolumeFactor, capFlatness, crossingMargin, crossingGap, … Unknown keys are refused by the kernel"),
         rootCells: z.array(z.number().int().positive()).optional().describe("octree: root cells per axis"),
         minLevel: z.number().int().nonnegative().optional().describe("octree: coarsest level (default 0)"),
         maxLevel: z.number().int().nonnegative().optional().describe("octree: finest level (default 4)"),

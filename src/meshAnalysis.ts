@@ -1,4 +1,4 @@
-import { qualityGate, hausdorff, periodicNodes, featureEdges, findIntersectionsReport, PeriodicOptions, FeatureEdgeOptions, IntersectionOptions } from "./parser/analysisOps";
+import { qualityGate, hausdorff, periodicNodes, featureEdges, findIntersectionsReport, checkTetrahedraReport, describeTetrahedraCheck, PeriodicOptions, FeatureEdgeOptions, IntersectionOptions } from "./parser/analysisOps";
 import { parseMeshFile } from "./parser/meshFileParser";
 import { parseMdpa } from "./parser/mdpaParser";
 import { meshExtname } from "./parser/meshFormats";
@@ -39,12 +39,14 @@ import { MdpaModel } from "./parser/types";
 /** The `meshAnalysis` kinds whose wasm work runs in the analysis worker (and are therefore cancellable). */
 export const WORKER_KINDS: ReadonlySet<string> = new Set([
   "probe", "watertight", "integrate", "lod",
-  "qualityGate", "hausdorff", "periodicNodes", "featureEdges", "flowBalance", "intersections", "recoverFlux",
+  "qualityGate", "hausdorff", "periodicNodes", "featureEdges", "flowBalance", "intersections", "checkTetrahedra", "recoverFlux",
 ]);
 
 export interface MeshAnalysisMessage extends FeatureEdgeOptions {
   require?: string; maxInverted?: number; maxDegenerate?: number;
   path?: string; faceSamples?: number;
+  /** checkTetrahedra kind: a volume under this fraction of the longest edge cubed counts as zero. */
+  zeroVolumeFactor?: number;
   /** Intersections kind: keep at most this many facet pairs (counts still cover all). `path` names an optional SECOND surface. */
   maxPairs?: number;
   slave?: string; master?: string; matrix?: number[]; translate?: number[]; rotate?: PeriodicOptions["rotate"]; atol?: number; requireComplete?: boolean;
@@ -102,6 +104,7 @@ export async function runMeshAnalysis(
     periodicRunner?: (model: MdpaModel, params: PeriodicOptions, opts?: { signal?: AbortSignal }) => ReturnType<typeof periodicNodes>;
     featureEdgesRunner?: (model: MdpaModel, params: FeatureEdgeOptions, opts?: { signal?: AbortSignal }) => ReturnType<typeof featureEdges>;
     intersectionsRunner?: (model: MdpaModel, params: IntersectionOptions, opts?: { signal?: AbortSignal }) => ReturnType<typeof findIntersectionsReport>;
+    checkTetrahedraRunner?: (model: MdpaModel, params: { zeroVolumeFactor?: number }, opts?: { signal?: AbortSignal }) => ReturnType<typeof checkTetrahedraReport>;
     flowBalanceRunner?: (model: MdpaModel, spec: FlowBalanceSpec, opts?: { signal?: AbortSignal }) => Promise<FlowBalance>;
     recoverFluxRunner?: (model: MdpaModel, params: RecoverFluxParams, opts?: { signal?: AbortSignal }) => Promise<RecoveredFlux>;
   } = {}
@@ -134,6 +137,10 @@ export async function runMeshAnalysis(
         : `${report.numPairs} intersecting facet pair(s) (${report.numTrianglePairs} triangle pairs, ${report.numCoplanar} coplanar), ${report.cells.total} facet(s) involved${report.truncated ? "; pair list truncated" : ""}.`;
       const { segments, ...rest } = report;
       return { type: "meshAnalysisResult", kind, seq: msg.seq, report: rest, summary, selection: report.clean ? undefined : selection, edges: segments };
+    }
+    if (kind === "checkTetrahedra") {
+      const report = await (opts.checkTetrahedraRunner ?? checkTetrahedraReport)(model, { zeroVolumeFactor: msg.zeroVolumeFactor }, signal);
+      return { type: "meshAnalysisResult", kind, seq: msg.seq, report, summary: describeTetrahedraCheck(report) };
     }
     if (kind === "periodicNodes") {
       const params: PeriodicOptions = {

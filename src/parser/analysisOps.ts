@@ -3,6 +3,7 @@ import { MESHIO_ID_KEY, MESHIO_KIND_KEY } from "./meshioFormats";
 import { loadMeshio } from './meshio';
 import { modelToMeshio, meshioToModel, meshioBlockOrder } from './meshioConvert';
 import { cellCategory } from './writers/writerCommon';
+import { VtkCellType } from './geometryMap';
 import type { MdpaModel } from './types';
 import { extractSubModelPart } from './subModelPartExtract';
 
@@ -155,4 +156,34 @@ export async function findIntersectionsReport(model: MdpaModel, options: Interse
     clean: r.clean, numPairs: r.numPairs, numTrianglePairs: r.numTrianglePairs, numCoplanar: r.numCoplanar, numSegments: r.numSegments,
     numCellsA: r.numCellsA, numCellsB: r.numCellsB, truncated: r.truncated, warnings: r.warnings, cells, otherCells, segments,
   };
+}
+
+export interface TetrahedraCheckParams {
+  /** A volume under this fraction of the longest edge cubed counts as zero (kernel default 1e-6). */
+  zeroVolumeFactor?: number;
+}
+
+/**
+ * Inverted, degenerate and overlapping tetrahedra (meshio++ >= 19.0.0 `checkTetrahedra`). Read-only; the
+ * kernel reports counts only, so no cells are named. Linear and quadratic tetrahedra are examined.
+ */
+export async function checkTetrahedraReport(model: MdpaModel, options: TetrahedraCheckParams = {}) {
+  if (!model.blocks.some((b) => b.count > 0 && (b.vtkCellType === VtkCellType.TETRA || b.vtkCellType === VtkCellType.QUADRATIC_TETRA))) {
+    throw new Error('The mesh has no tetrahedra (Tetrahedra3D4N / Tetrahedra3D10N); there is nothing to check. Simplexify it first if it holds other volume cells.');
+  }
+  const z = options.zeroVolumeFactor;
+  if (z !== undefined && !(Number.isFinite(z) && z >= 0)) throw new Error('zeroVolumeFactor must be a nonnegative number.');
+  const m = await loadMeshio();
+  const r = m.checkTetrahedra(modelToMeshio({ ...model, is3D: true }, []), z === undefined ? {} : { zeroVolumeFactor: z });
+  return {
+    valid: r.valid, numTetrahedra: r.numTetrahedra, numInverted: r.numInverted, numDegenerate: r.numDegenerate,
+    numOverlaps: r.numOverlaps, minVolume: r.minVolume, maxVolume: r.maxVolume, warnings: r.warnings,
+  };
+}
+
+export function describeTetrahedraCheck(r: Awaited<ReturnType<typeof checkTetrahedraReport>>): string {
+  const n = (x: number) => x.toLocaleString('en-US');
+  return r.valid
+    ? `${n(r.numTetrahedra)} tetrahedra, all valid (volume ${+r.minVolume.toPrecision(4)} to ${+r.maxVolume.toPrecision(4)}).`
+    : `${n(r.numTetrahedra)} tetrahedra: ${n(r.numInverted)} inverted, ${n(r.numDegenerate)} degenerate, ${n(r.numOverlaps)} overlapping pair(s) (smallest volume ${+r.minVolume.toPrecision(4)}).`;
 }

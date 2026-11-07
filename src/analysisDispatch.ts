@@ -18,6 +18,7 @@ import {
   runPeriodicNodesInWorker,
   runProbeInWorker,
   runIntersectionsInWorker,
+  runCheckTetrahedraInWorker,
   runQualityGateInWorker,
   runRecoverFluxInWorker,
   runWatertightInWorker,
@@ -28,7 +29,7 @@ import type { MdpaModel } from "./parser/types";
 export type WorkerRunners = Pick<
   NonNullable<Parameters<typeof runMeshAnalysis>[2]>,
   | "probeRunner" | "watertightRunner" | "integrateRunner" | "lodRunner"
-  | "qualityGateRunner" | "hausdorffRunner" | "periodicRunner" | "featureEdgesRunner" | "flowBalanceRunner" | "intersectionsRunner" | "recoverFluxRunner"
+  | "qualityGateRunner" | "hausdorffRunner" | "periodicRunner" | "featureEdgesRunner" | "flowBalanceRunner" | "intersectionsRunner" | "checkTetrahedraRunner" | "recoverFluxRunner"
 >;
 
 const WORKER_RUNNERS: WorkerRunners = {
@@ -41,6 +42,7 @@ const WORKER_RUNNERS: WorkerRunners = {
   periodicRunner: runPeriodicNodesInWorker,
   featureEdgesRunner: runFeatureEdgesInWorker,
   intersectionsRunner: runIntersectionsInWorker,
+  checkTetrahedraRunner: runCheckTetrahedraInWorker,
   flowBalanceRunner: runFlowBalanceInWorker,
   recoverFluxRunner: runRecoverFluxInWorker,
 };

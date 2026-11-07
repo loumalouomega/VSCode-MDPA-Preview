@@ -37,7 +37,7 @@ import {
 } from "../recipePresetLibrary";
 import { sequenceSource, exportResampled, ResampleSourceOptions } from "../parser/resampleFiles";
 import type { ResampleOptions } from "../parser/resampleSequence";
-import { qualityGate, hausdorff, periodicNodes, findIntersectionsReport, PeriodicOptions } from "../parser/analysisOps";
+import { qualityGate, hausdorff, periodicNodes, findIntersectionsReport, checkTetrahedraReport, PeriodicOptions } from "../parser/analysisOps";
 import { assertFreshElmerDestination } from "../parser/caeFiles";
 /**
  * The MCP tool handler core: path-based tools over the pure parser/problemtype
@@ -1221,6 +1221,16 @@ export async function meshIntersections(args: {
     cells: cut(r.cells), ...(r.otherCells ? { otherCells: cut(r.otherCells) } : {}),
     ...(args.includeSegments && r.segments ? { segments: r.segments } : {}),
   };
+}
+
+/**
+ * mesh_check_tetrahedra: inverted, degenerate and overlapping tetrahedra (meshio++ >= 19.0.0). Read-only; the
+ * same core as the Mesh-analysis panel's "Check tetrahedra".
+ */
+export async function meshCheckTetrahedra(args: { path: string; zeroVolumeFactor?: number }, execution: PlotExecution = {}): Promise<object> {
+  const { model } = await loadMesh(args.path, undefined, undefined, undefined, undefined, undefined, execution.signal);
+  const r = await checkTetrahedraReport(model, { zeroVolumeFactor: args.zeroVolumeFactor });
+  return { path: args.path, ...r };
 }
 
 /**

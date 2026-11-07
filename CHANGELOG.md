@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- **meshio++ 19.0.0.** The kernel moves from 18.3.0 (no format change expected; the live key audits pass unedited). Adopted:
+  - **Check tetrahedra**: the new `checkTetrahedra` kernel counts inverted, degenerate and overlapping tetrahedra (linear and quadratic) with the smallest and largest signed volume. It is a **Check tetrahedra** button in the Mesh-analysis panel (cancellable, run in the analysis worker) and MCP `mesh_check_tetrahedra`. The kernel reports counts only, so no cells are selected.
+  - **Octree volume fix**: `octreeMesh` now repairs its tetrahedra by default (`volumeFix`, with `zeroVolumeFactor`, `capFlatness`, `crossingMargin`, `crossingGap`), and the summary states what it fixed (gaps filled, degenerate tetrahedra collapsed, inverted ones reordered, caps removed, slivers removed, nodes untangled, overlaps remaining). The output differs from 18.3.0; pass `volumeFix: false` to restore it.
+  - **`cadSurface` defaults**: upstream now turns `modelTolerances` and `virtualFaces` on by default. This extension keeps them off when a recipe omits them, so recorded results do not change; set them to `true` to get the new behaviour.
+  - `mesh_capabilities` reports 19.0.0 and lists `checkTetrahedra`.
+
 ## [5.37.0] - 2026-11-06
 
 ### Added
