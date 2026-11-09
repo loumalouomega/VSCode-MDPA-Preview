@@ -580,7 +580,7 @@ export interface OutputState {
  */
 export interface RestartState {
   save?: { frequency: number; controlType: "step" | "time"; keep?: number };
-  from?: { runDirectory: string; label: number; inputFilename?: string };
+  from?: { runDirectory: string; label?: number; inputFilename?: string };
 }
 
 /** The user's whole case setup — persisted as `<stem>.kratoscase.json`. */

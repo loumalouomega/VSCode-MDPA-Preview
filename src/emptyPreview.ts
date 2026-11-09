@@ -878,6 +878,8 @@ const runAleSeries = (msg: Record<string, unknown>): Promise<void> => seriesScan
       await session.ptController?.savePreset(msg as { lawId: string; name: string; values: Record<string, number> });
     } else if (msg?.type === "ptPresetImport") {
       await session.ptController?.importPresets();
+    } else if (msg?.type === "ptRestartPick") {
+      await session.ptController?.pickRestartRun();
     } else if (msg?.type === "ptPresetExport") {
       await session.ptController?.exportPreset(String(msg.preset ?? ""));
     } else if (msg?.type === "ptPreviewTables") {

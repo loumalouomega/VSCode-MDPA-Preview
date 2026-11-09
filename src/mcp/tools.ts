@@ -1,6 +1,6 @@
 import { fieldExtremes } from "../parser/fieldScalars";
-import { supportsRestart } from "../problemtype/restart";
-import { resolveRestartSource } from "../problemtype/restartFile";
+import { preparedRestart } from "../problemtype/preparation";
+import { checkRestart, resolveStateRestart, restartIdentity } from "../problemtype/restartFile";
 import { computePartMeasures, measureName, PartMeasures } from "../parser/partMeasures";
 import { discoverOutputs } from '../problemtype/outputDiscovery';
 import { exportCaseResults, normalizeExportFormats } from "../problemtype/resultExport";
@@ -3279,7 +3279,9 @@ export async function caseValidate(args: {
   const runtime = await resolveRuntime(ptId, args.workspaceDirs);
   // One rulebook with the sidebar's Preflight card: a dry run of the generator
   // plus the structural, entity, Properties and mesh-quality checks.
-  const report = await preflightCase(runtime, model, state, meshStem(args.meshPath), {
+  const restartCheck = checkRestart(path.dirname(path.resolve(args.meshPath)), meshStem(args.meshPath), path.resolve(args.meshPath), state);
+  const report = await preflightCase(runtime, model, restartCheck.state, meshStem(args.meshPath), {
+    restartProblems: restartCheck.problems,
     isMdpaSource: meshExtname(args.meshPath) === ".mdpa",
     quality: args.quality,
     qualityMaxElements: args.qualityMaxElements,
@@ -3497,27 +3499,15 @@ export async function caseGenerate(args: {
     written.push(domainPath);
     domainPaths.push(domainPath);
   }
-  if (state.restart?.from && supportsRestart(runtime.decl.id)) {
-    // Checked against the mesh this case will read, before anything else is written.
-    state = {
-      ...state,
-      restart: {
-        ...state.restart,
-        from: resolveRestartSource(
-          caseDir,
-          state.restart.from,
-          domainPaths[0] ?? path.join(caseDir, `${caseStem}.mdpa`)
-        ),
-      },
-    };
-  }
+  // Checked against the mesh this case will read, before the solver files are written.
+  state = resolveStateRestart(caseDir, state, domainPaths[0] ?? path.join(caseDir, `${caseStem}.mdpa`));
   const out = await generateCase(runtime, caseModel, state, caseStem);
   const handoff = readHandoff(args.meshPath);
   // The CAD export this mesh came from, when it left a handoff beside it:
   // identity only, so the chain stays checkable without a path in the record.
   // A manifest that records no source revision is not turned into a claim.
   const identity = handoff.manifest ? handoffIdentity(handoff.manifest) : undefined;
-  const prepared = writePreparedCase({ directory: caseDir, sourcePath: args.meshPath,
+  const prepared = writePreparedCase({ directory: caseDir, sourcePath: args.meshPath, restart: restartIdentity(caseDir, state),
     solverMeshPath: domainPaths[0] ?? path.join(caseDir, `${caseStem}.mdpa`), runtime, state, generated: out,
     warnings: [...warnings, ...plan.warnings], extraMeshPaths: domainPaths.slice(1), ...(args.run ? { run: args.run } : {}),
     ...(identity ? { handoff: identity } : {}) });
@@ -4361,9 +4351,11 @@ export async function caseStatus(args: { meshPath?: string; requestId?: string; 
   const convergence = convergenceRead.parsed ? briefConvergence(convergenceRead.parsed, status) : undefined;
   const optimization = briefOptimization(path.dirname(abs), status);
   const rom = briefRom(path.dirname(abs));
+  const restartedFrom = preparedRestart(path.dirname(abs));
   return {
     meshPath: abs,
     status,
+    ...(restartedFrom ? { restartedFrom } : {}),
     ...(convergence ? { convergence } : {}),
     ...(optimization ? { optimization } : {}),
     ...(rom ? { rom } : {}),

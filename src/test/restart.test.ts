@@ -11,9 +11,9 @@ import { structural } from "../problemtype/builtins/structural";
 import { potentialFlow } from "../problemtype/builtins/potentialFlow";
 import { parseCaseJson, serializeCase } from "../problemtype/caseFile";
 import { applyRestart, restartRefusals, restartSaveProcess, supportsRestart } from "../problemtype/restart";
-import { findRestartFiles, resolveRestartSource } from "../problemtype/restartFile";
+import { checkRestart, findRestartFiles, listRestartLabels, resolveRestartSource, resolveStateRestart, restartIdentity } from "../problemtype/restartFile";
 import { writeExecution } from "../problemtype/runReceiptWriter";
-import { writePreparedCase } from "../problemtype/preparation";
+import { parsePreparationReport, PREPARATION_FILE, preparedRestart, writePreparedCase } from "../problemtype/preparation";
 import type { CaseState, JsonObject } from "../problemtype/types";
 
 const MDPA = `Begin Properties 0
@@ -168,6 +168,67 @@ test("resolveRestartSource names every refusal", async () => {
       (e: Error) => /is running/.test(e.message) && /differs/.test(e.message) && /label 9/.test(e.message)
     );
     assert.throws(() => resolveRestartSource(root, { runDirectory: "nope", label: 1 }, mesh), /no run receipt/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("without a label the run's latest restart is used and its identity is recorded", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "restart-"));
+  try {
+    const dir = await sourceRun(root, { meshText: MDPA, label: 4 });
+    fs.writeFileSync(path.join(dir, "beam__restart_files", "beam_11.rest"), "x");
+    assert.deepEqual(listRestartLabels(dir), [4, 11]);
+    const mesh = path.join(root, "beam.mdpa");
+    fs.writeFileSync(mesh, MDPA);
+    const s = state();
+    s.restart = { from: { runDirectory: "runs/a" } };
+    const resolved = resolveStateRestart(root, s, mesh);
+    assert.equal(resolved.restart?.from?.label, 11);
+    assert.deepEqual(restartIdentity(root, resolved), { requestId: "r", label: 11 });
+    const out = await generateCase(structural, parseMdpa(MDPA), resolved, "beam");
+    assert.equal(JSON.parse(out.projectParameters).solver_settings.model_import_settings.restart_load_file_label, "11");
+    // a case with no restart source is returned unchanged
+    assert.equal(resolveStateRestart(root, state(), mesh).restart, undefined);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("preparation record keeps the restart identity and compare reports it", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "restart-"));
+  try {
+    const mesh = path.join(root, "beam.mdpa");
+    fs.writeFileSync(mesh, MDPA);
+    const st = state();
+    const generated = await generateCase(structural, parseMdpa(MDPA), st, "beam");
+    const { preparation } = writePreparedCase({
+      directory: root, sourcePath: mesh, solverMeshPath: mesh, runtime: structural, state: st, generated, warnings: [],
+      restart: { requestId: "r", label: 3 },
+    });
+    assert.deepEqual(preparation.restart, { requestId: "r", label: 3 });
+    assert.deepEqual(preparedRestart(root), { requestId: "r", label: 3 });
+    const text = fs.readFileSync(path.join(root, PREPARATION_FILE), "utf8");
+    assert.deepEqual(parsePreparationReport(text).restart, { requestId: "r", label: 3 });
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("checkRestart drops an unusable source and reports each reason", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "restart-"));
+  try {
+    await sourceRun(root, { meshText: MDPA, label: 7, state: "running" });
+    const mesh = path.join(root, "beam.mdpa");
+    fs.writeFileSync(mesh, MDPA);
+    const s = state();
+    s.restart = { save: { frequency: 2, controlType: "step" }, from: { runDirectory: "runs/a", label: 7 } };
+    const check = checkRestart(root, "beam", mesh, s);
+    assert.ok(check.problems.some((p) => /is running/.test(p)));
+    assert.equal(check.state.restart?.from, undefined);
+    assert.ok(check.state.restart?.save);
+    // the dry run no longer complains about an unresolved source
+    await generateCase(structural, parseMdpa(MDPA), check.state, "beam");
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

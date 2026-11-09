@@ -897,6 +897,8 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
         void session.ptController?.savePreset(msg as { lawId: string; name: string; values: Record<string, number> });
       } else if (msg?.type === "ptPresetImport") {
         void session.ptController?.importPresets();
+      } else if (msg?.type === "ptRestartPick") {
+        void session.ptController?.pickRestartRun();
       } else if (msg?.type === "ptPresetExport") {
         void session.ptController?.exportPreset(String(msg.preset ?? ""));
       } else if (msg?.type === "ptPreviewTables") {

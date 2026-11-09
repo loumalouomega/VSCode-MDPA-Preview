@@ -145,14 +145,14 @@ function readRestart(raw: unknown, warnings: string[]): import("./types").Restar
     } else warnings.push("Restart save frequency must be positive; restart saving was ignored.");
   } else if (raw.save !== undefined) warnings.push("Restart save settings were malformed and ignored.");
   if (isRecord(raw.from)) {
-    const label = Number(raw.from.label);
-    if (typeof raw.from.runDirectory === "string" && raw.from.runDirectory && Number.isInteger(label) && label >= 0) {
+    const label = raw.from.label === undefined ? undefined : Number(raw.from.label);
+    if (typeof raw.from.runDirectory === "string" && raw.from.runDirectory && (label === undefined || (Number.isInteger(label) && label >= 0))) {
       out.from = {
         runDirectory: raw.from.runDirectory,
-        label,
+        ...(label !== undefined ? { label } : {}),
         ...(typeof raw.from.inputFilename === "string" && raw.from.inputFilename ? { inputFilename: raw.from.inputFilename } : {}),
       };
-    } else warnings.push("Restart source needs a run directory and a non-negative integer label; it was ignored.");
+    } else warnings.push("Restart source needs a run directory and, when given, a non-negative integer label; it was ignored.");
   } else if (raw.from !== undefined) warnings.push("Restart source was malformed and ignored.");
   return out.save || out.from ? out : undefined;
 }

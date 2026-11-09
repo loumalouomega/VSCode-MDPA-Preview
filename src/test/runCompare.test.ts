@@ -230,3 +230,16 @@ test("the CAD export identity is compared when both runs record one", (t) => {
   const plain = run(t, {});
   assert.equal(compareRuns(left, plain).same.cadSource, undefined);
 });
+
+test("a restarted run names its restart source and whether both share one", (t) => {
+  const a = run(t, { preparation: preparation({ restart: { requestId: "src", label: 5 } }) });
+  const b = run(t, { receipt: { requestId: "request-b" }, preparation: preparation({ restart: { requestId: "src", label: 5 } }) });
+  const c = run(t, { receipt: { requestId: "request-c" }, preparation: preparation() });
+  const same = compareRuns(a, b);
+  assert.equal(same.same.restartSource, true);
+  assert.deepEqual(same.restartedFrom, { left: { requestId: "src", label: 5 }, right: { requestId: "src", label: 5 } });
+  const different = compareRuns(a, c);
+  assert.equal(different.same.restartSource, false);
+  assert.deepEqual(different.restartedFrom, { left: { requestId: "src", label: 5 } });
+  assert.equal(compareRuns(c, run(t, { receipt: { requestId: "request-d" } })).same.restartSource, undefined);
+});

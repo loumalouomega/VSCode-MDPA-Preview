@@ -34,7 +34,7 @@ export function restartImportSettings(from: NonNullable<RestartState["from"]>): 
   return {
     input_type: "rest",
     input_filename: from.inputFilename ?? "",
-    restart_load_file_label: String(from.label),
+    restart_load_file_label: String(from.label ?? 0),
   };
 }
 
@@ -46,7 +46,7 @@ export function restartRefusals(problemtypeId: string, restart: RestartState | u
     out.push(`Restart is not available for the "${problemtypeId}" problemtype (supported: ${RESTART_PROBLEMTYPES.join(", ")}).`);
     return out;
   }
-  if (restart.from && !restart.from.inputFilename) {
+  if (restart.from && (!restart.from.inputFilename || restart.from.label === undefined)) {
     out.push("The restart source is not resolved: name a previous run that has restart files (resolveRestartSource).");
   }
   return out;

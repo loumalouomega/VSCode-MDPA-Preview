@@ -317,6 +317,7 @@ import {
   initProblemtype,
   setProblemtypeCatalog,
   setProblemtypeCase,
+  setProblemtypeRestartPicked,
   setMaterialPresets,
   setProblemtypeModel,
   setProblemtypePreflight,
@@ -2240,6 +2241,9 @@ function handleHostMessage(event: MessageEvent): void {
       break;
     case "ptCase":
       setProblemtypeCase(msg.state as Parameters<typeof setProblemtypeCase>[0]);
+      break;
+    case "ptRestartPicked":
+      setProblemtypeRestartPicked(msg as unknown as Parameters<typeof setProblemtypeRestartPicked>[0]);
       break;
     case "ptPresets":
       setMaterialPresets(

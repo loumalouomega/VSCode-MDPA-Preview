@@ -89,6 +89,13 @@ export interface PreflightOptions {
    * read here, so this module stays fs-free; omitted for an in-memory model.
    */
   handoff?: HandoffRead;
+  /**
+   * Why the restart source cannot be used (`checkRestart` in `restartFile.ts`),
+   * one string per reason; each becomes an error finding `restart-source`. The
+   * caller passes the state with the unusable source removed so the dry run does
+   * not repeat the same reason in another wording.
+   */
+  restartProblems?: string[];
 }
 
 export const DEFAULT_QUALITY_MAX_ELEMENTS = 200_000;
@@ -275,6 +282,8 @@ export async function preflightCase(
       else add("error", "generate-refused", line);
     }
   }
+
+  for (const problem of opts.restartProblems ?? []) add("error", "restart-source", problem);
 
   // --- 2. Assignments and materials against the mesh and the declaration. ---
   const seen = new Set<string>();
