@@ -228,7 +228,7 @@ export function parseCaseJson(text: string): { state?: CaseState; warnings: stri
         return restart ? { restart } : {};
       })(),
       ...(isRecord(raw.parallel) && raw.parallel.type === "mpi"
-        ? { parallel: { type: "mpi" as const, ...(raw.parallel.partitionInMemory === true ? { partitionInMemory: true } : {}) } }
+        ? { parallel: { type: "mpi" as const, ...(raw.parallel.partitionInMemory === true ? { partitionInMemory: true } : {}), ...(raw.parallel.solver === "amesos" || raw.parallel.solver === "multi_level" ? { solver: raw.parallel.solver } : {}) } }
         : {}),
       ...(isRecord(raw.outputProcesses) ? { outputProcesses: raw.outputProcesses as import("./types").JsonObject } : {}),
       ...(() => {

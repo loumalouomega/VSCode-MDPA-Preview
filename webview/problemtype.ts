@@ -1909,6 +1909,17 @@ function renderParallel(decl: ProblemtypeDeclaration): void {
     const par = state.parallel;
     body.appendChild(
       fieldInput(
+        { id: "parallelSolver", label: t("distributed solver"), type: "enum", options: [{ value: "amgcl", label: "AMG (amgcl)" }, { value: "amesos", label: t("Direct (Amesos Klu)") }, { value: "multi_level", label: t("Multilevel (ML)") }] },
+        par.solver ?? "amgcl",
+        (v) => {
+          if (v === "amesos" || v === "multi_level") par.solver = v;
+          else delete par.solver;
+          scheduleSend();
+        }
+      )
+    );
+    body.appendChild(
+      fieldInput(
         { id: "parallelInMemory", label: t("partition in memory"), type: "bool", help: t("Every rank reads the mesh and partitions it in memory (no pre-partitioned input).") },
         par.partitionInMemory === true,
         (v) => {

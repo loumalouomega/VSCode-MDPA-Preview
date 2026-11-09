@@ -588,6 +588,11 @@ export interface ParallelState {
   type: "mpi";
   /** Read the mdpa on every rank and partition it in memory (Kratos `partition_in_memory`). */
   partitionInMemory?: boolean;
+  /**
+   * The distributed linear solver for every serial choice: `amgcl` (default; keeps
+   * a Krylov method), `amesos` (Trilinos direct, Klu) or `multi_level` (ML).
+   */
+  solver?: "amgcl" | "amesos" | "multi_level";
 }
 
 /** The user's whole case setup — persisted as `<stem>.kratoscase.json`. */

@@ -7,7 +7,7 @@
 import type { CaseState, JsonObject, JsonValue, ParallelState } from "./types";
 
 /** Built-ins with an MPI variant. */
-export const PARALLEL_PROBLEMTYPES: readonly string[] = ["structural", "fluid"];
+export const PARALLEL_PROBLEMTYPES: readonly string[] = ["structural", "fluid", "convectionDiffusion"];
 
 export function supportsMpi(problemtypeId: string): boolean {
   return PARALLEL_PROBLEMTYPES.includes(problemtypeId);
@@ -22,8 +22,17 @@ const SERIAL_ANALYSES = ["eigen_value", "harmonic_analysis"];
 const isObject = (v: JsonValue | undefined): v is JsonObject => !!v && typeof v === "object" && !Array.isArray(v);
 
 /** The distributed solver for one serial `linear_solver_settings`; undefined means serial-only. */
-export function distributedLinearSolver(serial: JsonObject): { settings?: JsonObject; note?: string; refusal?: string } {
+export function distributedLinearSolver(serial: JsonObject, choice: ParallelState["solver"] = "amgcl"): { settings?: JsonObject; note?: string; refusal?: string } {
   const type = String(serial.solver_type ?? "");
+  const known = type === "amgcl" || type === "cg" || type === "bicgstab" || type === "";
+  if (choice === "amesos" && known) return { settings: { solver_type: "amesos", amesos_solver_type: "Amesos_Klu" } };
+  if (choice === "multi_level" && known) {
+    const settings: JsonObject = { solver_type: "multi_level", scaling: false, smoother_type: "ILU", krylov_type: "AztecOO_GMRES" };
+    if (serial.tolerance !== undefined) settings.tolerance = serial.tolerance;
+    if (serial.max_iteration !== undefined) settings.max_iteration = serial.max_iteration;
+    return { settings };
+  }
+  if (type === "") return { settings: { solver_type: "amgcl" } };
   if (type === "amgcl") return { settings: { ...serial } };
   if (type === "cg" || type === "bicgstab") {
     const settings: JsonObject = { solver_type: "amgcl", krylov_type: type };
@@ -64,7 +73,7 @@ export function applyParallel(document: JsonObject, state: CaseState): { documen
   }
   const keys = Object.keys(solver).filter((k) => k.endsWith("linear_solver_settings") && isObject(solver[k]));
   const rewrite = (key: string, serial: JsonObject): void => {
-    const out = distributedLinearSolver(serial);
+    const out = distributedLinearSolver(serial, parallel.solver);
     if (out.refusal) problems.push(out.refusal);
     else if (out.settings) {
       solver[key] = out.settings;
@@ -75,10 +84,10 @@ export function applyParallel(document: JsonObject, state: CaseState): { documen
     for (const k of keys) rewrite(k, solver[k] as JsonObject);
   } else if (/fractional/i.test(solverType)) {
     // Automatic: Kratos' serial default is skyline LU, which cannot run distributed.
-    solver.velocity_linear_solver_settings = { solver_type: "amgcl" };
-    solver.pressure_linear_solver_settings = { solver_type: "amgcl" };
+    solver.velocity_linear_solver_settings = distributedLinearSolver({}, parallel.solver).settings!;
+    solver.pressure_linear_solver_settings = distributedLinearSolver({}, parallel.solver).settings!;
   } else {
-    solver.linear_solver_settings = { solver_type: "amgcl" };
+    solver.linear_solver_settings = distributedLinearSolver({}, parallel.solver).settings!;
   }
   if (problems.length > 0) {
     throw new Error(`The MPI variant cannot be generated, so no case files were written:\n- ${[...new Set(problems)].join("\n- ")}`);

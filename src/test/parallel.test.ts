@@ -7,6 +7,7 @@ import { defaultCaseState } from "../problemtype/api";
 import { structural } from "../problemtype/builtins/structural";
 import { fluid } from "../problemtype/builtins/fluid";
 import { potentialFlow } from "../problemtype/builtins/potentialFlow";
+import { convectionDiffusion } from "../problemtype/builtins/convectionDiffusion";
 import { parseCaseJson, serializeCase } from "../problemtype/caseFile";
 import { applyParallel, distributedLinearSolver, supportsMpi } from "../problemtype/parallel";
 import type { CaseState, JsonObject } from "../problemtype/types";
@@ -115,4 +116,20 @@ test("the case file round-trips parallel", () => {
   s.parallel = { type: "mpi", partitionInMemory: true };
   assert.deepEqual(parseCaseJson(serializeCase(s)).state?.parallel, s.parallel);
   assert.equal(parseCaseJson(serializeCase(state())).state?.parallel, undefined);
+});
+
+test("the distributed solver choice and convection-diffusion", async () => {
+  const amesos = applyParallel({ solver_settings: { solver_type: "Static" } }, { ...state(), parallel: { type: "mpi", solver: "amesos" } });
+  assert.deepEqual((amesos.document.solver_settings as JsonObject).linear_solver_settings, { solver_type: "amesos", amesos_solver_type: "Amesos_Klu" });
+  const ml = distributedLinearSolver({ solver_type: "cg", tolerance: 1e-6 }, "multi_level").settings!;
+  assert.equal(ml.solver_type, "multi_level");
+  assert.equal(ml.tolerance, 1e-6);
+  assert.match(distributedLinearSolver({ solver_type: "LinearSolversApplication.sparse_lu" }, "amesos").refusal ?? "", /serial-only/);
+  const cd = defaultCaseState(convectionDiffusion.decl);
+  cd.parallel = { type: "mpi" };
+  assert.equal(supportsMpi("convectionDiffusion"), true);
+  const out = await generateCase(convectionDiffusion, parseMdpa(MDPA), cd, "beam").catch((e: Error) => e);
+  // Without assignments the case is incomplete, but never "not available".
+  assert.ok(!(out instanceof Error) || !/not available/.test(out.message));
+  assert.deepEqual(parseCaseJson(serializeCase({ ...state(), parallel: { type: "mpi", solver: "multi_level" } })).state?.parallel, { type: "mpi", solver: "multi_level" });
 });
