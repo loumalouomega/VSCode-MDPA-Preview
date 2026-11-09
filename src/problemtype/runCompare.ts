@@ -81,7 +81,14 @@ export interface RunComparison {
      * generated from a CAD handoff, because then the claim cannot be made.
      */
     cadSource?: boolean;
+    /**
+     * Both runs started from the same restart (same source request and label).
+     * Absent when neither restarted; false when only one did or they differ.
+     */
+    restartSource?: boolean;
   };
+  /** The restart each side started from, when it did (identity only). */
+  restartedFrom?: { left?: { requestId: string; label: number }; right?: { requestId: string; label: number } };
   settings: SettingChange[];
   /** How many artifacts both runs record under the same role and run-relative name. */
   counts: { paired: number; onlyLeft: number; onlyRight: number; changed: number; unverified: number };
@@ -220,6 +227,8 @@ export function compareRuns(leftDirectory: string, rightDirectory: string): RunC
     sameFacts.sourceMesh = left.preparation.sourceMesh.revision === right.preparation.sourceMesh.revision;
     sameFacts.problemtype = left.preparation.problemtype === right.preparation.problemtype;
     sameFacts.settings = left.preparation.settingsRevision === right.preparation.settingsRevision;
+    const lr = left.preparation.restart, rr = right.preparation.restart;
+    if (lr || rr) sameFacts.restartSource = !!lr && !!rr && lr.requestId === rr.requestId && lr.label === rr.label;
     const lh = left.preparation.handoff, rh = right.preparation.handoff;
     if (lh && rh) {
       sameFacts.cadSource = lh.sourceRevision === rh.sourceRevision &&
@@ -260,6 +269,12 @@ export function compareRuns(leftDirectory: string, rightDirectory: string): RunC
     ...empty,
     comparable: problems.length === 0,
     same: sameFacts,
+    ...(left.preparation?.restart || right.preparation?.restart
+      ? { restartedFrom: {
+          ...(left.preparation?.restart ? { left: { ...left.preparation.restart } } : {}),
+          ...(right.preparation?.restart ? { right: { ...right.preparation.restart } } : {}),
+        } }
+      : {}),
     settings: left.preparation && right.preparation ? diffSettings(left.preparation.settings, right.preparation.settings) : [],
     counts: {
       paired: paired.length,

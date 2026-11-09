@@ -21,6 +21,7 @@ import { CaseState, ProblemtypeRuntime, ProblemtypeSource } from "./problemtype/
 import { BUILTIN_PROBLEMTYPES } from "./problemtype/builtins";
 import { generateCase } from "./problemtype/generate";
 import { writePreparedCase } from "./problemtype/preparation";
+import { checkRestart, listRestartLabels, resolveStateRestart, restartIdentity } from "./problemtype/restartFile";
 import type { PreparationHandoff } from "./problemtype/preparation";
 import { planRunWorkspace, runWorkspaceFolder, snapshotRunInputs, type RunInputSnapshot } from "./problemtype/runWorkspace";
 import { planCaseMesh } from "./problemtype/caseMesh";
@@ -42,7 +43,7 @@ import {
   writePresetFile,
 } from "./problemtype/materialLibrary";
 import { RunManager } from "./runManager";
-import { caseKeyFor, isLive, stopDialogCopy } from "./problemtype/runCore";
+import { caseKeyFor, isLive, runRowDescription, runRowLabel, stopDialogCopy } from "./problemtype/runCore";
 import { STOP_SENTINEL_MS } from "./problemtype/runProcess";
 import { computeKratosEnv, defaultPythonPath, resolveKratosInstall } from "./problemtype/kratosEnv";
 
@@ -231,6 +232,41 @@ export class PtController {
     }
   }
 
+  /**
+   * Restart source picker (roadmap item 29): terminal isolated runs of THIS case
+   * that wrote restart files, then the label (default the latest). Replies
+   * `ptRestartPicked`; nothing is chosen on a cancel.
+   */
+  async pickRestartRun(): Promise<void> {
+    const candidates = this.runs.list().filter(
+      (r) =>
+        r.runDirectory &&
+        (r.sourceMeshFsPath ?? r.meshFsPath) === this.fsPath &&
+        (r.status === "finished" || r.status === "failed" || r.status === "cancelled") &&
+        listRestartLabels(r.runDirectory).length > 0
+    );
+    if (candidates.length === 0) {
+      vscode.window.showInformationMessage(
+        "No finished isolated run of this case wrote restart files. Turn on Save restart files, run the case with kratos.run.isolate, then choose it here."
+      );
+      return;
+    }
+    const run = await vscode.window.showQuickPick(
+      candidates.map((r) => ({ label: runRowLabel(r), description: runRowDescription(r, Date.now()), record: r })),
+      { placeHolder: "Start from the restart of…" }
+    );
+    if (!run?.record.runDirectory) return;
+    const labels = listRestartLabels(run.record.runDirectory).reverse();
+    const label = await vscode.window.showQuickPick(
+      labels.map((l, i) => ({ label: String(l), description: i === 0 ? "latest" : "", value: l })),
+      { placeHolder: "Restart label" }
+    );
+    if (!label) return;
+    // Relative to the case folder when it is inside it, so the case file stays portable.
+    const rel = path.relative(path.dirname(this.fsPath), run.record.runDirectory).split(path.sep).join("/");
+    this.post({ type: "ptRestartPicked", runDirectory: rel, label: label.value });
+  }
+
   /** Copies a preset file chosen by the user into the library. */
   async importPresets(): Promise<void> {
     const picked = await vscode.window.showOpenDialog({
@@ -376,7 +412,9 @@ export class PtController {
     try {
       // The sidebar re-runs this on every edit, so the quality layer is capped
       // lower than MCP's default; the cap is stated in the finding when hit.
-      const report = await preflightCase(runtime, model, state, this.stem, {
+      const restartCheck = checkRestart(path.dirname(this.fsPath), this.stem, this.fsPath, state);
+      const report = await preflightCase(runtime, model, restartCheck.state, this.stem, {
+        restartProblems: restartCheck.problems,
         isMdpaSource: meshExtname(this.fsPath) === ".mdpa",
         qualityMaxElements: 50_000,
         // An exported CAD mesh carries its handoff receipt beside it; the
@@ -566,11 +604,13 @@ export class PtController {
           `Meshes written for ${runtime.decl.name}: ${plan.domainMeshes.map((m) => `${m.stem}.mdpa`).join(", ")}; the source file stays untouched.`
         );
       }
-      const out = await generateCase(runtime, caseModel, state, plan.caseStem);
+      const solverMesh = path.join(caseDir, `${plan.domainMeshes[0]?.stem ?? plan.caseStem}.mdpa`);
+      const generating = resolveStateRestart(caseDir, state, solverMesh);
+      const out = await generateCase(runtime, caseModel, generating, plan.caseStem);
       const ppPath = path.join(caseDir, out.primaryDocumentName);
       const domainStems = plan.domainMeshes.map((m) => path.join(caseDir, `${m.stem}.mdpa`));
       const handoff = this.handoff();
-      const prepared = writePreparedCase({ directory: caseDir, sourcePath: meshPath,
+      const prepared = writePreparedCase({ directory: caseDir, sourcePath: meshPath, restart: restartIdentity(caseDir, generating),
         solverMeshPath: domainStems[0] ?? path.join(caseDir, `${plan.caseStem}.mdpa`), runtime, state,
         generated: out, warnings: plan.warnings, extraMeshPaths: domainStems.slice(1),
         // The run identity is recorded only for an isolated workspace: an

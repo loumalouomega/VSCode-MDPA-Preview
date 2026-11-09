@@ -26,6 +26,8 @@ import {
   MaterialLawSpec,
   ProblemtypeDeclaration,
 } from "../src/problemtype/types";
+import { supportsRestart } from "../src/problemtype/restart";
+import { supportsMpi } from "../src/problemtype/parallel";
 import { defaultCaseState, fieldDefault, flattenValues } from "../src/problemtype/api";
 import { parseNumericText, previewParameters } from "../src/problemtype/caseExpressions";
 import {
@@ -558,6 +560,8 @@ function render(): void {
   renderCollections(decl);
   renderSections(decl);
   renderOutput(decl);
+  renderRestart(decl);
+  renderParallel(decl);
 }
 
 /** The logo tile, name, description and summary chips above the stages. */
@@ -1806,6 +1810,144 @@ function renderOutput(decl: ProblemtypeDeclaration): void {
     )
   );
   host.appendChild(form);
+}
+
+/** The Restart card (roadmap item 29): save restart files, start from another run. */
+function renderRestart(decl: ProblemtypeDeclaration): void {
+  const host = el("pt-restart");
+  if (!host) return;
+  host.textContent = "";
+  if (!state || !supportsRestart(decl.id)) return;
+  const restart = (state.restart ??= {});
+  const { form, body } = cardBlock({ key: `${decl.id}:restart`, title: t("Restart"), icon: "runCase", collapsed: true });
+  const saving = restart.save !== undefined;
+  const saveBox = fieldInput(
+    { id: "restartSave", label: t("save restart files"), type: "bool" },
+    saving,
+    (v) => {
+      if (v === true) restart.save = restart.save ?? { frequency: 10, controlType: "step" };
+      else delete restart.save;
+      tidyRestart();
+      renderRestart(decl);
+      scheduleSend();
+    }
+  );
+  body.appendChild(saveBox);
+  if (restart.save) {
+    const save = restart.save;
+    body.appendChild(
+      fieldInput({ id: "restartControl", label: t("control"), type: "enum", options: [{ value: "step", label: t("every N steps") }, { value: "time", label: t("every Δt") }] },
+        save.controlType, (v) => { save.controlType = v === "time" ? "time" : "step"; scheduleSend(); })
+    );
+    body.appendChild(
+      fieldInput({ id: "restartFrequency", label: t("interval"), type: "number" }, save.frequency, (v) => {
+        save.frequency = Number(v) > 0 ? Number(v) : 1;
+        scheduleSend();
+      })
+    );
+    body.appendChild(
+      fieldInput({ id: "restartKeep", label: t("files to keep"), type: "number", help: t("0 keeps every file") }, save.keep ?? 0, (v) => {
+        const n = Math.floor(Number(v));
+        if (n > 0) save.keep = n;
+        else delete save.keep;
+        scheduleSend();
+      })
+    );
+  }
+  const row = document.createElement("div");
+  row.className = "pt-restart-from";
+  const text = document.createElement("span");
+  text.id = "pt-restart-from-label";
+  text.textContent = restart.from
+    ? `${t("Start from")}: ${restart.from.runDirectory}${restart.from.label !== undefined ? ` @ ${restart.from.label}` : ` (${t("latest")})`}`
+    : t("Starts from the mesh (no restart)");
+  const choose = document.createElement("button");
+  choose.type = "button";
+  choose.id = "pt-restart-choose";
+  choose.className = "panel-btn";
+  choose.textContent = t("Choose run…");
+  choose.addEventListener("click", () => post({ type: "ptRestartPick" }));
+  row.append(text, choose);
+  if (restart.from) {
+    const clear = document.createElement("button");
+    clear.type = "button";
+    clear.id = "pt-restart-clear";
+    clear.className = "panel-btn";
+    clear.textContent = t("Clear");
+    clear.addEventListener("click", () => {
+      delete restart.from;
+      tidyRestart();
+      renderRestart(decl);
+      scheduleSend();
+    });
+    row.append(clear);
+  }
+  body.appendChild(row);
+  host.appendChild(form);
+}
+
+/** The Parallel card (roadmap item 32): the MPI/Trilinos variant of the generated case. */
+function renderParallel(decl: ProblemtypeDeclaration): void {
+  const host = el("pt-parallel");
+  if (!host) return;
+  host.textContent = "";
+  if (!state || !supportsMpi(decl.id)) return;
+  const { form, body } = cardBlock({ key: `${decl.id}:parallel`, title: t("Parallel"), icon: "runCase", collapsed: true });
+  body.appendChild(
+    fieldInput(
+      { id: "parallelMpi", label: t("MPI (Trilinos)"), type: "bool", help: t("Generate the distributed variant: parallel_type MPI and an algebraic multigrid solver. Launch it with mpirun; serial-only solvers are refused.") },
+      state.parallel !== undefined,
+      (v) => {
+        if (v === true) state!.parallel = { type: "mpi", ...(state!.parallel?.partitionInMemory ? { partitionInMemory: true } : {}) };
+        else delete state!.parallel;
+        renderParallel(decl);
+        scheduleSend();
+      }
+    )
+  );
+  if (state.parallel) {
+    const par = state.parallel;
+    body.appendChild(
+      fieldInput(
+        { id: "parallelSolver", label: t("distributed solver"), type: "enum", options: [{ value: "amgcl", label: "AMG (amgcl)" }, { value: "amesos", label: t("Direct (Amesos Klu)") }, { value: "multi_level", label: t("Multilevel (ML)") }] },
+        par.solver ?? "amgcl",
+        (v) => {
+          if (v === "amesos" || v === "multi_level") par.solver = v;
+          else delete par.solver;
+          scheduleSend();
+        }
+      )
+    );
+    body.appendChild(
+      fieldInput(
+        { id: "parallelInMemory", label: t("partition in memory"), type: "bool", help: t("Every rank reads the mesh and partitions it in memory (no pre-partitioned input).") },
+        par.partitionInMemory === true,
+        (v) => {
+          if (v === true) par.partitionInMemory = true;
+          else delete par.partitionInMemory;
+          scheduleSend();
+        }
+      )
+    );
+  }
+  host.appendChild(form);
+}
+
+/** Drops an empty `restart` so a card nobody used leaves the case file unchanged. */
+function tidyRestart(): void {
+  if (state?.restart && !state.restart.save && !state.restart.from) delete state.restart;
+}
+
+/** The host's `ptRestartPicked` reply to **Choose run…**. */
+export function setProblemtypeRestartPicked(msg: { runDirectory?: string; label?: number }): void {
+  const decl = currentDecl();
+  if (!state || !decl || typeof msg.runDirectory !== "string" || !msg.runDirectory) return;
+  state.restart = {
+    ...state.restart,
+    from: { runDirectory: msg.runDirectory, ...(typeof msg.label === "number" ? { label: msg.label } : {}) },
+  };
+  renderRestart(decl);
+  scheduleSend();
 }
 
 /** Host-computed time-step guidance (fluid only); empty lines hides it. */

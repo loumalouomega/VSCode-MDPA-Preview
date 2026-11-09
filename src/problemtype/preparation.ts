@@ -53,7 +53,12 @@ export interface PreparationReport {
    * portable identity-only form the rest of this report uses (no paths).
    */
   handoff?: PreparationHandoff;
+  /** The restart this case started from, when it did. */
+  restart?: PreparationRestart;
 }
+
+/** The run and restart label this case started from (roadmap item 29); identity only. */
+export interface PreparationRestart { requestId: string; label: number }
 
 export interface PreparationRun { runId: string; studyId?: string; clonedFrom?: string }
 
@@ -96,6 +101,7 @@ export function parsePreparationReport(text: string): PreparationReport {
       (value.run !== undefined && !(isRunIdentity(value.run?.runId) &&
         (value.run.studyId === undefined || isRunIdentity(value.run.studyId)) &&
         (value.run.clonedFrom === undefined || isRunIdentity(value.run.clonedFrom)))) ||
+      (value.restart !== undefined && !(typeof value.restart?.requestId === "string" && Number.isInteger(value.restart?.label) && value.restart.label >= 0)) ||
       (value.handoff !== undefined && !(plainName(value.handoff?.source) && plainName(value.handoff?.sourceRevision) &&
         (value.handoff.replay === undefined || plainName(value.handoff.replay))))) {
     throw new Error("Malformed preparation report.");
@@ -132,6 +138,15 @@ export function preparedApplications(directory: string): string[] | undefined {
   }
 }
 
+/** The restart a prepared case started from, from its preparation record; undefined when none. */
+export function preparedRestart(directory: string): PreparationRestart | undefined {
+  try {
+    return parsePreparationReport(fs.readFileSync(path.join(directory, PREPARATION_FILE), "utf8")).restart;
+  } catch {
+    return undefined;
+  }
+}
+
 export function writePreparedCase(options: {
   directory: string; sourcePath: string; solverMeshPath: string;
   runtime: ProblemtypeRuntime; state: CaseState; generated: GeneratedCase; warnings: string[];
@@ -141,6 +156,8 @@ export function writePreparedCase(options: {
   run?: PreparationRun;
   /** The CAD export identity, when the caller found a handoff beside the source mesh. */
   handoff?: PreparationHandoff;
+  /** The restart source, from `restartIdentity`. */
+  restart?: PreparationRestart;
 }): { written: string[]; preparation: PreparationReport } {
   const { directory, generated, runtime, state } = options;
   const manifest = path.join(directory, PREPARATION_FILE);
@@ -161,6 +178,7 @@ export function writePreparedCase(options: {
     ...(generated.loadMeasures ? { loadMeasures: generated.loadMeasures.map((m) => ({ ...m })) } : {}),
     ...(options.run ? { run: { ...options.run } } : {}),
     ...(options.handoff ? { handoff: { ...options.handoff } } : {}),
+    ...(options.restart ? { restart: { ...options.restart } } : {}),
     settings: structuredClone(state), settingsRevision: hash(JSON.stringify(state)),
     effectiveParameters: JSON.parse(generated.projectParameters),
     units: { state: "undeclared", reason: "This case has no declared unit system. Mesh, material and load values must use consistent units; no conversion was inferred." },

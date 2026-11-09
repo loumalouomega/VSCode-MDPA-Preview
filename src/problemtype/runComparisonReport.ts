@@ -59,6 +59,7 @@ export function renderRunComparisonMarkdown(comparison: RunComparison, now: numb
     ["Same problemtype", comparison.same.problemtype],
     ["Identical settings", comparison.same.settings],
     ["Same CAD source", comparison.same.cadSource],
+    ["Same restart source", comparison.same.restartSource],
   ];
   if (sameEntries.some(([, value]) => value !== undefined)) {
     out.push("## Identity", "", "| Check | Result |", "| --- | --- |");

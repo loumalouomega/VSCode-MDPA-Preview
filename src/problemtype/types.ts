@@ -571,8 +571,36 @@ export interface OutputState {
   exportFolder?: string;
 }
 
+/**
+ * Restart options (roadmap item 29). `save` makes the run write Kratos restart
+ * files; `from` starts it from another run's restart. `inputFilename` is the
+ * previous run's restart stem relative to the new case folder, filled by
+ * `resolveRestartSource` (restartFile.ts) — a state that names `from` without it
+ * is refused at generation rather than guessed.
+ */
+export interface RestartState {
+  save?: { frequency: number; controlType: "step" | "time"; keep?: number };
+  from?: { runDirectory: string; label?: number; inputFilename?: string };
+}
+
+/** MPI variant of the case (roadmap item 32). Absent = OpenMP. */
+export interface ParallelState {
+  type: "mpi";
+  /** Read the mdpa on every rank and partition it in memory (Kratos `partition_in_memory`). */
+  partitionInMemory?: boolean;
+  /**
+   * The distributed linear solver for every serial choice: `amgcl` (default; keeps
+   * a Krylov method), `amesos` (Trilinos direct, Klu) or `multi_level` (ML).
+   */
+  solver?: "amgcl" | "amesos" | "multi_level";
+}
+
 /** The user's whole case setup — persisted as `<stem>.kratoscase.json`. */
 export interface CaseState {
+  /** Restart saving / starting from another run (roadmap item 29). */
+  restart?: RestartState;
+  /** MPI/Trilinos variant (roadmap item 32). */
+  parallel?: ParallelState;
   /** Optional explicit Kratos output-process settings, preserved by headless workflows. */
   outputProcesses?: JsonObject;
   version: 1;

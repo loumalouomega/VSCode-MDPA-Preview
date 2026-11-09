@@ -125,6 +125,38 @@ function readOutput(raw: unknown): OutputState {
   };
 }
 
+/** `restart`: tolerant per part; a malformed part is dropped with a warning. */
+function readRestart(raw: unknown, warnings: string[]): import("./types").RestartState | undefined {
+  if (raw === undefined) return undefined;
+  if (!isRecord(raw)) {
+    warnings.push("Case restart settings were malformed and ignored.");
+    return undefined;
+  }
+  const out: import("./types").RestartState = {};
+  if (isRecord(raw.save)) {
+    const frequency = Number(raw.save.frequency);
+    const keep = Number(raw.save.keep);
+    if (Number.isFinite(frequency) && frequency > 0) {
+      out.save = {
+        frequency,
+        controlType: raw.save.controlType === "time" ? "time" : "step",
+        ...(Number.isInteger(keep) && keep > 0 ? { keep } : {}),
+      };
+    } else warnings.push("Restart save frequency must be positive; restart saving was ignored.");
+  } else if (raw.save !== undefined) warnings.push("Restart save settings were malformed and ignored.");
+  if (isRecord(raw.from)) {
+    const label = raw.from.label === undefined ? undefined : Number(raw.from.label);
+    if (typeof raw.from.runDirectory === "string" && raw.from.runDirectory && (label === undefined || (Number.isInteger(label) && label >= 0))) {
+      out.from = {
+        runDirectory: raw.from.runDirectory,
+        ...(label !== undefined ? { label } : {}),
+        ...(typeof raw.from.inputFilename === "string" && raw.from.inputFilename ? { inputFilename: raw.from.inputFilename } : {}),
+      };
+    } else warnings.push("Restart source needs a run directory and, when given, a non-negative integer label; it was ignored.");
+  } else if (raw.from !== undefined) warnings.push("Restart source was malformed and ignored.");
+  return out.save || out.from ? out : undefined;
+}
+
 /**
  * `collections`: collectionId → entries. A malformed entry is dropped with a
  * warning (the rest survive); names and types are NOT checked against a
@@ -191,6 +223,13 @@ export function parseCaseJson(text: string): { state?: CaseState; warnings: stri
         if (parameters.length < raw.parameters.length) warnings.push("Some case parameters were malformed and ignored.");
         return parameters.length > 0 ? { parameters } : {};
       })(),
+      ...(() => {
+        const restart = readRestart(raw.restart, warnings);
+        return restart ? { restart } : {};
+      })(),
+      ...(isRecord(raw.parallel) && raw.parallel.type === "mpi"
+        ? { parallel: { type: "mpi" as const, ...(raw.parallel.partitionInMemory === true ? { partitionInMemory: true } : {}), ...(raw.parallel.solver === "amesos" || raw.parallel.solver === "multi_level" ? { solver: raw.parallel.solver } : {}) } }
+        : {}),
       ...(isRecord(raw.outputProcesses) ? { outputProcesses: raw.outputProcesses as import("./types").JsonObject } : {}),
       ...(() => {
         const collections = readCollections(raw.collections, warnings);
