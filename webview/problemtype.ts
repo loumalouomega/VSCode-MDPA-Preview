@@ -27,6 +27,7 @@ import {
   ProblemtypeDeclaration,
 } from "../src/problemtype/types";
 import { supportsRestart } from "../src/problemtype/restart";
+import { supportsMpi } from "../src/problemtype/parallel";
 import { defaultCaseState, fieldDefault, flattenValues } from "../src/problemtype/api";
 import { parseNumericText, previewParameters } from "../src/problemtype/caseExpressions";
 import {
@@ -560,6 +561,7 @@ function render(): void {
   renderSections(decl);
   renderOutput(decl);
   renderRestart(decl);
+  renderParallel(decl);
 }
 
 /** The logo tile, name, description and summary chips above the stages. */
@@ -1881,6 +1883,42 @@ function renderRestart(decl: ProblemtypeDeclaration): void {
     row.append(clear);
   }
   body.appendChild(row);
+  host.appendChild(form);
+}
+
+/** The Parallel card (roadmap item 32): the MPI/Trilinos variant of the generated case. */
+function renderParallel(decl: ProblemtypeDeclaration): void {
+  const host = el("pt-parallel");
+  if (!host) return;
+  host.textContent = "";
+  if (!state || !supportsMpi(decl.id)) return;
+  const { form, body } = cardBlock({ key: `${decl.id}:parallel`, title: t("Parallel"), icon: "runCase", collapsed: true });
+  body.appendChild(
+    fieldInput(
+      { id: "parallelMpi", label: t("MPI (Trilinos)"), type: "bool", help: t("Generate the distributed variant: parallel_type MPI and an algebraic multigrid solver. Launch it with mpirun; serial-only solvers are refused.") },
+      state.parallel !== undefined,
+      (v) => {
+        if (v === true) state!.parallel = { type: "mpi", ...(state!.parallel?.partitionInMemory ? { partitionInMemory: true } : {}) };
+        else delete state!.parallel;
+        renderParallel(decl);
+        scheduleSend();
+      }
+    )
+  );
+  if (state.parallel) {
+    const par = state.parallel;
+    body.appendChild(
+      fieldInput(
+        { id: "parallelInMemory", label: t("partition in memory"), type: "bool", help: t("Every rank reads the mesh and partitions it in memory (no pre-partitioned input).") },
+        par.partitionInMemory === true,
+        (v) => {
+          if (v === true) par.partitionInMemory = true;
+          else delete par.partitionInMemory;
+          scheduleSend();
+        }
+      )
+    );
+  }
   host.appendChild(form);
 }
 

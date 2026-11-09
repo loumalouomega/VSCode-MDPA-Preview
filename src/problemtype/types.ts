@@ -583,10 +583,19 @@ export interface RestartState {
   from?: { runDirectory: string; label?: number; inputFilename?: string };
 }
 
+/** MPI variant of the case (roadmap item 32). Absent = OpenMP. */
+export interface ParallelState {
+  type: "mpi";
+  /** Read the mdpa on every rank and partition it in memory (Kratos `partition_in_memory`). */
+  partitionInMemory?: boolean;
+}
+
 /** The user's whole case setup — persisted as `<stem>.kratoscase.json`. */
 export interface CaseState {
   /** Restart saving / starting from another run (roadmap item 29). */
   restart?: RestartState;
+  /** MPI/Trilinos variant (roadmap item 32). */
+  parallel?: ParallelState;
   /** Optional explicit Kratos output-process settings, preserved by headless workflows. */
   outputProcesses?: JsonObject;
   version: 1;

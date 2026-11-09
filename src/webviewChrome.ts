@@ -1452,6 +1452,7 @@ ${FORMS_181.map((f) => form181Html(f, ic(f.icon as never), ic("play"), ic("stop"
             <div id="pt-forms"></div>
             <div id="pt-output"></div>
             <div id="pt-restart"></div>
+            <div id="pt-parallel"></div>
             <div class="pt-sep" role="separator"><span class="pt-sep-label">Run</span></div>
             <div class="pt-actions">
               <button type="button" id="pt-generate" class="sb-action" title="Write ProjectParameters.json, the materials file and MainKratos.py next to the mdpa">${ic("generateCase")}<span>Generate case files</span></button>

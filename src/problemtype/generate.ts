@@ -8,6 +8,7 @@ import { materialJson } from "./materialJson";
  */
 
 import { applyRestart, restartRefusals } from "./restart";
+import { applyParallel, MPI_APPLICATIONS, parallelRefusals } from "./parallel";
 import { MdpaModel, SubModelPart } from "../parser/types";
 import {
   Assignment,
@@ -420,15 +421,16 @@ export async function generateCase(
     }
   }
 
-  const restartIssues = restartRefusals(decl.id, state.restart);
+  const restartIssues = [...restartRefusals(decl.id, state.restart), ...parallelRefusals(decl.id, state.parallel)];
   if (restartIssues.length > 0) {
-    throw new Error(`The restart options cannot be applied, so no case files were written:\n- ${restartIssues.join("\n- ")}`);
+    throw new Error(`The restart or parallel options cannot be applied, so no case files were written:\n- ${restartIssues.join("\n- ")}`);
   }
-  const projectParameters = applyRestart(
-    await buildSolverDocument(runtime, ctx, state, processes),
-    state,
-    ctx.modelPartName
+  const parallelApplied = applyParallel(
+    applyRestart(await buildSolverDocument(runtime, ctx, state, processes), state, ctx.modelPartName),
+    state
   );
+  warnings.push(...parallelApplied.warnings);
+  const projectParameters = parallelApplied.document;
 
   // One materials document per domain (a coupled case) or the single one.
   const extraFiles: { name: string; content: string }[] = [];
@@ -460,8 +462,11 @@ export async function generateCase(
     ],
     state.materials
   );
+  if (state.parallel) applications.push(...MPI_APPLICATIONS.filter((a) => !applications.includes(a)));
+  applications.sort();
   // The prelude checks the applications before the driver reads or writes anything.
-  const mainScript = applicationCheckPy(applications) + (await runtime.mainScript(ctx));
+  const mpiPrelude = state.parallel ? "import KratosMultiphysics.mpi  # distributed data communicator (MPI variant)\n" : "";
+  const mainScript = applicationCheckPy(applications) + mpiPrelude + (await runtime.mainScript(ctx));
 
   return {
     projectParameters: JSON.stringify(projectParameters, null, 4) + "\n",
