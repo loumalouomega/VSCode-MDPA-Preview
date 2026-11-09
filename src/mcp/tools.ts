@@ -1,4 +1,6 @@
 import { fieldExtremes } from "../parser/fieldScalars";
+import { supportsRestart } from "../problemtype/restart";
+import { resolveRestartSource } from "../problemtype/restartFile";
 import { computePartMeasures, measureName, PartMeasures } from "../parser/partMeasures";
 import { discoverOutputs } from '../problemtype/outputDiscovery';
 import { exportCaseResults, normalizeExportFormats } from "../problemtype/resultExport";
@@ -3494,6 +3496,20 @@ export async function caseGenerate(args: {
     invalidateCache(domainPath);
     written.push(domainPath);
     domainPaths.push(domainPath);
+  }
+  if (state.restart?.from && supportsRestart(runtime.decl.id)) {
+    // Checked against the mesh this case will read, before anything else is written.
+    state = {
+      ...state,
+      restart: {
+        ...state.restart,
+        from: resolveRestartSource(
+          caseDir,
+          state.restart.from,
+          domainPaths[0] ?? path.join(caseDir, `${caseStem}.mdpa`)
+        ),
+      },
+    };
   }
   const out = await generateCase(runtime, caseModel, state, caseStem);
   const handoff = readHandoff(args.meshPath);

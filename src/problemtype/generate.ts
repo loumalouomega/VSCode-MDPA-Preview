@@ -7,6 +7,7 @@ import { materialJson } from "./materialJson";
  * Pure module: no vscode / DOM / vtk.js imports so it stays Node-testable.
  */
 
+import { applyRestart, restartRefusals } from "./restart";
 import { MdpaModel, SubModelPart } from "../parser/types";
 import {
   Assignment,
@@ -419,7 +420,15 @@ export async function generateCase(
     }
   }
 
-  const projectParameters = await buildSolverDocument(runtime, ctx, state, processes);
+  const restartIssues = restartRefusals(decl.id, state.restart);
+  if (restartIssues.length > 0) {
+    throw new Error(`The restart options cannot be applied, so no case files were written:\n- ${restartIssues.join("\n- ")}`);
+  }
+  const projectParameters = applyRestart(
+    await buildSolverDocument(runtime, ctx, state, processes),
+    state,
+    ctx.modelPartName
+  );
 
   // One materials document per domain (a coupled case) or the single one.
   const extraFiles: { name: string; content: string }[] = [];

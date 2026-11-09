@@ -571,8 +571,22 @@ export interface OutputState {
   exportFolder?: string;
 }
 
+/**
+ * Restart options (roadmap item 29). `save` makes the run write Kratos restart
+ * files; `from` starts it from another run's restart. `inputFilename` is the
+ * previous run's restart stem relative to the new case folder, filled by
+ * `resolveRestartSource` (restartFile.ts) — a state that names `from` without it
+ * is refused at generation rather than guessed.
+ */
+export interface RestartState {
+  save?: { frequency: number; controlType: "step" | "time"; keep?: number };
+  from?: { runDirectory: string; label: number; inputFilename?: string };
+}
+
 /** The user's whole case setup — persisted as `<stem>.kratoscase.json`. */
 export interface CaseState {
+  /** Restart saving / starting from another run (roadmap item 29). */
+  restart?: RestartState;
   /** Optional explicit Kratos output-process settings, preserved by headless workflows. */
   outputProcesses?: JsonObject;
   version: 1;
