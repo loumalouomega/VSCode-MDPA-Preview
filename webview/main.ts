@@ -107,6 +107,7 @@ import { mirrorExpand } from "../src/parser/render/mirrorDisplay";
 import { MIRROR_PLANES, mirrorPlaneAt, parseMirrorAction } from "../src/parser/render/mirrorPlanes";
 import { revolveExpand, type RevolveSpec } from "../src/parser/render/revolveDisplay";
 import { sectorExpand, type SectorSpec } from "../src/parser/render/sectorDisplay";
+import { explodeExpand, type ExplodeSpec } from "../src/parser/render/explodeDisplay";
 import { buildDisplayGeometry, Cell, prepareNodes, PreparedNodes } from "../src/parser/render/displayGeometry";
 import {
   hideSummaryOverlay,
@@ -1533,10 +1534,23 @@ let hostModel: MdpaModel | undefined;
 let revolveState: RevolveSpec | undefined;
 /** View-only sector repeat (item 24, third increment); exclusive with the mirror and the revolve. */
 let sectorState: SectorSpec | undefined;
+/** View-only exploded view by top-level SubModelPart (roadmap item 61); exclusive with the symmetry views. */
+let explodeState: ExplodeSpec | undefined;
 /** The id maps of whichever expansion is on, so a pick on a copy names its source. */
 let mirrorInfo: { sourceNodeId(id: number): number; sourceEntityId(id: number): number } | undefined;
 function applyMirror(m: MdpaModel): MdpaModel {
   mirrorInfo = undefined;
+  if (explodeState) {
+    try {
+      const r = explodeExpand(m, explodeState);
+      mirrorInfo = r;
+      if (r.diagnostics.length) toast(r.diagnostics[0]);
+      return r.model;
+    } catch (e) {
+      toast(e instanceof Error ? e.message : String(e));
+      return m;
+    }
+  }
   if (sectorState) {
     try {
       const r = sectorExpand(m, sectorState);
@@ -1590,7 +1604,7 @@ function setMirror(state: MirrorState | undefined): void {
   const same = (!state && !mirrorState) || (!!state && !!mirrorState && state.axis === mirrorState.axis && state.at === mirrorState.at);
   if (same) return;
   mirrorState = state;
-  if (state) { revolveState = undefined; sectorState = undefined; }
+  if (state) { revolveState = undefined; sectorState = undefined; explodeState = undefined; }
   syncMirrorMenu();
   document.querySelector('[data-action="revolve"]')?.classList.toggle("active", false);
   scheduleViewSave();
@@ -1604,7 +1618,7 @@ function setRevolve(state: RevolveSpec | undefined): void {
   const same = (!state && !revolveState) || (!!state && !!revolveState && JSON.stringify(state) === JSON.stringify(revolveState));
   if (same) return;
   revolveState = state;
-  if (state) { mirrorState = undefined; sectorState = undefined; }
+  if (state) { mirrorState = undefined; sectorState = undefined; explodeState = undefined; }
   document.querySelector('[data-action="revolve"]')?.classList.toggle("active", !!state);
   syncMirrorMenu();
   scheduleViewSave();
@@ -1619,10 +1633,27 @@ function setSector(state: SectorSpec | undefined): void {
   const same = (!state && !sectorState) || (!!state && !!sectorState && JSON.stringify(state) === JSON.stringify(sectorState));
   if (same) return;
   sectorState = state;
-  if (state) { mirrorState = undefined; revolveState = undefined; }
+  if (state) { mirrorState = undefined; revolveState = undefined; explodeState = undefined; }
   syncMirrorMenu();
   document.querySelector('[data-action="revolve"]')?.classList.toggle("active", false);
   document.querySelector('[data-action="sector"]')?.classList.toggle("active", !!state);
+  scheduleViewSave();
+  if (!model || !hostModel) return;
+  snapshotVisibility();
+  model = applyMirror(hostModel);
+  buildScene(false);
+  setMeshModFields(model.fields, model.globals);
+}
+
+function setExplode(state: ExplodeSpec | undefined): void {
+  const same = (!state && !explodeState) || (!!state && !!explodeState && JSON.stringify(state) === JSON.stringify(explodeState));
+  if (same) return;
+  explodeState = state;
+  if (state) { mirrorState = undefined; revolveState = undefined; sectorState = undefined; }
+  syncMirrorMenu();
+  document.querySelector('[data-action="revolve"]')?.classList.toggle("active", false);
+  document.querySelector('[data-action="sector"]')?.classList.toggle("active", false);
+  document.querySelector('[data-action="explode"]')?.classList.toggle("active", !!state);
   scheduleViewSave();
   if (!model || !hostModel) return;
   snapshotVisibility();
@@ -1919,7 +1950,7 @@ function handleHostMessage(event: MessageEvent): void {
       if (!st || !model || msg.stageId !== st.stageId) break; // superseded by a newer model
       let loaded = msg.field as FieldData;
       const key = `${loaded.kind}:${loaded.variable}`;
-      if ((mirrorState || revolveState || sectorState) && hostModel) {
+      if ((mirrorState || revolveState || sectorState || explodeState) && hostModel) {
         hostModel = { ...hostModel, fields: hostModel.fields.map((f) => (`${f.kind}:${f.variable}` === key ? loaded : f)) };
         model = applyMirror(hostModel);
         loaded = model.fields.find((f) => `${f.kind}:${f.variable}` === key) ?? loaded;
@@ -4284,6 +4315,7 @@ function dispatchToolbarAction(action: string | undefined, _target?: HTMLElement
     const on = !!mirrorState && mirrorState.axis === st.axis && mirrorState.at === st.at;
     setMirror(on ? undefined : st);
   }
+  else if (action === "explode") setExplode(explodeState ? undefined : { factor: 1 });
   else if (action === "sector") setSector(sectorState ? undefined : { axis: "z", copies: 6 });
   else if (action === "revolve") setRevolve(revolveState ? undefined : { axis: "y", startDeg: 0, sweepDeg: 360, layers: 36 });
   else if (action === "flatParts") {
@@ -4363,6 +4395,7 @@ function uiToggleState(action: string): boolean | undefined {
     case "mirror": return !!mirrorState;
     case "revolve": return !!revolveState;
     case "sector": return !!sectorState;
+    case "explode": return !!explodeState;
     case "constraintLinks": return constraintLinksOn;
     case "pan": return panMode;
     case "grid": return gridVisible;
@@ -4436,6 +4469,16 @@ function runViewCommand(fn: string, args: Record<string, unknown>): string | und
       if (typeof args.flip === "boolean" && pane.clip.flipped !== args.flip) {
         document.getElementById("cut-flip")?.click();
       }
+      return undefined;
+    }
+    case "explode": {
+      if (!model) return "No mesh loaded";
+      if (args.state === "off") { setExplode(undefined); return undefined; }
+      const ax = args.axis === undefined ? undefined : String(args.axis);
+      if (ax !== undefined && ax !== "x" && ax !== "y" && ax !== "z") return "axis must be x, y or z";
+      const f = typeof args.factor === "number" ? args.factor : 1;
+      if (!(f >= 0 && f <= 5)) return "factor must be between 0 and 5";
+      setExplode(f === 0 ? undefined : { factor: f, ...(ax ? { axis: ax as "x" | "y" | "z" } : {}) });
       return undefined;
     }
     case "sector": {
@@ -7976,6 +8019,10 @@ function renderInspectUI(): void {
       renderInspectUI();
     },
     onToggleMeasure: () => {
+      if (!measuring && explodeState) {
+        toast("Measure is off while the view is exploded: distances between parts are no longer real.");
+        return;
+      }
       measuring = !measuring;
       measurePicked = [];
       if (!measuring) {
@@ -9386,6 +9433,7 @@ function captureViewState(): ViewState {
   if (mirrorState) v.mirror = { axis: mirrorState.axis, at: mirrorState.at };
   if (revolveState) v.revolve = { ...revolveState };
   if (sectorState) v.sector = { ...sectorState };
+  if (explodeState) v.explode = { ...explodeState };
   v.panes = panes.map((p, i) => ({
     field: fieldToSaved(p.field),
     clip: clonePaneClipState(p.clip),
@@ -9479,6 +9527,7 @@ function applyPendingView(): void {
     if (view.mirror) setMirror({ axis: view.mirror.axis, at: view.mirror.at });
     if (view.revolve) setRevolve({ ...view.revolve });
     if (view.sector) setSector({ ...view.sector });
+    if (view.explode) setExplode({ ...view.explode });
 
     view.panes.forEach((sp, i) => {
       const pane = panes[i];

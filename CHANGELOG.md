@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- `mesh_quality` takes a `metrics` list that appends scaled Jacobian (quadratic cells use the true corner tangent, so an inverted mid-side node is caught), skewness, warpage, taper, tetrahedral radius ratio and size against the block median (roadmap item 63).
+- A Medit `.mesh`/`.meshb` with a sibling ASCII `.sol` opens with the solution as nodal fields; a vertex-count mismatch opens the mesh alone with a warning, and a lone `.sol` explains that its mesh is missing (roadmap item 75).
+- View ▾ ▸ Explode by SubModelPart and the `explode factor= axis=` command move each top-level part away from the model centre in the drawing only (roadmap item 61).
+- View templates: a saved view without its file-specific parts, stored under `.kratos/recipes/views` and listed by `mesh_capabilities` (roadmap item 65, core and folder only).
+
 ## [5.38.0] - 2026-11-10
 
 ### Added

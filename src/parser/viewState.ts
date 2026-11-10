@@ -91,6 +91,8 @@ export interface ViewState {
   revolve?: { axis: "x" | "y"; startDeg: number; sweepDeg: number; layers: number };
   /** View-only sector repeat (cyclic symmetry). Exclusive with `mirror` and `revolve`. Omitted = off. */
   sector?: { axis: "x" | "y" | "z"; copies: number; angleDeg?: number };
+  /** View-only exploded view by top-level SubModelPart (roadmap item 61). Exclusive with the symmetry views. Omitted = off. */
+  explode?: { factor: number; axis?: "x" | "y" | "z" };
   /** The Field panel was open (so the saved field overlays are drawn on restore). Omitted = closed. */
   fieldPanel?: boolean;
   /**
@@ -179,6 +181,7 @@ export function isEmptyViewState(v: ViewState): boolean {
     v.mirror === undefined &&
     v.revolve === undefined &&
     v.sector === undefined &&
+    v.explode === undefined &&
     v.panes.length === 0 &&
     !v.fieldPanel &&
     v.panels.length === 0 &&
@@ -402,6 +405,20 @@ export function validateViewState(raw: unknown, colormapFallback = "Rainbow"): {
     } else warnings.push("View sidecar sector is malformed — ignored.");
   }
 
+  if (r.explode !== undefined) {
+    const m = r.explode as { factor?: unknown; axis?: unknown } | null;
+    const axisOk = m?.axis === undefined || m.axis === "x" || m.axis === "y" || m.axis === "z";
+    if (m && typeof m.factor === "number" && Number.isFinite(m.factor) && m.factor > 0 && m.factor <= 5 && axisOk) {
+      view.explode = { factor: m.factor, ...(m.axis ? { axis: m.axis as "x" | "y" | "z" } : {}) };
+      if (view.mirror || view.revolve || view.sector) {
+        delete view.mirror;
+        delete view.revolve;
+        delete view.sector;
+        warnings.push("View sidecar holds an explode together with another expansion view — the explode wins.");
+      }
+    } else warnings.push("View sidecar explode is malformed — ignored.");
+  }
+
   if (r.panes !== undefined) {
     if (!Array.isArray(r.panes)) warnings.push("View sidecar panes are not an array — ignored.");
     else {
@@ -579,6 +596,7 @@ export function serializeViewState(v: ViewState): Record<string, unknown> {
   if (v.mirror) out.mirror = { axis: v.mirror.axis, at: v.mirror.at };
   if (v.revolve) out.revolve = { ...v.revolve };
   if (v.sector) out.sector = { ...v.sector };
+  if (v.explode) out.explode = { ...v.explode };
   if (v.fieldPanel) out.fieldPanel = true;
   return out;
 }

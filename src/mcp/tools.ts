@@ -145,9 +145,11 @@ import {
 import { packPvdSeries, PackPvdResult, pvdOutputClash, pvdPieceDir } from "../parser/packPvd";
 import { buildMembershipIndex } from "../parser/smpMembership";
 import { getMeshCapabilities } from "../parser/meshCapabilities";
+import { discoverViewTemplates } from "../viewTemplatesIO";
 import { getRuntimeWiring } from "../parser/runtimeWiring";
 import { writeXlsx } from "../parser/writers/xlsxWriter";
 import { computeMeshQuality } from "../parser/meshQuality";
+import { computeSolverMetrics, SOLVER_METRIC_KEYS, SolverMetricKey } from "../parser/elementMetrics";
 import { SelectionSeed, resolveSeed } from "../parser/selectionCore";
 import { computeGlobal, GLOBAL_REDUCTIONS, reduceValues, type GlobalReduction } from "../parser/globalReduce";
 import { computeMeshSize } from "../parser/meshSize";
@@ -818,12 +820,20 @@ export async function meshQuality(args: {
   maxDegenerate?: number;
   badIdLimit?: number;
   defectLimit?: number;
+  metrics?: string[];
 }, execution: PlotExecution = {}): Promise<object> {
   const { model } = await loadMesh(args.path, undefined, undefined, undefined, undefined, undefined, execution.signal);
   const limit = args.badIdLimit ?? 20;
+  const extraKeys = (args.metrics ?? []) as SolverMetricKey[];
+  for (const k of extraKeys) {
+    if (!(SOLVER_METRIC_KEYS as readonly string[]).includes(k)) {
+      throw new Error(`Unknown metric "${k}". Available: ${SOLVER_METRIC_KEYS.join(", ")}.`);
+    }
+  }
   const defectLimit = args.defectLimit ?? 50;
   const defects = surfaceDefects(model);
   const report = computeMeshQuality(model);
+  if (extraKeys.length > 0) report.metrics = [...report.metrics, ...computeSolverMetrics(model, extraKeys)];
   return {
     gate: args.require !== undefined ? await qualityGate(model, args.require, args.maxInverted, args.maxDegenerate) : undefined,
     overallOk: report.overallOk,
@@ -3011,8 +3021,15 @@ export async function meshSelect(args: {
  * vocabulary does.
  */
 export async function meshCapabilities(): Promise<object> {
+  const viewTemplates = discoverViewTemplates([process.cwd()], DEFAULT_RECIPE_PRESET_PATHS);
   return {
     ...await getMeshCapabilities(),
+    // Named view templates found under <cwd>/.kratos/recipes/views (item 65).
+    viewTemplates: {
+      directory: `${DEFAULT_RECIPE_PRESET_PATHS[0]}/views`,
+      templates: viewTemplates.templates.map((t) => ({ name: t.name, description: t.description, file: t.file })),
+      problems: viewTemplates.problems,
+    },
     // What this process actually wired (workers found beside the bundle, the
     // kernel tree's location): a packaged distribution that lost a file falls
     // back silently, and this is where that becomes visible.

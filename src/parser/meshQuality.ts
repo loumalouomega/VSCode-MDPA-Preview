@@ -250,7 +250,7 @@ function cellGeometry(pts: Vec3[], t: Topo): CellGeometry | undefined {
 // --- banding ------------------------------------------------------------
 const BAD_MAX_PCT = 5;
 
-function classify(
+export function classify(
   value: number,
   thresholds: [number, number, number],
   higherIsBetter: boolean
@@ -268,7 +268,7 @@ function classify(
   return "unacceptable";
 }
 
-interface MetricSpec {
+export interface MetricSpec {
   key: string;
   label: string;
   unit?: string;
@@ -312,7 +312,7 @@ const SPECS: Record<string, MetricSpec> = {
 
 const HIST_BINS = 28;
 
-function finalize(spec: MetricSpec, values: number[], badEntityIds: number[]): MetricResult {
+export function finalize(spec: MetricSpec, values: number[], badEntityIds: number[]): MetricResult {
   const bands: Record<QualityBand, number> = {
     good: 0,
     acceptable: 0,

@@ -358,3 +358,14 @@ test("ribbon keys round trip and are omitted at their defaults", () => {
   assert.equal(back.ribbonHidden, true);
   assert.equal(validateViewState({ ribbonTab: "bogus" }).view.ribbonTab, undefined);
 });
+
+test("explode round-trips, rejects bad values and displaces other expansion views", () => {
+  const v = validateViewState({ explode: { factor: 1.5, axis: "z" } }).view;
+  assert.deepEqual(v.explode, { factor: 1.5, axis: "z" });
+  assert.deepEqual(serializeViewState(v).explode, { factor: 1.5, axis: "z" });
+  assert.equal("explode" in serializeViewState(emptyViewState()), false);
+  assert.equal(validateViewState({ explode: { factor: 0 } }).view.explode, undefined);
+  assert.equal(validateViewState({ explode: { factor: 9 } }).view.explode, undefined);
+  const both = validateViewState({ explode: { factor: 1 }, sector: { axis: "z", copies: 4 } });
+  assert.ok(both.view.explode && !both.view.sector);
+});

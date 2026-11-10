@@ -38,3 +38,11 @@ When a metric has elements in the **Bad** / **Unacceptable** bands, its card gai
 ## Export
 
 **Export CSV** writes one row per metric — aggregates, band counts and shares, thresholds, and the bad-element ids — to a `.csv` file. Id lists over 100 arrive truncated with a `…(+N more)` trailer; the counts are whole.
+
+## Solver-oriented metrics (MCP)
+
+`mesh_quality` accepts a `metrics` list that appends scaled Jacobian, skewness, warpage, taper, radius ratio (linear tetrahedra) and size against the block median.
+Scaled Jacobian is the smallest corner determinant divided by the product of the edge lengths, normalised so an ideal element reads 1; a negative value means an inverted element.
+On quadratic cells the tangent at each corner uses the mid-side node, so a curved element with valid corners and an inverted mid-side node reads negative.
+Thresholds are advisory.
+Pyramids are not evaluated yet.
