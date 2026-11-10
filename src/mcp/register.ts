@@ -379,6 +379,8 @@ export function registerAllTools(server: McpServer): void {
           .describe("Max bad-element ids returned per metric (default 20)"),
         defectLimit: z.number().int().positive().optional()
           .describe("Max entries returned per surface-defect list (default 50)"),
+        metrics: z.array(z.string()).optional()
+          .describe("Extra solver-oriented metrics to append: scaledJacobian (negative = inverted; quadratic cells use the true corner tangent), skewness, warpage, taper, radiusRatio (linear tets), volumeRatio (size against the block median). Omitted = the four default metrics only."),
       },
     },
     runCancellable(meshQuality)

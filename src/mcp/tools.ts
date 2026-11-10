@@ -148,6 +148,7 @@ import { getMeshCapabilities } from "../parser/meshCapabilities";
 import { getRuntimeWiring } from "../parser/runtimeWiring";
 import { writeXlsx } from "../parser/writers/xlsxWriter";
 import { computeMeshQuality } from "../parser/meshQuality";
+import { computeSolverMetrics, SOLVER_METRIC_KEYS, SolverMetricKey } from "../parser/elementMetrics";
 import { SelectionSeed, resolveSeed } from "../parser/selectionCore";
 import { computeGlobal, GLOBAL_REDUCTIONS, reduceValues, type GlobalReduction } from "../parser/globalReduce";
 import { computeMeshSize } from "../parser/meshSize";
@@ -818,12 +819,20 @@ export async function meshQuality(args: {
   maxDegenerate?: number;
   badIdLimit?: number;
   defectLimit?: number;
+  metrics?: string[];
 }, execution: PlotExecution = {}): Promise<object> {
   const { model } = await loadMesh(args.path, undefined, undefined, undefined, undefined, undefined, execution.signal);
   const limit = args.badIdLimit ?? 20;
+  const extraKeys = (args.metrics ?? []) as SolverMetricKey[];
+  for (const k of extraKeys) {
+    if (!(SOLVER_METRIC_KEYS as readonly string[]).includes(k)) {
+      throw new Error(`Unknown metric "${k}". Available: ${SOLVER_METRIC_KEYS.join(", ")}.`);
+    }
+  }
   const defectLimit = args.defectLimit ?? 50;
   const defects = surfaceDefects(model);
   const report = computeMeshQuality(model);
+  if (extraKeys.length > 0) report.metrics = [...report.metrics, ...computeSolverMetrics(model, extraKeys)];
   return {
     gate: args.require !== undefined ? await qualityGate(model, args.require, args.maxInverted, args.maxDegenerate) : undefined,
     overallOk: report.overallOk,

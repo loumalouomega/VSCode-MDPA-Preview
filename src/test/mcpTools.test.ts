@@ -409,6 +409,18 @@ test("mesh_quality reports metrics with capped bad ids", async () => {
   }
 });
 
+test("mesh_quality appends the requested solver metrics and refuses an unknown one", async () => {
+  const dir = tmpDir();
+  const file = writeFixture(dir);
+  const report = (await meshQuality({ path: file, metrics: ["scaledJacobian", "radiusRatio"] })) as {
+    metrics: { key: string; min: number }[];
+  };
+  const keys = report.metrics.map((m) => m.key);
+  assert.ok(keys.includes("scaledJacobian") && keys.includes("radiusRatio"));
+  assert.ok(report.metrics.find((m) => m.key === "scaledJacobian")!.min > 0);
+  await assert.rejects(() => meshQuality({ path: file, metrics: ["nope"] }), /Unknown metric/);
+});
+
 test("mesh_size reports nodal + element size statistics", async () => {
   const dir = tmpDir();
   const report = (await meshSize({ path: writeFixture(dir) })) as {
