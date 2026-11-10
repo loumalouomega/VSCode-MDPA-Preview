@@ -3894,8 +3894,10 @@ function requestLabelUpdate(): void {
 
 function setNodeIds(on: boolean): void {
   showNodeIds = on;
+  if (!on) pinnedLabel = undefined;
   const btn = document.querySelector('[data-action="nodeIds"]');
-  btn?.classList.toggle("active", on);
+  btn?.classList.toggle("active", on && labelTarget === "node");
+  syncLabelBar();
   labelsEl.textContent = "";
   labelPool.length = 0;
   gpuLabelKey = "";
@@ -3968,13 +3970,32 @@ let labelTarget: LabelTarget = "node";
 let labelSource: LabelSource = "id";
 let cellLabelCache: { model: MdpaModel; prep: PreparedNodes; kind: "Elements" | "Conditions"; pts: CellLabelPoints } | undefined;
 
+/** An entity the Find bar's Label action pinned: drawn whatever the declutter says. */
+let pinnedLabel: { target: LabelTarget; id: number } | undefined;
+let pinnedLabelIndex: { key: string; index: number } | undefined;
+
+function syncLabelBar(): void {
+  const bar = document.getElementById("label-bar");
+  const sel = document.getElementById("label-source") as HTMLSelectElement | null;
+  const cell = showNodeIds && labelTarget !== "node";
+  bar?.classList.toggle("visible", cell);
+  if (sel) sel.value = labelSource;
+  document.querySelector('[data-action="nodeIds"]')?.classList.toggle("active", showNodeIds && labelTarget === "node");
+  document.querySelector('[data-action="elementIds"]')?.classList.toggle("active", showNodeIds && labelTarget === "element");
+  document.querySelector('[data-action="conditionIds"]')?.classList.toggle("active", showNodeIds && labelTarget === "condition");
+}
+
 function setLabelMode(target: LabelTarget, source: LabelSource): void {
   labelTarget = target;
   labelSource = source;
   cellLabelCache = undefined;
+  pinnedLabelIndex = undefined;
+  if (pinnedLabel && pinnedLabel.target !== target) pinnedLabel = undefined;
   gpuLabelKey = "";
   if (!showNodeIds) setNodeIds(true);
   else requestLabelUpdate();
+  syncLabelBar();
+  scheduleViewSave();
 }
 const GPU_LABEL_CELL = 38;
 let gpuLabelKey = "";
@@ -3991,7 +4012,7 @@ function updateGpuNodeLabels(): void {
     keyParts.push(matrix.join(","));
     return { pane, matrix, tile: backend.viewTile(pane.view) };
   });
-  keyParts.push(labelTarget, labelSource, selectedFieldInfo(focusedPane())?.key ?? "");
+  keyParts.push(labelTarget, labelSource, String(pinnedLabel?.id ?? ""), selectedFieldInfo(focusedPane())?.key ?? "");
   const key = keyParts.join("|");
   if (key === gpuLabelKey) return;
   gpuLabelKey = key;
@@ -4024,6 +4045,17 @@ function updateGpuNodeLabels(): void {
     labelSource = "id";
   }
   const kept: { x: number; y: number; text: string }[] = [];
+  let pinnedIdx = -1;
+  if (pinnedLabel && cellKind && cellLabelCache && pinnedLabel.target === labelTarget) {
+    const pkey = `${pinnedLabel.id}|${labelTarget}|${cellLabelCache.pts.cell.length}`;
+    if (pinnedLabelIndex?.key !== pkey) {
+      const cp = cellLabelCache.pts;
+      let found = -1;
+      for (let i = 0; i < cp.cell.length && found < 0; i++) if (model.blocks[cp.block[i]].entityIds[cp.cell[i]] === pinnedLabel.id) found = i;
+      pinnedLabelIndex = { key: pkey, index: found };
+    }
+    pinnedIdx = pinnedLabelIndex.index;
+  }
   let occludedCount = 0;
   for (const f of frames) {
     const proj = projectPoints(f.matrix, pts, f.tile);
@@ -4043,9 +4075,11 @@ function updateGpuNodeLabels(): void {
     const picked = layoutLabels(proj, f.tile, { maxLabels: GPU_LABEL_MAX, cell: GPU_LABEL_CELL, hidden, nearestFirst: !!cellKind });
     if (hidden) for (let i = 0; i < hidden.length; i++) occludedCount += hidden[i];
     for (const i of picked) {
+      if (i === pinnedIdx) continue;
       const text = textOf(i);
       if (text) kept.push({ x: proj.x[i], y: proj.y[i], text });
     }
+    if (pinnedIdx >= 0 && proj.inside[pinnedIdx]) kept.push({ x: proj.x[pinnedIdx], y: proj.y[pinnedIdx], text: textOf(pinnedIdx) || String(pinnedLabel!.id) });
   }
   for (let i = 0; i < kept.length; i++) {
     let el = labelPool[i];
@@ -4350,7 +4384,15 @@ function dispatchToolbarAction(action: string | undefined, _target?: HTMLElement
   else if (action === "cut") setCut(!focusedPane().clip.active);
   else if (action === "wireframe") setWireframe(!wireframe);
   else if (action === "edges") setShowEdges(!showEdges);
-  else if (action === "nodeIds") setNodeIds(!showNodeIds);
+  else if (action === "nodeIds") {
+    if (showNodeIds && labelTarget === "node") setNodeIds(false);
+    else setLabelMode("node", "id");
+  }
+  else if (action === "elementIds" || action === "conditionIds") {
+    const tg: LabelTarget = action === "elementIds" ? "element" : "condition";
+    if (showNodeIds && labelTarget === tg) setNodeIds(false);
+    else setLabelMode(tg, labelSource);
+  }
   else if (action === "lod") setLod(!lodEnabled);
   else if (action === "constraintLinks") setConstraintLinks(!constraintLinksOn);
   else if (action === "curved") setCurved(curvedLevel === 0);
@@ -4436,7 +4478,9 @@ function uiToggleState(action: string): boolean | undefined {
   switch (action) {
     case "wireframe": return wireframe;
     case "edges": return showEdges;
-    case "nodeIds": return showNodeIds;
+    case "nodeIds": return showNodeIds && labelTarget === "node";
+    case "elementIds": return showNodeIds && labelTarget === "element";
+    case "conditionIds": return showNodeIds && labelTarget === "condition";
     case "lod": return lodEnabled;
     case "mirror": return !!mirrorState;
     case "revolve": return !!revolveState;
@@ -4638,6 +4682,23 @@ const commandLine = initCommandLine({
   };
 
   findGoEl.addEventListener("click", runFind);
+  document.getElementById("find-label")?.addEventListener("click", () => {
+    const type = findTypeEl.value;
+    const id = Number(findIdEl.value);
+    const err = locateEntity(type, id);
+    findStatusEl.textContent = err ?? "";
+    if (err) return;
+    if (type === "Node") setLabelMode("node", "id");
+    else if (type === "Element" || type === "Condition") {
+      const tg: LabelTarget = type === "Element" ? "element" : "condition";
+      pinnedLabel = { target: tg, id };
+      setLabelMode(tg, "id");
+    } else findStatusEl.textContent = "Geometries cannot be labelled.";
+  });
+  document.getElementById("label-source")?.addEventListener("change", (e) => {
+    const v = (e.target as HTMLSelectElement).value;
+    if (isLabelSource(v)) setLabelMode(labelTarget, v);
+  });
   findIdEl.addEventListener("keydown", (e) => { if (e.key === "Enter") runFind(); });
   findCloseEl.addEventListener("click", () => toggleFindBar());
 })();
@@ -9487,6 +9548,7 @@ function captureViewState(): ViewState {
     if (rs.compact) v.ribbonCompact = true;
     if (rs.hidden) v.ribbonHidden = true;
   }
+  if (showNodeIds && labelTarget !== "node") v.labels = { target: labelTarget, source: labelSource };
   if (mirrorState) v.mirror = { axis: mirrorState.axis, at: mirrorState.at };
   if (revolveState) v.revolve = { ...revolveState };
   if (sectorState) v.sector = { ...sectorState };
@@ -9585,6 +9647,7 @@ function applyPendingView(): void {
     if (view.revolve) setRevolve({ ...view.revolve });
     if (view.sector) setSector({ ...view.sector });
     if (view.explode) setExplode({ ...view.explode });
+    if (view.labels) setLabelMode(view.labels.target, view.labels.source);
 
     view.panes.forEach((sp, i) => {
       const pane = panes[i];

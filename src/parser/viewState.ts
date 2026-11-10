@@ -93,6 +93,8 @@ export interface ViewState {
   sector?: { axis: "x" | "y" | "z"; copies: number; angleDeg?: number };
   /** View-only exploded view by top-level SubModelPart (roadmap item 61). Exclusive with the symmetry views. Omitted = off. */
   explode?: { factor: number; axis?: "x" | "y" | "z" };
+  /** Element or condition id labels (roadmap item 60). Omitted = node labels / labels off. */
+  labels?: { target: "element" | "condition"; source: "id" | "propertyId" | "smp" | "field" };
   /** The Field panel was open (so the saved field overlays are drawn on restore). Omitted = closed. */
   fieldPanel?: boolean;
   /**
@@ -182,6 +184,7 @@ export function isEmptyViewState(v: ViewState): boolean {
     v.revolve === undefined &&
     v.sector === undefined &&
     v.explode === undefined &&
+    v.labels === undefined &&
     v.panes.length === 0 &&
     !v.fieldPanel &&
     v.panels.length === 0 &&
@@ -419,6 +422,13 @@ export function validateViewState(raw: unknown, colormapFallback = "Rainbow"): {
     } else warnings.push("View sidecar explode is malformed — ignored.");
   }
 
+  if (r.labels !== undefined) {
+    const m = r.labels as { target?: unknown; source?: unknown } | null;
+    if (m && (m.target === "element" || m.target === "condition") && (m.source === "id" || m.source === "propertyId" || m.source === "smp" || m.source === "field")) {
+      view.labels = { target: m.target, source: m.source };
+    } else warnings.push("View sidecar labels is malformed — ignored.");
+  }
+
   if (r.panes !== undefined) {
     if (!Array.isArray(r.panes)) warnings.push("View sidecar panes are not an array — ignored.");
     else {
@@ -597,6 +607,7 @@ export function serializeViewState(v: ViewState): Record<string, unknown> {
   if (v.revolve) out.revolve = { ...v.revolve };
   if (v.sector) out.sector = { ...v.sector };
   if (v.explode) out.explode = { ...v.explode };
+  if (v.labels) out.labels = { ...v.labels };
   if (v.fieldPanel) out.fieldPanel = true;
   return out;
 }

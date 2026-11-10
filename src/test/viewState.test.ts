@@ -369,3 +369,12 @@ test("explode round-trips, rejects bad values and displaces other expansion view
   const both = validateViewState({ explode: { factor: 1 }, sector: { axis: "z", copies: 4 } });
   assert.ok(both.view.explode && !both.view.sector);
 });
+
+test("labels round-trip and reject bad values", () => {
+  const v = validateViewState({ labels: { target: "element", source: "smp" } }).view;
+  assert.deepEqual(v.labels, { target: "element", source: "smp" });
+  assert.deepEqual(serializeViewState(v).labels, { target: "element", source: "smp" });
+  const bad = validateViewState({ labels: { target: "node", source: "id" } });
+  assert.equal(bad.view.labels, undefined);
+  assert.ok(bad.warnings.length > 0);
+});

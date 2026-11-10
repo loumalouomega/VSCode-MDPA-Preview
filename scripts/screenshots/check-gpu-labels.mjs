@@ -42,6 +42,37 @@ await page.waitForTimeout(1500);
 s = await stats();
 check(s.shown > 0 && !/single-pane/.test(s.msg), `labels survive a split layout (${s.shown})`);
 check(problems.length === 0, `no console errors${problems.length ? ": " + problems.join(" | ") : ""}`);
+// Roadmap item 60: element labels are bounded by the grid and grow on zoom.
+await page.evaluate(() => document.querySelector('[data-action="layout:1x1"]')?.click());
+await page.evaluate(() => document.querySelector('[data-action="nodeIds"]')?.click());
+await page.evaluate(() => document.querySelector('[data-action="elementIds"]')?.click());
+await page.waitForTimeout(1500);
+s = await stats();
+check(s.shown > 0, `element labels drawn (${s.shown})`);
+const wide = s.shown;
+check(await page.evaluate(() => document.querySelector("#label-bar")?.classList.contains("visible")), "label source bar is visible for element labels");
+for (const src of ["propertyId", "smp"]) {
+  await page.selectOption("#label-source", src);
+  await page.waitForTimeout(800);
+  s = await stats();
+  check(s.shown >= 0 && (await page.evaluate(() => document.querySelector("#label-source").value)) === src, `source ${src} accepted (${s.shown} labels)`);
+}
+await page.selectOption("#label-source", "id");
+for (let i = 0; i < 2; i++) await page.evaluate(() => document.getElementById("nav-zoom-in")?.click());
+await page.waitForTimeout(1200);
+s = await stats();
+check(s.shown <= 6000, `labels stay bounded after zoom (${wide} -> ${s.shown})`);
+const first = await page.evaluate(() => document.querySelector("#labels .node-label")?.textContent ?? "");
+check(/^\d+$/.test(first), `an element label reads as an id (${first})`);
+// Find + Label pins an entity.
+await page.evaluate(() => { document.querySelector('[data-action="find"]')?.click(); });
+await page.waitForTimeout(300);
+await page.fill("#find-id", "1");
+await page.selectOption("#find-type", "Element");
+await page.click("#find-label");
+await page.waitForTimeout(1200);
+const texts = await page.evaluate(() => [...document.querySelectorAll("#labels .node-label")].filter((e) => e.style.display !== "none").map((e) => e.textContent));
+check(texts.includes("1"), "Find + Label draws the located element's id");
 await page.screenshot({ path: "/tmp/gpu-labels.png" });
 await browser.close();
 process.exit(failures.length ? 1 : 0);

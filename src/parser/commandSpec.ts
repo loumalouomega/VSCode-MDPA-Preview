@@ -308,6 +308,8 @@ const VIEW: CommandSpec[] = [
   ui("edges", "view", "Draw cell edges", "edges"),
   ui("grid", "view", "Cube axes grid", "grid"),
   ui("nodeIds", "view", "Node id labels", "nodeIds", { aliases: ["nodeids"] }),
+  ui("elementIds", "view", "Element id labels at the cell centroids", "elementIds", { aliases: ["elementids"] }),
+  ui("conditionIds", "view", "Condition id labels at the cell centroids", "conditionIds", { aliases: ["conditionids"] }),
   ui("lod", "view", "Level-of-detail surface preview", "lod"),
   ui("constraintLinks", "view", "Draw slave→master links of the multi-point constraints", "constraintLinks"),
   ui("flatParts", "view", "Flat SubModelPart list in the outline", "flatParts"),

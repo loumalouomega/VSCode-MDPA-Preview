@@ -540,11 +540,20 @@ async function main() {
       ${VIEW_MENU_HTML}
       ${ADVANCED_MENU_HTML}
       <div id="find-bar">
-        <select id="find-type"><option>Node</option></select>
+        <select id="find-type"><option>Node</option><option>Element</option><option>Condition</option><option>Geometry</option></select>
         <input id="find-id" type="number" min="1" placeholder="ID" />
         <button id="find-go">Go</button>
+        <button id="find-label" title="Locate it and label it">Label</button>
         <button id="find-close" title="Close">x</button>
         <span id="find-status"></span>
+      </div>
+      <div id="label-bar"><span>Label by</span>
+        <select id="label-source">
+          <option value="id">Id</option>
+          <option value="propertyId">Properties id</option>
+          <option value="smp">SubModelPart</option>
+          <option value="field">Active field</option>
+        </select>
       </div>
       <div id="render-root"></div>
       ${FLOWGRAPH_PANE_HTML}

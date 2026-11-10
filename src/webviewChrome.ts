@@ -272,6 +272,8 @@ export const VIEW_BUTTON_HTML = `<button data-action="viewMenu" class="tb-menu" 
 
 export const VIEW_MENU_HTML = `<div id="view-popup" class="hidden" role="menu">
         <button type="button" class="file-menu-item" data-action="nodeIds" role="menuitemcheckbox" title="Toggle node ids">${ic("nodeIds")}<span>Node IDs</span></button>
+        <button type="button" class="file-menu-item" data-action="elementIds" role="menuitemcheckbox" title="Label every element at its centroid; the nearest ones are kept as you zoom">${ic("nodeIds")}<span>Element IDs</span></button>
+        <button type="button" class="file-menu-item" data-action="conditionIds" role="menuitemcheckbox" title="Label every condition at its centroid; the nearest ones are kept as you zoom">${ic("nodeIds")}<span>Condition IDs</span></button>
         <button type="button" class="file-menu-item" data-action="grid" role="menuitemcheckbox" title="Toggle background grid">${ic("grid")}<span>Grid</span></button>
         <button type="button" class="file-menu-item active" data-action="edges" role="menuitemcheckbox" title="Toggle mesh edge lines — off so a transparent mesh reads as surfaces">${ic("wireframe")}<span>Edges</span></button>
         <button type="button" class="file-menu-item" data-action="lod" role="menuitemcheckbox" title="Draw a decimated surface in place of the full layers — for navigating a big mesh. The mesh itself is untouched; picking is off while it shows">${ic("wireframe")}<span>Level of detail</span></button>
@@ -1652,8 +1654,17 @@ export function buildPreviewHtml(o: PreviewHtmlOptions): string {
         </select>
         <input id="find-id" type="number" min="1" placeholder="ID" />
         <button id="find-go">Go</button>
+        <button id="find-label" title="Locate it and label it">Label</button>
         <button id="find-close" title="Close">${ic("close")}</button>
         <span id="find-status"></span>
+      </div>
+      <div id="label-bar"><span>Label by</span>
+        <select id="label-source">
+          <option value="id">Id</option>
+          <option value="propertyId">Properties id</option>
+          <option value="smp">SubModelPart</option>
+          <option value="field">Active field</option>
+        </select>
       </div>
       <div id="render-root"></div>${emptyHint}
       </div>
