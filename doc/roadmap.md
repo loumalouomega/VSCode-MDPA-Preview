@@ -475,6 +475,8 @@ Admission criterion: closes a gap between a generated case and how its results a
 
 ### 61. Exploded view by SubModelPart — S
 
+**Delivered 2026-11-10 except a browser check:** `parser/render/explodeDisplay.ts`, View ▾ ▸ Explode by SubModelPart, command `explode`, `view.explode`; Measure refused while exploded; tests in `explodeDisplay.test.ts` and `viewState.test.ts`; no Chromium check written. Original text follows.
+
 **Pending — added 2026-11-10.** CAD-Preview has an explode preview for assemblies; the mesh viewer has none, so interior parts and interfaces of a multi-part mesh are inspected by hiding things one at a time. Add a display-only explode: each top-level SubModelPart (or view layer) is translated away from the model centroid along the line to its own centroid by a slider factor, with an axis-constrained variant; shared nodes are duplicated only in the render copy. It rides the view state, never the operation history, and measurements taken while exploded are refused with a reason, since distances between parts are no longer real.
 
 **Acceptance:** at factor 0 the picture is pixel-identical to the unexploded view; at factor 1 no two top-level parts' bounding boxes overlap; the model's node count and saved bytes are unchanged. **MCP:** UI-only.
@@ -487,6 +489,8 @@ Admission criterion: closes a gap between a generated case and how its results a
 
 ### 63. Quality metrics a solver cares about — M
 
+**First increment delivered 2026-11-10:** `parser/elementMetrics.ts` (scaled Jacobian with true corner tangents for tet10/hex20/tri6/quad8, skewness, warpage, taper, tetrahedral radius ratio, size against the block median — not yet per SubModelPart) and MCP `mesh_quality` `metrics`; tests in `elementMetrics.test.ts` and `mcpTools.test.ts`. **Still pending:** the panel colouring by a metric, pyramids, sharing the functions with CAD-Preview with a drift test, and a check that both extensions report the same worst scaled Jacobian. Original text follows.
+
 **Pending — added 2026-11-10.** `meshQuality.ts` implements four geometric metrics modelled on Kratos' `ComputeMeshQualityProcess` (edge ratio, minimum and maximum angle, size gradation); CAD-Preview's quality gate and the separate Check-tetrahedra kernel cover more, and the two extensions report different numbers for the same mesh. Add the metrics element formulations are sensitive to, each with its definition in the guide: scaled Jacobian (at the integration points for quadratic cells, so a curved element with a valid corner Jacobian and an inverted mid-side one is caught), skewness, quadrilateral and hexahedral warpage and taper, tetrahedral collapse (radius ratio), and element volume against the SubModelPart's median. Share one definition per metric with CAD-Preview: the functions live in a module both repositories copy with a drift test, like the design tokens. Thresholds stay advisory, and the panel can colour by any metric and select the elements outside a band.
 
 **Acceptance:** a unit cube hexahedron reads scaled Jacobian 1, a hexahedron with one inverted corner reads a negative value and is selected by the "invalid" filter; the same MDPA reports the same worst scaled Jacobian in this extension and in CAD-Preview's quality gate. **MCP:** `mesh_quality` returns the new metrics and accepts a metric list.
@@ -498,6 +502,8 @@ Admission criterion: closes a gap between a generated case and how its results a
 **Acceptance:** rendering the fluid tutorial's last frame with a saved view reproduces the interactive screenshot within the render-parity tolerance (`scripts/render-parity`); a missing browser gives `supported: false`, not an error; a 4 K request is honoured or refused with the limit. **MCP:** `view_render` (write-class: writes a PNG), with a test in `mcpTools.test.ts`.
 
 ### 65. View templates that apply across cases — S
+
+**Core delivered 2026-11-10:** `parser/viewTemplate.ts` (`toTemplate`, `parseViewTemplate`, `applyViewTemplate`, reporting what the target lacks), `viewTemplatesIO.ts` (`.kratos/recipes/views`) and a `viewTemplates` list in `mesh_capabilities`. **Still pending:** the save and apply commands and their webview path, and template names in `view_render`. Original text follows.
 
 **Pending — added 2026-11-10.** A view is saved per file in `<stem>.kratosview.json` (`viewState.ts`), so the same set-up (field, range policy, colormap, clip, camera, legend) is rebuilt by hand for every run of a sweep. Add named **view templates**: a view state with its file-specific parts removed (absolute ranges become a range policy, selection sets and the compared-run link are dropped), stored in a user folder and in `kratos.recipes.extraPaths` folders beside the operation recipes, and applied to any open result. Applying reports what could not be matched (a field or layer the target lacks) and changes nothing else. KKSS's report builder and item 64 take a template by name.
 
@@ -546,6 +552,8 @@ Admission criterion: closes a gap between a generated case and how its results a
 **Acceptance:** a CAD export whose Parts carry "inlet", "outlet", "wall" and a fluid material yields a fluid case that preflights clean after one Apply; a role the problemtype cannot map is listed, not dropped; a manifest written before the new fields behaves exactly as today. **MCP:** `case_validate` returns the suggestions; `case_generate` accepts `applyHandoffSuggestions: true` and reports what it applied.
 
 ### 75. Medit solution files read as fields of their mesh — S
+
+**Read half delivered 2026-11-10:** `parser/meditSol.ts` (ASCII scalar, vector and symmetric-tensor `SolAtVertices`, fields named `SOL`/`SOL_n`) attached by `parseMeshFile` to a `.mesh`/`.meshb` with a sibling `.sol`; mismatch opens the mesh alone with a named warning; a lone `.sol` opens its sibling mesh or explains; the companion joins `statMeshSource`. **Still pending:** binary `.solb`, the `.sol` extension in the Open dialog and custom editors, and the `mesh_convert` write option. Original text follows.
 
 **Pending — added 2026-11-10 (recovered from Non-goals).** Routing `medit_sol` as a mesh was excluded because a `.sol` file has values and no geometry. The exclusion named its own remedy, a deterministic companion rule, and that rule is small: when a `.mesh`/`.meshb` is opened and a sibling `<stem>.sol`/`.solb` exists, read it as nodal fields of that mesh (vertex count must match exactly, otherwise it is reported and ignored); opening a `.sol` directly opens its sibling mesh with the fields attached, or explains that the mesh is missing. On export to Medit, fields may be written as the companion file behind an explicit option. This matters beyond the format: MMG reads and writes its metrics and level sets as `.sol`, so the pairing lets a metric computed elsewhere be inspected before a remesh.
 
