@@ -57,6 +57,12 @@ export interface LayoutOptions {
   cell: number;
   /** Points to skip, 1 = hidden behind a surface (parallel to the projection). */
   hidden?: Uint8Array;
+  /**
+   * When set, the point nearest the camera (smallest NDC depth) wins each grid
+   * square instead of the first in index order, so zooming in always reveals
+   * the labels closest to the viewer. One pass, no sort.
+   */
+  nearestFirst?: boolean;
 }
 
 /**
@@ -68,6 +74,20 @@ export function layoutLabels(p: ProjectedPoints, tile: TileRect, o: LayoutOption
   const cell = Math.max(1, o.cell);
   const cols = Math.max(1, Math.ceil(tile.width / cell));
   const rows = Math.max(1, Math.ceil(tile.height / cell));
+  if (o.nearestFirst) {
+    const best = new Int32Array(cols * rows).fill(-1);
+    for (let i = 0; i < p.inside.length; i++) {
+      if (!p.inside[i] || (o.hidden && o.hidden[i])) continue;
+      const c = Math.floor((p.x[i] - tile.left) / cell);
+      const r = Math.floor((p.y[i] - tile.top) / cell);
+      if (c < 0 || c >= cols || r < 0 || r >= rows) continue;
+      const k = r * cols + c;
+      if (best[k] < 0 || p.z[i] < p.z[best[k]]) best[k] = i;
+    }
+    const out: number[] = [];
+    for (let k = 0; k < best.length && out.length < o.maxLabels; k++) if (best[k] >= 0) out.push(best[k]);
+    return out;
+  }
   const taken = new Uint8Array(cols * rows);
   const keep: number[] = [];
   for (let i = 0; i < p.inside.length && keep.length < o.maxLabels; i++) {

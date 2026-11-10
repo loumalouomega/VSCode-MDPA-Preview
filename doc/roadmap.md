@@ -469,6 +469,8 @@ Admission criterion: closes a gap between a generated case and how its results a
 
 ### 60. Element and condition labels, and more than 3,000 of them — S
 
+**First increment delivered 2026-11-10:** `parser/render/cellLabels.ts` (centroids per kind, text for id / Properties id / SubModelPart / active field), `layoutLabels` `nearestFirst`, command `labels target= source=`; the grid cell now bounds the count (safety ceiling 6000 per pane). **Still pending:** a View-menu control for target and source, `view.labels` in the sidecar, the Find bar's **Label** action, and a Chromium check on a large mesh (not run; webview half uncompiled here). Original text follows.
+
 **Pending — added 2026-11-10.** Only node ids can be labelled, capped at 3,000 on screen (`GPU_LABEL_MAX` in `webview/main.ts`). Solver messages name elements and conditions by id, so the first question after "element 48211 has a negative Jacobian" has no direct answer. Add element and condition id labels (at the cell centroid), a label source selector (id, Properties id, SubModelPart name, the active field's value), and view-dependent decluttering in place of the hard cap: labels are placed for the entities under a screen-space grid, nearest the camera first, so zooming in always reveals more and the count on screen stays bounded. `mesh_find_entity` already locates an id; this item adds a **Label** action to its result.
 
 **Acceptance:** on a 1 M-element mesh the label pass stays under one frame budget and shows a bounded number of labels at every zoom; zooming on a located element shows its id; switching the source to the active field prints the same number the Evaluation table gives. **MCP:** UI-only.

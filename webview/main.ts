@@ -35,6 +35,7 @@ import type { Vec3 } from "../src/parser/render/types";
 import { angleAt, clipFromPlane, planeFromClip, polylineLength } from "../src/parser/render/widgetMath";
 import { lightPlacement } from "../src/parser/render/lightMode";
 import { layoutLabels, occludedPoints, projectPoints } from "../src/parser/render/labelLayout";
+import { cellLabelPoints, cellLabelText, CellLabelPoints, isLabelSource, isLabelTarget, LabelSource, LabelTarget } from "../src/parser/render/cellLabels";
 import type { ScalarColoring } from "../src/parser/render/types";
 import { renderStreamlinePanel, StreamlinePanelState } from "./streamlinePanel";
 import {
@@ -3960,7 +3961,21 @@ function stopLabelLoop(): void {
 // against the depth buffer, a grid declutters what is left and a pooled set of
 // DOM labels is positioned. The work is redone only when a camera, a pane
 // rectangle or the rendered frame changed.
-const GPU_LABEL_MAX = 3000;
+// The grid cell, not this number, bounds what is on screen; this is only a
+// safety ceiling per pane (roadmap item 60).
+const GPU_LABEL_MAX = 6000;
+let labelTarget: LabelTarget = "node";
+let labelSource: LabelSource = "id";
+let cellLabelCache: { model: MdpaModel; prep: PreparedNodes; kind: "Elements" | "Conditions"; pts: CellLabelPoints } | undefined;
+
+function setLabelMode(target: LabelTarget, source: LabelSource): void {
+  labelTarget = target;
+  labelSource = source;
+  cellLabelCache = undefined;
+  gpuLabelKey = "";
+  if (!showNodeIds) setNodeIds(true);
+  else requestLabelUpdate();
+}
 const GPU_LABEL_CELL = 38;
 let gpuLabelKey = "";
 let gpuProbeRequested = false;
@@ -3976,11 +3991,39 @@ function updateGpuNodeLabels(): void {
     keyParts.push(matrix.join(","));
     return { pane, matrix, tile: backend.viewTile(pane.view) };
   });
+  keyParts.push(labelTarget, labelSource, selectedFieldInfo(focusedPane())?.key ?? "");
   const key = keyParts.join("|");
   if (key === gpuLabelKey) return;
   gpuLabelKey = key;
-  const pts = model.coords as Float32Array;
-  const kept: { x: number; y: number; id: number }[] = [];
+  const cellKind = labelTarget === "element" ? "Elements" : labelTarget === "condition" ? "Conditions" : undefined;
+  let pts = model.coords as Float32Array;
+  let textOf: (i: number) => string = (i) => String(model!.nodeIds[i]);
+  if (cellKind) {
+    const prep = prepared;
+    if (!prep) return;
+    if (!cellLabelCache || cellLabelCache.model !== model || cellLabelCache.prep !== prep || cellLabelCache.kind !== cellKind) {
+      cellLabelCache = { model, prep, kind: cellKind, pts: cellLabelPoints(model.blocks, cellKind, prep) };
+    }
+    const cp = cellLabelCache.pts;
+    pts = cp.xyz;
+    const info = labelSource === "field" ? selectedFieldInfo(focusedPane()) : undefined;
+    const ctx = {
+      blocks: model.blocks,
+      kind: cellKind as "Elements" | "Conditions",
+      membership: labelSource === "smp" ? getMembershipIndex() : undefined,
+      fieldText: info
+        ? (id: number) => {
+            const v = scalarAt(info, id);
+            return v === undefined || !Number.isFinite(v) ? undefined : String(v);
+          }
+        : undefined,
+    };
+    const src = labelSource;
+    textOf = (i) => cellLabelText(src, cp, i, ctx);
+  } else if (labelSource !== "id") {
+    labelSource = "id";
+  }
+  const kept: { x: number; y: number; text: string }[] = [];
   let occludedCount = 0;
   for (const f of frames) {
     const proj = projectPoints(f.matrix, pts, f.tile);
@@ -3997,9 +4040,12 @@ function updateGpuNodeLabels(): void {
     if (snap) {
       hidden = occludedPoints(proj, snap.depth, snap.width, snap.height, dpr, canvasRect.height, 2e-3);
     }
-    const picked = layoutLabels(proj, f.tile, { maxLabels: GPU_LABEL_MAX, cell: GPU_LABEL_CELL, hidden });
+    const picked = layoutLabels(proj, f.tile, { maxLabels: GPU_LABEL_MAX, cell: GPU_LABEL_CELL, hidden, nearestFirst: !!cellKind });
     if (hidden) for (let i = 0; i < hidden.length; i++) occludedCount += hidden[i];
-    for (const i of picked) kept.push({ x: proj.x[i], y: proj.y[i], id: model.nodeIds[i] });
+    for (const i of picked) {
+      const text = textOf(i);
+      if (text) kept.push({ x: proj.x[i], y: proj.y[i], text });
+    }
   }
   for (let i = 0; i < kept.length; i++) {
     let el = labelPool[i];
@@ -4009,7 +4055,7 @@ function updateGpuNodeLabels(): void {
       labelPool[i] = el;
       labelsEl.appendChild(el);
     }
-    el.textContent = String(kept[i].id);
+    el.textContent = kept[i].text;
     el.style.left = `${kept[i].x}px`;
     el.style.top = `${kept[i].y}px`;
     el.style.display = "";
@@ -4496,6 +4542,17 @@ function runViewCommand(fn: string, args: Record<string, unknown>): string | und
       if (ax !== "x" && ax !== "y") return "axis must be x or y";
       const num = (v: unknown, d: number): number => (typeof v === "number" ? v : d);
       setRevolve({ axis: ax, startDeg: num(args.start, 0), sweepDeg: num(args.sweep, 360), layers: Math.floor(num(args.layers, 36)) });
+      return undefined;
+    }
+    case "labels": {
+      if (!model) return "No mesh loaded";
+      if (args.state === "off") { if (showNodeIds) setNodeIds(false); return undefined; }
+      const tg = String(args.target ?? labelTarget);
+      const sr = String(args.source ?? "id");
+      if (!isLabelTarget(tg)) return "target must be node, element or condition";
+      if (!isLabelSource(sr)) return "source must be id, propertyId, smp or field";
+      if (tg === "node" && sr !== "id") return "node labels show the id only";
+      setLabelMode(tg, sr);
       return undefined;
     }
     case "mirror": {

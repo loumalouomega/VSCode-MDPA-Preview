@@ -63,6 +63,7 @@ export type ViewFn =
   | "layout"
   | "clip"
   | "mirror"
+  | "labels"
   | "revolve"
   | "sector"
   | "explode"
@@ -306,7 +307,7 @@ const VIEW: CommandSpec[] = [
   ui("wireframe", "view", "Wireframe display", "wireframe"),
   ui("edges", "view", "Draw cell edges", "edges"),
   ui("grid", "view", "Cube axes grid", "grid"),
-  ui("nodeIds", "view", "Node id labels (small meshes only)", "nodeIds", { aliases: ["nodeids"] }),
+  ui("nodeIds", "view", "Node id labels", "nodeIds", { aliases: ["nodeids"] }),
   ui("lod", "view", "Level-of-detail surface preview", "lod"),
   ui("constraintLinks", "view", "Draw slave→master links of the multi-point constraints", "constraintLinks"),
   ui("flatParts", "view", "Flat SubModelPart list in the outline", "flatParts"),
@@ -320,6 +321,15 @@ const VIEW: CommandSpec[] = [
     { kind: "view", fn: "clip" },
     "clip on axis=x pos=0.5",
     { positional: ["state"] }
+  ),
+  cmd(
+    "labels",
+    "view",
+    "Label nodes, elements or conditions by id, Properties id, SubModelPart or the active field",
+    "target:enum(node|element|condition) source:enum(id|propertyId|smp|field) state:enum(on|off)",
+    { kind: "view", fn: "labels" },
+    "labels target=element source=id",
+    { positional: ["target", "source"] }
   ),
   cmd(
     "mirror",
