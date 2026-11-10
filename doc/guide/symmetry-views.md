@@ -28,6 +28,16 @@ Vectors and tensors are rotated for each layer.
 Repeats the mesh `copies` times about an axis, every `angle` degrees.
 Axis nodes are shared; seam nodes are not welded.
 
+## Explode by SubModelPart
+
+View ▾ ▸ Explode by SubModelPart moves every top-level SubModelPart away from the model centre along the line to its own centre.
+A cell belongs to the first top-level part that lists it; cells in no part stay where they are.
+Nodes shared between parts are duplicated in the drawing only, so the mesh, its node count and any saved file are unchanged.
+At factor 1 the parts' bounding boxes just stop overlapping; the command `explode factor=1.5 axis=z` changes the factor or restricts the movement to one axis, and `explode off` restores the view.
+Two parts with the same centre cannot be separated and are reported.
+Measure is refused while the view is exploded, because distances between parts are no longer real.
+The view is exclusive with Mirror, Revolve and Sector repeat and is stored in the view sidecar like them.
+
 ## Not in the view
 
 Welding of seam nodes is not done yet, and mirrored SubModelParts exist only for the Mirror view (each part gains a `_mirror` copy).

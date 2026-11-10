@@ -65,6 +65,7 @@ export type ViewFn =
   | "mirror"
   | "revolve"
   | "sector"
+  | "explode"
   | "opacity"
   | "theme"
   | "find"
@@ -345,6 +346,15 @@ const VIEW: CommandSpec[] = [
     "state:enum(on|off) axis:enum(x|y|z) copies:int angle:number",
     { kind: "view", fn: "sector" },
     "sector axis=z copies=6",
+    { positional: ["state"] }
+  ),
+  cmd(
+    "explode",
+    "view",
+    "View-only exploded view: each top-level SubModelPart is moved away from the model centre (nothing is written)",
+    "state:enum(on|off) factor:number axis:enum(x|y|z)",
+    { kind: "view", fn: "explode" },
+    "explode factor=1.5 axis=z",
     { positional: ["state"] }
   ),
   cmd("opacity", "view", "Global model opacity (0..1)", "value:number!", { kind: "view", fn: "opacity" }, "opacity 0.6", { positional: ["value"] }),
