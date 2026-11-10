@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- Element and condition id labels at the cell centroids (View ▸ Element IDs / Condition IDs, command `labels target= source=`): a source selector (id, Properties id, SubModelPart, active field), nearest-to-camera declutter so zooming reveals more, a **Label** button on the Find bar that pins the located entity, and the choice saved in the view sidecar (roadmap item 60).
 - `mesh_quality` takes a `metrics` list that appends scaled Jacobian (quadratic cells use the true corner tangent, so an inverted mid-side node is caught), skewness, warpage, taper, tetrahedral radius ratio and size against the block median (roadmap item 63).
 - A Medit `.mesh`/`.meshb` with a sibling ASCII `.sol` opens with the solution as nodal fields; a vertex-count mismatch opens the mesh alone with a warning, and a lone `.sol` explains that its mesh is missing (roadmap item 75).
 - View ▾ ▸ Explode by SubModelPart and the `explode factor= axis=` command move each top-level part away from the model centre in the drawing only (roadmap item 61).

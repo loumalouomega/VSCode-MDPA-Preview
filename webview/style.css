@@ -2228,7 +2228,7 @@ input.outline-label-input {
   .outline-membership-kind,
   .dt-goto,
   .cut-normal-input,
-  :where(#tl-fps, #theme-select, #find-bar input, #find-bar select)
+  :where(#tl-fps, #theme-select, #find-bar input, #find-bar select, #label-source)
 ) {
   box-sizing: border-box;
   height: var(--ui-h-ctl);
@@ -2252,7 +2252,7 @@ input.outline-label-input {
   .outline-membership-kind,
   .dt-goto,
   .cut-normal-input,
-  :where(#tl-fps, #theme-select, #find-bar input, #find-bar select)
+  :where(#tl-fps, #theme-select, #find-bar input, #find-bar select, #label-source)
 ):focus {
   outline: none;
   border-color: var(--ds-focus);
@@ -4977,3 +4977,18 @@ body.ribbon-collapsed #ribbon-body { display: none; }
 body.ribbon-compact .ribbon-btn { min-width: 0; }
 body.ribbon-compact .ribbon-btn-label,
 body.ribbon-compact .ribbon-group-label { display: none; }
+
+#label-bar {
+  display: none;
+  position: absolute;
+  top: 48px;
+  right: 8px;
+  z-index: 25;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  background: var(--vscode-editorWidget-background);
+  border: 1px solid var(--vscode-editorWidget-border, var(--vscode-panel-border));
+  border-radius: var(--ui-r-sm);
+}
+#label-bar.visible { display: flex; }

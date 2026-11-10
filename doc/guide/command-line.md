@@ -133,7 +133,9 @@ While you type here, the single-key view shortcuts (`1`–`6`, `i`) are not trig
 | `wireframe [state=<on\|off>]` | Wireframe display |
 | `edges [state=<on\|off>]` | Draw cell edges |
 | `grid [state=<on\|off>]` | Cube axes grid |
-| `nodeIds [state=<on\|off>]` | Node id labels (small meshes only) |
+| `nodeIds [state=<on\|off>]` | Node id labels |
+| `elementIds`, `conditionIds` `[state=<on\|off>]` | Element or condition id labels at the cell centroids |
+| `labels target=<node\|element\|condition> source=<id\|propertyId\|smp\|field>` | Choose what is labelled and what the label shows; `labels state=off` clears them |
 | `lod [state=<on\|off>]` | Level-of-detail surface preview |
 | `flatParts [state=<on\|off>]` | Flat SubModelPart list in the outline |
 | `ortho [state=<on\|off>]` | Parallel (orthographic) projection |

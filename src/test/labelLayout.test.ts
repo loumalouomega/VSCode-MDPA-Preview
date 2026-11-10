@@ -35,3 +35,9 @@ test("occlusion compares NDC depth with the snapshot", () => {
   depth.fill(0.9);
   assert.deepEqual([...occludedPoints(p, depth, 4, 4, 1, 4, 1e-3)], [0]);
 });
+test("nearestFirst keeps the point closest to the camera in each square", () => {
+  // Same pixel, depths 0.5 (far) then -0.5 (near): index 1 must win.
+  const p = projectPoints(ID, new Float32Array([0, 0, 0.5, 0.001, 0, -0.5, 0.5, 0.5, 0]), tile);
+  assert.deepEqual(layoutLabels(p, tile, { maxLabels: 10, cell: 10, nearestFirst: true }).sort(), [1, 2]);
+  assert.deepEqual(layoutLabels(p, tile, { maxLabels: 10, cell: 10 }), [0, 2]);
+});
