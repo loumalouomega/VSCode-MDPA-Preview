@@ -27,6 +27,7 @@ import {
   VTK_XML_EXTENSIONS,
 } from "./meshFormats";
 import { isMeshioReadExtension, meshioSiblingNames } from "./meshioFormats";
+import { meditSolCompanionNames, meditMeshForSolNames, parseMeditSol } from "./meditSol";
 import {
   cleanFlac3dPartNames,
   dropFlac3dInternalFields,
@@ -417,6 +418,15 @@ export async function parseMeshFile(
   const ext = meshExtname(fsPath);
   const signal = opts?.signal;
   throwIfCancelled(signal);
+  if (ext === ".sol" || ext === ".solb") {
+    // A solution file has values and no geometry: open its sibling mesh, which
+    // attaches the fields itself, or say what is missing (never an empty view).
+    const dir = path.dirname(fsPath);
+    for (const candidate of meditMeshForSolNames(path.basename(fsPath))) {
+      if (fs.existsSync(path.join(dir, candidate))) return parseMeshFile(path.join(dir, candidate), onProgress, opts);
+    }
+    throw new Error(`"${path.basename(fsPath)}" is a Medit solution file: it holds values but no geometry. Put its mesh beside it (${meditMeshForSolNames(path.basename(fsPath)).join(" or ")}) and open that.`);
+  }
   if (ext === ".elmer" || opts?.meshioFormat === "elmer" || ext === ".mfem-rank") {
     const elmer = ext === ".elmer" || opts?.meshioFormat === "elmer";
     const files = await collectCaeFiles(fsPath, elmer);
@@ -696,6 +706,9 @@ export async function parseMeshFile(
             cleanFlac3dPartNames(reclassifyFlac3dFaces(model))
           );
         }
+        if ((ext === ".mesh" || ext === ".meshb") && opts?.meshioFormat !== "mfem") {
+          await attachMeditSolFields(fsPath, model);
+        }
         return model;
       }
       throw new Error(
@@ -868,6 +881,36 @@ export async function readMeshMetadata(
  * and are therefore not derivable from the path; omit it and those are skipped.
  * Names are relative paths (`data/beam.h5`), never `fileName` itself.
  */
+/**
+ * Medit pairing (roadmap item 75): a `.mesh`/`.meshb` with a sibling
+ * `<stem>.sol`/`.solb` gains that file's values as nodal fields. A vertex-count
+ * mismatch or an unreadable file leaves the mesh alone and adds one named
+ * diagnostic; fields that would collide with an existing name are skipped.
+ */
+async function attachMeditSolFields(meshPath: string, model: MdpaModel): Promise<void> {
+  const dir = path.dirname(meshPath);
+  for (const candidate of meditSolCompanionNames(path.basename(meshPath))) {
+    const full = path.join(dir, candidate);
+    let bytes: Buffer;
+    try {
+      bytes = await fs.promises.readFile(full);
+    } catch {
+      continue;
+    }
+    const parsed = parseMeditSol(bytes.toString("latin1"), model.nodeIds, candidate);
+    model.diagnostics.push(...parsed.diagnostics);
+    const have = new Set(model.fields.map((f) => `${f.kind}:${f.variable}`));
+    for (const f of parsed.fields) {
+      if (have.has(`${f.kind}:${f.variable}`)) {
+        model.diagnostics.push({ line: 0, message: `${candidate}: field ${f.variable} already exists on the mesh and was not replaced.` });
+        continue;
+      }
+      model.fields.push(f);
+    }
+    return;
+  }
+}
+
 export function meshCompanionNames(
   fileName: string,
   ext: string,
@@ -974,7 +1017,8 @@ export async function statMeshSource(fsPath: string): Promise<MeshSourceStat> {
   }
 
   const dir = path.dirname(fsPath);
-  for (const companion of meshCompanionNames(name, ext, mainText)) {
+  const solNames = ext === ".mesh" || ext === ".meshb" ? meditSolCompanionNames(name) : [];
+  for (const companion of [...meshCompanionNames(name, ext, mainText), ...solNames]) {
     try {
       const st = await fs.promises.stat(path.join(dir, companion));
       bytes += st.size;
