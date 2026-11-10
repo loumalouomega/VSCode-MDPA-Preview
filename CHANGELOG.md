@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [5.38.0] - 2026-11-10
+
 ### Added
 
 - **MPI variant: convection-diffusion and a distributed-solver choice.** Convection-diffusion cases now take the MPI variant, and `parallel.solver` picks the distributed linear solver for every serial choice: `amgcl` (default), `amesos` (Trilinos direct, Klu) or `multi_level` (ML), set from the Parallel card. Key names are from Kratos' sources, not an MPI run.
@@ -1572,7 +1574,8 @@ Four silent-correctness fixes. None of them threw, and none was visible in the m
 
 - Initial release: custom editor preview for `.mdpa` files.
 
-[Unreleased]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.37.0...HEAD
+[Unreleased]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.38.0...HEAD
+[5.38.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.37.0...v5.38.0
 [5.37.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.36.0...v5.37.0
 [5.36.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.35.0...v5.36.0
 [5.35.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.34.0...v5.35.0
