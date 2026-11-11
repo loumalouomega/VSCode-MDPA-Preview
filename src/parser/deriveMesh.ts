@@ -37,6 +37,9 @@ export type Vec3 = [number, number, number];
 
 export interface SliceSpec {
   kind: "slice";
+  /** Walk a surface's line section into polylines (meshio++ >= 20.0.0); minLength drops chains shorter than it. */
+  chain?: boolean;
+  minLength?: number;
   /** A point on the plane. */
   origin: Vec3;
   /** The plane normal (need not be unit). */
@@ -100,7 +103,7 @@ export type TessellateSpec = { kind: "tessellate" } & TessellateParams;
 export type StreamlineSpec = { kind: "streamlines"; frame?: string } & StreamlineParams;
 
 export type DeriveSpec = ({ kind: "featureEdges" } & FeatureEdgeOptions) | SliceSpec | IsosurfaceSpec | ThresholdSpec | DecimateSpec | TessellateSpec | GridSampleSpec | StreamlineSpec | IgaRefineSpec | IgaSampleSpec | GenerateSpec | OctreeMeshSpec | OctreeSpec | CadSurfaceSpec | KernelOpSpec;
-export const DERIVE_KINDS = ["featureEdges", "slice", "isosurface", "threshold", "decimate", "tessellate", "grid", "voxelize", "sdfVolume", "streamlines", "igaRefine", "igaSample", "generate", "octreeMesh", "octree", "cadSurface", "extrude", "revolve", "mirror", "boundaryLayer", "tetrahedralize", "errorSize", "checkConformity", "adapt", "discretizeLevelset", "meshDomain", "metricFromHessian", "findIntersections", "tetToPoly", "convexHull", "delaunay2d", "reconstructSurface", "estimateNormals", "parameterize", "cutLevelSet", "cutQuadrature"] as const;
+export const DERIVE_KINDS = ["featureEdges", "slice", "isosurface", "threshold", "decimate", "tessellate", "grid", "voxelize", "sdfVolume", "streamlines", "igaRefine", "igaSample", "generate", "octreeMesh", "octree", "cadSurface", "extrude", "revolve", "mirror", "boundaryLayer", "tetrahedralize", "errorSize", "checkConformity", "adapt", "discretizeLevelset", "meshDomain", "metricFromHessian", "findIntersections", "tetToPoly", "convexHull", "delaunay2d", "reconstructSurface", "estimateNormals", "parameterize", "cutLevelSet", "cutQuadrature", "sections", "silhouette", "fitCurves", "clip", "thicken", "hollow", "exaggerate", "colorize", "profileSolid"] as const;
 /** Kinds that need no input mesh at all (a grid is made from nothing). */
 export const DERIVE_STANDALONE_KINDS: readonly string[] = ["grid", "generate"];
 
@@ -265,7 +268,7 @@ export async function deriveMesh(
       if (signal?.aborted) throw new Error("cancelled");
       const m = await loadMeshio();
       if (signal?.aborted) throw new Error("cancelled");
-      const cut = m.slice(mesh, spec.origin, spec.normal, true) as MeshioMesh;
+      const cut = (spec.chain ? m.slice(mesh, spec.origin, spec.normal, true, { chain: true, minLength: spec.minLength ?? 0 }) : m.slice(mesh, spec.origin, spec.normal, true)) as MeshioMesh;
       if (cut.cells.length === 0 || cut.cells.every((c) => "data" in c && c.data.length === 0)) {
         throw new Error("The plane does not cut the mesh.");
       }
@@ -342,6 +345,7 @@ export async function deriveMesh(
           `Decimated ${r.facesBefore} → ${r.facesAfter} faces (${pct}% removed), ${r.pointsBefore} → ${r.pointsAfter} nodes. ` +
           `Largest collapse error ${err.toPrecision(3)} (${(100 * r.relativeError).toPrecision(2)}% of the bounding-box diagonal). ` +
           `Surviving faces keep their entity ids, property ids and cell-field values; a node keeps the lowest id merged into it, and its nodal fields are upstream's blend of the endpoints (an approximation for optimal placement).` +
+          (r.deviation !== undefined && Number.isFinite(r.deviation) ? `Measured deviation from the original ${r.deviation.toPrecision(3)}${r.deviationMet === false ? " — the bound was NOT met" : ""}${r.rounds ? ` after ${r.rounds} round(s)` : ""}. ` : "") +
           (r.warnings.length ? ` ${r.warnings.join(" ")}` : ""),
         suffix: "decimated",
       };
@@ -391,7 +395,16 @@ export async function deriveMesh(
     case "estimateNormals":
     case "parameterize":
     case "cutLevelSet":
-    case "cutQuadrature": {
+    case "cutQuadrature":
+    case "sections":
+    case "silhouette":
+    case "fitCurves":
+    case "clip":
+    case "thicken":
+    case "hollow":
+    case "exaggerate":
+    case "colorize":
+    case "profileSolid": {
       if (signal?.aborted) throw new Error("cancelled");
       const r = await kernelOpModel(model, spec, diagnostics);
       if (signal?.aborted) throw new Error("cancelled");

@@ -41,7 +41,7 @@ interface Spec { keys: Record<string, KeyKind>; required?: string[] }
 const SPECS: Record<Op181Name, Spec> = {
   untangle: { keys: { fixBoundary: "bool", frozenPart: "str", rings: "int", smooth: "bool", maxSweeps: "int" } },
   morph: { keys: { variable: "name", fixBoundary: "bool", constrainedPart: "str", stiffening: "num", steps: "int", allowInverted: "bool", tolerance: "pos", maxIterations: "int" }, required: ["variable"] },
-  registerRigid: { keys: { path: "str", method: { enum: ["point_to_point", "point_to_plane"] }, maxIterations: "int", tolerance: "pos", maxDistance: "pos", part: "str" }, required: ["path"] },
+  registerRigid: { keys: { path: "str", method: { enum: ["point_to_point", "point_to_plane"] }, maxIterations: "int", tolerance: "pos", maxDistance: "pos", part: "str", autoInit: "bool", symmetricCheck: "bool", symmetricTolerance: "pos", adaptiveTrim: "pos" }, required: ["path"] },
   geodesicDistance: { keys: { sourceNodes: "ids", sourcePart: "str", timeFactor: "pos", tolerance: "pos", maxIterations: "int", output: "name" } },
   laplacianEigenmodes: { keys: { numModes: "int", tolerance: "pos", maxIterations: "int", output: "name" } },
   convertCoordinates: { keys: { system: { enum: ["cylindrical", "spherical"] }, axis: "nums3", origin: "nums3", reference: "nums3", arrays: "strs", inverse: "bool", recordCoordinates: "bool" }, required: ["arrays"] },
@@ -243,7 +243,9 @@ async function run181(model: MdpaModel, rec: Op181Record, deps: Op181Deps, diagn
       (moving ?? Array.from({ length: model.nodeCount }, (_, i) => i)).forEach((n, j) => { for (let k = 0; k < 3; k++) sourcePoints[j * 3 + k] = model.coords[n * 3 + k]; });
       const source = { dim: 3, points: sourcePoints, cells: [], point_data: {}, cell_data: {}, field_data: {} } as unknown as MeshioMesh;
       const options: Record<string, unknown> = {};
-      for (const k of ["method", "maxIterations", "tolerance", "maxDistance"]) if (rec[k] !== undefined) options[k] = rec[k];
+      for (const k of ["method", "maxIterations", "tolerance", "maxDistance", "symmetricCheck", "symmetricTolerance", "adaptiveTrim"]) if (rec[k] !== undefined) options[k] = rec[k];
+      // meshio++ 20.0.0: the best of 24 principal-frame starts instead of the identity.
+      if (rec.autoInit === true) options.initial = "auto";
       const r = m.registerRigid(source, modelToMeshio(target, diagnostics, { dim: 3 }), options);
       if (r.numPairs === 0) return noop(model, "No source point found a partner on the target, so there is no transform to apply.");
       const T = r.matrix;
@@ -263,7 +265,7 @@ async function run181(model: MdpaModel, rec: Op181Record, deps: Op181Deps, diagn
         next = { ...base, fields: rot.fields };
         note = (rot.rotated.length ? ` Rotated ${rot.rotated.join(", ")} with the mesh.` : "") + (rot.skipped.length ? ` Not rotated (width is neither 3 nor 9): ${rot.skipped.join(", ")}.` : "");
       } else note = " Vector and tensor fields were left as they are (only part of the mesh moved).";
-      return { model: next, message: `Registered rigidly: rms ${g(r.initialRms)} → ${g(r.rms)} over ${r.numPairs} pair(s), ${r.iterations} iteration(s)${r.converged ? "" : " (NOT converged)"}. Matrix ${T.map(g).join(" ")}.${note}` };
+      return { model: next, message: `Registered rigidly: rms ${g(r.initialRms)} → ${g(r.rms)} over ${r.numPairs} pair(s), ${r.iterations} iteration(s)${r.converged ? "" : " (NOT converged)"}. Matrix ${T.map(g).join(" ")}.${(r.numRejected ?? 0) > 0 ? ` ${r.numRejected} pair(s) rejected by the trim.` : ""}${rec.autoInit === true ? ` Start ${r.chosenCandidate} of ${r.candidateRms?.length ?? 24} principal-frame candidates.` : ""}${r.warnings?.length ? ` ${r.warnings.join(" ")}` : ""}${note}` };
     }
     case "geodesicDistance": {
       const surfaceOnly = trianglesOnly(model);

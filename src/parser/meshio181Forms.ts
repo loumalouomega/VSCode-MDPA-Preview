@@ -68,6 +68,9 @@ export const FORMS_181: Form181[] = [
       { key: "maxIterations", label: "iterations", kind: "int", title: "Most ICP iterations.", placeholder: "auto" },
       { key: "maxDistance", label: "max pair distance", kind: "num", title: "Pairs farther apart than this are ignored.", placeholder: "none" },
       { key: "part", label: "move only part", kind: "text", title: "Register and move only the nodes of this SubModelPart (fields are then left alone).", placeholder: "whole mesh" },
+      { key: "autoInit", label: "auto start", kind: "bool", title: "Start from the best of 24 principal-frame candidates instead of the identity (meshio++ 20.0.0). Use it when the two meshes are far apart or turned." },
+      { key: "symmetricCheck", label: "symmetry check", kind: "bool", title: "Warn when the mesh is nearly symmetric, so the registration may be ambiguous." },
+      { key: "adaptiveTrim", label: "trim pairs ×median", kind: "num", title: "Drop pairs farther apart than this multiple of the median pair distance (0 keeps all).", placeholder: "off" },
     ],
   },
   {

@@ -571,6 +571,7 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
                 </div>
                 <div class="edit-form-row">
                   <label class="edit-field" title="Holes with more boundary edges than this are left open."><span>max hole edges</span><input type="number" id="repair-maxhole" class="edit-num edit-num-wide" value="10" min="3" step="1"></label>
+                  <label class="edit-field" title="How a hole is filled: a fan from its centre, a flat triangulation, or a curved patch (meshio++ 20.0.0)."><span>fill</span><select id="repair-style" class="edit-sel"><option value="fan" selected>fan</option><option value="flat">flat</option><option value="curved">curved</option></select></label>
                 </div>
                 <div class="edit-form-row">
                   <label class="edit-field" title="Weld points closer than this first; 0 leaves the points alone."><span>weld</span><input type="number" id="repair-weld" class="edit-num edit-num-wide" value="0" min="0" step="any"></label>
@@ -1304,6 +1305,14 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
                 <div class="edit-form-row">
                   <label class="edit-field" title="The longest ray. Blank = the bounding-box diagonal."><span>max</span><input type="number" id="thick-max" class="edit-num" min="0" step="any" placeholder="auto"></label>
                   <label class="edit-field" title="Count the facets thinner than this in the result message."><span>below</span><input type="number" id="thick-below" class="edit-num" min="0" step="any" placeholder="off"></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field edit-field-grow" title="Ray (default): the distance along the normal. Sphere: the largest sphere inside the wall. Cone: the nearest hit among rays inside a cone. meshio++ 20.0.0."><span>method</span><select id="thick-method" class="edit-sel edit-sel-grow"><option value="ray" selected>ray</option><option value="sphere">sphere</option><option value="cone">cone</option></select></label>
+                  <label class="edit-field" title="Cone half-angle in degrees (method cone). Blank = the kernel default."><span>cone°</span><input type="number" id="thick-cone" class="edit-num" min="0" step="any" placeholder="auto"></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field" title="Cast the rays both ways, either face of a triangle counting."><span>two-sided</span><input type="checkbox" id="thick-two"></label>
+                  <label class="edit-field" title="Step over triangles more edge-on to the ray than this many degrees. Blank = off."><span>edge-on°</span><input type="number" id="thick-edge" class="edit-num" min="0" step="any" placeholder="off"></label>
                 </div>
                 <div class="edit-form-row">
                   <label class="edit-field edit-field-grow" title="A per-facet field (Elemental for Elements, Conditional for Conditions). A ray that reaches nothing leaves a gap, not a zero. Colour by it in the Field panel."><span>field</span><input type="text" id="thick-out" class="edit-text" placeholder="THICKNESS"></label>

@@ -29,6 +29,10 @@ export interface FitPrimitivesParams {
   relative?: boolean;
   minInlierFraction?: number;
   types?: PatchPrimitive[];
+  /** Trim the points a fit uses by sigma: auto (default), all, 3sigma, 2sigma, 1sigma (meshio++ >= 20.0.0). */
+  usedPoints?: "auto" | "all" | "3sigma" | "2sigma" | "1sigma";
+  /** The reference a plane/sphere/cylinder is refitted under (meshio++ >= 20.0.0). */
+  criterion?: "least_squares" | "minimum_zone" | "min_circumscribed" | "max_inscribed";
   /** Also write the integer `FIT_PRIMITIVE` field. */
   writeField?: boolean;
 }
@@ -70,7 +74,7 @@ export async function fitPrimitivesReport(model: MdpaModel, params: FitPrimitive
   }
   (mesh as { cell_data?: Record<string, unknown[]> }).cell_data = { ...(mesh.cell_data ?? {}), "segment:patch": perBlock };
   const m = await loadMeshio();
-  const r = m.fitPrimitives(mesh, "segment:patch", params.tolerance, params.relative, params.minInlierFraction, params.types);
+  const r = m.fitPrimitives(mesh, "segment:patch", params.tolerance, params.relative, params.minInlierFraction, params.types, undefined, Object.fromEntries(Object.entries({ usedPoints: params.usedPoints, criterion: params.criterion }).filter(([, v]) => v !== undefined)));
   const fd = r.mesh.field_data ?? {};
   const num = (k: string): number[] => (fd[k] ? Array.from(fd[k] as ArrayLike<number | bigint>, Number) : []);
   const ids = num("fit:patch_id"), types = num("fit:patch_type"), frac = num("fit:patch_fraction"), rms = num("fit:patch_rms"), max = num("fit:patch_max"), tol = num("fit:patch_tolerance"), par = num("fit:patch_params");

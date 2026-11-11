@@ -1260,6 +1260,8 @@ export async function meshFitPrimitives(args: {
   relative?: boolean;
   minInlierFraction?: number;
   types?: ("plane" | "sphere" | "cylinder" | "cone" | "torus")[];
+  usedPoints?: "auto" | "all" | "3sigma" | "2sigma" | "1sigma";
+  criterion?: "least_squares" | "minimum_zone" | "min_circumscribed" | "max_inscribed";
   outputPath?: string;
   provenance?: ProvenanceMode;
   verify?: boolean;
@@ -1277,6 +1279,8 @@ export async function meshFitPrimitives(args: {
     relative: args.relative,
     minInlierFraction: args.minInlierFraction,
     types: args.types,
+    usedPoints: args.usedPoints,
+    criterion: args.criterion,
     writeField: args.outputPath !== undefined,
   });
   const out: Record<string, unknown> = { path: args.path, ...(segmented ? { segmented } : {}), counts: r.counts, patches: r.patches, message: r.message };
@@ -2058,7 +2062,16 @@ export async function meshDerive(args: {
     | "estimateNormals"
     | "parameterize"
     | "cutLevelSet"
-    | "cutQuadrature";
+    | "cutQuadrature"
+    | "sections"
+    | "silhouette"
+    | "fitCurves"
+    | "clip"
+    | "thicken"
+    | "hollow"
+    | "exaggerate"
+    | "colorize"
+    | "profileSolid";
   outputPath: string;
   outputFormat?: string;
   /** Read this step of a multi-step file instead of the first (the frame every kind works on). */
@@ -2098,6 +2111,11 @@ export async function meshDerive(args: {
   nonManifold?: boolean;
   inconsistent?: boolean;
   frozenPart?: string;
+  chain?: boolean;
+  minLength?: number;
+  maxDeviation?: number;
+  coverage?: number;
+  maxFaces?: number;
   /** tessellate: divisions per axis / recursive splits (0-5, default 2). */
   levels?: number;
   dims?: number[];
@@ -2164,7 +2182,7 @@ export async function meshDerive(args: {
   };
   let spec: DeriveSpec;
   if (args.kind === "slice") {
-    spec = { kind: "slice", origin: triple(args.origin, "origin"), normal: triple(args.normal, "normal"), ...(args.parts && args.parts.length > 0 ? { parts: args.parts } : {}) };
+    spec = { kind: "slice", origin: triple(args.origin, "origin"), normal: triple(args.normal, "normal"), ...(args.chain ? { chain: true, minLength: args.minLength } : {}), ...(args.parts && args.parts.length > 0 ? { parts: args.parts } : {}) };
   } else if (args.kind === "isosurface") {
     if (!args.variable) throw new Error("An isosurface needs a `variable`.");
     spec = { kind: "isosurface", variable: args.variable, values: args.values ?? [], component: args.component };
@@ -2196,6 +2214,9 @@ export async function meshDerive(args: {
       preserveFeatures: args.preserveFeatures,
       featureAngle: args.featureAngle,
       frozenPart: args.frozenPart,
+      maxDeviation: args.maxDeviation,
+      coverage: args.coverage,
+      maxFaces: args.maxFaces,
     };
   } else if (args.kind === "tessellate") {
     spec = { kind: "tessellate", levels: args.levels };

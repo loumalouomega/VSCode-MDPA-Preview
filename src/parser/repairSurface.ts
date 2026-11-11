@@ -45,6 +45,8 @@ export interface RepairSurfaceParams {
   maxHoleEdges?: number;
   /** Weld points closer than this first (default 0 = off). */
   weldTolerance?: number;
+  /** How a hole is filled: "fan" (default), "flat" or "curved" (meshio++ >= 20.0.0). */
+  fillStyle?: "fan" | "flat" | "curved";
 }
 
 export interface RepairSurfaceResult {
@@ -134,7 +136,8 @@ export async function repairSurfaceModel(
         params.splitNonManifold ?? true,
         params.maxHoleEdges ?? 10,
         params.weldTolerance ?? 0,
-        true
+        true,
+        params.fillStyle
       ),
     {
       recoverBlockNames: true,

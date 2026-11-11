@@ -23,6 +23,9 @@ import { prepareMeshioOp, meshioCorrespondence, flattenMeshioData, expectCount, 
 
 export const THICKNESS_DIRECTIONS = ["auto", "inward", "outward"] as const;
 export type ThicknessDirection = (typeof THICKNESS_DIRECTIONS)[number];
+/** meshio++ 20.0.0: how the distance is measured. */
+export const THICKNESS_METHODS = ["ray", "sphere", "cone"] as const;
+export type ThicknessMethod = (typeof THICKNESS_METHODS)[number];
 export const THICKNESS_VARIABLE = "THICKNESS";
 
 export interface ThicknessParams {
@@ -34,6 +37,15 @@ export interface ThicknessParams {
   threshold?: number;
   /** Field name for the distance (default THICKNESS). */
   output?: string;
+  /** "ray" (default), "sphere" (largest inscribed sphere) or "cone" (rays inside a cone); meshio++ >= 20.0.0. */
+  method?: ThicknessMethod;
+  /** The cone's half-angle in degrees and its ray count (method "cone"). */
+  coneAngle?: number;
+  coneRays?: number;
+  /** Rays both ways, either face of a triangle counting. */
+  twoSided?: boolean;
+  /** Step over triangles more edge-on to the ray than this many degrees. */
+  maxNormalDeviation?: number;
 }
 
 export interface ThicknessResult {
@@ -51,6 +63,10 @@ export interface ThicknessResult {
   /** Entity of the least distance, `{kind, id}`, when anything was hit. */
   minEntity?: { kind: "Elements" | "Conditions" | "Geometries"; id: number };
   warnings: string[];
+  /** The method that ran and the 2nd / 95th percentiles of the hits (meshio++ >= 20.0.0). */
+  method?: string;
+  p2?: number;
+  p95?: number;
   message?: string;
 }
 
@@ -78,7 +94,12 @@ export async function thicknessModel(model: MdpaModel, params: ThicknessParams =
   if (params.direction && params.direction !== "auto") options.direction = params.direction;
   if (params.maxDistance !== undefined && params.maxDistance > 0) options.maxDistance = params.maxDistance;
   if (params.threshold !== undefined && params.threshold > 0) options.threshold = params.threshold;
-  const r = m.thickness(mesh, options);
+  if (params.method && params.method !== "ray") options.method = params.method;
+  if (params.coneAngle !== undefined && params.coneAngle > 0) options.coneAngle = params.coneAngle;
+  if (params.coneRays !== undefined && params.coneRays > 0) options.coneRays = params.coneRays;
+  if (params.twoSided) options.twoSided = true;
+  if (params.maxNormalDeviation !== undefined && params.maxNormalDeviation > 0) options.maxNormalDeviation = params.maxNormalDeviation;
+  const r = m.thickness(mesh, options) as ReturnType<typeof m.thickness> & { method?: string; p2?: number; p95?: number };
 
   const { blocks, cellCount } = meshioCorrespondence(model, mesh, "thickness");
   const flat = flattenMeshioData(r.mesh.cell_data?.["thickness:distance"] as never);
@@ -127,7 +148,7 @@ export async function thicknessModel(model: MdpaModel, params: ThicknessParams =
   if (skippedGeometries > 0) warnings.push(`${skippedGeometries} Geometry cell(s) were measured but not written: a field cannot address the Geometries id space.`);
   return {
     model: out, written, direction: r.direction, numCells: r.numCells, numHit: r.numHit, numMissed: r.numMissed, numBelow: r.numBelow,
-    min: r.min, max: r.max, mean: r.mean, minEntity, warnings,
+    min: r.min, max: r.max, mean: r.mean, minEntity, warnings, method: r.method, p2: r.p2, p95: r.p95,
   };
 }
 
@@ -137,6 +158,8 @@ export function describeThickness(r: ThicknessResult, threshold?: number): strin
   const parts = [
     `Wrote ${r.written.map((k) => k.replace(/^(Elemental|Conditional):/, "")).filter((v, i, a) => a.indexOf(v) === i).join(", ")}: ${what} of ${r.numHit} of ${r.numCells} facet(s) ∈ [${r.min.toPrecision(4)}, ${r.max.toPrecision(4)}], mean ${r.mean.toPrecision(4)}.`,
   ];
+  if (r.method && r.method !== "ray") parts.push(`Method: ${r.method}.`);
+  if (r.p2 !== undefined && Number.isFinite(r.p2) && Number.isFinite(r.p95)) parts.push(`2nd–95th percentile ${r.p2.toPrecision(4)}–${r.p95!.toPrecision(4)}.`);
   if (r.numMissed > 0) parts.push(`${r.numMissed} ray(s) reached nothing and are gaps, not zeros.`);
   if (threshold && threshold > 0) parts.push(`${r.numBelow} facet(s) are thinner than ${threshold}.`);
   if (r.minEntity) parts.push(`Least at ${r.minEntity.kind.replace(/s$/, "")} ${r.minEntity.id}.`);

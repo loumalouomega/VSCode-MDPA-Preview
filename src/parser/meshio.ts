@@ -195,6 +195,18 @@ export interface KernelSweepResult {
   numQuads: number; numTriangles: number; numFlipped: number; minScaledJacobian: number; warnings: string[];
 }
 
+/** What `offsetSurface`, `thicken` and `hollow` return (20.0.0). */
+export interface OffsetSurfaceOut {
+  mesh: MeshioMesh; numNotVisible: number; numClamped: number; numFolded: number; numRimQuads: number; maxMove: number; warnings: string[];
+}
+/** What `deviation` returns (20.0.0). */
+export interface DeviationOut {
+  mesh: MeshioMesh; numPoints: number; numMeasured: number; min: number; max: number; mean: number; rms: number; sigma: number;
+  percentiles: { p1: number; p5: number; p50: number; p95: number; p99: number };
+  histogramEdges: Float64Array; histogramCounts: Float64Array; numOutsideRange: number; shareWithin: number;
+  suggestedRange: number; numWithoutNormal: number; warnings: string[]; registered: boolean; matrix: number[]; registrationRms: number;
+}
+
 export interface MeshioModule {
   checkQuality(
     mesh: MeshioMesh,
@@ -343,6 +355,65 @@ export interface MeshioModule {
     numTetrahedra: number; numInverted: number; numDegenerate: number; numOverlaps: number;
     minVolume: number; maxVolume: number; valid: boolean; warnings: string[];
   };
+  /** Chained sections of a surface at parallel planes `direction . x = offsets[k]` (20.0.0). */
+  sections(mesh: MeshioMesh, direction: number[], offsets: ArrayLike<number>, options?: { minLength?: number; recordParentIds?: boolean }): MeshioMesh;
+  /** Lines, arcs and circles from the chains of a chained line mesh (20.0.0). */
+  fitCurves(sections: MeshioMesh, options?: Record<string, unknown>): {
+    mesh: MeshioMesh; pieces: Record<string, unknown>[]; numLines: number; numArcs: number; numCircles: number;
+    maxResidual: number; tolerance: number; warnings: string[];
+  };
+  /** Outline (and holes) of a surface seen along a normal, optionally extruded (20.0.0). */
+  silhouette(mesh: MeshioMesh, options?: Record<string, unknown>): {
+    mesh: MeshioMesh; numLoops: number; numOuter: number; numHoles: number; numTriangles: number;
+    area: number; perimeter: number; minHeight: number; maxHeight: number; warnings: string[];
+  };
+  /** Cut a surface by a plane, keep one side and cap the cut (20.0.0). */
+  clip(mesh: MeshioMesh, origin: ArrayLike<number>, normal: ArrayLike<number>, options?: { keepBelow?: boolean; cap?: boolean }): {
+    mesh: MeshioMesh; numKept: number; numSplit: number; numCapTriangles: number; numLoops: number; numOpenChains: number; warnings: string[];
+  };
+  /** Offset / thicken / hollow a surface (20.0.0). */
+  offsetSurface(mesh: MeshioMesh, distance: number, options?: { smoothIterations?: number }): OffsetSurfaceOut;
+  thicken(mesh: MeshioMesh, thickness: number, options?: { side?: "inward" | "outward" | "both"; smoothIterations?: number }): OffsetSurfaceOut;
+  hollow(mesh: MeshioMesh, wall: number, options?: { smoothIterations?: number }): OffsetSurfaceOut;
+  /** Reverse the winding of every cell, or of one cell region (20.0.0). */
+  flipNormals(mesh: MeshioMesh, region?: string): { mesh: MeshioMesh; numFlipped: number };
+  /** Remove small connected components (20.0.0). */
+  removeIslands(mesh: MeshioMesh, options?: Record<string, unknown>): {
+    mesh: MeshioMesh; numComponents: number; numRemoved: number; numCellsRemoved: number; numPointsRemoved: number;
+  };
+  /** Signed deviation of a scan from a reference surface or fitted primitive (20.0.0). */
+  deviation(scan: MeshioMesh, options?: Record<string, unknown>): DeviationOut;
+  deviationRegions(mesh: MeshioMesh, options: { tolerance: number; field?: string; prefix?: string; minArea?: number }): {
+    mesh: MeshioMesh; regions: Record<string, unknown>[]; numExcess: number; numMissing: number; numDropped: number; warnings: string[];
+  };
+  exaggerate(mesh: MeshioMesh, options?: Record<string, unknown>): { mesh: MeshioMesh; clamp: number; radius: number; numMoved: number; warnings: string[] };
+  colorize(mesh: MeshioMesh, options: Record<string, unknown>): { mesh: MeshioMesh; vmin: number; vmax: number; location: "point" | "cell" };
+  /** Elements, dimensions and GD&T by a JSON spec (20.0.0). */
+  measure(mesh: MeshioMesh, spec: object | string): { mesh: MeshioMesh; report: any; numFail: number; warnings: string[] };
+  alignDatums(mesh: MeshioMesh, primary: string, secondary: string, origin?: string): { mesh: MeshioMesh; matrix: Float64Array };
+  measureElementPrimitive(mesh: MeshioMesh, name: string): { type: number; params: Float64Array };
+  registerLandmarks(source: ArrayLike<number>, target: ArrayLike<number>, weights?: ArrayLike<number> | null): { matrix: number[]; residuals: Float64Array; rms: number };
+  findSymmetryPlane(mesh: MeshioMesh, options?: Record<string, unknown>): {
+    origin: number[]; normal: number[]; rms: number; share: number; tolerance: number; candidateRms: Float64Array; chosenCandidate: number; warnings: string[];
+  };
+  autoAlign(mesh: MeshioMesh, options?: Record<string, unknown>): {
+    mesh: MeshioMesh; matrix: number[]; mode: "face" | "axis"; primary: number[]; secondary: number[]; share: number;
+    faceShare: number; axisShare: number; openingArea: number; warnings: string[];
+  };
+  constrainPrimitives(mesh: MeshioMesh, options?: Record<string, unknown>): {
+    mesh: MeshioMesh; numConstrained: number; numGroups: number; faceTolerance: number; relations: Record<string, unknown>[]; unmet: unknown[];
+  };
+  faceSupport(solid: MeshioMesh, scan: MeshioMesh, options?: Record<string, unknown>): {
+    mesh: MeshioMesh; numMeasured: number; numPartial: number; numInferred: number; shareWithin: number; tolerance: number; faceShare: number[];
+  };
+  fitCadIterate(scan: MeshioMesh, options?: Record<string, unknown>): {
+    mesh: MeshioMesh; rounds: Record<string, unknown>[]; bestRound: number; targetWithin: number; targetMet: boolean;
+    stopReason: string; numMeasured: number; numInferred: number;
+  };
+  /** Needs OpenCASCADE: the full artifact only (20.0.0). */
+  profileSolid(sketch: MeshioMesh, features: string, options?: Record<string, unknown>): {
+    mesh: MeshioMesh; volume: number; area: number; numFaces: number; valid: boolean; provider: string; warnings: string[];
+  };
   /** Wall thickness (inward) or clearance (outward) per facet by ray casting (18.0.0). */
   thickness(mesh: MeshioMesh, options?: Record<string, unknown>): {
     mesh: MeshioMesh; direction: "inward" | "outward"; numCells: number; numHit: number; numMissed: number; numBelow: number;
@@ -372,6 +443,7 @@ export interface MeshioModule {
   /** Rigid ICP registration: a row-major 4x4 `matrix` that lays `source` onto `target`. */
   registerRigid(source: MeshioMesh, target: MeshioMesh, options?: Record<string, unknown>): {
     matrix: number[]; initialRms: number; rms: number; iterations: number; numPairs: number; converged: boolean;
+    numRejected?: number; candidateRms?: Float64Array; chosenCandidate?: number; warnings?: string[];
   };
   /** Normals of a point cloud as `normals` point data. */
   estimateNormals(mesh: MeshioMesh, options?: Record<string, unknown>): { mesh: MeshioMesh; numDegenerate: number; numComponents: number };
@@ -455,8 +527,10 @@ export interface MeshioModule {
     relative?: boolean,
     minInlierFraction?: number,
     types?: string[],
-    maxIterations?: number
-  ): { mesh: MeshioMesh; numPatches: number; numPlane: number; numSphere: number; numCylinder: number; numCone: number; numTorus: number; numUnfitted: number };
+    maxIterations?: number,
+    /** meshio++ >= 20.0.0: region / seeds / featureAngle / rimAngle / outputRegion / usedPoints / criterion. */
+    options?: Record<string, unknown>
+  ): { mesh: MeshioMesh; numPatches: number; numPlane: number; numSphere: number; numCylinder: number; numCone: number; numTorus: number; numUnfitted: number; numFeatureCells?: number; warnings?: string[] };
 
   /** Procedural generators (17.9.0, planar-domain ones 17.11.0); `null` = default. */
   rectangle(dims?: number[] | null, size?: number[] | null, origin?: number[] | null, cellType?: string, split?: string, order?: number, maxCells?: number): MeshioMesh;
@@ -962,7 +1036,9 @@ export interface MeshioModule {
     splitNonManifold?: boolean,
     maxHoleEdges?: number,
     weldTolerance?: number,
-    recordProvenance?: boolean
+    recordProvenance?: boolean,
+    /** How a hole is filled: fan (default), flat or curved (20.0.0). */
+    fillStyle?: string
   ): MeshioRepairResult;
 
   decimate(
@@ -975,13 +1051,18 @@ export interface MeshioModule {
     preserveFeatures?: boolean,
     featureAngle?: number,
     frozen?: number[] | Int32Array | null,
-    returnMaps?: boolean
+    returnMaps?: boolean,
+    /** Stop on a measured deviation from the input surface (20.0.0). */
+    bounds?: { maxDeviation?: number; coverage?: number; maxFaces?: number }
   ): {
     mesh: MeshioMesh;
     facesRemoved: number;
     pointsRemoved: number;
     collapsesRejected: number;
     maxErrorApplied: number;
+    deviation?: number;
+    deviationMet?: boolean;
+    rounds?: number;
     pointMap?: Int32Array;
     cellMaps?: Int32Array[];
   };
@@ -1200,7 +1281,7 @@ export interface MeshioModule {
     onConflict?: string
   ): MeshioMesh;
 
-  slice(mesh: MeshioMesh, origin: number[], normal: number[], recordParentIds?: boolean): MeshioMesh;
+  slice(mesh: MeshioMesh, origin: number[], normal: number[], recordParentIds?: boolean, options?: { chain?: boolean; minLength?: number }): MeshioMesh;
 
   /** A negative `component` means the row magnitude here (the opposite sense to `gradient`'s "all"). */
   isosurface(
