@@ -69,7 +69,7 @@ test("audit covers every registered reader's live options capability", async () 
   ]);
   const audited = [
     "abaqus", "abaqus_fil", "ansys", "ansys_rst", "ansysinp", "avsucd", "cad_json",
-    "cgns", "code_aster", "dex", "dolfin", "elmer", "ensight", "exodus", "febio", "femap",
+    "cgns", "code_aster", "dex", "dolfin", "dxf", "elmer", "ensight", "exodus", "febio", "femap",
     "flac3d", "flux", "frd", "freefem", "gid", "gltf", "gmsh", "h5m", "hmf", "iges", "ip",
     "libmesh", "lsdyna", "lsdyna_d3plot", "marc", "marc_t19", "med", "medit",
     "mfem", "mff", "mfm", "mphbin", "mphtxt", "nastran", "nastran_h5",
@@ -267,7 +267,7 @@ test("lsdyna/pcd/xyz report no options awareness at all (static capability contr
   // keyword deck has no reader-side step selection in this build — so unlike
   // frd/vtkhdf there is nothing here to defer: they are simply not candidates.
   const m = await loadMeshio();
-  for (const format of ["lsdyna", "pcd", "xyz"]) {
+  for (const format of ["dxf", "lsdyna", "pcd", "xyz"]) {
     assert.equal(m.readerSupportsOptions(format), false, format);
   }
 });
