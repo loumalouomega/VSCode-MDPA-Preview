@@ -1259,6 +1259,15 @@ const KERNEL_OP_EXAMPLES: Record<KernelOpKind, { description: string; options: R
   cutQuadrature: { description: "quadrature rules on that cut part as a point cloud with weights (full artifact)", options: { levelSets: ["phi"], selection: "phi < 0", order: 2 } },
   estimateNormals: { description: "normals of a point cloud as point data, oriented consistently", options: { k: 12, orientation: "consistent" } },
   findIntersections: { description: "write the curve where a surface meets itself, as a line mesh", options: {} },
+  sections: { description: "chained section polylines of a surface at parallel planes (SECTION_OFFSET / SECTION_CHAIN / SECTION_CLOSED cell fields)", options: { direction: [0, 0, 1], offsets: [0] } },
+  silhouette: { description: "the outline (and holes) of a surface seen along a direction, as a line mesh; extrude: true gives the prism surface", options: { normal: [0, 0, 1] } },
+  fitCurves: { description: "lines, arcs and circles fitted to a chained line mesh (the output of Sections)", options: { tolerance: 0.01 } },
+  clip: { description: "cut a surface by a plane, keep one side and cap the cut", options: { origin: [0, 0, 0], normal: [0, 0, 1], keepBelow: true, cap: true } },
+  thicken: { description: "a closed shell of a given thickness from a surface", options: { thickness: 0.1, side: "inward" } },
+  hollow: { description: "a closed surface with an inner, reversed wall inside it", options: { wall: 0.1 } },
+  exaggerate: { description: "displace the points along their normals by a scaled, clamped, smoothed deviation field", options: { field: "DEVIATION", scale: 10 } },
+  colorize: { description: "bake a field into COLOR_R / COLOR_G / COLOR_B (0-255) through a colormap", options: { field: "DEVIATION", cmap: "viridis" } },
+  profileSolid: { description: "build a solid from a fitted-curve sketch by features (full artifact only)", options: { features: "extrude:10" } },
   metricFromHessian: { description: "turn a Hessian field and a target error into an MMG metric field", options: { hessian: "HESSIAN", error: 0.01, hmin: 0.01, hmax: 1 } },
 };
 

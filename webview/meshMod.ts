@@ -1517,6 +1517,13 @@ function buildThicknessMsg(): Record<string, unknown> {
   if (max !== undefined && max > 0) msg.maxDistance = max;
   const below = optNum("thick-below");
   if (below !== undefined && below > 0) msg.threshold = below;
+  const method = (document.getElementById("thick-method") as HTMLSelectElement | null)?.value;
+  if (method && method !== "ray") msg.method = method;
+  const cone = optNum("thick-cone");
+  if (cone !== undefined && cone > 0) msg.coneAngle = cone;
+  if (checked("thick-two")) msg.twoSided = true;
+  const edge = optNum("thick-edge");
+  if (edge !== undefined && edge > 0) msg.maxNormalDeviation = edge;
   const out = optStr("thick-out");
   if (out) msg.output = out;
   return msg;
@@ -1591,6 +1598,7 @@ function buildRepairSurfaceMsg(): Record<string, unknown> | undefined {
     splitNonManifold: checked("repair-split"),
     maxHoleEdges: Math.floor(maxHoleEdges),
     weldTolerance,
+    ...(((document.getElementById("repair-style") as HTMLSelectElement | null)?.value ?? "fan") !== "fan" ? { fillStyle: (document.getElementById("repair-style") as HTMLSelectElement).value } : {}),
   };
 }
 

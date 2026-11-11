@@ -95,6 +95,7 @@ export const EXPORT_FORMAT_LABELS: Record<ExportableExtension, string> = {
   ".mfm": "Modulef MFM",
   ".mphtxt": "COMSOL",
   ".nas": "Nastran (.nas)",
+  ".dxf": "AutoCAD DXF (line sketches)",
   ".off": "OFF",
   ".pcd": "Point Cloud (PCD, no cells)",
   ".pf3": "FLUX",
@@ -133,7 +134,7 @@ export const EXPORT_MENU_GROUPS: readonly ExportGroup[] = [
   { label: "VTK", extensions: [".vtk", ".vtu", ".vtp", ".vtm", ".xdmf", ".vtkhdf"] },
   {
     label: "Surface",
-    extensions: [".stl", ".obj", ".ply", ".off", ".wkt", ".pcd", ".xyz"],
+    extensions: [".stl", ".obj", ".ply", ".off", ".dxf", ".wkt", ".pcd", ".xyz"],
   },
   {
     label: "Solvers",

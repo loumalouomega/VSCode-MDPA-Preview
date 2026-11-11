@@ -31,7 +31,9 @@ import { loadMeshio, loadMeshioFull, meshioFullInstalled, type MeshioModule } fr
 import { triangleSurfaceOf } from "./gridSample";
 import { withKratosBlockNames, legalFields, type KernelMeshResult } from "./kernelMeshes";
 
-export const KERNEL_OP_KINDS = ["extrude", "revolve", "mirror", "boundaryLayer", "tetrahedralize", "errorSize", "checkConformity", "adapt", "discretizeLevelset", "meshDomain", "metricFromHessian", "findIntersections", "tetToPoly", "convexHull", "delaunay2d", "reconstructSurface", "estimateNormals", "parameterize", "cutLevelSet", "cutQuadrature"] as const;
+export const KERNEL_OP_KINDS = ["extrude", "revolve", "mirror", "boundaryLayer", "tetrahedralize", "errorSize", "checkConformity", "adapt", "discretizeLevelset", "meshDomain", "metricFromHessian", "findIntersections", "tetToPoly", "convexHull", "delaunay2d", "reconstructSurface", "estimateNormals", "parameterize", "cutLevelSet", "cutQuadrature", "sections", "silhouette", "fitCurves", "clip", "thicken", "hollow", "exaggerate", "colorize", "profileSolid"] as const;
+/** The kinds that need OpenCASCADE, which only the full artifact links (meshio++ 20.0.0). */
+export const OCCT_KERNEL_KINDS: readonly KernelOpKind[] = ["profileSolid"];
 /** The kinds that need MMG, which only the full artifact links (meshio++ 18.0.0). */
 export const MMG_KERNEL_KINDS: readonly KernelOpKind[] = ["adapt", "discretizeLevelset", "meshDomain"];
 /** The kinds that need CutCells, which only the full artifact links (meshio++ 18.3.0). */
@@ -79,6 +81,12 @@ async function moduleFor(spec: KernelOpSpec, options: Record<string, unknown>): 
   if (CUT_KERNEL_KINDS.includes(spec.kind)) {
     if (!meshioFullInstalled()) {
       throw new Error(`${spec.kind} runs on the CutCells library that only the full meshio++ artifact links, and this install ships the lean one. Use Crop or the Clip export instead.`);
+    }
+    return loadMeshioFull();
+  }
+  if (OCCT_KERNEL_KINDS.includes(spec.kind)) {
+    if (!meshioFullInstalled()) {
+      throw new Error(`${spec.kind} builds the solid with OpenCASCADE, which only the full meshio++ artifact links, and this install ships the lean one.`);
     }
     return loadMeshioFull();
   }
@@ -282,6 +290,78 @@ export async function kernelOpModel(model: MdpaModel, spec: KernelOpSpec, diagno
           `Cut-cell quadrature (${r.selection}, ${r.backend}): ${n(r.numPoints)} point(s) in ${n(r.numRules)} rule(s), weights sum to ${f(r.sumWeights)}. ` +
           "A point cloud: QUADRATURE_WEIGHT, QUADRATURE_REFERENCE, QUADRATURE_RULE and QUADRATURE_PARENT_CELL are nodal fields.",
         suffix: "quadrature",
+      };
+    }
+    case "sections": {
+      const { direction, offsets, ...rest } = options as { direction?: number[]; offsets?: number[] };
+      if (!Array.isArray(direction) || direction.length !== 3 || !Array.isArray(offsets) || offsets.length === 0) {
+        throw new Error("sections needs options.direction (three numbers, the plane normal) and options.offsets (the plane positions along it).");
+      }
+      const mesh = m.sections(input, direction, offsets, rest);
+      const out = read(mesh, { section_offset: "SECTION_OFFSET", section_chain: "SECTION_CHAIN", section_closed: "SECTION_CLOSED" });
+      return { model: out, summary: `Sections: ${n(offsets.length)} plane(s) along (${direction.map(f).join(", ")}) gave ${n(out.blocks.reduce((a, b) => a + b.count, 0))} line segment(s); SECTION_OFFSET, SECTION_CHAIN and SECTION_CLOSED are cell fields.`, suffix: "sections" };
+    }
+    case "silhouette": {
+      const r = m.silhouette(input, options);
+      return {
+        model: read(r.mesh),
+        summary: `Silhouette: ${n(r.numLoops)} loop(s) (${n(r.numOuter)} outer, ${n(r.numHoles)} hole(s)), area ${f(r.area)}, perimeter ${f(r.perimeter)}` + (options.extrude ? `, extruded over ${f(r.minHeight)} to ${f(r.maxHeight)}` : "") + "." + warn(r.warnings),
+        suffix: "silhouette",
+      };
+    }
+    case "fitCurves": {
+      const r = m.fitCurves(input, options);
+      return {
+        model: read(r.mesh),
+        summary: `Curves: ${n(r.numLines)} line(s), ${n(r.numArcs)} arc(s), ${n(r.numCircles)} circle(s); worst residual ${f(r.maxResidual)} (tolerance ${f(r.tolerance)}).` + warn(r.warnings),
+        suffix: "curves",
+      };
+    }
+    case "clip": {
+      const { origin, normal, ...rest } = options as { origin?: number[]; normal?: number[] };
+      if (!Array.isArray(origin) || origin.length !== 3 || !Array.isArray(normal) || normal.length !== 3) {
+        throw new Error("clip needs options.origin and options.normal (three numbers each); keepBelow and cap are optional.");
+      }
+      const r = m.clip(input, origin, normal, rest);
+      return {
+        model: read(r.mesh),
+        summary: `Clipped: ${n(r.numKept)} facet(s) kept, ${n(r.numSplit)} split, ${n(r.numCapTriangles)} cap triangle(s) over ${n(r.numLoops)} loop(s)` + (r.numOpenChains > 0 ? `; ${n(r.numOpenChains)} OPEN chain(s) left uncapped` : "") + "." + warn(r.warnings),
+        suffix: "clipped",
+      };
+    }
+    case "thicken":
+    case "hollow": {
+      const key = spec.kind === "thicken" ? "thickness" : "wall";
+      const { [key]: amount, ...rest } = options as Record<string, unknown>;
+      if (typeof amount !== "number" || !(amount > 0)) throw new Error(`${spec.kind} needs options.${key} (a positive length).`);
+      const r = spec.kind === "thicken" ? m.thicken(input, amount, rest) : m.hollow(input, amount, rest);
+      return {
+        model: read(r.mesh),
+        summary: `${spec.kind === "thicken" ? "Thickened" : "Hollowed"} by ${f(amount)}: largest point move ${f(r.maxMove)}` +
+          (r.numClamped + r.numFolded + r.numNotVisible > 0 ? `; ${n(r.numClamped)} clamped, ${n(r.numFolded)} folded, ${n(r.numNotVisible)} without a visible offset` : "") + `; ${n(r.numRimQuads)} rim quad(s).` + warn(r.warnings),
+        suffix: spec.kind === "thicken" ? "thickened" : "hollowed",
+      };
+    }
+    case "exaggerate": {
+      const r = m.exaggerate(input, options);
+      return { model: read(r.mesh), summary: `Deviation exaggerated: ${n(r.numMoved)} point(s) moved along their normals, clamp ${f(r.clamp)}, smoothing radius ${f(r.radius)}.` + warn(r.warnings), suffix: "exaggerated" };
+    }
+    case "colorize": {
+      const r = m.colorize(input, options);
+      return {
+        model: read(r.mesh, { red: "COLOR_R", green: "COLOR_G", blue: "COLOR_B" }),
+        summary: `Coloured by ${String(options.field)} over ${f(r.vmin)} to ${f(r.vmax)} (${r.location} data). Red, green and blue are the 0-255 ${r.location === "point" ? "nodal" : "cell"} fields COLOR_R, COLOR_G and COLOR_B (a .ply keeps no colours from this extension's writer).`,
+        suffix: "colored",
+      };
+    }
+    case "profileSolid": {
+      const { features, ...rest } = options as { features?: string };
+      if (typeof features !== "string" || !features.trim()) throw new Error("profileSolid needs options.features, e.g. 'extrude:10;fillet:0.5'.");
+      const r = m.profileSolid(input, features, rest);
+      return {
+        model: read(r.mesh),
+        summary: `Solid from the sketch (${r.provider}): ${n(r.numFaces)} face(s), area ${f(r.area)}, volume ${f(r.volume)}${r.valid ? "" : " — NOT valid"}.` + warn(r.warnings),
+        suffix: "solid",
       };
     }
     case "checkConformity": {

@@ -17,8 +17,8 @@ async function tetBox(): Promise<MdpaModel> {
   return (await applyOpAsync(box, opRecordFromMessage({ op: "simplexify" })!)).model;
 }
 
-test("the installed kernel is 19.0.0 and exposes checkTetrahedra", async () => {
-  assert.equal(meshioPackageVersion(), "19.0.0");
+test("the installed kernel is 19.0.0 or later and exposes checkTetrahedra", async () => {
+  assert.match(meshioPackageVersion()!, /^(19|20)\./);
   assert.equal(typeof (await loadMeshio()).checkTetrahedra, "function");
 });
 

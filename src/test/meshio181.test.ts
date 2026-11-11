@@ -16,7 +16,7 @@ const cellCount = (m: MdpaModel) => m.blocks.reduce((a, b) => a + b.count, 0);
 const fieldNames = (m: MdpaModel) => m.fields.map((f) => f.variable);
 
 test("the installed kernel has and exposes the fourteen new functions", async () => {
-  assert.match(meshioPackageVersion()!, /^(18|19)\./);
+  assert.match(meshioPackageVersion()!, /^(18|19|20)\./);
   const m = (await loadMeshio()) as unknown as Record<string, unknown>;
   for (const fn of ["adjacency", "convertCoordinates", "convexHull", "delaunay2d", "estimateNormals", "geodesicDistance", "laplacianEigenmodes", "morph", "parameterize", "prepareMetric", "reconstructSurface", "registerRigid", "untangle", "writeGraph"]) {
     assert.equal(typeof m[fn], "function", fn);

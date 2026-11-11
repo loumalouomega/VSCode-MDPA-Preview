@@ -62,6 +62,7 @@ import { surfaceDefects } from "../parser/surfaceDefects";
 import { curvatureModel, gaussBonnetResidual } from "../parser/curvature";
 import { meshGraph, graphFormatOf, GRAPH_KINDS, GRAPH_FORMATS, type GraphKind, type GraphFormat } from "../parser/meshGraph";
 import { fitPrimitivesReport } from "../parser/primitiveReport";
+import { measureReport, symmetryPlaneReport, fitCadIterateModel } from "../parser/scanTools";
 import { aleQualitySeries } from "../parser/aleQuality";
 import { recoverBoundaryFlux } from "../parser/boundaryFlux";
 import { segmentModel, SEGMENT_VARIABLE } from "../parser/segmentMesh";
@@ -1260,6 +1261,8 @@ export async function meshFitPrimitives(args: {
   relative?: boolean;
   minInlierFraction?: number;
   types?: ("plane" | "sphere" | "cylinder" | "cone" | "torus")[];
+  usedPoints?: "auto" | "all" | "3sigma" | "2sigma" | "1sigma";
+  criterion?: "least_squares" | "minimum_zone" | "min_circumscribed" | "max_inscribed";
   outputPath?: string;
   provenance?: ProvenanceMode;
   verify?: boolean;
@@ -1277,12 +1280,51 @@ export async function meshFitPrimitives(args: {
     relative: args.relative,
     minInlierFraction: args.minInlierFraction,
     types: args.types,
+    usedPoints: args.usedPoints,
+    criterion: args.criterion,
     writeField: args.outputPath !== undefined,
   });
   const out: Record<string, unknown> = { path: args.path, ...(segmented ? { segmented } : {}), counts: r.counts, patches: r.patches, message: r.message };
   if (args.outputPath && r.patches.length > 0) {
     const warnings: string[] = [];
     const written = await writeModelReported(r.model, args.outputPath, loaded.sourceText, undefined, warnings, { sourceFile: args.path, ops: [{ op: "fitPrimitives" }], provenance: args.provenance, verify: args.verify });
+    out.outputPath = written.path;
+    out.report = written.report;
+    out.warnings = warnings;
+  }
+  return out;
+}
+
+/**
+ * mesh_measure (meshio++ >= 20.0.0): elements fitted from regions, seeds or
+ * patches (or constructed / literal), then dimensions and GD&T tolerances, by a
+ * JSON spec. Read-only; the report is the kernel's own.
+ */
+export async function meshMeasure(args: { path: string; spec?: object | string; specPath?: string }, execution: PlotExecution = {}): Promise<object> {
+  let spec = args.spec;
+  if (spec === undefined && args.specPath) spec = fs.readFileSync(path.resolve(args.specPath), "utf8");
+  if (spec === undefined) throw new Error("Give spec (an object or its JSON text) or specPath (a JSON file).");
+  const { model } = await loadMesh(args.path, undefined, undefined, undefined, undefined, undefined, execution.signal);
+  const r = await measureReport(model, spec);
+  return { path: args.path, numFail: r.numFail, report: r.report, warnings: r.warnings };
+}
+
+/** mesh_symmetry_plane (meshio++ >= 20.0.0): the plane a scan is most nearly symmetric about. */
+export async function meshSymmetryPlane(args: { path: string; seedOrigin?: number[]; seedNormal?: number[]; tolerance?: number; minShare?: number; maxSamples?: number; maxIterations?: number }, execution: PlotExecution = {}): Promise<object> {
+  const { model } = await loadMesh(args.path, undefined, undefined, undefined, undefined, undefined, execution.signal);
+  const { path: _p, ...options } = args;
+  void _p;
+  return { path: args.path, ...(await symmetryPlaneReport(model, options)) };
+}
+
+/** mesh_fit_cad_iterate (meshio++ >= 20.0.0): a solid fitted to a scan in rounds towards a target; optionally written as a mesh. */
+export async function meshFitCadIterate(args: { path: string; options?: Record<string, unknown>; outputPath?: string; provenance?: ProvenanceMode; verify?: boolean }, execution: PlotExecution = {}): Promise<object> {
+  const loaded = await loadMesh(args.path, undefined, undefined, undefined, undefined, undefined, execution.signal);
+  const r = await fitCadIterateModel(loaded.model, args.options ?? {});
+  const out: Record<string, unknown> = { path: args.path, summary: r.summary, targetMet: r.targetMet, stopReason: r.stopReason, rounds: r.rounds };
+  if (args.outputPath) {
+    const warnings: string[] = [];
+    const written = await writeModelReported(r.model, args.outputPath, loaded.sourceText, undefined, warnings, { sourceFile: args.path, ops: [{ op: "fitCadIterate" }], provenance: args.provenance, verify: args.verify });
     out.outputPath = written.path;
     out.report = written.report;
     out.warnings = warnings;
@@ -2058,7 +2100,16 @@ export async function meshDerive(args: {
     | "estimateNormals"
     | "parameterize"
     | "cutLevelSet"
-    | "cutQuadrature";
+    | "cutQuadrature"
+    | "sections"
+    | "silhouette"
+    | "fitCurves"
+    | "clip"
+    | "thicken"
+    | "hollow"
+    | "exaggerate"
+    | "colorize"
+    | "profileSolid";
   outputPath: string;
   outputFormat?: string;
   /** Read this step of a multi-step file instead of the first (the frame every kind works on). */
@@ -2098,6 +2149,11 @@ export async function meshDerive(args: {
   nonManifold?: boolean;
   inconsistent?: boolean;
   frozenPart?: string;
+  chain?: boolean;
+  minLength?: number;
+  maxDeviation?: number;
+  coverage?: number;
+  maxFaces?: number;
   /** tessellate: divisions per axis / recursive splits (0-5, default 2). */
   levels?: number;
   dims?: number[];
@@ -2164,7 +2220,7 @@ export async function meshDerive(args: {
   };
   let spec: DeriveSpec;
   if (args.kind === "slice") {
-    spec = { kind: "slice", origin: triple(args.origin, "origin"), normal: triple(args.normal, "normal"), ...(args.parts && args.parts.length > 0 ? { parts: args.parts } : {}) };
+    spec = { kind: "slice", origin: triple(args.origin, "origin"), normal: triple(args.normal, "normal"), ...(args.chain ? { chain: true, minLength: args.minLength } : {}), ...(args.parts && args.parts.length > 0 ? { parts: args.parts } : {}) };
   } else if (args.kind === "isosurface") {
     if (!args.variable) throw new Error("An isosurface needs a `variable`.");
     spec = { kind: "isosurface", variable: args.variable, values: args.values ?? [], component: args.component };
@@ -2196,6 +2252,9 @@ export async function meshDerive(args: {
       preserveFeatures: args.preserveFeatures,
       featureAngle: args.featureAngle,
       frozenPart: args.frozenPart,
+      maxDeviation: args.maxDeviation,
+      coverage: args.coverage,
+      maxFaces: args.maxFaces,
     };
   } else if (args.kind === "tessellate") {
     spec = { kind: "tessellate", levels: args.levels };

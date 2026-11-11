@@ -81,7 +81,7 @@ import {
 import { repairSurfaceModel, RepairSurfaceParams } from "./repairSurface";
 import { tessellateModel, TessellateParams, TESSELLATE_MAX_LEVELS } from "./tessellate";
 import { OPS_181, is181Op, parse181, apply181, Op181Record } from "./meshio181";
-import { thicknessModel, describeThickness, THICKNESS_DIRECTIONS, ThicknessParams, ThicknessDirection } from "./thickness";
+import { thicknessModel, describeThickness, THICKNESS_DIRECTIONS, THICKNESS_METHODS, ThicknessParams, ThicknessDirection, ThicknessMethod } from "./thickness";
 import { selectRegionModel, describeSelectRegion, hasSelectRegionCriterion, SELECT_REGION_KINDS, SELECT_REGION_MODES, SelectRegionParams } from "./selectRegion";
 import { curvatureModel, gaussBonnetResidual, CurvatureParams, CURVATURE_DUAL_AREAS, CurvatureDualArea } from "./curvature";
 import { projectToCadModel, describeProjectToCad, ProjectToCadParams } from "./projectCad";
@@ -2322,12 +2322,17 @@ export function opRecordFromMessage(
         if (typeof msg.direction !== "string" || !(THICKNESS_DIRECTIONS as readonly string[]).includes(msg.direction)) return undefined;
         rec.direction = msg.direction as ThicknessDirection;
       }
-      for (const k of ["maxDistance", "threshold"] as const) {
+      for (const k of ["maxDistance", "threshold", "coneAngle", "coneRays", "maxNormalDeviation"] as const) {
         if (msg[k] === undefined || msg[k] === "") continue;
         const v = Number(msg[k]);
         if (!Number.isFinite(v) || v < 0) return undefined;
         rec[k] = v;
       }
+      if (msg.method !== undefined && msg.method !== "") {
+        if (typeof msg.method !== "string" || !(THICKNESS_METHODS as readonly string[]).includes(msg.method)) return undefined;
+        if (msg.method !== "ray") rec.method = msg.method as ThicknessMethod;
+      }
+      if (msg.twoSided === true || msg.twoSided === "true") rec.twoSided = true;
       if (typeof msg.output === "string" && msg.output.trim()) {
         if (!isValidFieldName(msg.output.trim())) return undefined;
         rec.output = msg.output.trim();
@@ -2458,6 +2463,10 @@ export function opRecordFromMessage(
         const v = Number(msg[k]);
         if (!Number.isFinite(v) || v < 0) return undefined;
         rec[k] = k === "maxHoleEdges" ? Math.floor(v) : v;
+      }
+      if (msg.fillStyle !== undefined && msg.fillStyle !== "") {
+        if (msg.fillStyle !== "fan" && msg.fillStyle !== "flat" && msg.fillStyle !== "curved") return undefined;
+        if (msg.fillStyle !== "fan") rec.fillStyle = msg.fillStyle;
       }
       return rec;
     }
@@ -3422,7 +3431,8 @@ function validateParams(rec: OpRecord, warnings: string[]): boolean {
     }
     case "thickness": {
       if (rec.direction !== undefined && !(THICKNESS_DIRECTIONS as readonly string[]).includes(rec.direction)) return bad("invalid direction");
-      for (const k of ["maxDistance", "threshold"] as const) if (rec[k] !== undefined && !(Number.isFinite(rec[k]) && (rec[k] as number) >= 0)) return bad(`invalid ${k}`);
+      for (const k of ["maxDistance", "threshold", "coneAngle", "coneRays", "maxNormalDeviation"] as const) if (rec[k] !== undefined && !(Number.isFinite(rec[k]) && (rec[k] as number) >= 0)) return bad(`invalid ${k}`);
+      if (rec.method !== undefined && !(THICKNESS_METHODS as readonly string[]).includes(rec.method)) return bad("invalid method");
       if (rec.output !== undefined && (typeof rec.output !== "string" || !isValidFieldName(rec.output))) return bad("invalid output");
       return true;
     }
@@ -3466,6 +3476,7 @@ function validateParams(rec: OpRecord, warnings: string[]): boolean {
           return bad(`invalid ${k}`);
         }
       }
+      if (rec.fillStyle !== undefined && rec.fillStyle !== "fan" && rec.fillStyle !== "flat" && rec.fillStyle !== "curved") return bad("invalid fillStyle");
       return true;
     }
     case "smooth": {

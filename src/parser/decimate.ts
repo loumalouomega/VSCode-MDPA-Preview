@@ -56,6 +56,12 @@ export interface DecimateParams {
   preserveFeatures?: boolean;
   /** Dihedral angle in degrees above which a vertex is a feature (default 30). */
   featureAngle?: number;
+  /** Stop on a MEASURED deviation: the largest distance the simplified surface may lie from the original (meshio++ >= 20.0.0). */
+  maxDeviation?: number;
+  /** The share of the original that must lie within maxDeviation (default 1). */
+  coverage?: number;
+  /** Never keep more than this many faces. */
+  maxFaces?: number;
   /** The nodes of this SubModelPart (and its subtree) are never moved or removed. */
   frozenPart?: string;
 }
@@ -73,6 +79,10 @@ export interface DecimateResult {
   /** As a fraction of the bounding-box diagonal (a scale-free reading of the same length). */
   relativeError: number;
   collapsesRejected: number;
+  /** With a deviation bound: the measured deviation, whether the bound was met and the rounds taken. */
+  deviation?: number;
+  deviationMet?: boolean;
+  rounds?: number;
   droppedConstraints: number;
   warnings: string[];
 }
@@ -104,8 +114,8 @@ export async function decimateModel(
   params: DecimateParams,
   diagnostics: MdpaDiagnostic[] = []
 ): Promise<DecimateResult> {
-  const given = [params.ratio, params.targetFaces, params.maxError].filter((v) => v !== undefined);
-  if (given.length !== 1) throw new Error("Give exactly one of ratio, targetFaces or maxError.");
+  const given = [params.ratio, params.targetFaces, params.maxError, params.maxDeviation].filter((v) => v !== undefined);
+  if (given.length !== 1) throw new Error("Give exactly one of ratio, targetFaces, maxError or maxDeviation.");
   if (params.ratio !== undefined && !(params.ratio > 0 && params.ratio <= 1)) throw new Error("ratio (the fraction of faces to KEEP) must be in (0, 1].");
   if (params.targetFaces !== undefined && !(Number.isInteger(params.targetFaces) && params.targetFaces >= 1)) throw new Error("targetFaces must be a positive integer.");
   if (params.maxError !== undefined && !(params.maxError > 0 && Number.isFinite(params.maxError))) throw new Error("maxError must be positive.");
@@ -136,7 +146,8 @@ export async function decimateModel(
     params.preserveFeatures ?? true,
     params.featureAngle ?? 30,
     frozen,
-    true
+    true,
+    Object.fromEntries(Object.entries({ maxDeviation: params.maxDeviation, coverage: params.coverage, maxFaces: params.maxFaces }).filter(([, v]) => v !== undefined))
   );
   if (!r.pointMap || !r.cellMaps) throw new Error("decimate returned no survivor maps; the result was discarded.");
   const pointMap: Int32Array = r.pointMap;
@@ -261,6 +272,9 @@ export async function decimateModel(
     maxErrorApplied: r.maxErrorApplied,
     relativeError: diag > 0 ? err / diag : 0,
     collapsesRejected: r.collapsesRejected,
+    deviation: r.deviation,
+    deviationMet: r.deviationMet,
+    rounds: r.rounds,
     droppedConstraints,
     warnings,
   };

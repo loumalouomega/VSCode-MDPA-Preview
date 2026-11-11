@@ -26,8 +26,11 @@ import { movedModel, partNodeIds } from "./deform";
 import { invertedCells, describeInverted } from "./cellInversion";
 import { cellCategory } from "./writers/writerCommon";
 import { isValidFieldName } from "./fieldManage";
+import { runAdoptingOp, describeFidelity } from "./adoptOp";
+import { MESHIO_PART_PREFIX } from "./meshioFormats";
 
-export const OPS_181 = ["untangle", "morph", "registerRigid", "geodesicDistance", "laplacianEigenmodes", "convertCoordinates", "prepareMetric"] as const;
+// The first seven are meshio++ 18.1.0; the last six are meshio++ 20.0.0 (scan metrology and surface editing).
+export const OPS_181 = ["untangle", "morph", "registerRigid", "geodesicDistance", "laplacianEigenmodes", "convertCoordinates", "prepareMetric", "flipNormals", "removeIslands", "offsetSurface", "autoAlign", "deviation", "deviationRegions", "registerLandmarks"] as const;
 export type Op181Name = (typeof OPS_181)[number];
 
 export const is181Op = (op: unknown): op is Op181Name => (OPS_181 as readonly unknown[]).includes(op);
@@ -35,16 +38,23 @@ export const is181Op = (op: unknown): op is Op181Name => (OPS_181 as readonly un
 /** The record of any of the seven: `{op}` plus the options its spec lists (all optional unless required). */
 export type Op181Record = { op: Op181Name } & Record<string, unknown>;
 
-type KeyKind = "num" | "pos" | "int" | "bool" | "str" | "name" | "nums3" | "strs" | "ids" | { enum: readonly string[] };
+type KeyKind = "nums" | "num" | "pos" | "int" | "bool" | "str" | "name" | "nums3" | "strs" | "ids" | { enum: readonly string[] };
 interface Spec { keys: Record<string, KeyKind>; required?: string[] }
 
 const SPECS: Record<Op181Name, Spec> = {
   untangle: { keys: { fixBoundary: "bool", frozenPart: "str", rings: "int", smooth: "bool", maxSweeps: "int" } },
   morph: { keys: { variable: "name", fixBoundary: "bool", constrainedPart: "str", stiffening: "num", steps: "int", allowInverted: "bool", tolerance: "pos", maxIterations: "int" }, required: ["variable"] },
-  registerRigid: { keys: { path: "str", method: { enum: ["point_to_point", "point_to_plane"] }, maxIterations: "int", tolerance: "pos", maxDistance: "pos", part: "str" }, required: ["path"] },
+  registerRigid: { keys: { path: "str", method: { enum: ["point_to_point", "point_to_plane"] }, maxIterations: "int", tolerance: "pos", maxDistance: "pos", part: "str", autoInit: "bool", symmetricCheck: "bool", symmetricTolerance: "pos", adaptiveTrim: "pos" }, required: ["path"] },
   geodesicDistance: { keys: { sourceNodes: "ids", sourcePart: "str", timeFactor: "pos", tolerance: "pos", maxIterations: "int", output: "name" } },
   laplacianEigenmodes: { keys: { numModes: "int", tolerance: "pos", maxIterations: "int", output: "name" } },
   convertCoordinates: { keys: { system: { enum: ["cylindrical", "spherical"] }, axis: "nums3", origin: "nums3", reference: "nums3", arrays: "strs", inverse: "bool", recordCoordinates: "bool" }, required: ["arrays"] },
+  flipNormals: { keys: { part: "str" } },
+  removeIslands: { keys: { connectivity: { enum: ["edge", "point"] }, minDiagonal: "pos", minArea: "pos", minCells: "int", relative: "bool", dryRun: "bool" } },
+  offsetSurface: { keys: { distance: "num", smoothIterations: "int" }, required: ["distance"] },
+  autoAlign: { keys: { angleTolerance: "pos", subdivisions: "int", rotateVectorData: "bool" } },
+  deviation: { keys: { path: "str", primitive: { enum: ["plane", "sphere", "cylinder", "cone", "torus"] }, primitiveParams: "nums", tolerance: "pos", bins: "int", maxNormalAngle: "pos", register: "bool", output: "name" } },
+  registerLandmarks: { keys: { source: "nums", target: "nums", weights: "nums" }, required: ["source", "target"] },
+  deviationRegions: { keys: { tolerance: "pos", field: "name", prefix: "name", minArea: "pos" }, required: ["tolerance"] },
   prepareMetric: { keys: { arrays: "strs", output: "name", targetVertices: "pos", norm: "pos", hmin: "pos", hmax: "pos", gradation: "pos", maxSweeps: "int" }, required: ["arrays"] },
 };
 
@@ -61,6 +71,7 @@ function coerce(kind: KeyKind, v: unknown): unknown {
     case "int": { const x = Number(v); return Number.isInteger(x) && x >= 0 ? x : undefined; }
     case "str": return typeof v === "string" && v.trim() ? v.trim() : undefined;
     case "name": return typeof v === "string" && isValidFieldName(v.trim()) ? v.trim() : undefined;
+    case "nums": { const l = asList(v)?.map(Number); return l && l.length > 0 && l.every(Number.isFinite) ? l : undefined; }
     case "nums3": { const l = asList(v)?.map(Number); return l && l.length === 3 && l.every(Number.isFinite) ? l : undefined; }
     case "strs": { const l = asList(v)?.map(String); return l && l.length > 0 && l.every((s) => isValidFieldName(s)) ? l : undefined; }
     case "ids": { const l = asList(v)?.map(Number); return l && l.length > 0 && l.every((x) => Number.isInteger(x) && x > 0) ? l : undefined; }
@@ -80,6 +91,17 @@ export function parse181(op: Op181Name, msg: Record<string, unknown>): Op181Reco
   }
   for (const r of spec.required ?? []) if (rec[r] === undefined) return undefined;
   if (op === "geodesicDistance" && rec.sourceNodes === undefined && rec.sourcePart === undefined) return undefined;
+  if (op === "registerLandmarks") {
+    const a = rec.source as number[], b = rec.target as number[];
+    if (a.length % 3 !== 0 || a.length < 9 || a.length !== b.length) return undefined;
+    if (rec.weights !== undefined && (rec.weights as number[]).length !== a.length / 3) return undefined;
+  }
+  if (op === "deviation") {
+    // Exactly one reference: a file, or a fitted primitive with its ten parameters.
+    const hasPrim = rec.primitive !== undefined;
+    if ((rec.path !== undefined) === hasPrim) return undefined;
+    if (hasPrim && (rec.primitiveParams as number[] | undefined)?.length !== 10) return undefined;
+  }
   return rec;
 }
 
@@ -243,7 +265,9 @@ async function run181(model: MdpaModel, rec: Op181Record, deps: Op181Deps, diagn
       (moving ?? Array.from({ length: model.nodeCount }, (_, i) => i)).forEach((n, j) => { for (let k = 0; k < 3; k++) sourcePoints[j * 3 + k] = model.coords[n * 3 + k]; });
       const source = { dim: 3, points: sourcePoints, cells: [], point_data: {}, cell_data: {}, field_data: {} } as unknown as MeshioMesh;
       const options: Record<string, unknown> = {};
-      for (const k of ["method", "maxIterations", "tolerance", "maxDistance"]) if (rec[k] !== undefined) options[k] = rec[k];
+      for (const k of ["method", "maxIterations", "tolerance", "maxDistance", "symmetricCheck", "symmetricTolerance", "adaptiveTrim"]) if (rec[k] !== undefined) options[k] = rec[k];
+      // meshio++ 20.0.0: the best of 24 principal-frame starts instead of the identity.
+      if (rec.autoInit === true) options.initial = "auto";
       const r = m.registerRigid(source, modelToMeshio(target, diagnostics, { dim: 3 }), options);
       if (r.numPairs === 0) return noop(model, "No source point found a partner on the target, so there is no transform to apply.");
       const T = r.matrix;
@@ -263,7 +287,108 @@ async function run181(model: MdpaModel, rec: Op181Record, deps: Op181Deps, diagn
         next = { ...base, fields: rot.fields };
         note = (rot.rotated.length ? ` Rotated ${rot.rotated.join(", ")} with the mesh.` : "") + (rot.skipped.length ? ` Not rotated (width is neither 3 nor 9): ${rot.skipped.join(", ")}.` : "");
       } else note = " Vector and tensor fields were left as they are (only part of the mesh moved).";
-      return { model: next, message: `Registered rigidly: rms ${g(r.initialRms)} → ${g(r.rms)} over ${r.numPairs} pair(s), ${r.iterations} iteration(s)${r.converged ? "" : " (NOT converged)"}. Matrix ${T.map(g).join(" ")}.${note}` };
+      return { model: next, message: `Registered rigidly: rms ${g(r.initialRms)} → ${g(r.rms)} over ${r.numPairs} pair(s), ${r.iterations} iteration(s)${r.converged ? "" : " (NOT converged)"}. Matrix ${T.map(g).join(" ")}.${(r.numRejected ?? 0) > 0 ? ` ${r.numRejected} pair(s) rejected by the trim.` : ""}${rec.autoInit === true ? ` Start ${r.chosenCandidate} of ${r.candidateRms?.length ?? 24} principal-frame candidates.` : ""}${r.warnings?.length ? ` ${r.warnings.join(" ")}` : ""}${note}` };
+    }
+    case "flipNormals": {
+      if (!model.blocks.some((b) => b.count > 0 && (cellCategory(b.vtkCellType) === "surface"))) return noop(model, "The mesh has no surface cells (triangles or quadrilaterals) to flip.");
+      let region = "";
+      if (typeof rec.part === "string") {
+        if (!findSubModelPart(model, rec.part)) return noop(model, `SubModelPart "${rec.part}" was not found.`);
+        region = `${MESHIO_PART_PREFIX}${rec.part}`;
+      }
+      const run = await runAdoptingOp(model, diagnostics, "flipNormals", (k, mesh) => k.flipNormals(mesh, region), { recoverBlockNames: true });
+      if (!run) return noop(model, "Nothing to flip.");
+      if (run.result.numFlipped === 0) return noop(model, "No cell was flipped.");
+      return { model: run.model, message: `Flipped the winding of ${run.result.numFlipped} cell(s)${rec.part ? ` of "${rec.part}"` : ""}; no point moved.${describeFidelity(run) ? ` ${describeFidelity(run)}` : ""}` };
+    }
+    case "removeIslands": {
+      const options: Record<string, unknown> = {};
+      for (const k of ["connectivity", "minDiagonal", "minArea", "minCells", "relative", "dryRun"]) if (rec[k] !== undefined) options[k] = rec[k];
+      if (options.minDiagonal === undefined && options.minArea === undefined && options.minCells === undefined) return noop(model, "Give at least one threshold: minDiagonal, minArea or minCells.");
+      const run = await runAdoptingOp(model, diagnostics, "removeIslands", (k, mesh) => k.removeIslands(mesh, options), { recoverBlockNames: true });
+      if (!run) return noop(model, "Nothing to remove.");
+      const r = run.result;
+      if (rec.dryRun === true) return noop(model, `Dry run: ${r.numRemoved} of ${r.numComponents} component(s) would go (${r.numCellsRemoved} cell(s), ${r.numPointsRemoved} point(s)); nothing was changed.`);
+      if (r.numRemoved === 0) return noop(model, `No island is below the threshold (${r.numComponents} component(s)).`);
+      return { model: run.model, message: `Removed ${r.numRemoved} of ${r.numComponents} component(s): ${r.numCellsRemoved} cell(s), ${r.numPointsRemoved} point(s).${describeFidelity(run) ? ` ${describeFidelity(run)}` : ""}` };
+    }
+    case "offsetSurface": {
+      const options: Record<string, unknown> = {};
+      if (rec.smoothIterations !== undefined) options.smoothIterations = rec.smoothIterations;
+      const r = m.offsetSurface(bare(model, diagnostics), Number(rec.distance), options);
+      expectCount("offsetSurface", "node", Math.floor(r.mesh.points.length / 3), model.nodeCount);
+      const next = movedModel(model, r.mesh.points);
+      const inv = describeInverted(invertedCells(model, next));
+      return { model: next, message: `Offset the surface by ${g(Number(rec.distance))}: largest move ${g(r.maxMove)}${r.numClamped + r.numFolded + r.numNotVisible > 0 ? `; ${r.numClamped} clamped, ${r.numFolded} folded, ${r.numNotVisible} without a visible offset` : ""}. Connectivity, ids and fields are unchanged.${r.warnings.length ? ` ${r.warnings.join(" ")}` : ""}${inv ? ` ${inv}` : ""}` };
+    }
+    case "autoAlign": {
+      const options: Record<string, unknown> = {};
+      for (const k of ["angleTolerance", "subdivisions"]) if (rec[k] !== undefined) options[k] = rec[k];
+      const r = m.autoAlign(bare(model, diagnostics), options);
+      expectCount("autoAlign", "node", Math.floor(r.mesh.points.length / 3), model.nodeCount);
+      const base = movedModel(model, r.mesh.points);
+      const T = r.matrix;
+      let next = base;
+      let note = "";
+      if (rec.rotateVectorData !== false) {
+        const rot = rotateFields(base, [T[0], T[1], T[2], T[4], T[5], T[6], T[8], T[9], T[10]]);
+        next = { ...base, fields: rot.fields };
+        note = (rot.rotated.length ? ` Rotated ${rot.rotated.join(", ")} with the mesh.` : "") + (rot.skipped.length ? ` Not rotated (width is neither 3 nor 9): ${rot.skipped.join(", ")}.` : "");
+      }
+      return { model: next, message: `Aligned on its ${r.mode === "face" ? "largest flat face" : "cylinder axis"} (${g(100 * r.share)}% of the surface): matrix ${T.map(g).join(" ")}.${note}${r.warnings.length ? ` ${r.warnings.join(" ")}` : ""}` };
+    }
+    case "deviation": {
+      if (!model.blocks.some((b) => b.count > 0 && cellCategory(b.vtkCellType) === "surface")) return noop(model, "Deviation is measured on a surface mesh; this one has no triangles or quadrilaterals.");
+      const options: Record<string, unknown> = {};
+      for (const k of ["tolerance", "bins", "maxNormalAngle"]) if (rec[k] !== undefined) options[k] = rec[k];
+      if (rec.primitive !== undefined) options.primitive = { type: rec.primitive, params: rec.primitiveParams };
+      else {
+        if (!deps.loadTarget) return noop(model, "Reading the reference mesh needs the file reader, which this runner does not have.");
+        let ref: MdpaModel;
+        try { ref = await deps.loadTarget(String(rec.path)); } catch (err) { return noop(model, `Could not read "${rec.path}": ${err instanceof Error ? err.message : String(err)}`); }
+        options.reference = modelToMeshio(ref, diagnostics, { dim: 3 });
+      }
+      if (rec.register === true) return noop(model, "register would move the scan onto the reference; use the Register (rigid ICP) operation first, then measure the deviation.");
+      const r = m.deviation(bare(model, diagnostics), options);
+      const variable = typeof rec.output === "string" ? rec.output : "DEVIATION";
+      const w = writeNodal(model, variable, 1, r.mesh.point_data?.["deviation:distance"] as never);
+      if (!w) return noop(model, "No scan point could be measured against the reference.");
+      const share = Number.isFinite(r.shareWithin) ? `, ${g(100 * r.shareWithin)}% within ±${g(Number(rec.tolerance))}` : "";
+      return { model: w.model, message: `Wrote ${variable} (signed, positive outside the reference): ${r.numMeasured} of ${r.numPoints} point(s) measured, range ${g(r.min)} to ${g(r.max)}, mean ${g(r.mean)}, rms ${g(r.rms)}, sigma ${g(r.sigma)}, 95th percentile ${g(r.percentiles.p95)}${share}. Suggested colour range ±${g(r.suggestedRange)}; ${w.gaps} point(s) are gaps, not zeros.${r.warnings.length ? ` ${r.warnings.join(" ")}` : ""}` };
+    }
+    case "deviationRegions": {
+      const field = typeof rec.field === "string" ? rec.field : "DEVIATION";
+      const f = model.fields.find((x) => x.kind === "Nodal" && x.variable === field && x.components === 1);
+      if (!f) return noop(model, `No scalar nodal field named "${field}"; run Deviation first.`);
+      const rows = nodalRows(model, f, 1);
+      const prefix = typeof rec.prefix === "string" ? rec.prefix : "DEV_";
+      const options: Record<string, unknown> = { tolerance: rec.tolerance, field: "deviation:distance", prefix: `${MESHIO_PART_PREFIX}${prefix}` };
+      if (rec.minArea !== undefined) options.minArea = rec.minArea;
+      // Gaps (no value) are NaN for the kernel, never 0.
+      const data = rows.data;
+      const have = new Set(f.ids);
+      model.nodeIds.forEach((id, i) => { if (!have.has(id)) data[i] = NaN; });
+      const run = await runAdoptingOp(model, diagnostics, "deviationRegions", (k, mesh) => {
+        (mesh.point_data as Record<string, unknown>)["deviation:distance"] = data;
+        return k.deviationRegions(mesh, options as { tolerance: number });
+      }, { recoverBlockNames: true });
+      if (!run) return noop(model, "Nothing to analyse.");
+      const r = run.result;
+      if (r.regions.length === 0) return noop(model, `No cell lies beyond ±${g(Number(rec.tolerance))}; no region was made.`);
+      const top = r.regions.slice(0, 3).map((x) => `${String(x.name).replace(MESHIO_PART_PREFIX, "")} (${g(Number(x.area))} area, extreme ${g(Number(x.extreme))})`).join("; ");
+      return { model: run.model, message: `Found ${r.numExcess} excess and ${r.numMissing} missing-material region(s)${r.numDropped > 0 ? `, ${r.numDropped} below the minimum area dropped` : ""}, each a SubModelPart "${prefix}excess_k" / "${prefix}missing_k". Largest: ${top}.${r.warnings.length ? ` ${r.warnings.join(" ")}` : ""}` };
+    }
+    case "registerLandmarks": {
+      const r = m.registerLandmarks(rec.source as number[], rec.target as number[], (rec.weights as number[] | undefined) ?? null);
+      const T = r.matrix;
+      const coords = new Float32Array(model.coords);
+      for (let i = 0; i < model.nodeCount; i++) {
+        const x = model.coords[i * 3], y = model.coords[i * 3 + 1], z = model.coords[i * 3 + 2];
+        for (let a = 0; a < 3; a++) coords[i * 3 + a] = T[a * 4] * x + T[a * 4 + 1] * y + T[a * 4 + 2] * z + T[a * 4 + 3];
+      }
+      const base = movedModel(model, coords);
+      const rot = rotateFields(base, [T[0], T[1], T[2], T[4], T[5], T[6], T[8], T[9], T[10]]);
+      return { model: { ...base, fields: rot.fields }, message: `Registered on ${(rec.source as number[]).length / 3} landmark pair(s): rms ${g(r.rms)}. Matrix ${T.map(g).join(" ")}.${rot.rotated.length ? ` Rotated ${rot.rotated.join(", ")} with the mesh.` : ""}` };
     }
     case "geodesicDistance": {
       const surfaceOnly = trianglesOnly(model);

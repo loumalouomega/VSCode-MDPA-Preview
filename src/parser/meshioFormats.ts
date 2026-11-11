@@ -235,6 +235,7 @@ export const MESHIO_READ_CANDIDATES: Readonly<Record<string, readonly string[]>>
   ".mphtxt": ["mphtxt"],
   ".nas": ["nastran"],
   ".node": ["tetgen"],
+  ".dxf": ["dxf"], // AutoCAD DXF (meshio++ >= 20.0.0)
   ".off": ["off"],
   // meshio++ >= 16.3.0: MSC Nastran's OP2 bulk result file, time-capable.
   ".op2": ["nastran_op2"],
@@ -391,7 +392,7 @@ export const MESHIO_READ_CANDIDATES: Readonly<Record<string, readonly string[]>>
 export const MESHIO_READER_KEYS: readonly string[] = [
   "code_aster", "elmer", "febio", "femap", "libmesh", "marc", "mfem", "mphbin", "patran", "radioss", "z88",
   "abaqus", "abaqus_fil", "ansys", "ansys_rst", "ansys_rst_cyclic", "ansysinp",
-  "avsucd", "cad_json", "cgns", "dex", "dolfin", "ensight", "exodus", "flac3d", "flux",
+  "avsucd", "cad_json", "cgns", "dex", "dolfin", "dxf", "ensight", "exodus", "flac3d", "flux",
   "frd", "freefem", "gid", "gltf", "gmsh", "h5m", "hmf", "iges", "ip", "lsdyna",
   "lsdyna_binout", "lsdyna_d3plot", "marc_t19", "med", "medit", "mff", "mfm",
   "mphtxt", "nastran", "nastran_h5", "nastran_op2", "netgen", "obj", "off",
@@ -639,6 +640,7 @@ export const MESHIO_WRITE_FORMAT: Readonly<Record<string, string>> = {
   ".mfm": "mfm",
   ".mphtxt": "mphtxt",
   ".nas": "nastran",
+  ".dxf": "dxf",
   ".off": "off",
   ".pcd": "pcd",
   ".pf3": "flux",
@@ -752,7 +754,7 @@ export const MESHIO_LENIENT_RETRY_FORMATS: readonly string[] = ["med"];
 export const MESHIO_EXPORT_EXTENSIONS = [
   ".mail", ".feb", ".neu", ".xda", ".xdr", ".mphbin", ".pat", ".z88", ".elmer",
   ".msh", ".e", ".ex2", ".exo", ".inp", ".avs", ".bdf", ".case", ".cgns",
-  ".dat", ".dato", ".dex", ".ele", ".f3grid", ".fem", ".foam", ".h5m",
+  ".dat", ".dato", ".dex", ".dxf", ".ele", ".f3grid", ".fem", ".foam", ".h5m",
   ".hmf", ".ip", ".k", ".med", ".mesh", ".meshb", ".mff", ".mfm", ".mphtxt", ".nas",
   ".off", ".pcd", ".pf3", ".poly", ".post", ".post.msh", ".fil", ".op2", ".t19", ".xplt", ".rst", ".cad.json", ".su2", ".svg",
   ".step", ".tec", ".tikz", ".ugrid", ".unv", ".vol", ".vtkhdf", ".wkt", ".xdmf",
