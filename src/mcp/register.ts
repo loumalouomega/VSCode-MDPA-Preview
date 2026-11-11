@@ -26,6 +26,9 @@ import {
   meshGraphTool,
   meshIntersections,
   meshCheckTetrahedra,
+  meshMeasure,
+  meshSymmetryPlane,
+  meshFitCadIterate,
   meshFitPrimitives,
   meshAleQuality,
   meshRecoverFlux,
@@ -130,6 +133,13 @@ const OPS_HELP = `Each entry is {"op": "<name>", ...params}:
 - {"op":"laplacianEigenmodes","numModes?":6,"output?":"LAPLACE_MODE"} — the lowest Laplace-Beltrami eigenmodes of a triangle surface (18.1.0), one nodal field per mode <output>_<i>; the eigenvalues are in the message.
 - {"op":"convertCoordinates","arrays":["VELOCITY"],"system?":"cylindrical|spherical","axis?":[0,0,1],"origin?":[0,0,0],"reference?":[1,0,0],"inverse?":false,"recordCoordinates?":true} — writes COORDS_CYLINDRICAL/COORDS_SPHERICAL and <field>_CYL/_SPH (or _CART with inverse) for nodal 3-vector and 9-tensor fields (18.1.0); the originals are kept.
 - {"op":"prepareMetric","arrays":["M1","M2"],"output?":"METRIC","targetVertices?":..,"norm?":..,"hmin?":..,"hmax?":..,"gradation?":..,"maxSweeps?":..} — the MMG metric toolbox (18.1.0): intersects 6-component (3-component in 2-D) metric fields, normalises, clamps and grades them into a nodal field to feed mesh_derive adapt.
+- {"op":"flipNormals","part?":"Skin"} — meshio++ >= 20.0.0: reverses the winding of every surface cell (or of one SubModelPart's cells); no point moves, ids/fields/parts kept.
+- {"op":"removeIslands","minDiagonal?":0.05,"minCells?":10,"minArea?":..,"connectivity?":"edge|point","relative?":true,"dryRun?":false} — meshio++ >= 20.0.0: deletes the small disconnected components of a scan below a threshold (at least one threshold required); dryRun only reports the counts.
+- {"op":"offsetSurface","distance":0.1,"smoothIterations?":..} — meshio++ >= 20.0.0: moves every point along its normal so each face's plane moves by distance (negative = inward); connectivity/ids/fields unchanged.
+- {"op":"autoAlign","angleTolerance?":..,"subdivisions?":..,"rotateVectorData?":true} — meshio++ >= 20.0.0: poses a scan on its largest flat face, or a cylinder on the end of its axis; vector/tensor fields turn with the mesh.
+- {"op":"deviation","path":"/path/reference.stl" OR "primitive":"plane|sphere|cylinder|cone|torus","primitiveParams":[10 numbers],"tolerance?":0.05,"bins?":20,"maxNormalAngle?":90,"output?":"DEVIATION"} — meshio++ >= 20.0.0: signed distance (positive outside) of every scan point from a reference surface or fitted primitive, written as a nodal field (a point with no partner is a GAP); the message gives min/max/mean/rms/sigma, percentiles and the share within tolerance.
+- {"op":"registerLandmarks","source":[x1,y1,z1,x2,y2,z2,x3,y3,z3,…],"target":[…same count…],"weights?":[…]} — meshio++ >= 20.0.0: a weighted rigid (Horn) solve laying picked landmark points of THIS mesh onto their targets (>= 3 non-collinear pairs), applied to the whole mesh; vector/tensor fields turn with it.
+- {"op":"deviationRegions","tolerance":0.1,"field?":"DEVIATION","prefix?":"DEV_","minArea?":0} — meshio++ >= 20.0.0: connected excess/missing-material regions beyond ± tolerance of a deviation field, each a SubModelPart <prefix>excess_k / <prefix>missing_k.
 - {"op":"selectRegion","name":"Region","kind?":"cell|point","mode?":"all|any|centroid","box?":[xmin,ymin,zmin,xmax,ymax,zmax],"plane?":[px,py,pz,nx,ny,nz],"sphere?":[cx,cy,cz,r],"where?":["TEMP",">",3],"quality?":["aspect_ratio",">",5],"component?":0,"seed?":[x,y,z],"featureAngle?":30,"normalTolerance?":0} — select cells (or points) into a NEW top-level SubModelPart "name" by geometry (box/plane/sphere), a field or quality test, the k-th connected component, or a PATCH GROWN from the facet nearest "seed" across dihedral angles up to "featureAngle" (meshio++ >= 18.0.0; give at least one criterion, criteria combine). The selected cells' nodes ride in, so the part is a valid Kratos SubModelPart; chain it with createSubModelPartFromSelection-style ops in one array. An empty selection is a noop with the reason.
 - {"op":"curvature","mean?":true,"gaussian?":true,"principal?":false,"area?":false,"dualArea?":"mixed-voronoi|barycentric","includeBoundary?":false,"outputPrefix?":"CURVATURE"} — per-node discrete curvature of a SURFACE mesh (a solid is refused; use mesh_extract_skin), written as Nodal fields <prefix>_MEAN, <prefix>_GAUSSIAN, and optionally <prefix>_AREA (the dual area divided by) and <prefix>_K1/_K2 (principal curvatures, k1 >= k2, split into two scalars so a formula can read either). meshio++ is an ORACLE here: the cells and ids are untouched. A sphere of radius R reads H = 1/R, K = 1/R^2; H's SIGN follows the winding (a uniformly inside-out surface reads -1/R; a mesh with faces wound against each other is flagged — run repairSurface first). Boundary nodes of an open surface, and nodes no face references, are left UNDEFINED (a gap, never 0) unless includeBoundary is set. The message gives the value ranges and, for a closed surface, the Gauss-Bonnet check (sum of angle defects vs 2*pi*chi). The fields join later ops' formula scopes: e.g. a remesh "expr" size 0.05/max(abs(CURVATURE_MEAN),0.01) refines where the surface curves. Use mesh_curvature for the read-only statistics without writing fields
 - {"op":"projectToCad","path":"part.cad.json","faceField?":"CAD_FACE","edgeField?":"CAD_EDGE","maxDistance?":0,"trimSamples?":16,"movePart?":"Free","pinPart?":"Fixed"} — moves the nodes of a CAD-tagged surface mesh (the CAD_FACE/CAD_EDGE fields Mesh CAD faces writes) onto the B-rep in path (a .cad.json); only coordinates change. Reports nodes too far, ambiguous, failed or outside a face's trims
@@ -477,6 +487,54 @@ export function registerAllTools(server: McpServer): void {
       },
     },
     runCancellable(meshCheckTetrahedra)
+  );
+
+  server.registerTool(
+    "mesh_measure",
+    {
+      description:
+        "Metrology on a scan or mesh (meshio++ >= 20.0.0): builds ELEMENTS (planes, spheres, cylinders, points, lines…) fitted from named regions, seed points or patches, or constructed from other elements, then evaluates DIMENSIONS (distances, angles, diameters) and GD&T tolerances (flatness, cylindricity, position…) against limits, all from a JSON spec; returns the kernel's report (each element's fit, each dimension's measured value and pass/fail) and numFail. Give spec (an object or its JSON text) or specPath. Read-only; a malformed spec or an element that cannot be built is an error naming it.",
+      inputSchema: {
+        path: meshPath,
+        spec: z.union([z.string(), z.record(z.string(), z.unknown())]).optional().describe("The measurement spec, as an object or JSON text, e.g. {elements:[{name:'A',type:'plane',fit:{region:'Top'}}],dimensions:[...]}"),
+        specPath: z.string().optional().describe("A JSON file holding the spec"),
+      },
+    },
+    runCancellable(meshMeasure)
+  );
+
+  server.registerTool(
+    "mesh_symmetry_plane",
+    {
+      description:
+        "The plane a mesh or scan is most nearly symmetric about (meshio++ >= 20.0.0): returns its origin and unit normal, the rms of the mirrored points, the share of points that mirror within tolerance and the candidate chosen. A plane reaching less than minShare is an error rather than a guess. Read-only. Use it to find the mirror plane before mesh_derive mirror, or to check a part is symmetric.",
+      inputSchema: {
+        path: meshPath,
+        seedOrigin: z.array(z.number()).length(3).optional(),
+        seedNormal: z.array(z.number()).length(3).optional(),
+        tolerance: z.number().positive().optional().describe("Mirror tolerance (default: a fraction of the bounding-box diagonal)"),
+        minShare: z.number().min(0).max(1).optional(),
+        maxSamples: z.number().int().positive().optional(),
+        maxIterations: z.number().int().positive().optional(),
+      },
+    },
+    runCancellable(meshSymmetryPlane)
+  );
+
+  server.registerTool(
+    "mesh_fit_cad_iterate",
+    {
+      description:
+        "Reconstruct a CAD solid from a surface scan in rounds (meshio++ >= 20.0.0): segments the scan, fits primitives, builds a solid and re-measures the scan's deviation from it, refining the worst faces until the target share is within tolerance or the rounds run out. options are the kernel's (targetWithin, targetExplained, maxRounds, segmentTolerance, fitTolerance, partClass any|analytic|cast|freeform, backend auto|occt|native, stepPath…). Returns the per-round share within tolerance / explained / Hausdorff max, whether the target was met and why it stopped. With outputPath the solid is written as a mesh (.step keeps exact geometry on the full artifact). Can take a while on a large scan.",
+      inputSchema: {
+        path: meshPath,
+        options: z.record(z.string(), z.unknown()).optional(),
+        outputPath: z.string().optional(),
+        provenance: z.enum(["auto", "sidecar", "none"]).optional(),
+        verify: z.boolean().optional(),
+      },
+    },
+    runCancellable(meshFitCadIterate)
   );
 
   server.registerTool(

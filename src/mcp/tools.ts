@@ -62,6 +62,7 @@ import { surfaceDefects } from "../parser/surfaceDefects";
 import { curvatureModel, gaussBonnetResidual } from "../parser/curvature";
 import { meshGraph, graphFormatOf, GRAPH_KINDS, GRAPH_FORMATS, type GraphKind, type GraphFormat } from "../parser/meshGraph";
 import { fitPrimitivesReport } from "../parser/primitiveReport";
+import { measureReport, symmetryPlaneReport, fitCadIterateModel } from "../parser/scanTools";
 import { aleQualitySeries } from "../parser/aleQuality";
 import { recoverBoundaryFlux } from "../parser/boundaryFlux";
 import { segmentModel, SEGMENT_VARIABLE } from "../parser/segmentMesh";
@@ -1287,6 +1288,43 @@ export async function meshFitPrimitives(args: {
   if (args.outputPath && r.patches.length > 0) {
     const warnings: string[] = [];
     const written = await writeModelReported(r.model, args.outputPath, loaded.sourceText, undefined, warnings, { sourceFile: args.path, ops: [{ op: "fitPrimitives" }], provenance: args.provenance, verify: args.verify });
+    out.outputPath = written.path;
+    out.report = written.report;
+    out.warnings = warnings;
+  }
+  return out;
+}
+
+/**
+ * mesh_measure (meshio++ >= 20.0.0): elements fitted from regions, seeds or
+ * patches (or constructed / literal), then dimensions and GD&T tolerances, by a
+ * JSON spec. Read-only; the report is the kernel's own.
+ */
+export async function meshMeasure(args: { path: string; spec?: object | string; specPath?: string }, execution: PlotExecution = {}): Promise<object> {
+  let spec = args.spec;
+  if (spec === undefined && args.specPath) spec = fs.readFileSync(path.resolve(args.specPath), "utf8");
+  if (spec === undefined) throw new Error("Give spec (an object or its JSON text) or specPath (a JSON file).");
+  const { model } = await loadMesh(args.path, undefined, undefined, undefined, undefined, undefined, execution.signal);
+  const r = await measureReport(model, spec);
+  return { path: args.path, numFail: r.numFail, report: r.report, warnings: r.warnings };
+}
+
+/** mesh_symmetry_plane (meshio++ >= 20.0.0): the plane a scan is most nearly symmetric about. */
+export async function meshSymmetryPlane(args: { path: string; seedOrigin?: number[]; seedNormal?: number[]; tolerance?: number; minShare?: number; maxSamples?: number; maxIterations?: number }, execution: PlotExecution = {}): Promise<object> {
+  const { model } = await loadMesh(args.path, undefined, undefined, undefined, undefined, undefined, execution.signal);
+  const { path: _p, ...options } = args;
+  void _p;
+  return { path: args.path, ...(await symmetryPlaneReport(model, options)) };
+}
+
+/** mesh_fit_cad_iterate (meshio++ >= 20.0.0): a solid fitted to a scan in rounds towards a target; optionally written as a mesh. */
+export async function meshFitCadIterate(args: { path: string; options?: Record<string, unknown>; outputPath?: string; provenance?: ProvenanceMode; verify?: boolean }, execution: PlotExecution = {}): Promise<object> {
+  const loaded = await loadMesh(args.path, undefined, undefined, undefined, undefined, undefined, execution.signal);
+  const r = await fitCadIterateModel(loaded.model, args.options ?? {});
+  const out: Record<string, unknown> = { path: args.path, summary: r.summary, targetMet: r.targetMet, stopReason: r.stopReason, rounds: r.rounds };
+  if (args.outputPath) {
+    const warnings: string[] = [];
+    const written = await writeModelReported(r.model, args.outputPath, loaded.sourceText, undefined, warnings, { sourceFile: args.path, ops: [{ op: "fitCadIterate" }], provenance: args.provenance, verify: args.verify });
     out.outputPath = written.path;
     out.report = written.report;
     out.warnings = warnings;

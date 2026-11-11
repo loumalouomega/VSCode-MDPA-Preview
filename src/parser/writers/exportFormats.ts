@@ -95,7 +95,7 @@ export const EXPORT_FORMAT_LABELS: Record<ExportableExtension, string> = {
   ".mfm": "Modulef MFM",
   ".mphtxt": "COMSOL",
   ".nas": "Nastran (.nas)",
-  ".dxf": "AutoCAD DXF",
+  ".dxf": "AutoCAD DXF (line sketches)",
   ".off": "OFF",
   ".pcd": "Point Cloud (PCD, no cells)",
   ".pf3": "FLUX",

@@ -113,6 +113,72 @@ export const FORMS_181: Form181[] = [
       { key: "output", label: "field", kind: "text", title: "Output field name.", placeholder: "METRIC" },
     ],
   },
+  {
+    op: "flipNormals", title: "Flip normals", icon: "normals",
+    hint: "Reverses the winding of every surface cell, or of one SubModelPart's cells. No point moves; ids, fields and parts are kept (meshio++ 20.0.0).",
+    fields: [
+      { key: "part", label: "only part", kind: "text", title: "A SubModelPart whose surface cells are flipped.", placeholder: "whole mesh" },
+    ],
+  },
+  {
+    op: "removeIslands", title: "Remove islands", icon: "crop",
+    hint: "Deletes the small disconnected pieces of a scan: components whose diagonal, area or cell count is below a threshold (meshio++ 20.0.0). Tick dry run to count without changing anything.",
+    fields: [
+      { key: "minDiagonal", label: "min diagonal", kind: "num", title: "Components with a smaller bounding-box diagonal go. A fraction of the whole mesh's diagonal when 'relative' is ticked.", placeholder: "0.05" },
+      { key: "minCells", label: "min cells", kind: "int", title: "Components with fewer cells go.", placeholder: "off" },
+      { key: "minArea", label: "min area", kind: "num", title: "Components with a smaller area go.", placeholder: "off" },
+      { key: "connectivity", label: "connected by", kind: "enum", title: "Cells touching along an edge, or at a single point.", options: ["edge", "point"] },
+      { key: "relative", label: "relative", kind: "bool", title: "Thresholds are fractions of the whole mesh.", defaultOn: true },
+      { key: "dryRun", label: "dry run", kind: "bool", title: "Report what would be removed and change nothing." },
+    ],
+  },
+  {
+    op: "offsetSurface", title: "Offset surface", icon: "translate",
+    hint: "Moves every point along its normal so each face's plane moves by the distance (negative goes inward). Connectivity, ids and fields are unchanged (meshio++ 20.0.0).",
+    fields: [
+      { key: "distance", label: "distance", kind: "num", title: "Length to offset by; negative goes the other way.", placeholder: "0.1", required: true },
+      { key: "smoothIterations", label: "smoothing", kind: "int", title: "Smoothing passes over the offset field.", placeholder: "auto" },
+    ],
+  },
+  {
+    op: "autoAlign", title: "Auto-align scan", icon: "rotate",
+    hint: "Poses a scan from itself alone: on its largest flat face, or a cylinder on the end of its axis (meshio++ 20.0.0). Vector and tensor fields turn with the mesh.",
+    fields: [
+      { key: "angleTolerance", label: "angle tolerance", kind: "num", title: "Degrees within which normals count as one face.", placeholder: "auto" },
+      { key: "subdivisions", label: "subdivisions", kind: "int", title: "Candidate-direction resolution.", placeholder: "auto" },
+      { key: "rotateVectorData", label: "turn vector fields", kind: "bool", title: "Rotate 3- and 9-component fields with the mesh.", defaultOn: true },
+    ],
+  },
+  {
+    op: "deviation", title: "Deviation from reference", icon: "measure",
+    hint: "Signed distance of each scan point from a reference surface file, or from a fitted primitive (positive outside), written as the nodal field DEVIATION with statistics in the message (meshio++ 20.0.0).",
+    fields: [
+      { key: "path", label: "reference file", kind: "text", title: "The reference surface (CAD tessellation or a good scan). Leave blank when giving a primitive.", placeholder: "reference.stl" },
+      { key: "primitive", label: "or primitive", kind: "enum", title: "A fitted primitive instead of a file; give its ten parameters.", options: ["", "plane", "sphere", "cylinder", "cone", "torus"] },
+      { key: "primitiveParams", label: "primitive params", kind: "text", title: "The ten numbers of the fit table (the fit:patch_params entries), comma-separated.", placeholder: "10 numbers" },
+      { key: "tolerance", label: "tolerance", kind: "num", title: "Report the share of points within ± this.", placeholder: "off" },
+      { key: "output", label: "field", kind: "text", title: "Nodal field name.", placeholder: "DEVIATION" },
+    ],
+  },
+  {
+    op: "deviationRegions", title: "Deviation regions", icon: "selection",
+    hint: "Groups the cells beyond ± tolerance of a deviation field into connected excess / missing-material regions, each a SubModelPart named <prefix>excess_k or <prefix>missing_k (meshio++ 20.0.0).",
+    fields: [
+      { key: "tolerance", label: "tolerance", kind: "num", title: "Cells beyond ± this are excess or missing material.", placeholder: "0.1", required: true },
+      { key: "field", label: "field", kind: "text", title: "The scalar nodal deviation field.", placeholder: "DEVIATION" },
+      { key: "prefix", label: "part prefix", kind: "text", title: "SubModelPart name prefix.", placeholder: "DEV_" },
+      { key: "minArea", label: "min area", kind: "num", title: "Drop regions smaller than this.", placeholder: "0" },
+    ],
+  },
+  {
+    op: "registerLandmarks", title: "Register by landmarks", icon: "translate",
+    hint: "Lays picked points of this mesh onto their targets (a weighted Horn solve, at least three non-collinear pairs) and moves the whole mesh rigidly (meshio++ 20.0.0). Vector and tensor fields turn with it.",
+    fields: [
+      { key: "source", label: "source points", kind: "text", title: "x,y,z of each landmark on this mesh, flattened: x1,y1,z1,x2,y2,z2,…", placeholder: "9+ numbers", required: true },
+      { key: "target", label: "target points", kind: "text", title: "x,y,z of the matching landmarks, in the same order.", placeholder: "9+ numbers", required: true },
+      { key: "weights", label: "weights", kind: "text", title: "One weight per pair (default 1 each).", placeholder: "optional" },
+    ],
+  },
 ];
 
 /** Element id of one input: `f181-<op>-<key>`. */

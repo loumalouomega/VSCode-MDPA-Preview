@@ -214,6 +214,22 @@ export function stepEligibility(model: MdpaModel): ExportEligibility {
   return { ok: true, warnings };
 }
 
+/**
+ * AutoCAD DXF (meshio++ >= 20.0.0): measured against the live wasm, the writer
+ * takes line cells (a sketch, e.g. the output of Sections or Silhouette) and
+ * RAISES on a triangle ("only line cells or a sketch are written"). Refusing here
+ * names the way to get lines.
+ */
+export function dxfEligibility(model: MdpaModel): ExportEligibility {
+  const live = model.blocks.filter((b) => b.count > 0);
+  const lines = live.filter((b) => b.vtkCellType === C.LINE || b.vtkCellType === C.QUADRATIC_EDGE);
+  if (lines.length === 0) {
+    return { ok: false, reason: "DXF export writes line cells (a sketch), and this mesh has none. Cut sections out of it first (Advanced ▸ Sweep, mirror and layers… ▸ sections or silhouette, or the Clip dock's slice export) and export that.", warnings: [] };
+  }
+  const dropped = live.filter((b) => !lines.includes(b));
+  return { ok: true, warnings: dropped.length ? [`DXF keeps only the line cells; ${dropped.map((b) => b.name).join(", ")} are not written.`] : [] };
+}
+
 /** Dispatches on the write extension; `undefined` for every other format (nothing to check here). */
 export function exportEligibility(model: MdpaModel, ext: string): ExportEligibility | undefined {
   switch (ext.toLowerCase()) {
@@ -229,6 +245,8 @@ export function exportEligibility(model: MdpaModel, ext: string): ExportEligibil
       return cadJsonEligibility(model);
     case ".step":
       return stepEligibility(model);
+    case ".dxf":
+      return dxfEligibility(model);
     default:
       return undefined;
   }
