@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [5.39.0] - 2026-11-12
+
 ### Added
 
 - Updated to meshio++ 20.0.0 and adopted its scan-metrology and surface-editing delta. New derive kinds in `mesh_derive` and Advanced ▸ Sweep, mirror and layers…: `sections`, `silhouette`, `fitCurves`, `clip`, `thicken`, `hollow`, `exaggerate`, `colorize` (COLOR_R/G/B fields) and `profileSolid` (full artifact). New in-place ops, also in the sidebar, command line and `mesh_transform`: `flipNormals`, `removeIslands`, `offsetSurface`, `autoAlign`, `registerLandmarks`, `deviation` (signed DEVIATION field from a reference file or primitive) and `deviationRegions` (excess / missing-material SubModelParts). New MCP tools `mesh_measure`, `mesh_symmetry_plane` and `mesh_fit_cad_iterate`. New options: `thickness` method sphere/cone, `registerRigid` auto start, `repairSurface` fill style, `decimate` measured-deviation bound, `slice` chaining and `fitPrimitives` sigma trimming / reference criterion. AutoCAD DXF (`.dxf`, line sketches) is a new read and write format.
@@ -1583,7 +1585,8 @@ Four silent-correctness fixes. None of them threw, and none was visible in the m
 
 - Initial release: custom editor preview for `.mdpa` files.
 
-[Unreleased]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.38.0...HEAD
+[Unreleased]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.39.0...HEAD
+[5.39.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.38.0...v5.39.0
 [5.38.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.37.0...v5.38.0
 [5.37.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.36.0...v5.37.0
 [5.36.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.35.0...v5.36.0
