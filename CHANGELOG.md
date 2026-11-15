@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [5.40.0] - 2026-11-15
+
 ### Added
 
 - Updated to meshio++ 20.1.0 (no format change: the live key audits pass unedited) and adopted its one new kernel, **`adaptVolume`**: Adapt tetrahedra (size field), an in-place, undoable operation in Mesh Modification ▸ Remeshing, the command line (`adaptVolume`), and `mesh_transform`. Tetrahedra inherit block, property, SubModelPart membership and element values from the nearest original one, boundary Conditions are re-derived from the new skin, and constraints, Geometries and Conditional fields are dropped with a stated message.
@@ -1590,7 +1592,8 @@ Four silent-correctness fixes. None of them threw, and none was visible in the m
 
 - Initial release: custom editor preview for `.mdpa` files.
 
-[Unreleased]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.39.0...HEAD
+[Unreleased]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.40.0...HEAD
+[5.40.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.39.0...v5.40.0
 [5.39.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.38.0...v5.39.0
 [5.38.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.37.0...v5.38.0
 [5.37.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.36.0...v5.37.0
