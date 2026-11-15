@@ -815,6 +815,43 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
                   <div class="edit-progress-msg"></div>
                 </div>
               </div>
+              <div class="edit-form collapsed" id="av-form">
+                <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("remesh")}<span>Adapt tetrahedra (size field)</span></button>
+                <div class="edit-form-row">
+                  <label class="edit-field" title="Smallest edge length to produce. Blank = the kernel's own default."><span>hmin</span><input type="number" id="av-hmin" class="edit-num" min="0" step="any" placeholder="auto"></label>
+                  <label class="edit-field" title="Largest edge length to produce. Blank = the kernel's own default."><span>hmax</span><input type="number" id="av-hmax" class="edit-num" min="0" step="any" placeholder="auto"></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field" title="Size gradation: the largest ratio of neighbouring edge lengths. Blank = the kernel's own default."><span>hgrad</span><input type="number" id="av-hgrad" class="edit-num" min="1" step="any" placeholder="auto"></label>
+                  <label class="edit-field" title="How far the boundary may move (a length, or a share of the bounding-box diagonal when relative is ticked). Blank = the kernel's own default."><span>hausd</span><input type="number" id="av-hausd" class="edit-num" min="0" step="any" placeholder="auto"></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-check" title="Read hausd as a share of the bounding-box diagonal."><input type="checkbox" id="av-hausdrel"><span>hausd relative</span></label>
+                  <label class="edit-check" title="Refine near curved boundary patches."><input type="checkbox" id="av-curv"><span>curvature sizing</span></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field" title="A scalar nodal field read as the target edge length at each node."><span>size field</span><select id="av-size"><option value="" selected>(none)</option></select></label>
+                  <label class="edit-field" title="Which quality measure guards every edit."><span>quality</span><select id="av-metric"><option value="" selected>default</option><option value="min_dihedral">Min dihedral</option><option value="mean_ratio">Mean ratio</option><option value="amips">AMIPS</option></select></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-check" title="Keep the boundary where it is."><input type="checkbox" id="av-boundary" checked><span>preserve boundary</span></label>
+                  <label class="edit-check" title="Keep corners and ridges."><input type="checkbox" id="av-features" checked><span>preserve features</span></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-check"><input type="checkbox" id="av-collapse" checked><span>collapse</span></label>
+                  <label class="edit-check"><input type="checkbox" id="av-split" checked><span>split</span></label>
+                  <label class="edit-check"><input type="checkbox" id="av-swap" checked><span>swap</span></label>
+                  <label class="edit-check"><input type="checkbox" id="av-smooth" checked><span>smooth</span></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field" title="Passes over the mesh. Blank = the kernel's own default."><span>iterations</span><input type="number" id="av-iter" class="edit-num edit-num-wide" min="1" step="1" placeholder="auto"></label>
+                  <button type="button" class="edit-apply edit-apply-mmg" data-op="adaptVolume" title="Remesh a tetrahedral mesh to a graded size field under a bound on boundary motion. Tetrahedra inherit block, property and parts from the nearest original one." data-run-title="Adapt the tetrahedra"><span class="apply-play">${ic("play")}</span><span class="apply-stop">${ic("stop")}</span></button>
+                </div>
+                <div class="edit-progress hidden" id="av-progress">
+                  <div class="edit-progress-track"><div class="edit-progress-bar"></div></div>
+                  <div class="edit-progress-msg"></div>
+                </div>
+              </div>
             </div>
           </div>
           <div class="sb-subsection collapsed" data-subsection="smoothing">

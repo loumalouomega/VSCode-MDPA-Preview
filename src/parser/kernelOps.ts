@@ -31,7 +31,7 @@ import { loadMeshio, loadMeshioFull, meshioFullInstalled, type MeshioModule } fr
 import { triangleSurfaceOf } from "./gridSample";
 import { withKratosBlockNames, legalFields, type KernelMeshResult } from "./kernelMeshes";
 
-export const KERNEL_OP_KINDS = ["extrude", "revolve", "mirror", "boundaryLayer", "tetrahedralize", "errorSize", "checkConformity", "adapt", "discretizeLevelset", "meshDomain", "metricFromHessian", "findIntersections", "tetToPoly", "convexHull", "delaunay2d", "reconstructSurface", "estimateNormals", "parameterize", "cutLevelSet", "cutQuadrature", "sections", "silhouette", "fitCurves", "clip", "thicken", "hollow", "exaggerate", "colorize", "profileSolid"] as const;
+export const KERNEL_OP_KINDS = ["extrude", "revolve", "mirror", "boundaryLayer", "tetrahedralize", "errorSize", "checkConformity", "findInterface", "splitInterface", "regionAdjacency", "adapt", "discretizeLevelset", "meshDomain", "metricFromHessian", "findIntersections", "tetToPoly", "convexHull", "delaunay2d", "reconstructSurface", "estimateNormals", "parameterize", "cutLevelSet", "cutQuadrature", "sections", "silhouette", "fitCurves", "clip", "thicken", "hollow", "exaggerate", "colorize", "profileSolid"] as const;
 /** The kinds that need OpenCASCADE, which only the full artifact links (meshio++ 20.0.0). */
 export const OCCT_KERNEL_KINDS: readonly KernelOpKind[] = ["profileSolid"];
 /** The kinds that need MMG, which only the full artifact links (meshio++ 18.0.0). */
@@ -50,6 +50,19 @@ const defined = (o: Record<string, unknown>) => Object.fromEntries(Object.entrie
 const n = (x: number) => x.toLocaleString("en-US");
 const f = (x: number) => (Number.isFinite(x) ? String(+x.toPrecision(4)) : "n/a");
 type Mesh = Parameters<typeof meshioToModel>[0];
+
+/** The meshio++ region name `modelToMeshio` gives a SubModelPart: its path, a nested part joined with dots. */
+const regionName = (path: string): string => path.split("/").join(".");
+
+/** The selector of the CELL region of a SubModelPart, or an error naming the option and the part. */
+function partCellRegion(input: Mesh, path: unknown, key: string, kind: string): { name: string; kind: "cell" } {
+  if (typeof path !== "string" || path.trim() === "") throw new Error(`${kind} needs options.${key}, the path of a SubModelPart that holds elements.`);
+  const name = regionName(path.trim());
+  if (!(input.regions ?? []).some((r) => r.name === name && r.kind === "cell")) {
+    throw new Error(`${kind}: SubModelPart "${path}" was not found or holds no elements (options.${key}).`);
+  }
+  return { name, kind: "cell" };
+}
 
 /** One sentence for an MMG report. */
 function mmgReport(r: { status: string; library: string; numPointsIn: number; numPointsOut: number; numElementsIn: number; numElementsOut: number; quality: { min: number; mean: number }; warnings: string[] }): string {
@@ -362,6 +375,52 @@ export async function kernelOpModel(model: MdpaModel, spec: KernelOpSpec, diagno
         model: read(r.mesh),
         summary: `Solid from the sketch (${r.provider}): ${n(r.numFaces)} face(s), area ${f(r.area)}, volume ${f(r.volume)}${r.valid ? "" : " — NOT valid"}.` + warn(r.warnings),
         suffix: "solid",
+      };
+    }
+    case "findInterface": {
+      const { regionA, regionB, ...rest } = options as Record<string, unknown>;
+      const a = partCellRegion(input, regionA, "regionA", spec.kind);
+      const b = partCellRegion(input, regionB, "regionB", spec.kind);
+      const r = m.findInterface(input, a, b, { mode: "conforming", ...rest });
+      if (r.report.numPairs === 0) throw new Error(`The two parts share no interface (${n(r.report.unmatchedA)} facet(s) of ${String(regionA)} and ${n(r.report.unmatchedB)} of ${String(regionB)} unmatched${rest.mode === "proximity" ? "" : "; try mode \"proximity\" with a gapTolerance for a non-conforming contact"}).`);
+      return {
+        model: read(r.mesh, { interface_gap: "INTERFACE_GAP", interface_measure: "INTERFACE_MEASURE", interface_parent_cell: "INTERFACE_PARENT_CELL", interface_parent_facet: "INTERFACE_PARENT_FACET", interface_partner_cell: "INTERFACE_PARTNER_CELL", interface_partner_facet: "INTERFACE_PARTNER_FACET" }),
+        summary:
+          `Interface between ${String(regionA)} and ${String(regionB)}: ${n(r.report.numPairs)} facet pair(s), area ${f(r.report.area)}, largest gap ${f(r.report.maxGap)}; ${n(r.report.unmatchedA)} and ${n(r.report.unmatchedB)} facet(s) unmatched. ` +
+          "INTERFACE_GAP and INTERFACE_MEASURE are element fields; INTERFACE_PARENT_CELL / INTERFACE_PARTNER_CELL are 0-based positions in the input's element order (block by block).",
+        suffix: "interface",
+      };
+    }
+    case "splitInterface": {
+      // The interface is found first (conforming, region A's side) and its facets become a Side region to split along.
+      const { regionA, regionB, addCohesive, ...rest } = options as Record<string, unknown>;
+      const a = partCellRegion(input, regionA, "regionA", spec.kind);
+      const b = partCellRegion(input, regionB, "regionB", spec.kind);
+      const found = m.findInterface(input, a, b, { mode: "conforming", ...rest });
+      if (found.report.numPairs === 0) throw new Error(`The two parts share no conforming interface, so there is nothing to split (${n(found.report.unmatchedA)} and ${n(found.report.unmatchedB)} facet(s) unmatched).`);
+      const side = { name: "kratos:interface", kind: "side" as const, dim: 2, tag: -1, entries: BigInt64Array.from(found.report.sideA.flat(), BigInt) as unknown as Int32Array };
+      const withSide = { ...input, regions: [...(input.regions ?? []), side] };
+      const r = m.splitInterface(withSide, "kratos:interface", { addCohesive: addCohesive !== false });
+      return {
+        model: read(r.mesh),
+        summary:
+          `Split along the ${String(regionA)} / ${String(regionB)} interface (${n(found.report.numPairs)} facet(s)): ${n(r.report.numDuplicatedPoints)} node(s) duplicated` +
+          (r.report.numCohesiveCells > 0 ? `, ${n(r.report.numCohesiveCells)} zero-thickness cohesive cell(s) inserted` : "") + ". " +
+          "The result is a new mesh; node and element ids are not carried, and SubModelParts follow the kernel's regions.",
+        suffix: "split",
+      };
+    }
+    case "regionAdjacency": {
+      const { regions, ...rest } = options as { regions?: unknown } & Record<string, unknown>;
+      const names = Array.isArray(regions) ? (regions as unknown[]).map((p) => partCellRegion(input, p, "regions", spec.kind)) : undefined;
+      const r = m.regionAdjacency(input, names);
+      void rest;
+      return {
+        model: read(r, { interface_region_a: "REGION_A", interface_region_b: "REGION_B", interface_shared_count: "SHARED_COUNT", interface_measure: "INTERFACE_MEASURE", interface_parent_cell_a: "PARENT_CELL_A", interface_parent_cell_b: "PARENT_CELL_B", interface_parent_facet_a: "PARENT_FACET_A", interface_parent_facet_b: "PARENT_FACET_B" }),
+        summary:
+          `Region adjacency: the shared facets between every pair of ${names ? `${names.length} listed` : "element"} region(s), as triangles. ` +
+          "REGION_A / REGION_B are the 0-based positions of the two regions (in the order given, otherwise the mesh's own region order).",
+        suffix: "adjacency",
       };
     }
     case "checkConformity": {

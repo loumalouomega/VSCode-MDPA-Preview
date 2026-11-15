@@ -24,7 +24,7 @@ import { FieldComponent, computeFieldRange } from "./fieldScalars";
 import { thresholdCells, ThresholdRule } from "./thresholdCells";
 import { restrictToElements, elementMeasures } from "./selectCells";
 import { extractSkinModel } from "./extractSkin";
-import { decimateModel, DecimateParams } from "./decimate";
+import { decimateModel, decimateVolumeModel, DecimateParams } from "./decimate";
 import { tessellateModel, withTessellateSourceFields, TessellateParams, TessellateParents, TESSELLATE_MAX_LEVELS } from "./tessellate";
 import { sampleGrid, GridSampleSpec } from "./gridSample";
 import { kernelOpModel, KernelOpSpec } from "./kernelOps";
@@ -87,6 +87,9 @@ export interface ThresholdSpec {
  */
 export type DecimateSpec = { kind: "decimate" } & DecimateParams;
 
+/** The same simplification over linear tetrahedra (meshio++ 20.1.0 `decimateVolume`); `targetFaces` is read as the target CELL count. */
+export type DecimateVolumeSpec = { kind: "decimateVolume" } & DecimateParams;
+
 /**
  * A LINEAR copy of the open mesh's curved cells (6-node triangles, 8/9-node
  * quads, 10-node tetrahedra, 27-node hexahedra) tessellated through their own
@@ -102,8 +105,8 @@ export type TessellateSpec = { kind: "tessellate" } & TessellateParams;
  */
 export type StreamlineSpec = { kind: "streamlines"; frame?: string } & StreamlineParams;
 
-export type DeriveSpec = ({ kind: "featureEdges" } & FeatureEdgeOptions) | SliceSpec | IsosurfaceSpec | ThresholdSpec | DecimateSpec | TessellateSpec | GridSampleSpec | StreamlineSpec | IgaRefineSpec | IgaSampleSpec | GenerateSpec | OctreeMeshSpec | OctreeSpec | CadSurfaceSpec | KernelOpSpec;
-export const DERIVE_KINDS = ["featureEdges", "slice", "isosurface", "threshold", "decimate", "tessellate", "grid", "voxelize", "sdfVolume", "streamlines", "igaRefine", "igaSample", "generate", "octreeMesh", "octree", "cadSurface", "extrude", "revolve", "mirror", "boundaryLayer", "tetrahedralize", "errorSize", "checkConformity", "adapt", "discretizeLevelset", "meshDomain", "metricFromHessian", "findIntersections", "tetToPoly", "convexHull", "delaunay2d", "reconstructSurface", "estimateNormals", "parameterize", "cutLevelSet", "cutQuadrature", "sections", "silhouette", "fitCurves", "clip", "thicken", "hollow", "exaggerate", "colorize", "profileSolid"] as const;
+export type DeriveSpec = ({ kind: "featureEdges" } & FeatureEdgeOptions) | SliceSpec | IsosurfaceSpec | ThresholdSpec | DecimateSpec | DecimateVolumeSpec | TessellateSpec | GridSampleSpec | StreamlineSpec | IgaRefineSpec | IgaSampleSpec | GenerateSpec | OctreeMeshSpec | OctreeSpec | CadSurfaceSpec | KernelOpSpec;
+export const DERIVE_KINDS = ["featureEdges", "slice", "isosurface", "threshold", "decimate", "decimateVolume", "tessellate", "grid", "voxelize", "sdfVolume", "streamlines", "igaRefine", "igaSample", "generate", "octreeMesh", "octree", "cadSurface", "extrude", "revolve", "mirror", "boundaryLayer", "tetrahedralize", "errorSize", "checkConformity", "findInterface", "splitInterface", "regionAdjacency", "adapt", "discretizeLevelset", "meshDomain", "metricFromHessian", "findIntersections", "tetToPoly", "convexHull", "delaunay2d", "reconstructSurface", "estimateNormals", "parameterize", "cutLevelSet", "cutQuadrature", "sections", "silhouette", "fitCurves", "clip", "thicken", "hollow", "exaggerate", "colorize", "profileSolid"] as const;
 /** Kinds that need no input mesh at all (a grid is made from nothing). */
 export const DERIVE_STANDALONE_KINDS: readonly string[] = ["grid", "generate"];
 
@@ -350,6 +353,21 @@ export async function deriveMesh(
         suffix: "decimated",
       };
     }
+    case "decimateVolume": {
+      if (signal?.aborted) throw new Error("cancelled");
+      const r = await decimateVolumeModel(model, spec, diagnostics);
+      if (signal?.aborted) throw new Error("cancelled");
+      const err = Math.sqrt(r.maxErrorApplied);
+      return {
+        model: r.model,
+        summary:
+          `Simplified ${r.facesBefore} → ${r.facesAfter} tetrahedra (${(100 * r.reduction).toPrecision(3)}% removed), ${r.pointsBefore} → ${r.pointsAfter} nodes. ` +
+          `Largest collapse error ${err.toPrecision(3)} (${(100 * r.relativeError).toPrecision(2)}% of the bounding-box diagonal). ` +
+          `Surviving tetrahedra keep their entity ids, property ids and element-field values; a node keeps the lowest id merged into it, and its nodal fields are upstream's blend of the endpoints (an approximation for optimal placement). ` +
+          (r.warnings.length ? ` ${r.warnings.join(" ")}` : ""),
+        suffix: "simplified",
+      };
+    }
     case "tessellate": {
       if (signal?.aborted) throw new Error("cancelled");
       const levels = spec.levels ?? 2;
@@ -383,6 +401,9 @@ export async function deriveMesh(
     case "tetrahedralize":
     case "errorSize":
     case "checkConformity":
+    case "findInterface":
+    case "splitInterface":
+    case "regionAdjacency":
     case "adapt":
     case "discretizeLevelset":
     case "meshDomain":

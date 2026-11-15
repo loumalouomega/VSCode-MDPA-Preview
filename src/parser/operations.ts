@@ -92,6 +92,10 @@ import {
   surfaceRemeshModel,
   volumeMeshModel,
   optimizeVolumeModel,
+  adaptVolumeModel,
+  adaptVolumeFromMessage,
+  adaptVolumeProblem,
+  AdaptVolumeParams,
   SurfaceRemeshParams,
   VolumeMeshParams,
   OptimizeVolumeParams,
@@ -312,6 +316,7 @@ export type OpRecord =
   | ({ op: "surfaceRemesh" } & SurfaceRemeshParams)
   | ({ op: "volumeMesh" } & VolumeMeshParams)
   | ({ op: "optimizeVolume" } & OptimizeVolumeParams)
+  | ({ op: "adaptVolume" } & AdaptVolumeParams)
   // meshio++ as an ORACLE (see curvature.ts): per-node curvature fields, cells untouched.
   | ({ op: "curvature" } & CurvatureParams)
   // meshio++ 18.0.0 oracles: wall thickness per facet (thickness.ts) and a region picked by geometry / data / a grown patch (selectRegion.ts).
@@ -413,6 +418,7 @@ const ASYNC_OPS = new Set<OpName>([
   "surfaceRemesh",
   "volumeMesh",
   "optimizeVolume",
+  "adaptVolume",
   "curvature",
   "thickness",
   ...OPS_181,
@@ -515,6 +521,7 @@ const ORACLE_OPS: ReadonlySet<OpName> = new Set<OpName>([
   "surfaceRemesh",
   "volumeMesh",
   "optimizeVolume",
+  "adaptVolume",
   "curvature",
   "thickness",
   ...OPS_181,
@@ -1176,6 +1183,7 @@ export function applyOp(model: MdpaModel, rec: OpRecord): OpOutcome {
     case "surfaceRemesh":
     case "volumeMesh":
     case "optimizeVolume":
+    case "adaptVolume":
     case "curvature":
     case "thickness":
     case "selectRegion":
@@ -1568,6 +1576,11 @@ async function applyAsyncOpInProcess(
       const r = await optimizeVolumeModel(model, rec);
       return r.changed ? { model: r.model, message: r.message } : { model, noop: true, message: r.message };
     }
+    case "adaptVolume": {
+      const { op: _op, ...params } = rec;
+      const r = await adaptVolumeModel(model, params);
+      return r.changed ? { model: r.model, message: r.message } : { model, noop: true, message: r.message };
+    }
     case "tessellate": {
       const r = await tessellateModel(model, rec);
       return r.changed ? { model: r.model, message: r.message } : { model, noop: true, message: r.message };
@@ -1806,6 +1819,7 @@ const KNOWN_OPS = new Set<OpName>([
   "surfaceRemesh",
   "volumeMesh",
   "optimizeVolume",
+  "adaptVolume",
   "curvature",
   "thickness",
   ...OPS_181,
@@ -2419,6 +2433,10 @@ export function opRecordFromMessage(
       }
       if (msg.keepSurface !== undefined) rec.keepSurface = Boolean(msg.keepSurface);
       return rec;
+    }
+    case "adaptVolume": {
+      const params = adaptVolumeFromMessage(msg);
+      return params ? ({ op, ...params } as OpRecord) : undefined;
     }
     case "optimizeVolume": {
       const rec: Extract<OpRecord, { op: "optimizeVolume" }> = { op };
@@ -3456,6 +3474,10 @@ function validateParams(rec: OpRecord, warnings: string[]): boolean {
       for (const k of ["paddingRelative", "warpFraction"] as const) if (rec[k] !== undefined && !(Number.isFinite(rec[k]) && (rec[k] as number) >= 0)) return bad(`invalid ${k}`);
       if (rec.maxTets !== undefined && !(Number.isFinite(rec.maxTets) && rec.maxTets >= 1)) return bad("invalid maxTets");
       return true;
+    }
+    case "adaptVolume": {
+      const problem = adaptVolumeProblem(rec);
+      return problem ? bad(problem) : true;
     }
     case "optimizeVolume": {
       if (rec.maxIterations !== undefined && !(Number.isFinite(rec.maxIterations) && rec.maxIterations >= 1)) return bad("invalid maxIterations");

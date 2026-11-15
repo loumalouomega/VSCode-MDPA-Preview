@@ -174,6 +174,17 @@ assert.deepEqual(m, { type: "applyOp", op: "volumeMesh", cellSize: 0.25, keepSur
 m = await fillAndClick({ "ov-objective": "energy", "ov-ring": "", "ov-flip": false, "ov-relocate": true, "ov-boundary": true, "ov-iter": 25 }, '[data-op="optimizeVolume"]');
 assert.deepEqual(m, { type: "applyOp", op: "optimizeVolume", flip: false, relocate: true, preserveBoundary: true, maxIterations: 25, objective: "energy" });
 
+// --- Adapt tetrahedra (meshio++ 20.1.0): only what the user changed is sent -------------------
+m = await fillAndClick({ "av-hmin": 0.1, "av-hmax": 0.5, "av-hgrad": 1.3, "av-iter": 6, "av-metric": "mean_ratio", "av-smooth": false }, '[data-op="adaptVolume"]');
+assert.deepEqual(m, { type: "applyOp", op: "adaptVolume", hmin: 0.1, hmax: 0.5, hgrad: 1.3, maxIterations: 6, qualityMetric: "mean_ratio", smooth: false });
+m = await fillAndClick({ "av-hmin": "", "av-hmax": "", "av-hgrad": "", "av-iter": "", "av-metric": "", "av-smooth": true, "av-hausdrel": true }, '[data-op="adaptVolume"]');
+assert.deepEqual(m, { type: "applyOp", op: "adaptVolume", hausdRelative: true });
+assert.equal(await fillAndClick({ "av-hmin": 2, "av-hmax": 1, "av-hausdrel": false }, '[data-op="adaptVolume"]'), undefined, "hmin above hmax posts nothing");
+m = await fillAndClick({ "av-hmin": "", "av-hmax": "" }, '[data-op="adaptVolume"]');
+assert.equal(m.op, "adaptVolume");
+m = await fillAndClick({ "f181-computeNormals-weight": "area", "f181-computeNormals-output": "N" }, '[data-op="computeNormals"]');
+assert.deepEqual(m, { type: "applyOp", op: "computeNormals", weight: "area", output: "N" });
+
 // --- Shrinkwrap / Sobolev / Compare need a target: no target, no message ---------------
 assert.equal(await fillAndClick({}, '[data-op="shrinkwrap"]'), undefined);
 assert.equal(await fillAndClick({}, '[data-op="compareField"]'), undefined);
@@ -274,7 +285,7 @@ assert.match(await statusText(), /no surface faces/);
 assert.equal(await page.evaluate(() => document.querySelector('[data-action="lod"]').classList.contains("active")), false);
 
 // --- The forms actually rendered, and the page raised no errors ---------------------------
-const forms = await page.evaluate(() => ["fm-form", "cond-form", "cvt-form", "repair-form", "curv-form", "sw-form", "sob-form", "cmp-form", "sr-form", "vm-form", "ov-form", "thick-form", "selreg-form", "untangle-form", "morph-form", "registerRigid-form", "geodesicDistance-form", "laplacianEigenmodes-form", "convertCoordinates-form", "prepareMetric-form"].map((id) => [id, !!document.getElementById(id)]));
+const forms = await page.evaluate(() => ["fm-form", "cond-form", "cvt-form", "repair-form", "curv-form", "sw-form", "sob-form", "cmp-form", "sr-form", "vm-form", "ov-form", "av-form", "computeNormals-form", "thick-form", "selreg-form", "untangle-form", "morph-form", "registerRigid-form", "geodesicDistance-form", "laplacianEigenmodes-form", "convertCoordinates-form", "prepareMetric-form"].map((id) => [id, !!document.getElementById(id)]));
 for (const [id, present] of forms) assert.ok(present, `#${id} is in the sidebar`);
 assert.deepEqual(errors.filter((e) => !/WebGL|swiftshader|GPU/i.test(e)), [], "no page errors");
 

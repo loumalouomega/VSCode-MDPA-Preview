@@ -39,7 +39,7 @@ import {
 } from "../recipePresetLibrary";
 import { sequenceSource, exportResampled, ResampleSourceOptions } from "../parser/resampleFiles";
 import type { ResampleOptions } from "../parser/resampleSequence";
-import { qualityGate, hausdorff, periodicNodes, findIntersectionsReport, checkTetrahedraReport, PeriodicOptions } from "../parser/analysisOps";
+import { qualityGate, hausdorff, periodicNodes, findIntersectionsReport, checkTetrahedraReport, contactPairsReport, PeriodicOptions } from "../parser/analysisOps";
 import { assertFreshElmerDestination } from "../parser/caeFiles";
 /**
  * The MCP tool handler core: path-based tools over the pure parser/problemtype
@@ -1247,6 +1247,39 @@ export async function meshCheckTetrahedra(args: { path: string; zeroVolumeFactor
 }
 
 /**
+ * mesh_contact_pairs: slave node to master facet pairing between two SubModelParts (meshio++ >= 20.1.0 contactPairs).
+ * Read-only; with `outputPath` (.json or .csv) the pairs are also written, uncapped.
+ */
+export async function meshContactPairs(args: {
+  path: string;
+  slavePart: string;
+  masterPart: string;
+  tolerance?: number;
+  requireComplete?: boolean;
+  limit?: number;
+  outputPath?: string;
+}, execution: PlotExecution = {}): Promise<object> {
+  const { model } = await loadMesh(args.path, undefined, undefined, undefined, undefined, undefined, execution.signal);
+  const r = await contactPairsReport(model, args);
+  let written: string | undefined;
+  if (args.outputPath) {
+    const ext = path.extname(args.outputPath).toLowerCase();
+    if (ext === ".csv") {
+      const rows = ["slaveNode,masterKind,masterEntity,masterFacet,masterSubfacet,gap,closestX,closestY,closestZ,normalX,normalY,normalZ"];
+      for (const p of r.pairs) rows.push([p.slaveNode, p.masterKind, p.masterEntity, p.masterFacet, p.masterSubfacet, p.gap, ...p.closestPoint, ...p.normal].join(","));
+      await fs.promises.writeFile(args.outputPath, rows.join("\n") + "\n", "utf8");
+    } else if (ext === ".json") {
+      await fs.promises.writeFile(args.outputPath, JSON.stringify(r, null, 2) + "\n", "utf8");
+    } else {
+      throw new Error("outputPath must end in .json or .csv.");
+    }
+    written = args.outputPath;
+  }
+  const limit = args.limit ?? 200;
+  return { path: args.path, ...r, pairs: r.pairs.slice(0, limit), pairsReturned: Math.min(limit, r.pairs.length), ...(written ? { outputPath: written } : {}) };
+}
+
+/**
  * mesh_fit_primitives (roadmap item 31): segment a SURFACE mesh into smooth
  * patches (unless it already carries SEGMENT_PATCH) and report, per patch, the
  * plane/sphere/cylinder/cone/torus it matches, its parameters and the fit
@@ -2070,6 +2103,7 @@ export async function meshDerive(args: {
     | "isosurface"
     | "threshold"
     | "decimate"
+    | "decimateVolume"
     | "tessellate"
     | "grid"
     | "voxelize"
@@ -2088,6 +2122,9 @@ export async function meshDerive(args: {
     | "tetrahedralize"
     | "errorSize"
     | "checkConformity"
+    | "findInterface"
+    | "splitInterface"
+    | "regionAdjacency"
     | "adapt"
     | "discretizeLevelset"
     | "meshDomain"
@@ -2240,6 +2277,18 @@ export async function meshDerive(args: {
         : undefined,
       rule: args.rule,
       output: args.output,
+    };
+  } else if (args.kind === "decimateVolume") {
+    spec = {
+      kind: "decimateVolume",
+      ratio: args.ratio,
+      targetFaces: args.targetFaces,
+      maxError: args.maxError,
+      placement: args.placement,
+      preserveBoundary: args.preserveBoundary,
+      preserveFeatures: args.preserveFeatures,
+      featureAngle: args.featureAngle,
+      frozenPart: args.frozenPart,
     };
   } else if (args.kind === "decimate") {
     spec = {

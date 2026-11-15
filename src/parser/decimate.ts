@@ -87,6 +87,15 @@ export interface DecimateResult {
   warnings: string[];
 }
 
+/** Refuses anything the volume kernel cannot decimate (linear tetrahedra only), by name, before the wasm runs. */
+function volumeScopeProblem(model: MdpaModel): string | undefined {
+  const elements = model.blocks.filter((b) => b.kind === "Elements");
+  if (elements.length === 0) return "The mesh has no Elements to decimate.";
+  const bad = elements.filter((b) => b.vtkCellType !== VtkCellType.TETRA);
+  if (bad.length > 0) return `Volume decimation needs linear tetrahedra; ${bad.map((b) => b.name).join(", ")} is not. Run Simplexify (or Quadratic → Linear) first.`;
+  return undefined;
+}
+
 /** Refuses anything upstream cannot decimate, by name, before the wasm runs. */
 function scopeProblem(model: MdpaModel): string | undefined {
   if (model.blocks.length === 0) return "The mesh has no cells to decimate.";
@@ -109,17 +118,36 @@ function partNodes(part: SubModelPart, into = new Set<number>()): Set<number> {
   return into;
 }
 
+/**
+ * Volume simplification (meshio++ `decimateVolume`, 20.1.0): the same survivor-map rebuild as the surface
+ * decimation, over linear tetrahedra. `targetFaces` is read as the target CELL count. Only the Elements go to
+ * the kernel (it refuses a mesh with other blocks). Conditions and Geometries are carried across ONLY when the
+ * boundary is pinned (the default): no boundary vertex can then move or merge, so every boundary face is still
+ * a face of the result with the same node ids; otherwise they are dropped with a stated warning.
+ */
+export async function decimateVolumeModel(model: MdpaModel, params: DecimateParams, diagnostics: MdpaDiagnostic[] = []): Promise<DecimateResult> {
+  if (params.maxDeviation !== undefined || params.coverage !== undefined || params.maxFaces !== undefined) {
+    throw new Error("maxDeviation, coverage and maxFaces apply to surface decimation only.");
+  }
+  return decimateModel(model, params, diagnostics, "volume");
+}
+
 export async function decimateModel(
   model: MdpaModel,
   params: DecimateParams,
-  diagnostics: MdpaDiagnostic[] = []
+  diagnostics: MdpaDiagnostic[] = [],
+  mode: "surface" | "volume" = "surface"
 ): Promise<DecimateResult> {
+  const volume = mode === "volume";
+  const full = model;
+  const aside = volume ? model.blocks.filter((b) => b.kind !== "Elements") : [];
+  if (volume) model = { ...model, blocks: model.blocks.filter((b) => b.kind === "Elements") };
   const given = [params.ratio, params.targetFaces, params.maxError, params.maxDeviation].filter((v) => v !== undefined);
   if (given.length !== 1) throw new Error("Give exactly one of ratio, targetFaces, maxError or maxDeviation.");
   if (params.ratio !== undefined && !(params.ratio > 0 && params.ratio <= 1)) throw new Error("ratio (the fraction of faces to KEEP) must be in (0, 1].");
   if (params.targetFaces !== undefined && !(Number.isInteger(params.targetFaces) && params.targetFaces >= 1)) throw new Error("targetFaces must be a positive integer.");
   if (params.maxError !== undefined && !(params.maxError > 0 && Number.isFinite(params.maxError))) throw new Error("maxError must be positive.");
-  const problem = scopeProblem(model);
+  const problem = volume ? volumeScopeProblem(model) : scopeProblem(model);
   if (problem) throw new Error(problem);
 
   let frozen: number[] | null = null;
@@ -136,7 +164,9 @@ export async function decimateModel(
   const order = meshioBlockOrder(model);
   if (order.length !== mesh.cells.length) throw new Error("decimate: block correspondence failed; the result was discarded.");
   const m = await loadMeshio();
-  const r = m.decimate(
+  const r = volume
+    ? { ...m.decimateVolume(mesh, params.ratio ?? -1, params.targetFaces ?? -1, params.maxError ?? -1, params.placement ?? "optimal", params.preserveBoundary ?? true, params.preserveFeatures ?? true, params.featureAngle ?? 30, frozen, true), facesRemoved: 0, deviation: undefined as number | undefined, deviationMet: undefined as boolean | undefined, rounds: undefined as number | undefined }
+    : m.decimate(
     mesh,
     params.ratio ?? -1,
     params.targetFaces ?? -1,
@@ -201,6 +231,24 @@ export async function decimateModel(
     if (n > 0) blocks.push({ ...src, count: n, entityIds, propertyIds, connectivity });
   }
 
+  const repOfSourceNode = new Map<number, number>();
+  for (let i = 0; i < pointMap.length; i++) repOfSourceNode.set(model.nodeIds[i], nodeIds[pointMap[i]]);
+
+  // Volume mode: boundary Conditions/Geometries rode aside. With the boundary pinned no boundary vertex moved or
+  // merged, so every one is still a face of the result under the same node ids; otherwise they cannot be kept.
+  const asideWarnings: string[] = [];
+  if (volume && aside.length > 0) {
+    const stable = (params.preserveBoundary ?? true) && aside.every((b) => b.connectivity.every((id) => repOfSourceNode.get(id) === id));
+    if (stable) {
+      for (const b of aside) {
+        blocks.push(b);
+        for (const id of b.entityIds) keep[b.kind].add(id);
+      }
+    } else {
+      asideWarnings.push(`${aside.map((b) => b.name).join(", ")} ${aside.length === 1 ? "was" : "were"} dropped: the boundary was not pinned, so its faces no longer match the simplified volume (re-derive them with Export skin).`);
+    }
+  }
+
   // Fields. Nodal: upstream's values at the output points (blended at collapsed vertices).
   const fields: FieldData[] = [];
   const dropped: string[] = [];
@@ -221,8 +269,6 @@ export async function decimateModel(
   }
 
   // SubModelParts: node lists follow the merge, entity lists narrow to survivors.
-  const repOfSourceNode = new Map<number, number>();
-  for (let i = 0; i < pointMap.length; i++) repOfSourceNode.set(model.nodeIds[i], nodeIds[pointMap[i]]);
   const mapPart = (p: SubModelPart): SubModelPart => ({
     ...p,
     nodeIds: Int32Array.from(new Set([...p.nodeIds].map((id) => repOfSourceNode.get(id)).filter((v): v is number => v !== undefined))).sort(),
@@ -234,7 +280,7 @@ export async function decimateModel(
   });
 
   const droppedConstraints = (model.constraints ?? []).reduce((s, b) => s + b.rows.length, 0);
-  const warnings: string[] = [];
+  const warnings: string[] = [...asideWarnings];
   if (droppedConstraints > 0) warnings.push(`${droppedConstraints} constraint row(s) were dropped: decimation changes the topology, so there is nothing to maintain them against.`);
   if (dropped.length > 0) warnings.push(`Dropped field(s) upstream did not return: ${dropped.join(", ")}.`);
   if (facesAfter > (params.targetFaces ?? 0) + 2 && params.targetFaces !== undefined) {
@@ -251,7 +297,7 @@ export async function decimateModel(
     if (v > bounds.max[k]) bounds.max[k] = v;
   }
   const result: MdpaModel = {
-    ...model,
+    ...full,
     nodeCount: outPoints,
     nodeIds,
     coords,

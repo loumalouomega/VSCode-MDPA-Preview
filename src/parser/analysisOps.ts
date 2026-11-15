@@ -4,8 +4,8 @@ import { loadMeshio } from './meshio';
 import { modelToMeshio, meshioToModel, meshioBlockOrder } from './meshioConvert';
 import { cellCategory } from './writers/writerCommon';
 import { VtkCellType } from './geometryMap';
-import type { MdpaModel } from './types';
-import { extractSubModelPart } from './subModelPartExtract';
+import type { MdpaDiagnostic, MdpaModel } from './types';
+import { extractSubModelPart, findSubModelPart } from './subModelPartExtract';
 
 export interface FeatureEdgeOptions {
   featureAngle?: number;
@@ -187,3 +187,71 @@ export function describeTetrahedraCheck(r: Awaited<ReturnType<typeof checkTetrah
     ? `${n(r.numTetrahedra)} tetrahedra, all valid (volume ${+r.minVolume.toPrecision(4)} to ${+r.maxVolume.toPrecision(4)}).`
     : `${n(r.numTetrahedra)} tetrahedra: ${n(r.numInverted)} inverted, ${n(r.numDegenerate)} degenerate, ${n(r.numOverlaps)} overlapping pair(s) (smallest volume ${+r.minVolume.toPrecision(4)}).`;
 }
+
+export interface ContactPairsParams {
+  /** SubModelPart whose NODES are the slave points. */
+  slavePart: string;
+  /** SubModelPart whose CELLS (elements or conditions) are the master facets. */
+  masterPart: string;
+  /** Largest distance a slave point may lie from a master facet and still pair (default: the kernel's own). */
+  tolerance?: number;
+  /** Refuse (instead of listing them) when any slave point finds no master. */
+  requireComplete?: boolean;
+}
+
+/**
+ * Slave-point to master-facet pairing for a contact definition (meshio++ >= 20.1.0 `contactPairs`). Read-only. The kernel
+ * speaks in positions: slave points by index into the node list and master cells by global block-major index, so both are
+ * translated back to the model's own node and entity ids. A slave node with no master within tolerance is listed in
+ * `unmatched`, never given a gap of 0.
+ */
+export async function contactPairsReport(model: MdpaModel, params: ContactPairsParams, diagnostics: MdpaDiagnostic[] = []) {
+  const dotted = (path: string) => path.split('/').join('.');
+  if (!params.slavePart || !params.masterPart) throw new Error('Give slavePart (the SubModelPart of slave nodes) and masterPart (the SubModelPart of master cells).');
+  if (params.tolerance !== undefined && !(Number.isFinite(params.tolerance) && params.tolerance >= 0)) throw new Error('tolerance must be a nonnegative number.');
+  const slave = findSubModelPart(model, params.slavePart);
+  const master = findSubModelPart(model, params.masterPart);
+  if (!slave) throw new Error(`SubModelPart "${params.slavePart}" (the slave nodes) was not found.`);
+  if (!master) throw new Error(`SubModelPart "${params.masterPart}" (the master cells) was not found.`);
+  const mesh = modelToMeshio({ ...model, is3D: true }, diagnostics, { dim: 3 });
+  const has = (name: string, kind: string) => (mesh.regions ?? []).some((r) => r.name === name && r.kind === kind);
+  if (!has(dotted(params.slavePart), 'point')) throw new Error(`SubModelPart "${params.slavePart}" lists no nodes, so it has no slave points.`);
+  if (!has(dotted(params.masterPart), 'cell')) throw new Error(`SubModelPart "${params.masterPart}" lists no cells, so it has no master facets.`);
+  const options: { tolerance?: number; requireComplete?: boolean } = {};
+  if (params.tolerance !== undefined) options.tolerance = params.tolerance;
+  if (params.requireComplete !== undefined) options.requireComplete = params.requireComplete;
+  const m = await loadMeshio();
+  const r = m.contactPairs(mesh, { name: dotted(params.slavePart), kind: 'point' }, { name: dotted(params.masterPart), kind: 'cell' }, options);
+  const order = meshioBlockOrder(model);
+  const starts: number[] = [];
+  let acc = 0;
+  for (const b of order) { starts.push(acc); acc += b.count; }
+  const cellOf = (g: number) => {
+    let bi = starts.length - 1;
+    while (bi > 0 && starts[bi] > g) bi--;
+    const b = order[bi];
+    return b ? { kind: b.kind, id: b.entityIds[g - starts[bi]] } : undefined;
+  };
+  const count = r.slavePoint.length;
+  const widthOf = (a: ArrayLike<number>) => (count > 0 ? Math.round(a.length / count) : 0);
+  const lw = widthOf(r.localCoordinates);
+  // The kernel's arrays are aligned to the slave points: a slave point with no master keeps its slot with master -1 and zeros.
+  const matched = Array.from({ length: count }, (_, i) => i).filter((i) => r.masterCell[i] >= 0);
+  const pairs = matched.map((i) => {
+    const c = cellOf(r.masterCell[i]);
+    return {
+      slaveNode: model.nodeIds[r.slavePoint[i]],
+      masterKind: c?.kind,
+      masterEntity: c?.id,
+      masterFacet: r.masterFacet[i],
+      masterSubfacet: r.masterSubfacet[i],
+      gap: r.gap[i],
+      closestPoint: [r.closestPoint[i * 3], r.closestPoint[i * 3 + 1], r.closestPoint[i * 3 + 2]],
+      normal: [r.normal[i * 3], r.normal[i * 3 + 1], r.normal[i * 3 + 2]],
+      localCoordinates: Array.from({ length: lw }, (_, k) => r.localCoordinates[i * lw + k]),
+    };
+  });
+  const unmatched = Array.from({ length: count }, (_, i) => i).filter((i) => r.masterCell[i] < 0).map((i) => model.nodeIds[r.slavePoint[i]]);
+  return { slavePart: params.slavePart, masterPart: params.masterPart, numPairs: pairs.length, numUnmatched: unmatched.length, unmatched, pairs };
+}
+

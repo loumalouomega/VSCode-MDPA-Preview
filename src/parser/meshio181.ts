@@ -29,8 +29,8 @@ import { isValidFieldName } from "./fieldManage";
 import { runAdoptingOp, describeFidelity } from "./adoptOp";
 import { MESHIO_PART_PREFIX } from "./meshioFormats";
 
-// The first seven are meshio++ 18.1.0; the last six are meshio++ 20.0.0 (scan metrology and surface editing).
-export const OPS_181 = ["untangle", "morph", "registerRigid", "geodesicDistance", "laplacianEigenmodes", "convertCoordinates", "prepareMetric", "flipNormals", "removeIslands", "offsetSurface", "autoAlign", "deviation", "deviationRegions", "registerLandmarks"] as const;
+// The first seven are meshio++ 18.1.0; the next six are meshio++ 20.0.0 (scan metrology and surface editing); `computeNormals` is 20.1.0.
+export const OPS_181 = ["untangle", "morph", "registerRigid", "geodesicDistance", "laplacianEigenmodes", "convertCoordinates", "prepareMetric", "flipNormals", "removeIslands", "offsetSurface", "autoAlign", "deviation", "deviationRegions", "registerLandmarks", "computeNormals"] as const;
 export type Op181Name = (typeof OPS_181)[number];
 
 export const is181Op = (op: unknown): op is Op181Name => (OPS_181 as readonly unknown[]).includes(op);
@@ -55,6 +55,7 @@ const SPECS: Record<Op181Name, Spec> = {
   deviation: { keys: { path: "str", primitive: { enum: ["plane", "sphere", "cylinder", "cone", "torus"] }, primitiveParams: "nums", tolerance: "pos", bins: "int", maxNormalAngle: "pos", register: "bool", output: "name" } },
   registerLandmarks: { keys: { source: "nums", target: "nums", weights: "nums" }, required: ["source", "target"] },
   deviationRegions: { keys: { tolerance: "pos", field: "name", prefix: "name", minArea: "pos" }, required: ["tolerance"] },
+  computeNormals: { keys: { weight: { enum: ["angle", "area"] }, output: "name" } },
   prepareMetric: { keys: { arrays: "strs", output: "name", targetVertices: "pos", norm: "pos", hmin: "pos", hmax: "pos", gradation: "pos", maxSweeps: "int" }, required: ["arrays"] },
 };
 
@@ -410,6 +411,26 @@ async function run181(model: MdpaModel, rec: Op181Record, deps: Op181Deps, diagn
       const w = writeNodal(model, variable, 1, r.mesh.point_data?.["geodesic:distance"] as never);
       if (!w) return noop(model, "The distance is undefined everywhere (no triangle reaches a source).");
       return { model: w.model, message: `Wrote ${variable}: geodesic distance from ${sources.size} source(s), max ${g(r.maxDistance)}${r.converged ? "" : " (NOT converged)"}.${r.numUnreached > 0 || w.gaps > 0 ? ` ${Math.max(r.numUnreached, w.gaps)} node(s) are unreachable and are gaps, not zeros.` : ""}${missing.length ? ` ${missing.length} source id(s) are not in the mesh.` : ""}` };
+    }
+    case "computeNormals": {
+      const surf = model.blocks.filter((b) => b.count > 0 && cellCategory(b.vtkCellType) === "surface");
+      if (surf.length === 0 || model.blocks.some((b) => b.count > 0 && cellCategory(b.vtkCellType) === "volume")) {
+        return noop(model, "Normals need a surface mesh (triangles or quadrilaterals) and no volume cells; export the skin of a solid first.");
+      }
+      // Point normals only and no point splitting, so the result is one vector per EXISTING node.
+      const r = m.computeNormals(bare(model, diagnostics), true, false, (rec.weight as "angle" | "area" | undefined) ?? "angle");
+      const variable = typeof rec.output === "string" ? rec.output : "NORMAL";
+      const raw = r.mesh.point_data?.["normals"];
+      const w = writeNodal(model, variable, 3, raw as never);
+      if (!w) return noop(model, "The kernel returned no point normals.");
+      const notes: string[] = [];
+      if (r.numIsolated > 0) notes.push(`${r.numIsolated} node(s) belong to no surface cell`);
+      if (r.numDegenerate > 0) notes.push(`${r.numDegenerate} degenerate cell(s) were skipped`);
+      if (r.numUndefined > 0) notes.push(`${r.numUndefined} node(s) have no defined normal`);
+      return {
+        model: w.model,
+        message: `Wrote ${variable}: unit point normals weighted by ${(rec.weight as string | undefined) ?? "angle"}, following the cell winding (a uniformly inside-out surface points inward).${notes.length ? " " + notes.join("; ") + " (left as gaps)." : ""}`,
+      };
     }
     case "laplacianEigenmodes": {
       const surfaceOnly = trianglesOnly(model);
