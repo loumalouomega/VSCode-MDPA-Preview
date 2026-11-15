@@ -83,6 +83,14 @@ export const FORMS_181: Form181[] = [
     ],
   },
   {
+    op: "computeNormals", title: "Point normals", icon: "normals",
+    hint: "Unit normals at the nodes of a surface (triangles or quads), as a Nodal vector field. They follow the cell winding, so a flipped element shows up as an inward normal.",
+    fields: [
+      { key: "weight", label: "weighting", kind: "enum", title: "How the incident cells average into a node.", options: ["angle", "area"] },
+      { key: "output", label: "field", kind: "text", title: "Nodal field name.", placeholder: "NORMAL" },
+    ],
+  },
+  {
     op: "laplacianEigenmodes", title: "Surface eigenmodes", icon: "fieldHessian",
     hint: "The lowest Laplace-Beltrami eigenmodes of a triangle surface, one nodal field per mode (mode 0 is the constant).",
     fields: [

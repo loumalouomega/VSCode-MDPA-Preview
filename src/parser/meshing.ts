@@ -340,6 +340,175 @@ function attachBoundary(out: MdpaModel, condBlocks: EntityBlock[], skinParts: Md
   return { ...out, blocks: [...out.blocks, ...blocks], subModelParts: sourceParts.map(build) };
 }
 
+// --- tetrahedral adaptation (meshio++ 20.1.0 adaptVolume) -----------------------------------
+
+export interface AdaptVolumeParams {
+  hmin?: number;
+  hmax?: number;
+  hgrad?: number;
+  hausd?: number;
+  hausdRelative?: boolean;
+  /** A scalar Nodal field read as the target size at each node. */
+  sizeArray?: string;
+  curvatureSizing?: boolean;
+  featureAngle?: number;
+  cornerAngle?: number;
+  maxNormalDeviation?: number;
+  preserveBoundary?: boolean;
+  preserveFeatures?: boolean;
+  qualityMetric?: "min_dihedral" | "mean_ratio" | "amips";
+  qualityMin?: number;
+  maxIterations?: number;
+  targetMinDihedral?: number;
+  collapse?: boolean;
+  split?: boolean;
+  swap?: boolean;
+  smooth?: boolean;
+  boundarySizing?: "input" | "geometry";
+}
+
+const ADAPT_VOLUME_KEYS: readonly (keyof AdaptVolumeParams)[] = [
+  "hmin", "hmax", "hgrad", "hausd", "hausdRelative", "sizeArray", "curvatureSizing", "featureAngle", "cornerAngle", "maxNormalDeviation",
+  "preserveBoundary", "preserveFeatures", "qualityMetric", "qualityMin", "maxIterations", "targetMinDihedral", "collapse", "split", "swap", "smooth", "boundarySizing",
+];
+
+/**
+ * Adds the boundary Conditions to `out` while KEEPING its own SubModelParts: each part gains the inherited
+ * boundary faces it held in the source tree (`attachBoundary` rebuilds parts from the source and would drop
+ * the element membership a volume mesh carries).
+ */
+function attachBoundaryKeepingParts(out: MdpaModel, condBlocks: EntityBlock[], skinParts: MdpaModel["subModelParts"]): MdpaModel {
+  let next = 0;
+  for (const b of out.blocks) if (b.kind === "Conditions") for (const id of b.entityIds) next = Math.max(next, id);
+  next++;
+  const remap = new Map<number, number>();
+  const blocks = condBlocks.map((b) => ({ ...b, entityIds: Int32Array.from(b.entityIds, (id) => { const fresh = next++; remap.set(id, fresh); return fresh; }) }));
+  const byPath = new Map<string, MdpaModel["subModelParts"][number]>();
+  const walk = (ps: MdpaModel["subModelParts"]): void => ps.forEach((p) => { byPath.set(p.path, p); walk(p.children); });
+  walk(skinParts);
+  const present = new Set<number>(out.nodeIds);
+  const build = (p: MdpaModel["subModelParts"][number]): MdpaModel["subModelParts"][number] => {
+    const inh = byPath.get(p.path);
+    const cond = new Set<number>(p.conditionIds);
+    if (inh) for (const id of inh.conditionIds) { const v = remap.get(id); if (v !== undefined) cond.add(v); }
+    const nodes = new Set<number>(p.nodeIds);
+    if (inh) for (const id of inh.nodeIds) if (present.has(id)) nodes.add(id);
+    return {
+      ...p,
+      nodeIds: Int32Array.from([...nodes].sort((a, b) => a - b)),
+      conditionIds: Int32Array.from([...cond].sort((a, b) => a - b)),
+      children: p.children.map(build),
+    };
+  };
+  return { ...out, blocks: [...out.blocks, ...blocks], subModelParts: out.subModelParts.map(build) };
+}
+
+const ADAPT_NUM_POS: readonly (keyof AdaptVolumeParams)[] = ["hmin", "hmax", "hgrad", "hausd", "qualityMin", "targetMinDihedral"];
+const ADAPT_NUM_NONNEG: readonly (keyof AdaptVolumeParams)[] = ["featureAngle", "cornerAngle", "maxNormalDeviation"];
+const ADAPT_BOOL: readonly (keyof AdaptVolumeParams)[] = ["hausdRelative", "curvatureSizing", "preserveBoundary", "preserveFeatures", "collapse", "split", "swap", "smooth"];
+
+/** Validates an `adaptVolume` record's own options; returns the reason it is refused, or `undefined`. */
+export function adaptVolumeProblem(rec: AdaptVolumeParams): string | undefined {
+  for (const k of ADAPT_NUM_POS) if (rec[k] !== undefined && !(typeof rec[k] === "number" && Number.isFinite(rec[k]) && (rec[k] as number) > 0)) return `invalid ${k}`;
+  for (const k of ADAPT_NUM_NONNEG) if (rec[k] !== undefined && !(typeof rec[k] === "number" && Number.isFinite(rec[k]) && (rec[k] as number) >= 0)) return `invalid ${k}`;
+  for (const k of ADAPT_BOOL) if (rec[k] !== undefined && typeof rec[k] !== "boolean") return `invalid ${k}`;
+  if (rec.maxIterations !== undefined && !(Number.isInteger(rec.maxIterations) && rec.maxIterations >= 1)) return "invalid maxIterations";
+  if (rec.sizeArray !== undefined && !(typeof rec.sizeArray === "string" && rec.sizeArray.length > 0)) return "invalid sizeArray";
+  if (rec.qualityMetric !== undefined && !["min_dihedral", "mean_ratio", "amips"].includes(rec.qualityMetric)) return "qualityMetric must be min_dihedral, mean_ratio or amips";
+  if (rec.boundarySizing !== undefined && rec.boundarySizing !== "input" && rec.boundarySizing !== "geometry") return "boundarySizing must be input or geometry";
+  if (rec.hmin !== undefined && rec.hmax !== undefined && rec.hmin > rec.hmax) return "hmin must not exceed hmax";
+  return undefined;
+}
+
+/** Builds the record from a raw message (webview / command line / MCP): empty strings are omitted, a bad value refuses the whole record. */
+export function adaptVolumeFromMessage(msg: Record<string, unknown>): AdaptVolumeParams | undefined {
+  const rec: Record<string, unknown> = {};
+  const given = (v: unknown): boolean => v !== undefined && v !== "" && v !== null;
+  for (const k of [...ADAPT_NUM_POS, ...ADAPT_NUM_NONNEG, "maxIterations"] as const) {
+    if (!given(msg[k])) continue;
+    const v = Number(msg[k]);
+    if (!Number.isFinite(v)) return undefined;
+    rec[k] = k === "maxIterations" ? Math.floor(v) : v;
+  }
+  for (const k of ADAPT_BOOL) if (given(msg[k])) rec[k] = msg[k] === "false" ? false : Boolean(msg[k]);
+  for (const k of ["sizeArray", "qualityMetric", "boundarySizing"] as const) if (given(msg[k])) rec[k] = String(msg[k]);
+  return adaptVolumeProblem(rec as AdaptVolumeParams) ? undefined : (rec as AdaptVolumeParams);
+}
+
+/**
+ * `adaptVolume`: remeshes the linear tetrahedra to a graded size field under a bound on boundary motion
+ * (collapse / split / swap / smooth, with exact orientation tests). The kernel only takes tetrahedra, so
+ * Conditions and Geometries ride aside. Node ids and nodal fields come back through the carriers; cells have
+ * no correspondence, so each inherits block, property, parts and element-field values from the nearest
+ * original tetrahedron, and the boundary Conditions are re-derived from the new skin, each inheriting from
+ * the nearest original surface face.
+ */
+export async function adaptVolumeModel(model: MdpaModel, params: AdaptVolumeParams = {}, diagnostics: MdpaDiagnostic[] = []): Promise<MeshingOutcome> {
+  const elementBlocks = model.blocks.filter((b) => b.kind === "Elements");
+  if (elementBlocks.length === 0) return { model, changed: false, message: "The mesh has no Elements to adapt." };
+  const notTet = elementBlocks.filter((b) => b.vtkCellType !== VtkCellType.TETRA);
+  if (notTet.length > 0) {
+    return {
+      model,
+      changed: false,
+      message: `Tetrahedral adaptation needs a mesh whose Elements are all linear tetrahedra; ${notTet.map((b) => b.name).join(", ")} is not. Run Simplexify (or Quadratic → Linear) first.`,
+    };
+  }
+  if (params.sizeArray !== undefined) {
+    const f = model.fields.find((x) => x.kind === "Nodal" && x.variable === params.sizeArray);
+    if (!f) return { model, changed: false, message: `sizeArray "${params.sizeArray}" is not a Nodal field of this mesh.` };
+    if (f.components !== 1) return { model, changed: false, message: `sizeArray "${params.sizeArray}" must be a scalar field (it has ${f.components} components).` };
+  }
+  const options: Record<string, unknown> = {};
+  for (const k of ADAPT_VOLUME_KEYS) if (params[k] !== undefined) options[k] = params[k];
+
+  const surfaceCond = model.blocks.filter((b) => b.kind === "Conditions" && cellCategory(b.vtkCellType) === "surface");
+  const otherAside = model.blocks.filter((b) => b.kind !== "Elements" && !(b.kind === "Conditions" && cellCategory(b.vtkCellType) === "surface"));
+  const tetModel: MdpaModel = { ...model, blocks: elementBlocks, subModelParts: [], constraints: undefined, fields: model.fields.filter((f) => f.kind === "Nodal") };
+  const beforeAngle = minAngle({ ...model, blocks: elementBlocks });
+  const run = await runAdoptingOp(tetModel, diagnostics, "adaptVolume", (m, mesh) => m.adaptVolume(mesh, options), { recoverBlockNames: true });
+  if (!run) return { model, changed: false, message: "Nothing to adapt." };
+  const r = run.result;
+  if (r.numCollapsed + r.numSplit + r.numSwapped + r.numSmoothed === 0) {
+    return { model, changed: false, message: `Nothing to change: the tetrahedra already satisfy the size field (least dihedral ${r.minDihedralBefore.toFixed(1)}°).${r.warnings.length ? " " + r.warnings.join(" ") : ""}` };
+  }
+  const inh = inheritCellIdentity({ ...model, blocks: elementBlocks }, { ...run.model, constraints: undefined }, { category: "volume", matchByNodes: false });
+  let out: MdpaModel = {
+    ...inh.model,
+    fields: inh.model.fields.filter((f) => f.kind !== "Conditional"),
+    constraints: undefined,
+  };
+  let boundaryNote = "";
+  if (surfaceCond.length > 0) {
+    const skin = extractSkinModel(out);
+    if (skin.faces > 0) {
+      const surfaceBase: MdpaModel = { ...model, blocks: surfaceCond };
+      const binh = inheritCellIdentity(surfaceBase, skin.model, { category: "surface", matchByNodes: false, targetKind: "Conditions" });
+      const condBlocks = binh.model.blocks.filter((b) => b.kind === "Conditions");
+      out = attachBoundaryKeepingParts(out, condBlocks, binh.model.subModelParts);
+      boundaryNote = `The ${binh.inherited} boundary face(s) were re-derived from the new skin as Conditions inheriting property and SubModelPart membership from the nearest original face.`;
+    }
+  }
+  const dropped: string[] = [];
+  if (otherAside.length > 0) dropped.push(`${otherAside.map((b) => b.name).join(", ")} (not surface Conditions)`);
+  if (model.fields.some((f) => f.kind === "Conditional")) dropped.push("Conditional fields");
+  if (model.constraints?.length) dropped.push("constraints");
+  const afterAngle = minAngle({ ...out, blocks: out.blocks.filter((b) => b.kind === "Elements") });
+  const parts: string[] = [
+    `Adapted ${r.numTetsBefore} → ${r.numTetsAfter} tetrahedra (${r.numPointsBefore} → ${r.numPointsAfter} nodes) to sizes ${r.hmin.toPrecision(3)}–${r.hmax.toPrecision(3)}: ` +
+      `${r.numCollapsed} collapse(s), ${r.numSplit} split(s), ${r.numSwapped} swap(s), ${r.numSmoothed} smoothing move(s) in ${r.iterations} iteration(s). ` +
+      `Least dihedral angle ${r.minDihedralBefore.toFixed(1)}° → ${r.minDihedralAfter.toFixed(1)}°; volume ${r.volumeBefore.toPrecision(6)} → ${r.volumeAfter.toPrecision(6)}; ` +
+      `largest boundary movement ${r.maxBoundaryDeviation.toExponential(2)} (hausd ${r.hausd.toPrecision(3)}).`,
+  ];
+  if (beforeAngle !== undefined && afterAngle !== undefined) parts.push(`Smallest angle ${beforeAngle.toFixed(1)}° → ${afterAngle.toFixed(1)}°.`);
+  parts.push(`${inh.inherited} tetrahedra inherited block, property, SubModelPart membership and element-field values from the nearest original tetrahedron.`);
+  if (boundaryNote) parts.push(boundaryNote);
+  if (dropped.length > 0) parts.push(`Dropped: ${dropped.join("; ")} (they cannot follow a topology change).`);
+  const kernelWarnings = r.warnings.filter((w) => !/cell_data with no correspondence/.test(w));
+  if (kernelWarnings.length > 0) parts.push(`Kernel warnings: ${kernelWarnings.join("; ")}`);
+  return { model: out, changed: true, message: parts.join(" ") };
+}
+
 // --- tetrahedral optimization -------------------------------------------------------------
 
 export interface OptimizeVolumeParams {

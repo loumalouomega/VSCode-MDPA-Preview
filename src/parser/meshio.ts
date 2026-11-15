@@ -294,6 +294,30 @@ export interface MeshioModule {
     boundaryPreserved: boolean; hausdorffToSurface: number; minDihedralDeg: number; maxDihedralDeg: number; volume: number; backend: string; warnings: string[];
   };
   errorSize(mesh: MeshioMesh, options: Record<string, unknown>): { mesh: MeshioMesh; numCells: number; numSkipped: number; numClamped: number; warnings: string[] } & Record<string, unknown>;
+  /** meshio++ >= 20.1.0 (interface kernels): regions are names or `{name, kind}` selectors; the result is a facet mesh with `interface:*` cell data. */
+  findInterface(
+    mesh: MeshioMesh,
+    regionA: string | { name: string; kind?: string; dim?: number; tag?: number },
+    regionB: string | { name: string; kind?: string; dim?: number; tag?: number },
+    options?: Record<string, unknown>
+  ): { mesh: MeshioMesh; report: { numPairs: number; area: number; maxGap: number; unmatchedA: number; unmatchedB: number; sideA: Array<[number, number]>; sideB: Array<[number, number]> } };
+  /** Duplicates the nodes along a SIDE region (optionally inserting zero-thickness cohesive cells). */
+  splitInterface(
+    mesh: MeshioMesh,
+    side: string | { name: string; kind?: string; dim?: number; tag?: number },
+    options?: { addCohesive?: boolean }
+  ): { mesh: MeshioMesh; report: { numDuplicatedPoints: number; numCohesiveCells: number } };
+  /** The facets shared between every pair of cell regions, as a triangle mesh. */
+  regionAdjacency(mesh: MeshioMesh, regions?: Array<string | { name: string; kind?: string; dim?: number; tag?: number }>): MeshioMesh;
+  contactPairs(
+    slaveMesh: MeshioMesh,
+    slavePoints: string | { name: string; kind?: string; dim?: number; tag?: number },
+    masterCells: string | { name: string; kind?: string; dim?: number; tag?: number },
+    options?: { masterMesh?: MeshioMesh; tolerance?: number; requireComplete?: boolean }
+  ): {
+    slavePoint: Int32Array; masterCell: Int32Array; masterFacet: Int32Array; masterSubfacet: Int32Array;
+    localCoordinates: Float64Array; closestPoint: Float64Array; gap: Float64Array; normal: Float64Array; unmatched: Int32Array;
+  };
   checkConformity(mesh: MeshioMesh, options?: Record<string, unknown>): {
     mesh: MeshioMesh; dimension: number; numHangingNodes: number; numTJunctions: number; numPartialOverlaps: number; numUnweldedFacets: number;
     numBoundaryFacets: number; numNonManifoldFacets: number; conforming: boolean; interfaceMode: string; warnings: string[];
@@ -455,6 +479,16 @@ export interface MeshioModule {
   delaunay2d(mesh: MeshioMesh): { mesh: MeshioMesh; numTriangles: number; numDuplicates: number; numBoundary: number };
   /** Cylindrical / spherical coordinates as point data; named vector / tensor arrays rewritten in the local basis. */
   convertCoordinates(mesh: MeshioMesh, options?: Record<string, unknown>): { mesh: MeshioMesh; numArrays: number; numSingular: number };
+  /** Point (and cell) normals of a surface as the `normals` point_data array (meshio++ >= 9.x; point splitting off by default). */
+  computeNormals(
+    mesh: MeshioMesh,
+    pointNormals?: boolean,
+    cellNormals?: boolean,
+    weight?: "angle" | "area",
+    splitAngle?: number,
+    recordParentIds?: boolean,
+    region?: string
+  ): { mesh: MeshioMesh; numIsolated: number; numUndefined: number; numDegenerate: number; numSplitPoints: number; numAddedPoints: number };
   /** Heat-method geodesic distance (`geodesic:distance` point data) to the source points. */
   geodesicDistance(mesh: MeshioMesh, sources: ArrayLike<number> | number, options?: Record<string, unknown>): {
     mesh: MeshioMesh; numSources: number; numUnreached: number; numDegenerate: number; maxDistance: number; timeStep: number;
@@ -1067,6 +1101,31 @@ export interface MeshioModule {
     cellMaps?: Int32Array[];
   };
 
+  /**
+   * meshio++ >= 20.1.0: edge-collapse simplification of a TETRAHEDRAL mesh (tet-only: another block is refused).
+   * `returnMaps` gives the same survivor bookkeeping as `decimate`.
+   */
+  decimateVolume(
+    mesh: MeshioMesh,
+    ratio?: number,
+    targetCells?: number,
+    maxError?: number,
+    placement?: string,
+    preserveBoundary?: boolean,
+    preserveFeatures?: boolean,
+    featureAngle?: number,
+    frozen?: number[] | Int32Array | null,
+    returnMaps?: boolean
+  ): {
+    mesh: MeshioMesh;
+    tetsRemoved: number;
+    pointsRemoved: number;
+    collapsesRejected: number;
+    maxErrorApplied: number;
+    pointMap?: Int32Array;
+    cellMaps?: Int32Array[];
+  };
+
   computeCurvature(
     mesh: MeshioMesh,
     mean?: boolean,
@@ -1162,6 +1221,37 @@ export interface MeshioModule {
     numVerticesWarped: number;
     numTetsRejected: number;
     numNonManifoldEdges: number;
+  };
+
+  /**
+   * meshio++ >= 20.1.0: tetrahedral remeshing to a graded isotropic size field (collapse, split, swap, smooth)
+   * under a bound on boundary motion, keeping corners, ridges, regions and boundary tags. Tet-only: a mesh with
+   * any other block is refused by the kernel. Cell carriers do not survive (cells have no correspondence);
+   * points keep `mdpa:id` and `point_data`.
+   */
+  adaptVolume(
+    mesh: MeshioMesh,
+    options?: Record<string, unknown>
+  ): {
+    mesh: MeshioMesh;
+    numTetsBefore: number;
+    numTetsAfter: number;
+    numPointsBefore: number;
+    numPointsAfter: number;
+    numCollapsed: number;
+    numSplit: number;
+    numSwapped: number;
+    numSmoothed: number;
+    iterations: number;
+    minDihedralBefore: number;
+    minDihedralAfter: number;
+    maxBoundaryDeviation: number;
+    volumeBefore: number;
+    volumeAfter: number;
+    hmin: number;
+    hmax: number;
+    hausd: number;
+    warnings: string[];
   };
 
   optimizeVolume(

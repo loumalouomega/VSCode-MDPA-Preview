@@ -89,7 +89,8 @@ test("every declared parameter of an operation is a key its validator reads", ()
   // Feed each parameter with a plausible value and look for it in the record
   // of the cheapest accepted example: catches a param name the host never reads.
   // The meshio++ 18.1.0 ops keep their keys in meshio181.ts (validated by its SPECS table).
-  const src = read("src/parser/operations.ts") + read("src/parser/meshio181.ts");
+  // adaptVolume (20.1.0) validates its options in meshing.ts.
+  const src = read("src/parser/operations.ts") + read("src/parser/meshio181.ts") + read("src/parser/meshing.ts");
   for (const c of COMMANDS.filter((x) => x.exec.kind === "op")) {
     for (const p of c.params) {
       const re = new RegExp(`\\b${p.name}\\b`);

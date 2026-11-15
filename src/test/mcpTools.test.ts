@@ -1408,7 +1408,7 @@ test("mesh_capabilities reports the live build next to the routing tables", asyn
       adoptingOperations: string[];
     };
   };
-  assert.equal(caps.packageVersion, "20.0.0");
+  assert.equal(caps.packageVersion, "20.1.0");
   assert.ok(caps.backend.length > 0);
   assert.equal(caps.hasCgnslib, true);
   // 15.x bump (roadmap item 3) added vtkhdf/pvd/pvtu/pvtp/pcd/xyz/lsdyna/frd/

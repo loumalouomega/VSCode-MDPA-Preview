@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- Updated to meshio++ 20.1.0 (no format change: the live key audits pass unedited) and adopted its one new kernel, **`adaptVolume`**: Adapt tetrahedra (size field), an in-place, undoable operation in Mesh Modification ▸ Remeshing, the command line (`adaptVolume`), and `mesh_transform`. Tetrahedra inherit block, property, SubModelPart membership and element values from the nearest original one, boundary Conditions are re-derived from the new skin, and constraints, Geometries and Conditional fields are dropped with a stated message.
+- The meshio++ kernels the extension did not yet use and that fit an editable model: `computeNormals` (**Point normals**, a nodal `NORMAL` field), `decimateVolume` (`mesh_derive` kind, also in Advanced ▸ Sweep, mirror and layers…), `findInterface`, `splitInterface` and `regionAdjacency` (`mesh_derive` kinds working on SubModelParts) and `contactPairs` (the read-only MCP tool `mesh_contact_pairs`). `blendSteps`, `dataToSets`/`setsToData`, `cropPredicate`, `undoGreen` and the file, render and introspection kernels are recorded with a reason in `mesh_capabilities` `operations.unavailable`.
+
 ## [5.39.0] - 2026-11-12
 
 ### Added

@@ -306,6 +306,7 @@ const ASYNC_BUILDERS: Record<string, () => Record<string, unknown> | undefined> 
   surfaceRemesh: buildSurfaceRemeshMsg,
   volumeMesh: buildVolumeMeshMsg,
   optimizeVolume: buildOptimizeVolumeMsg,
+  adaptVolume: buildAdaptVolumeMsg,
   curvature: buildCurvatureMsg,
   thickness: buildThicknessMsg,
   selectRegion: buildSelectRegionMsg,
@@ -897,6 +898,7 @@ export function setMeshModFields(
     nodal.filter((f) => f.components === 2 || f.components === 3),
     (f) => `${f.variable} (${f.components})`
   );
+  fillOptionalSelect("av-size", nodal.filter((f) => f.components === 1));
   fillAnyFieldSelect("fm-field", fields);
   fillAnyFieldSelect("cmp-field", fields);
   fillAnyFieldSelect("cond-field", fields);
@@ -1471,6 +1473,52 @@ function buildOptimizeVolumeMsg(): Record<string, unknown> | undefined {
     objective: (document.getElementById("ov-objective") as HTMLSelectElement | null)?.value || "energy",
     ...(optNum("ov-ring") !== undefined ? { maxRingSize: Math.floor(optNum("ov-ring") as number) } : {}),
   };
+}
+
+function buildAdaptVolumeMsg(): Record<string, unknown> | undefined {
+  const msg: Record<string, unknown> = { type: "applyOp", op: "adaptVolume" };
+  for (const [id, key] of [["av-hmin", "hmin"], ["av-hmax", "hmax"], ["av-hgrad", "hgrad"], ["av-hausd", "hausd"]] as const) {
+    const v = optNum(id);
+    if (v === undefined) continue;
+    if (!(v > 0)) return undefined;
+    msg[key] = v;
+  }
+  const iter = optNum("av-iter");
+  if (iter !== undefined) {
+    if (!(iter >= 1)) return undefined;
+    msg.maxIterations = Math.floor(iter);
+  }
+  if (msg.hmin !== undefined && msg.hmax !== undefined && (msg.hmin as number) > (msg.hmax as number)) return undefined;
+  const size = (document.getElementById("av-size") as HTMLSelectElement | null)?.value;
+  if (size) msg.sizeArray = size;
+  const metric = (document.getElementById("av-metric") as HTMLSelectElement | null)?.value;
+  if (metric) msg.qualityMetric = metric;
+  if (checked("av-hausdrel")) msg.hausdRelative = true;
+  if (checked("av-curv")) msg.curvatureSizing = true;
+  // The kernel's defaults are all on: only a switched-off option is worth sending.
+  for (const [id, key] of [["av-boundary", "preserveBoundary"], ["av-features", "preserveFeatures"], ["av-collapse", "collapse"], ["av-split", "split"], ["av-swap", "swap"], ["av-smooth", "smooth"]] as const) {
+    if (!checked(id)) msg[key] = false;
+  }
+  return msg;
+}
+
+/** Fills a select whose first entry means "none" (the size field of the tetrahedral adaptation is optional). */
+function fillOptionalSelect(id: string, nodal: { variable: string }[]): void {
+  const select = document.getElementById(id) as HTMLSelectElement | null;
+  if (!select) return;
+  const previous = select.value;
+  select.textContent = "";
+  const none = document.createElement("option");
+  none.value = "";
+  none.textContent = t("(none)");
+  select.appendChild(none);
+  for (const f of nodal) {
+    const opt = document.createElement("option");
+    opt.value = f.variable;
+    opt.textContent = f.variable;
+    select.appendChild(opt);
+  }
+  select.value = nodal.some((f) => f.variable === previous) ? previous : "";
 }
 
 /** The anisotropic stretch limit only means something for the anisotropic metric. */
