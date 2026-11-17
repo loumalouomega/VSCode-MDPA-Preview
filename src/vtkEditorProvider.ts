@@ -80,7 +80,9 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
   /**
    * Marks the tab dirty. A `CustomDocumentContentChangeEvent`, never a
    * `CustomDocumentEditEvent` — see the matching note in `mdpaEditorProvider.ts`
-   * for why VS Code does not get ownership of the undo stack.
+   * for why VS Code does not get ownership of the undo stack. That note also
+   * describes how `PreviewSession.markDirty` reconciles the latch back to the
+   * save point without dropping the redo tail.
    *
    * Note what is NOT a fire site here: `adoptFrame` rebases and replays on
    * every timeline step, and scrubbing a solver's output is not an edit. That
@@ -270,6 +272,7 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
       onDirty: (doc) => {
         this._onDidChangeCustomDocument.fire({ document: doc });
       },
+      tabMarker: true,
     });
 
     let loadInProgress = false;
@@ -1238,10 +1241,11 @@ const runAleSeries = (msg: Record<string, unknown>): Promise<void> => seriesScan
         // Runs the ops a frame change passed over (see MmgRunOptions.skipAsyncOps).
         if (session.history.hasBase()) void reapplyAll();
       } else if (msg?.type === "opClear") {
-        // No markDirty: an empty stack is never dirty. The marker itself stays
-        // latched until a save or File ▸ Revert File.
+        // Clear returns to the base. That is the file only when nothing was
+        // saved; after a save the base is the pre-save file, so the save-point
+        // comparison in markDirty keeps the tab marked.
         session.history.clear();
-        session.docInfo?.sync();
+        session.markDirty();
         void rerenderFromHistory();
       } else if (msg?.type === "opRevertTo") {
         // Reverts BOTH ways: a row below the cursor redoes up to that step, so

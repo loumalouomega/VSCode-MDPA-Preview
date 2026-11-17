@@ -85,3 +85,22 @@ export function dirtyPanelTitle(title: string, dirty: boolean): string {
   const clean = title.endsWith(" •") ? title.slice(0, -2) : title;
   return dirty ? `${clean} •` : clean;
 }
+
+/** What `PreviewSession.markDirty` must do to the tab's unsaved marker. */
+export type TabMarkerAction = "keep" | "set" | "clear";
+
+/**
+ * Reconcile VS Code's tab dot with the save point.
+ *
+ * `clean` is the same comparison the document chip uses (the applied ops equal
+ * the ones the file holds); `marked` is the session's belief that VS Code's
+ * dot is up, because the API has no getter for it. A dirty history always
+ * (re-)sets the dot: the provider's event is the only way to restore one that
+ * was cleared elsewhere. A clean history clears a set dot once — through the
+ * revert path — and otherwise leaves it alone, so a watcher tick or a timeline
+ * step never runs the command for a document that is already clean.
+ */
+export function tabMarkerAction(clean: boolean, marked: boolean): TabMarkerAction {
+  if (!clean) return "set";
+  return marked ? "clear" : "keep";
+}

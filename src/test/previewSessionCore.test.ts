@@ -8,6 +8,7 @@ import {
   initialSessionFileState,
   sessionFileName,
   sessionTitleFor,
+  tabMarkerAction,
 } from "../parser/previewSessionCore";
 
 describe("previewSessionCore", () => {
@@ -55,5 +56,14 @@ describe("previewSessionCore", () => {
     assert.equal(dirtyPanelTitle("Kratos Preview •", true), "Kratos Preview •");
     assert.equal(dirtyPanelTitle("Kratos Preview •", false), "Kratos Preview");
     assert.equal(sessionFileName("C:\\case\\mesh.vtu"), "mesh.vtu");
+  });
+
+  test("the tab marker is set while dirty, cleared once at the save point, then kept", () => {
+    assert.equal(tabMarkerAction(false, false), "set");
+    assert.equal(tabMarkerAction(false, true), "set");
+    // Clean but already unmarked: a watcher tick must not run the revert.
+    assert.equal(tabMarkerAction(true, false), "keep");
+    // Clean and marked: clear through the no-op revert path.
+    assert.equal(tabMarkerAction(true, true), "clear");
   });
 });
