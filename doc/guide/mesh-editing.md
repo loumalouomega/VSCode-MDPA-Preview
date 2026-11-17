@@ -470,9 +470,10 @@ Because the operations are pure and deterministic, the history is a replayable *
 
 Applying an operation marks the preview tab **unsaved** — the dot in the tab, the same one a modified text file gets. Closing it asks before discarding, and a window that closes with edits still pending brings them back when it reopens (VS Code's hot exit; what is stored is the operation recipe, not a copy of the mesh).
 
+The dot follows the save point, not the click count: it clears as soon as the applied operations are exactly the ones the file on disk holds — after a save, after **File ▸ Revert File**, after **Clear** when nothing was saved, and by undoing your way back to the saved state. That clean-up keeps the redo tail: undo to the save point and the dot clears, redo and it comes back with the operation. It asks VS Code to clear its own marker without writing or re-reading the file; a manual **File ▸ Revert File** remains the full reset, dropping every operation and re-reading the file from disk.
+
 Two details are worth knowing, because both are deliberate:
 
-- **The marker is a latch.** It clears when you save the mesh, or on **File ▸ Revert File** — which drops every operation and re-reads the file from disk. Undoing your way back to zero operations does *not* clear it: the preview would rather ask once too often than let real work disappear. The Edit section's **Clear** button does not clear it either, for the same reason.
 - **Saving must actually write to clear it.** If the save is refused — an OpenFOAM case, a format with no writer, or you dismiss the overwrite confirmation — the tab stays marked and nothing is written.
 - **A preview never auto-saves.** If you use `files.autoSave`, it does not apply here: saving a preview re-serialises the whole mesh over the source file, and the overwrite warning is only shown once, so an automatic save would quietly rewrite the file you opened one second after your first operation. Automatic saves are refused and the tab simply stays marked; `Ctrl+S` and **File ▸ Save** work as normal. Set `kratos.preview.autoSave` to `true` if you want auto-save to apply anyway.
 
@@ -496,7 +497,7 @@ A queue that hits a stopping point — you cancel it, or a step fails outright �
 
 **File ▸ Reload from disk** (`Ctrl+Alt+R`, or the **Kratos Mesh: Reload from Disk** command) re-reads the file. So does an external change to it — the preview watches the file — and, for a `.mdpa`, saving it in a text editor.
 
-**Your edits survive all of that.** The history is re-applied to the new contents rather than thrown away, so a colleague regenerating the mesh, or a solver appending a time step, no longer silently costs you an afternoon's work. Two things are worth knowing about how that goes:
+**Your edits survive all of that.** The history is re-applied to the new contents rather than thrown away, so a colleague regenerating the mesh, or a solver appending a time step, no longer silently costs you an afternoon's work. The unsaved dot survives too: the re-applied history is still compared with the same save point, so a reload never clears a marker that real edits set. Two things are worth knowing about how that goes:
 
 - **An operation that no longer applies is kept, not dropped.** If the file changed such that an op has nothing to do — you deleted a SubModelPart that is already gone — the op stays in the list marked `no effect`, with its own explanation as the tooltip, and the operations after it still run. Nothing is destroyed, so you can revert to before it or clear it yourself.
 - **Stepping a VTK time series skips the expensive operations.** Geometric ops (scale, crop, refine, delete part, …) follow you from frame to frame, but the remeshing and meshio++-backed ones (MMG remesh, level-set split, smooth, reorder, partition, merge, field gradient) are marked `skipped` rather than re-run — a 30-second remesh firing on every arrow-key press would make the timeline unusable. **Re-apply skipped operations**, which appears in the Edit section whenever there is something to re-run, runs them on the current frame.

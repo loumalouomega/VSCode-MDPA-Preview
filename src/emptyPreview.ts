@@ -214,15 +214,18 @@ function attachEmptyPanel(
     recents: deps.recents,
     panel,
     onDirty: () => {
-      syncTitle(panel, session, true);
+      syncTitleDirty();
       persistSession(context, session);
     },
+    tabMarker: false,
   });
   currentSession = session;
 
   let titleDirty = false;
   const syncTitleDirty = (): void => {
-    titleDirty = session.history.appliedCount() > 0;
+    // The same save-point comparison as the chip: undoing back to the file
+    // clears the shell's title dot too.
+    titleDirty = session.docInfo ? !session.docInfo.isClean() : session.history.appliedCount() > 0;
     syncTitle(panel, session, titleDirty);
   };
   const markClean = (): void => {
@@ -951,7 +954,7 @@ const runAleSeries = (msg: Record<string, unknown>): Promise<void> => seriesScan
       if (session.history.hasBase()) await replayAndPost("Re-applying operations…");
     } else if (msg?.type === "opClear") {
       session.history.clear();
-      session.docInfo?.sync();
+      session.markDirty();
       await rerenderFromHistory();
       persistSession(context, session);
     } else if (msg?.type === "opRevertTo") {

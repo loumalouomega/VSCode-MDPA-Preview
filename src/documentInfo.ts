@@ -35,9 +35,10 @@ export interface DocumentInfoMessage {
   format: string | null;
   /**
    * True when the applied operations differ from the ones the source file
-   * already contains. NOT VS Code's tab dot: that is a one-way latch cleared
-   * only by a save or revert, while this clears the moment undo returns to the
-   * save point — see `unsavedEditCount`.
+   * already contains — see `unsavedEditCount`. The menubar chip follows this
+   * directly. VS Code's tab dot is its own content-change latch; the session
+   * reconciles it to this same comparison (see `PreviewSession.markDirty`), so
+   * undo back to the save point clears both.
    */
   dirty: boolean;
   /** How many operations differ (0 whenever `dirty` is false). */
@@ -74,7 +75,7 @@ export class DocumentInfoReporter {
 
   /** The message for the current state (exposed for tests). */
   build(): DocumentInfoMessage {
-    const unsavedEdits = unsavedEditCount(this.history.appliedOps(), this.saved);
+    const unsavedEdits = this.unsavedEdits();
     return {
       type: "documentInfo",
       name: path.basename(this.fsPath),
@@ -83,6 +84,20 @@ export class DocumentInfoReporter {
       dirty: unsavedEdits > 0,
       unsavedEdits,
     };
+  }
+
+  /**
+   * True when the applied operations are exactly the ones the source file
+   * already holds. The tab-marker reconciliation in `PreviewSession` asks this
+   * before it runs VS Code's revert command, so it must use the same identity
+   * comparison as `build()` rather than a count.
+   */
+  isClean(): boolean {
+    return this.unsavedEdits() === 0;
+  }
+
+  private unsavedEdits(): number {
+    return unsavedEditCount(this.history.appliedOps(), this.saved);
   }
 
   /**

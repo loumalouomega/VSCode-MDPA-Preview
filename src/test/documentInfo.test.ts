@@ -96,3 +96,30 @@ test("reverting the file drops the save point along with the stack", () => {
   reporter.markReverted();
   assert.deepStrictEqual([last(posted).dirty, last(posted).unsavedEdits], [false, 0]);
 });
+
+test("isClean follows the same save-point identity as the chip", () => {
+  const { reporter, history } = setup();
+  const a = op("a");
+  const b = op("b");
+  assert.strictEqual(reporter.isClean(), true);
+  history.applied = [a];
+  assert.strictEqual(reporter.isClean(), false);
+  // Undoing to the empty save point is clean again.
+  history.applied = [];
+  assert.strictEqual(reporter.isClean(), true);
+  // Saving moves the save point; undo past it is unsaved, redo back is clean.
+  history.applied = [a, b];
+  reporter.markSaved();
+  assert.strictEqual(reporter.isClean(), true);
+  history.applied = [a];
+  assert.strictEqual(reporter.isClean(), false);
+  history.applied = [a, b];
+  assert.strictEqual(reporter.isClean(), true);
+  // Identity, not shape: a re-created record is not the saved one.
+  history.applied = [a, op("b")];
+  assert.strictEqual(reporter.isClean(), false);
+  // A revert drops the save point and the stack together.
+  history.applied = [];
+  reporter.markReverted();
+  assert.strictEqual(reporter.isClean(), true);
+});

@@ -63,14 +63,16 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
    * never a `CustomDocumentEditEvent`: the latter hands VS Code ownership of
    * the undo stack, and `OperationHistory` would become a second cursor that
    * has to stay in lockstep with it through `clear`, three `load` sites and
-   * `revertTo` — none of which VS Code's stack can express, and none of which
-   * anything in this repo could test (there is no VS Code integration harness).
+   * `revertTo` — none of which VS Code's stack can express faithfully.
    * `Ctrl+Z` is delivered instead by `kratos.mesh.undo`, gated on
    * `activeCustomEditorId` exactly as `Ctrl+S`/`Ctrl+O`/`Ctrl+E` already are.
    *
-   * The cost, stated rather than hidden: the marker is a one-way latch,
-   * cleared only by a save or File ▸ Revert File. Undoing back to zero
-   * operations leaves it set — which over-prompts rather than under-prompts.
+   * The content-change flavour leaves VS Code's dot as a latch: only a save or
+   * its revert command clears it. `PreviewSession.markDirty` bridges that: when
+   * the applied prefix returns to the save point it runs the revert command
+   * against this panel and turns the resulting `revertCustomDocument` call into
+   * a no-op, so the dot clears without dropping the redo tail or re-reading the
+   * file. A manual File ▸ Revert File keeps the full reset.
    */
   private readonly _onDidChangeCustomDocument = new vscode.EventEmitter<
     vscode.CustomDocumentContentChangeEvent<MdpaDocument>
@@ -226,6 +228,7 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
       onDirty: (doc) => {
         this._onDidChangeCustomDocument.fire({ document: doc });
       },
+      tabMarker: true,
     });
 
     let parseInProgress = false;
@@ -977,10 +980,11 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
         // Runs the ops a frame change passed over (see MmgRunOptions.skipAsyncOps).
         if (session.history.hasBase()) void replayAndPost("Re-applying operations…");
       } else if (msg?.type === "opClear") {
-        // No markDirty: an empty stack is never dirty. The marker itself stays
-        // latched until a save or File ▸ Revert File — see the emitter's note.
+        // Clear returns to the base. That is the file only when nothing was
+        // saved; after a save the base is the pre-save file, so the save-point
+        // comparison in markDirty keeps the tab marked.
         session.history.clear();
-        session.docInfo?.sync();
+        session.markDirty();
         void rerenderFromHistory();
       } else if (msg?.type === "opRevertTo") {
         // Reverts BOTH ways: a row below the cursor redoes up to that step, so
