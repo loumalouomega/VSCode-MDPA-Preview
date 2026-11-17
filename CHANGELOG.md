@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [5.41.0] - 2026-11-17
+
 ### Changed
 
 - The preview tab's unsaved dot now follows the edit history back to the save point (roadmap item 78). Undoing to the state the file on disk holds clears the dot — and the close prompt with it — instead of staying latched until a save; the redo tail is kept, and the clean-up neither writes nor re-reads the source file. Saving, **Clear** with nothing saved, and a manual **File ▸ Revert File** also leave the marker correct, while a watcher reload or a timeline step still never clears a marker that real edits set. UI-only.
@@ -1596,7 +1598,8 @@ Four silent-correctness fixes. None of them threw, and none was visible in the m
 
 - Initial release: custom editor preview for `.mdpa` files.
 
-[Unreleased]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.40.0...HEAD
+[Unreleased]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.41.0...HEAD
+[5.41.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.40.0...v5.41.0
 [5.40.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.39.0...v5.40.0
 [5.39.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.38.0...v5.39.0
 [5.38.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.37.0...v5.38.0
