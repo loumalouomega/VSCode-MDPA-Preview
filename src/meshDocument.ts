@@ -38,7 +38,12 @@ export interface MeshEditorHooks {
   save(): Promise<boolean>;
   /** Writes to `destination`. FALSE = nothing was written. */
   saveAs(destination: vscode.Uri): Promise<boolean>;
-  /** Drops every edit and re-reads the file from disk. */
+  /**
+   * File ▸ Revert File: drops every edit and re-reads the file from disk.
+   * The revert command `PreviewSession` runs only to clear VS Code's tab dot
+   * arrives here too; the session recognizes that one call and makes it a
+   * no-op, so this description holds for the user-invoked revert.
+   */
   revert(): Promise<void>;
   undo(): void;
   redo(): void;

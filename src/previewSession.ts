@@ -44,6 +44,7 @@ import {
   bindSessionFileState,
   flagsForBind,
   sessionFileName,
+  tabMarkerAction,
 } from "./parser/previewSessionCore";
 
 /**
@@ -80,6 +81,12 @@ export interface PreviewSessionDeps {
   panel: vscode.WebviewPanel;
   /** Fires the provider's dirty event; a no-op for the empty shell. */
   onDirty: (document: MeshPreviewDocument) => void;
+  /**
+   * True for the two custom-editor providers, which own a VS Code tab dot.
+   * False for the empty shell: its title dot is drawn by `dirtyPanelTitle`
+   * and the session must never run the revert command on its behalf.
+   */
+  tabMarker: boolean;
 }
 
 /** Format-specific closures a session drives but never implements. */
@@ -120,6 +127,25 @@ export class PreviewSession {
   private rerenderFn: SessionOps["rerender"] | undefined;
   private exportCtxFn: SessionOps["exportCtx"] | undefined;
   private revertFn: SessionOps["revert"] | undefined;
+  /**
+   * The tab dot is believed set. VS Code has no getter for it, so this mirrors
+   * the content-change events this session has fired (and the save/revert
+   * points that clear it externally).
+   */
+  private markerSet = false;
+  /**
+   * Revisions of clean-up reverts in flight. The command clears VS Code's dot
+   * immediately but invokes `revertCustomDocument` over a later RPC, so a
+   * second return-to-clean can start before the first hook runs. Each pending
+   * revision makes exactly one hook call a no-op; a set rather than a boolean
+   * keeps the two from cancelling each other's protection.
+   */
+  private readonly pendingMarkerClears = new Set<number>();
+  private markerClearRevision = 0;
+  private readonly markerClearTimers = new Map<number, ReturnType<typeof setTimeout>>();
+  private markerClearInFlight = false;
+  /** A clean-up arrived while one was in flight; run it once that settles. */
+  private markerClearQueued = false;
   private readonly disposables: vscode.Disposable[] = [];
   private readonly engineOff: () => void;
   /** This panel as a member of the preview link hub (see parser/previewLinkHub.ts). */
@@ -303,6 +329,7 @@ export class PreviewSession {
    */
   public bindDocument(document: MeshPreviewDocument, ops: SessionOps): void {
     const nextFsPath = document.uri.fsPath;
+    const sameFile = this.fsPath === nextFsPath;
     const { flags, historyReset } = flagsForBind(
       this.fsPath,
       nextFsPath,
@@ -319,6 +346,10 @@ export class PreviewSession {
       this.frameFile = nextFsPath;
       this.lastFrame = { frameIndex: 0, stepLabel: "", totalFrames: 1 };
       this.inFileTimeValues = undefined;
+      // A different document gets its own tab dot, starting clean. Pending
+      // clear-ups are left to expire: an old command's hook may still arrive
+      // and must not clear the new document's history.
+      this.markerSet = false;
     } else if (this.frameFile === undefined) {
       this.frameFile = nextFsPath;
     }
@@ -333,9 +364,14 @@ export class PreviewSession {
     this.exportCtxFn = ops.exportCtx;
     this.revertFn = ops.revert;
     this.deps.recents.record(nextFsPath);
-    this.docInfo = new DocumentInfoReporter(nextFsPath, this.history, (m) => {
-      if (!this.disposed) void this.deps.panel.webview.postMessage(m);
-    });
+    // A same-file re-bind keeps the save point: the history object is the same
+    // one the reporter compares against, so recreating it would claim every
+    // applied op was unsaved.
+    if (!sameFile || !this.docInfo) {
+      this.docInfo = new DocumentInfoReporter(nextFsPath, this.history, (m) => {
+        if (!this.disposed) void this.deps.panel.webview.postMessage(m);
+      });
+    }
     this.ptController = new PtController(
       nextFsPath,
       () => this.lastModel,
@@ -362,12 +398,114 @@ export class PreviewSession {
     this.disposables.push(disposable);
   }
 
-  /** Marks the tab unsaved when edits are applied; the chip syncs every time. */
+  /**
+   * Reconciles the tab's unsaved marker and the document chip with the save
+   * point.
+   *
+   * The chip recomputes from the applied prefix on every call. VS Code's tab
+   * dot is a content-change latch with no public API to clear it, so when the
+   * history returns exactly to the save point this asks the revert command to
+   * clear it; `makeHooks().revert` turns that one call into a no-op, so the
+   * redo tail survives and the file is not re-read. A manual File ▸ Revert
+   * File never carries that token and keeps the full reset.
+   */
   public markDirty(): void {
-    if (this.document && this.history.appliedCount() > 0) {
+    const clean = this.docInfo ? this.docInfo.isClean() : this.history.appliedCount() === 0;
+    if (this.document && this.deps.tabMarker) {
+      switch (tabMarkerAction(clean, this.markerSet)) {
+        case "set":
+          this.markerSet = true;
+          this.deps.onDirty(this.document);
+          break;
+        case "clear":
+          void this.clearTabMarker();
+          break;
+      }
+    } else if (this.document) {
+      // The empty shell draws its own title dot from the same save point;
+      // always hand it the current state so an undo back to clean clears it.
       this.deps.onDirty(this.document);
     }
     this.docInfo?.sync();
+  }
+
+  /**
+   * Ask VS Code to clear its content-change dot by running its own revert
+   * command. The command addresses the active group's active editor (and an
+   * Open Editors multi-selection when that list has focus), so the panel is
+   * brought forward first and the command is skipped unless it is the active
+   * editor: reverting somebody else's editor is worse than a stale dot.
+   */
+  private async clearTabMarker(): Promise<void> {
+    if (this.markerClearInFlight) {
+      // A redo marked the tab again before the first command settled; its dot
+      // has to be cleared too, once the first revert round-trip is done.
+      this.markerClearQueued = true;
+      return;
+    }
+    if (this.disposed || !this.document) return;
+    this.markerClearInFlight = true;
+    this.markerClearQueued = false;
+    let sent = false;
+    try {
+      this.deps.panel.reveal(this.deps.panel.viewColumn, false);
+      if (!(await this.panelBecameActive())) return;
+      // The command clears the dot and only then asks this document to
+      // revert (over a later RPC), so the token must exist before it runs.
+      this.beginMarkerClear();
+      sent = true;
+      await vscode.commands.executeCommand("workbench.action.files.revert");
+    } catch {
+      // The command is a workbench internal. If a host lacks it, keep the dot
+      // and retry on the next history move rather than pretending it is clean.
+    } finally {
+      this.markerClearInFlight = false;
+      const queued = this.markerClearQueued;
+      this.markerClearQueued = false;
+      if (sent && !this.disposed && this.document && this.docInfo && !this.docInfo.isClean()) {
+        // An edit that landed while the command was in flight must keep its dot.
+        this.markerSet = true;
+        this.deps.onDirty(this.document);
+      } else if (queued && !this.disposed && this.document && this.markerSet) {
+        void this.clearTabMarker();
+      }
+    }
+  }
+
+  /** Wait briefly for a reveal to reach the workbench; false = not ours. */
+  private async panelBecameActive(): Promise<boolean> {
+    if (this.deps.panel.active) return true;
+    for (let i = 0; i < 20; i++) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 10));
+      if (this.disposed) return false;
+      if (this.deps.panel.active) return true;
+    }
+    return this.deps.panel.active;
+  }
+
+  private beginMarkerClear(): void {
+    const revision = ++this.markerClearRevision;
+    this.pendingMarkerClears.add(revision);
+    const timer = setTimeout(() => {
+      this.pendingMarkerClears.delete(revision);
+      this.markerClearTimers.delete(revision);
+    }, 1500);
+    this.markerClearTimers.set(revision, timer);
+  }
+
+  /**
+   * Consume one pending clean-up revision. The provider's revert hook calls
+   * this; only a call made while a command is in flight is the no-op variant.
+   * The expiry timer covers a command that never reached this document.
+   */
+  private takeMarkerCleanup(): boolean {
+    if (this.pendingMarkerClears.size === 0) return false;
+    const [revision] = this.pendingMarkerClears;
+    this.pendingMarkerClears.delete(revision);
+    const timer = this.markerClearTimers.get(revision);
+    if (timer) clearTimeout(timer);
+    this.markerClearTimers.delete(revision);
+    return true;
   }
 
   /** Relays the process-wide engine activity to this panel only. */
@@ -462,7 +600,10 @@ export class PreviewSession {
       save: async () => {
         const ctx = this.exportCtxFn?.();
         const wrote = ctx ? await saveMesh(ctx, this.deps.context) : false;
-        if (wrote) this.docInfo?.markSaved();
+        if (wrote) {
+          this.docInfo?.markSaved();
+          this.markerSet = false;
+        }
         return wrote;
       },
       saveAs: async (destination) => {
@@ -470,8 +611,16 @@ export class PreviewSession {
         return ctx ? saveMeshToPath(ctx, destination.fsPath) : false;
       },
       revert: async () => {
+        if (this.takeMarkerCleanup()) {
+          // VS Code's own revert command, run only to clear its content-change
+          // latch: the document is already at the save point, so keep the
+          // history (and any redo tail) and do not re-read the file.
+          this.markerSet = this.docInfo ? !this.docInfo.isClean() : false;
+          return;
+        }
         this.history.clear();
         this.docInfo?.markReverted();
+        this.markerSet = false;
         await this.revertFn?.();
       },
       undo: () => this.doUndo(),
@@ -484,6 +633,9 @@ export class PreviewSession {
     if (this.disposed) return;
     this.disposed = true;
     liveSessions.delete(this);
+    for (const timer of this.markerClearTimers.values()) clearTimeout(timer);
+    this.markerClearTimers.clear();
+    this.pendingMarkerClears.clear();
     this.stopFlowgraph();
     this.ptController?.dispose();
     this.engineOff();
