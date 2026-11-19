@@ -643,6 +643,40 @@ Admission criterion: closes a gap between a generated case and how its results a
 
 **Acceptance:** blanking one icon's path fails the script; the sheet is linked from `icons/README.md`; the check runs in CI without LaTeX (codegen only). **MCP:** none.
 
+## Tier 4 — Long-term platform bets
+
+*Admission: an L-sized, multi-phase change to how the extension is built rather than what it does. Each item starts with a probe, and nothing in it is estimated until the probe reports. Recorded 2026-11-19 from KKSS's Rust port review, which found a full Rust rewrite not viable (a VS Code extension host and its webviews run only JavaScript, and vtk.js, Plotly and the picking pipeline have no Rust equivalent), and a Rust compute core loaded as WebAssembly viable.*
+
+### 87. Rust core crates compiled to WASM — L (probe first)
+
+**Pending — added 2026-11-19 (KKSS Rust port review).**
+
+**Hypothesis:** pure, `vscode`-free, CPU-bound modules can move into Rust crates and be compiled to WebAssembly with `wasm-bindgen`. They would load in the workers that already exist, so the extension stays an extension, and they would add no native module. KKSS stages them the same way it stages MMG and meshio++, beside `out/main.js`.
+
+**Candidates:**
+- `src/parser/mdpaParser.ts` (936 lines) and its writer, which are first.
+- `elementMetrics.ts`, `constraintsParser.ts`, and the `deriveMesh.ts` kernels that run in `derivedWorker`.
+- The STL/OBJ/PLY parsers. These are duplicated today in `src/parser/` and in CAD-Preview's `src/`, so one crate could serve both extensions. This depends on CAD-Preview's "Rust core crates compiled to WASM" entry.
+
+**Probe (M):**
+1. Port the MDPA parse and write to a crate. Keep the delivery rule "preserve the data contract": original IDs, the separate Elements/Conditions/Geometries ID spaces, Properties, SubModelParts and field components.
+2. Run the existing parser tests against both implementations. On every fixture, the round trip must produce the same `MeshModel` and byte-identical output.
+3. Benchmark a large `.mdpa` (at least 1M elements) inside `meshioReadWorker` or `analysisWorker`, and compare time and peak memory with the TS parser.
+4. Measure the `.wasm` size, and the cost of the build in CI: a pinned Rust toolchain and the `wasm32-unknown-unknown` target.
+
+**Decision gate:**
+- **Pass:** identical output on every fixture, at least 2× faster on the large case, and a build that fits the existing CI matrix. Phase 1 is admitted.
+- **Partial:** identical output but no meaningful speedup. Keep the crate only if the shared STL/OBJ/PLY parsers justify it.
+- **Fail:** recorded under Non-goals with the measurements.
+
+**If admitted (L):** the crate replaces the TS module behind its existing function signatures, and the TS version stays as the test oracle for one release. Later candidates are each a separate probe.
+
+**Out of scope:** the webview (vtk.js, Plotly and the DOM stay TypeScript), the `vscode` providers, and a native Node addon.
+
+**MCP:** none, because behaviour is unchanged. `mesh_capabilities` may report the backend.
+
+**KKSS:** the parent stages the crate and adds a preflight entry and a runtime parity test. Its roadmap lists the matching work as "Rust compute core shared with the extensions".
+
 ## Non-goals / known constraints
 
 Standing exclusions, gathered here on 2026-10-31 from `CLAUDE.md`, the guides and the out-of-scope lines of the items above (this file had no such section, while `CLAUDE.md` cited one). Each says what would change our mind; where a narrower version is now worth doing, it names the item that recovers it. **Re-read 2026-11-10** against the 19.0.0 kernel and the items added that day: three entries turned into work (items 75, 76 and 77) and are reworded below to say what remains excluded; the others were kept, each for the reason it states.
