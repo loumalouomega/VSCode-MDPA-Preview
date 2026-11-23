@@ -27,6 +27,7 @@ import { meshShapeKey } from "./meshNaming";
 import { DRIVER_TEMPLATES, driverTemplateScript } from "./mainKratosTemplate";
 import { APPLICATION_NAME, applicationDeclarationProblems } from "./applications";
 import { couplingInterfaceDeclarationProblems } from "./interfaceCheck";
+import { DEFAULT_PRIMARY_DOCUMENT } from "./documentNames";
 
 const FIELD_TYPES = new Set([
   "number", "int", "string", "bool", "enum", "vector3",
@@ -127,6 +128,34 @@ export function validateDeclaration(decl: ProblemtypeDeclaration): string[] {
   }
   if (decl.driverTemplate !== undefined && !(DRIVER_TEMPLATES as readonly string[]).includes(decl.driverTemplate)) {
     errors.push(`driverTemplate must be one of ${DRIVER_TEMPLATES.join(", ")}`);
+  }
+  if (decl.solverDocuments !== undefined) {
+    const docs: unknown[] = Array.isArray(decl.solverDocuments) ? decl.solverDocuments : [];
+    if (docs.length === 0) {
+      errors.push("solverDocuments must be a non-empty array of plain .json file names");
+    } else {
+      const names: string[] = [];
+      for (const name of docs) {
+        if (typeof name !== "string" || !/^[A-Za-z0-9_.-]+$/.test(name) || !name.endsWith(".json")) {
+          errors.push("solverDocuments entries must be plain file names ending in .json");
+          continue;
+        }
+        names.push(name);
+      }
+      if (new Set(names).size !== names.length) errors.push("solverDocuments must not repeat a document");
+      const primary = decl.primaryDocumentName ?? DEFAULT_PRIMARY_DOCUMENT;
+      if (names[0] !== primary) errors.push(`solverDocuments must start with the primary document "${primary}"`);
+      const materials = [
+        decl.materialsFileName,
+        ...(Array.isArray(decl.domains) ? decl.domains.map((d) => d.materialsFileName) : []),
+      ].filter((n): n is string => typeof n === "string");
+      for (const name of names) {
+        if (materials.includes(name)) errors.push(`solverDocuments must not list the materials file "${name}"`);
+        if (decl.driverScriptName !== undefined && name === decl.driverScriptName) {
+          errors.push(`solverDocuments must not list the driver script "${name}"`);
+        }
+      }
+    }
   }
   if (!Array.isArray(decl.domainSizes) || decl.domainSizes.length === 0 ||
     !decl.domainSizes.every((d) => d === 2 || d === 3)) {

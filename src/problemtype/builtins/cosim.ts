@@ -293,6 +293,8 @@ const decl: ProblemtypeDeclaration = {
   materialsFileName: "FluidMaterials.json",
   primaryDocumentName: PRIMARY_DOCUMENT,
   driverScriptName: "MainKratosCoSim.py",
+  // Roadmap item 80: one Additional settings box per written solver document.
+  solverDocuments: [PRIMARY_DOCUMENT, CFD_DOCUMENT, CSM_DOCUMENT],
   // CoSimulationAnalysis reading PRIMARY_DOCUMENT, recording the coupling iterations.
   driverTemplate: "cosim",
   partsCondition: FLUID_PARTS,

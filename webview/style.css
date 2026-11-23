@@ -3696,6 +3696,65 @@ input.outline-label-input {
   display: none;
 }
 
+/* Additional settings (roadmap item 80): one raw JSON box per solver document. */
+.pt-additional {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: var(--ui-s-2);
+}
+.pt-additional-head {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-s-1);
+  flex-wrap: wrap;
+}
+.pt-additional-head code {
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: var(--ui-fs-sm);
+}
+.pt-additional-text {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 7rem;
+  resize: vertical;
+  padding: var(--ui-s-1) var(--ui-s-2);
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: var(--ui-fs-sm);
+  line-height: 1.4;
+  color: var(--ds-input-fg);
+  background: var(--ds-input-bg);
+  border: 1px solid var(--ds-input-border);
+  border-radius: var(--ui-r-sm);
+}
+.pt-additional-text:focus {
+  outline: none;
+  border-color: var(--ds-focus);
+}
+.pt-additional-status {
+  white-space: pre-wrap;
+}
+.pt-additional-error {
+  color: var(--vscode-errorForeground, #f14c4c);
+}
+.pt-additional-unknown {
+  color: var(--vscode-editorWarning-foreground, #cca700);
+}
+.pt-additional-remove {
+  margin-left: auto;
+  padding: 0 var(--ui-s-1);
+  font: inherit;
+  font-size: var(--ui-fs-sm);
+  color: var(--ds-input-fg);
+  background: transparent;
+  border: 1px solid var(--ds-hairline);
+  border-radius: var(--ui-r-sm);
+  cursor: pointer;
+}
+.pt-additional-remove:hover {
+  background: var(--ds-hover);
+}
+
 /* The problemtype header card: logo tile, name, description and summary chips. */
 .pt-header {
   display: flex;

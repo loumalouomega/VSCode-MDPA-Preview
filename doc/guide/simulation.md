@@ -44,7 +44,7 @@ Two common setups:
    - Assign boundary conditions (displacement, inlet, temperature…) and loads to boundary SubModelParts. Each assignment shows its parameter fields inline; **×** removes it.
 5. Under **Materials**, assign a constitutive law to each Parts SubModelPart and adjust its variables — or pick a **material preset** and let it fill the row (see below).
 
-The panel follows the order of GiD's data tree, with a separator and an icon for each stage: header (problemtype, description, summary chips), **Parts**, **Materials**, **Initial conditions**, **Boundary conditions**, **Loads**, the solution cards, **Output (VTK)** and the **Generate / Run / Results** actions. Conditions are listed under their branch with a count, and the condition picker offers them grouped the same way.
+The panel follows the order of GiD's data tree, with a separator and an icon for each stage: header (problemtype, description, summary chips), **Parts**, **Materials**, **Initial conditions**, **Boundary conditions**, **Loads**, the solution cards, **Additional settings** (last of the solution stage), **Output (VTK)** and the **Generate / Run / Results** actions. Conditions are listed under their branch with a count, and the condition picker offers them grouped the same way.
 
 ## Built-in problemtypes
 
@@ -111,7 +111,8 @@ Choose a preset, choose a law and a SubModelPart, and press **+**. The water and
 - **A material that cannot mean anything will not generate.** An undeclared law, a preset paired with a law it does not fit, and a non-positive density, viscosity or Young's modulus are reported in the row and refused by **Generate** (and by `case_validate` headlessly), instead of being written out for Kratos to fail on. A physically impossible Poisson ratio stays a warning.
 
 6. Under **Output (VTK)**, choose the file format, output cadence and the nodal variables to write.
-7. **Generate case files** — the generated `ProjectParameters.json` opens for inspection. Warnings (e.g. an assignment referencing a SubModelPart that no longer exists) surface as notifications.
+7. If the solver needs a setting the form does not offer, open **Additional settings** — the last card of the Solution stage — and write a JSON object for the document it belongs in (see [Additional settings](#additional-settings)).
+8. **Generate case files** — the generated `ProjectParameters.json` opens for inspection. Warnings (e.g. an assignment referencing a SubModelPart that no longer exists) surface as notifications.
 
 **Preflight.** Under the Run buttons, a **Preflight** card re-checks the case as you edit it or as the mesh changes. A dry run of Generate supplies its errors (so a case with no error generates), and on top it lists, most severe first:
 
@@ -121,6 +122,29 @@ Choose a preset, choose a law and a SubModelPart, and press **+**. The water and
 
 A row that names a SubModelPart is clickable and frames that part in the viewport. Quality checks are skipped above 50 000 cells in the sidebar (the Quality panel still gives the full report). Headlessly, `case_validate` returns the same findings.
 
+## Additional settings
+
+The **Additional settings** card, collapsed at the bottom of the Solution stage, holds one raw JSON box per solver document the problemtype writes: `ProjectParameters.json` for a single-physics problemtype, and one box for each participant document of a coupled one (CoSimulation: `ProjectParametersCoSim.json`, `ProjectParametersCFD.json`, `ProjectParametersCSM.json`). It exists for what the form does not declare — a linear-solver factory option, a process a newer Kratos version added, a flag the GiD writer omits.
+
+- **The patch is merged last.** It is applied after the form, the conditions, the materials, the output settings and every problemtype hook, with [RFC 7386 JSON Merge Patch](https://www.rfc-editor.org/rfc/rfc7386) rules: objects merge key by key, an array or scalar replaces what was there, and `null` removes a key. The materials files and the generated driver are never touched.
+- **The text is the case.** A half-typed value is stored as typed in `<name>.kratoscase.json`, so reopening the case shows exactly what was written. An empty box is not an entry: Generate produces a byte-identical document to a case without the card, asserted for every built-in.
+- **A bad box refuses Generate.** Invalid JSON, a value that is not an object, or the keys `__proto__`, `constructor` and `prototype` are reported in the box with their line and column, and Generate writes nothing until it is fixed. An entry naming a document the problemtype does not write is refused with the valid names listed.
+- **Preflight lists what the patch changes.** Each added path is an information row (`Additional settings add \`solver_settings.echo_level\` = 0 to \`ProjectParameters.json\``); a path the form already writes — including one the patch removes — is a warning, because the patch wins. The row names the document path, not the sidebar field, since the generator keeps no path-to-field map. `case_validate` returns the same overridden paths as `overrides`, one per document and path with its `set`/`remove` action.
+- **Applications are checked after the merge.** The required-applications scan reads the patched documents, so a linear solver or process the patch names is import-checked like one the form writes. A key Kratos itself rejects is the solver's error at run time, not Generate's.
+- **The patch is evidence.** It is part of the case state, so `kkss-preparation-v1.json` records it under `settings` (and its hash in `settingsRevision`), `effectiveParameters` holds the merged primary document, and `case_compare` reports a changed patch as a setting difference under `additionalSettings.<document>`.
+
+```json
+{
+  "solver_settings": {
+    "linear_solver_settings": {
+      "solver_type": "amgcl",
+      "tolerance": 1e-10
+    }
+  }
+}
+```
+
+A coupled problemtype declares its documents with `solverDocuments` (see [Authoring Problemtypes](./problemtype-authoring#coupled-problemtypes-domains)); a case naming any other document is refused rather than silently ignored.
 
 ## Material tables: plot, drag to edit, preview
 

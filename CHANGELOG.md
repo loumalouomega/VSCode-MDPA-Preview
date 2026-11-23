@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- **Additional solver settings per case (roadmap item 80).** The Solution stage ends with an **Additional settings** card holding one raw JSON box per solver document, merged last into the generated document with JSON Merge Patch rules: objects merge, other values replace and `null` removes. The text lives in the case state (so a half-typed value survives), empty boxes leave every built-in's output byte-identical, and the patch never touches the materials files or the driver. A malformed patch, a non-object or an unknown document name refuses Generate with the document and a line/column; Preflight lists each changed path as information and each path the form already writes as a warning, and `case_validate` returns the overridden paths as `overrides`. The required-applications scan runs after the merge. The patch is recorded verbatim in `kkss-preparation-v1.json` and `case_compare` reports it as a setting difference. Coupled problemtypes declare their documents with `solverDocuments` (CoSimulation lists all three) and take one patch per document; the Python API mirrors it as `solver_documents`. MCP: `case_write_state`/`case_generate` carry `additionalSettings`, `case_generate` reports the applied changes, and `problemtype_describe` lists `solverDocuments`.
+
 ## [5.41.0] - 2026-11-17
 
 ### Changed

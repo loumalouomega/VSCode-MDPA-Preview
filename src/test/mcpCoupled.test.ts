@@ -16,7 +16,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import test from "node:test";
 
-import { caseGenerate, caseRun, caseValidate, problemtypeDescribe } from "../mcp/tools";
+import { caseGenerate, caseRun, caseValidate, caseWriteState, problemtypeDescribe } from "../mcp/tools";
 import { defaultCaseState } from "../problemtype/api";
 import { cosim } from "../problemtype/builtins/cosim";
 import { preparedApplications } from "../problemtype/preparation";
@@ -144,10 +144,16 @@ function fakeKratos(apps: string[]): string {
 test("problemtype_describe publishes the interface pairs, the driver template and the applications", async () => {
   const described = (await problemtypeDescribe({ problemtype: "cosim" })) as {
     declaration: { couplingInterfaces: unknown; driverTemplate: string; applications: unknown[] };
+    solverDocuments: string[];
   };
   assert.deepEqual(described.declaration.couplingInterfaces, [{ label: "Coupling interface", sides: ["fluidInterface", "structureInterface"] }]);
   assert.equal(described.declaration.driverTemplate, "cosim");
   assert.ok(described.declaration.applications.some((a) => typeof a === "object" && (a as { application: string }).application === "MeshMovingApplication"));
+  assert.deepEqual(described.solverDocuments, [
+    "ProjectParametersCoSim.json",
+    "ProjectParametersCFD.json",
+    "ProjectParametersCSM.json",
+  ]);
 });
 
 test("case_validate refuses an unbalanced interface, naming both condition labels", async () => {
@@ -191,6 +197,66 @@ test("case_generate writes the CoSimulation documents and records the applicatio
   const driver = fs.readFileSync(path.join(dir, "MainKratosCoSim.py"), "utf8");
   assert.match(driver, /Missing Kratos applications/);
   assert.match(driver, /kkss\.cosim-convergence/);
+});
+
+test("additional solver settings round-trip through case_write_state, case_validate and case_generate", async () => {
+  const mesh = caseFolder();
+  const dir = path.dirname(mesh);
+  const state = cosimState();
+  state.additionalSettings = {
+    "ProjectParametersCFD.json": '{"solver_settings":{"echo_level":2}}',
+    "ProjectParametersCSM.json":
+      '{"solver_settings":{"linear_solver_settings":{"solver_type":"LinearSolversApplication.sparse_lu"}}}',
+  };
+  const written = (await caseWriteState({ meshPath: mesh, state })) as { warnings: string[] };
+  assert.deepEqual(written.warnings, []);
+
+  const validated = (await caseValidate({ meshPath: mesh })) as {
+    ok: boolean;
+    overrides: { document: string; path: string; action: string }[];
+  };
+  assert.equal(validated.ok, true);
+  assert.deepEqual(validated.overrides, [
+    { document: "ProjectParametersCFD.json", path: "solver_settings.echo_level", action: "set" },
+  ]);
+
+  const generated = (await caseGenerate({ meshPath: mesh })) as {
+    additionalSettings: { documents: { name: string; changes: { path: string }[] }[] };
+  };
+  assert.deepEqual(
+    generated.additionalSettings.documents.map((d) => d.name).sort(),
+    ["ProjectParametersCFD.json", "ProjectParametersCSM.json"]
+  );
+  const cfd = JSON.parse(fs.readFileSync(path.join(dir, "ProjectParametersCFD.json"), "utf8"));
+  assert.equal(cfd.solver_settings.echo_level, 2);
+  const csm = JSON.parse(fs.readFileSync(path.join(dir, "ProjectParametersCSM.json"), "utf8"));
+  assert.equal(csm.solver_settings.linear_solver_settings.solver_type, "LinearSolversApplication.sparse_lu");
+  // The application scan ran after the merge: the added solver's application is
+  // in the preparation record and therefore in the driver's pre-launch check.
+  assert.ok(preparedApplications(dir)?.includes("LinearSolversApplication"));
+});
+
+test("case_validate and case_generate refuse a malformed additional-settings patch", async () => {
+  const mesh = caseFolder();
+  const state = cosimState();
+  state.additionalSettings = {
+    "ProjectParametersCFD.json": '{\n  "solver_settings": {\n    "echo_level": }\n}',
+  };
+  const validated = (await caseValidate({ meshPath: mesh, state })) as {
+    ok: boolean;
+    issues: string[];
+    findings: { code: string; message: string }[];
+  };
+  assert.equal(validated.ok, false);
+  assert.equal(validated.findings.filter((f) => f.code === "additional-settings-invalid").length, 1);
+  assert.match(validated.issues.join(" "), /ProjectParametersCFD\.json/);
+  assert.match(validated.issues.join(" "), /line \d+ column \d+/);
+  assert.equal(validated.findings.some((f) => f.code === "generate-refused"), false);
+  await assert.rejects(
+    caseGenerate({ meshPath: mesh, state }),
+    /not valid JSON[\s\S]*line \d+ column \d+/
+  );
+  assert.equal(fs.existsSync(path.join(path.dirname(mesh), "ProjectParametersCFD.json")), false);
 });
 
 test("case_run refuses before launching when the python cannot import an application", { skip: !PYTHON }, async () => {

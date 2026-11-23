@@ -75,12 +75,16 @@ Compact reference (mirrors the JavaScript API, spelled snake_case)::
                        domains=None, extra_files=None, validate=None,
                        collections=None, applications=None,
                        coupling_interfaces=None, primary_document_name=None,
-                       driver_script_name=None, driver_template=None)
+                       driver_script_name=None, driver_template=None,
+                       solver_documents=None)
         Registers the problemtype. coupling_interfaces = [{"label", "sides":
         [fluid-side condition, structure-side condition]}]: Generate checks the
         two sides pair up one-to-one (by assignment order), carry boundary cells
         and overlap. primary_document_name / driver_script_name rename the
-        primary JSON document and the driver script. driver_template ("standard",
+        primary JSON document and the driver script. solver_documents lists
+        every solver JSON document the problemtype writes, primary first
+        (excluding the materials files and the driver); the case's
+        additionalSettings keys are these names. driver_template ("standard",
         "fsi" or "cosim") picks the shipped driver when there is no main_script
         hook. applications = Kratos applications the
         case needs beyond the analysis stage's and those its documents name
@@ -578,7 +582,7 @@ def define_problemtype(id, name, analysis_stage, model_part_name,
                        domains=None, extra_files=None, validate=None, collections=None,
                        applications=None, coupling_interfaces=None,
                        primary_document_name=None, driver_script_name=None,
-                       driver_template=None):
+                       driver_template=None, solver_documents=None):
     """Registers a problemtype; returns its handle (used internally).
 
     See the module docstring for every argument. Raises ``ValueError`` on a
@@ -664,6 +668,27 @@ def define_problemtype(id, name, analysis_stage, model_part_name,
         if not isinstance(value, str) or not re.match(r"^[A-Za-z0-9_.-]+$", value) or not value.endswith(extension):
             raise ValueError(f'problemtype "{id}": {key} must be a plain file name ending in {extension}')
         decl[key] = value
+    if solver_documents is not None:
+        if not isinstance(solver_documents, (list, tuple)) or not solver_documents:
+            raise ValueError(f'problemtype "{id}": solver_documents must be a non-empty list of plain .json file names')
+        names = list(solver_documents)
+        for name in names:
+            if not isinstance(name, str) or not re.match(r"^[A-Za-z0-9_.-]+$", name) or not name.endswith(".json"):
+                raise ValueError(f'problemtype "{id}": solver_documents entries must be plain file names ending in .json')
+        if len(set(names)) != len(names):
+            raise ValueError(f'problemtype "{id}": solver_documents must not repeat a document')
+        primary = primary_document_name or "ProjectParameters.json"
+        if names[0] != primary:
+            raise ValueError(f'problemtype "{id}": solver_documents must start with the primary document "{primary}"')
+        materials = [materials_file_name] + [
+            d.get("materialsFileName") for d in (domains or ()) if isinstance(d, dict) and d.get("materialsFileName")
+        ]
+        for name in names:
+            if name in materials:
+                raise ValueError(f'problemtype "{id}": solver_documents must not list the materials file "{name}"')
+            if driver_script_name is not None and name == driver_script_name:
+                raise ValueError(f'problemtype "{id}": solver_documents must not list the driver script "{name}"')
+        decl["solverDocuments"] = names
     if driver_template is not None:
         if driver_template not in DRIVER_TEMPLATES:
             raise ValueError(f'problemtype "{id}": unknown driver_template {driver_template!r} (one of {", ".join(DRIVER_TEMPLATES)})')
