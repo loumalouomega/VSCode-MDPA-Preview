@@ -171,6 +171,7 @@ import { findIsolatedNodeIds } from "../parser/isolatedNodes";
 import { CaseState, FieldSpec, JsonValue, MaterialAssignment, ProblemtypeRuntime, ProblemtypeSource } from "../problemtype/types";
 import { BUILTIN_PROBLEMTYPES } from "../problemtype/builtins";
 import { generateCase, subModelPartPaths } from "../problemtype/generate";
+import { solverDocumentNames } from "../problemtype/documentNames";
 import { preflightCase } from "../problemtype/preflight";
 import { readHandoff } from "../problemtype/handoffFile";
 import { handoffIdentity } from "../problemtype/handoff";
@@ -3342,6 +3343,7 @@ export async function problemtypeDescribe(args: {
   return {
     declaration: runtime.decl,
     defaultState: defaultCaseState(runtime.decl),
+    solverDocuments: solverDocumentNames(runtime.decl),
     fieldUnits,
     expressions: "Numeric and vector3 fields accept a number, a unit-suffixed value (10[mm], 20[degC]) or an expression over the case's `parameters` table ({name, expr} entries in the case state); they are resolved to numbers in the field's unit at generation.",
   };
@@ -3452,6 +3454,8 @@ export async function caseValidate(args: {
     advisories: report.findings.filter((f) => f.severity !== "error").map((f) => f.message),
     counts: report.counts,
     findings: report.findings,
+    // Paths the additional settings override (roadmap item 80); empty when none.
+    overrides: report.overrides ?? [],
     // Recommended element size and the inputs it came from; absent when the problemtype has no defensible rule.
     ...(() => {
       const a = adviseElementSize(runtime.decl.id, flattenValues(runtime.decl, state), state.materials, model.bounds.min, model.bounds.max);
@@ -3647,6 +3651,7 @@ export async function caseGenerate(args: {
     renames: plan.renames,
     warnings,
     preparation: prepared.preparation,
+    ...(out.additionalSettings ? { additionalSettings: out.additionalSettings } : {}),
   };
 }
 

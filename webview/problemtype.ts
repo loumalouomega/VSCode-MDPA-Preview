@@ -29,6 +29,8 @@ import {
 import { supportsRestart } from "../src/problemtype/restart";
 import { supportsMpi } from "../src/problemtype/parallel";
 import { defaultCaseState, fieldDefault, flattenValues } from "../src/problemtype/api";
+import { solverDocumentNames } from "../src/problemtype/documentNames";
+import { additionalSettingsDocuments, parsePatchText } from "../src/problemtype/additionalSettings";
 import { parseNumericText, previewParameters } from "../src/problemtype/caseExpressions";
 import {
   collectionProblems,
@@ -742,6 +744,7 @@ function renderSections(decl: ProblemtypeDeclaration): void {
     host.appendChild(form);
   });
   host.appendChild(parametersCard(decl));
+  host.appendChild(additionalSettingsCard(decl));
 }
 
 /** The case-level Parameters table: `name = expression`, usable by name in any numeric field. */
@@ -1723,6 +1726,104 @@ function renderMaterials(decl: ProblemtypeDeclaration): void {
     body.appendChild(row);
   });
   host.appendChild(form);
+}
+
+/**
+ * The Additional settings card (roadmap item 80): one raw JSON box per solver
+ * document, merged last into that document. The text is the case state; empty
+ * boxes delete their key, so a case without a patch stays byte-identical.
+ */
+function additionalSettingsCard(decl: ProblemtypeDeclaration): HTMLElement {
+  const current = state;
+  if (!current) return document.createElement("div");
+  const declared = solverDocumentNames(decl);
+  const map = current.additionalSettings ?? {};
+  const documents = additionalSettingsDocuments(decl, current);
+  const filled = documents.filter((d) => (map[d] ?? "").trim().length > 0).length;
+  const { form, body } = cardBlock({
+    key: `${decl.id}:additional-settings`,
+    title: t("Additional settings"),
+    icon: "ptSolver",
+    collapsed: true,
+    count: filled,
+  });
+  const hint = document.createElement("div");
+  hint.className = "pt-hint";
+  hint.textContent = t(
+    "A JSON object merged last into each solver document with JSON Merge Patch rules: objects merge, other values replace, null removes a key. Empty leaves the document unchanged. Preflight lists every path it changes."
+  );
+  body.appendChild(hint);
+
+  for (const doc of documents) {
+    const unknown = !declared.includes(doc);
+    const row = document.createElement("div");
+    row.className = "pt-additional";
+    const head = document.createElement("div");
+    head.className = "pt-additional-head";
+    const name = document.createElement("code");
+    name.textContent = doc;
+    head.appendChild(name);
+    if (unknown) {
+      const mark = document.createElement("span");
+      mark.className = "pt-additional-unknown";
+      mark.textContent = t("not written by this problemtype");
+      head.appendChild(mark);
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "pt-additional-remove";
+      remove.textContent = t("Remove");
+      remove.addEventListener("click", () => {
+        const settings = current.additionalSettings;
+        if (!settings) return;
+        delete settings[doc];
+        if (Object.keys(settings).length === 0) delete current.additionalSettings;
+        scheduleSend();
+        render();
+      });
+      head.appendChild(remove);
+    }
+    row.appendChild(head);
+
+    const textarea = document.createElement("textarea");
+    textarea.className = "pt-additional-text";
+    textarea.rows = 6;
+    textarea.spellcheck = false;
+    textarea.value = map[doc] ?? "";
+    textarea.setAttribute("aria-label", doc);
+    const status = document.createElement("div");
+    status.className = "pt-hint pt-additional-status";
+    const updateStatus = (): void => {
+      if (textarea.value.trim().length === 0) {
+        status.textContent = t("No changes.");
+        status.classList.remove("pt-additional-error");
+        return;
+      }
+      const parsed = parsePatchText(textarea.value, doc);
+      if (parsed.problem) {
+        status.textContent = parsed.problem.message;
+        status.classList.add("pt-additional-error");
+      } else {
+        status.textContent = t("Valid JSON object.");
+        status.classList.remove("pt-additional-error");
+      }
+    };
+    textarea.addEventListener("input", () => {
+      const settings = (current.additionalSettings ??= {});
+      if (textarea.value.trim().length === 0) {
+        delete settings[doc];
+        if (Object.keys(settings).length === 0) delete current.additionalSettings;
+      } else {
+        settings[doc] = textarea.value;
+      }
+      updateStatus();
+      scheduleSend();
+    });
+    updateStatus();
+    row.appendChild(textarea);
+    row.appendChild(status);
+    body.appendChild(row);
+  }
+  return form;
 }
 
 function renderOutput(decl: ProblemtypeDeclaration): void {

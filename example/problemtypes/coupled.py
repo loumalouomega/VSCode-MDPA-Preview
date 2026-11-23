@@ -2993,6 +2993,7 @@ define_problemtype(
     coupling_interfaces=[{"label": "Coupling interface", "sides": ["fluidInterface", "structureInterface"]}],
     primary_document_name=PRIMARY_DOCUMENT,
     driver_script_name="MainKratosCoSim.py",
+    solver_documents=[PRIMARY_DOCUMENT, CFD_DOCUMENT, CSM_DOCUMENT],
     driver_template="cosim",
     output={"nodal_defaults": ["VELOCITY", "PRESSURE"]},
 )

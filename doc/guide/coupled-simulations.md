@@ -21,6 +21,7 @@ The case shapes follow Kratos master (read 2026-10-15): the FSIApplication's par
 1. Open one mesh that contains both bodies. Each physics is a **domain**: assign its body with *Fluid body* / *Structure body*, and its conditions as you would in the single-physics problemtype.
 2. Mark the interface on **both** sides: a fluid-side SubModelPart (*FSI fluid interface* or *Coupling interface (fluid side)*) and a structure-side one. Several interface pairs are allowed; the n-th fluid side is coupled with the n-th structure side, in the order you assigned them.
 3. Assign materials to both bodies and generate. Generate writes one mesh per physics (`<name>_Fluid.mdpa`, `<name>_Structural.mdpa`), sliced from the open mesh, and one materials file per physics.
+4. If a participant needs a setting neither form declares, use the **Additional settings** card: CoSimulation shows one JSON box per document (`ProjectParametersCoSim.json`, `ProjectParametersCFD.json`, `ProjectParametersCSM.json`), and each patch is merged last into its own document only. The materials files and the driver have no box. See [Additional settings](./simulation#additional-settings).
 
 ## What Generate checks
 

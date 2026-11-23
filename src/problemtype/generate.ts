@@ -34,6 +34,8 @@ import { resolveStateExpressions } from "./caseExpressions";
 import { computePartMeasures } from "../parser/partMeasures";
 import { applyTotalLoad, isTotalLoad, LoadMeasure } from "./totalLoad";
 import { periodicPairProblems } from "./periodicCheck";
+import { DEFAULT_PRIMARY_DOCUMENT, DEFAULT_DRIVER_SCRIPT } from "./documentNames";
+import { applyAdditionalSettings } from "./additionalSettings";
 
 /** Flattens the SubModelPart tree into slash-separated paths (depth-first). */
 export function subModelPartPaths(parts: SubModelPart[]): string[] {
@@ -287,8 +289,7 @@ export function buildMaterials(
 }
 
 /** The primary document and driver names a problemtype gets when its declaration names none. */
-export const DEFAULT_PRIMARY_DOCUMENT = "ProjectParameters.json";
-export const DEFAULT_DRIVER_SCRIPT = "MainKratos.py";
+export { DEFAULT_PRIMARY_DOCUMENT, DEFAULT_DRIVER_SCRIPT } from "./documentNames";
 
 /**
  * The process entries of one solver document, grouped by the list each condition
@@ -453,12 +454,22 @@ export async function generateCase(
     materialsText = materialJson(materials, runtime);
   }
   extraFiles.push(...(await runtime.extraFiles(ctx, materials)));
+  // Roadmap item 80: the patch is merged last, after every hook and before the
+  // application scan, so an added linear solver or process is checked too.
+  const withAdditional = applyAdditionalSettings(decl, state, projectParameters, extraFiles);
+  if (withAdditional.problems.length > 0) {
+    throw new Error(
+      `The additional solver settings cannot be applied, so no case files were written:\n- ${withAdditional.problems.map((p) => p.message).join("\n- ")}`
+    );
+  }
+  const finalParameters = withAdditional.primary as JsonObject;
+  const finalExtraFiles = withAdditional.extraFiles;
   const applications = requiredApplications(
     decl,
     values,
     [
-      projectParameters,
-      ...extraFiles.filter((f) => f.name.toLowerCase().endsWith(".json")).map((f) => parseJsonOrNull(f.content)),
+      finalParameters,
+      ...finalExtraFiles.filter((f) => f.name.toLowerCase().endsWith(".json")).map((f) => parseJsonOrNull(f.content)),
     ],
     state.materials
   );
@@ -469,16 +480,17 @@ export async function generateCase(
   const mainScript = applicationCheckPy(applications) + mpiPrelude + (await runtime.mainScript(ctx));
 
   return {
-    projectParameters: JSON.stringify(projectParameters, null, 4) + "\n",
+    projectParameters: JSON.stringify(finalParameters, null, 4) + "\n",
     materials: materialsText,
     materialsFileName,
     mainScript,
-    extraFiles,
+    extraFiles: finalExtraFiles,
     warnings,
     primaryDocumentName: decl.primaryDocumentName ?? DEFAULT_PRIMARY_DOCUMENT,
     driverScriptName: decl.driverScriptName ?? DEFAULT_DRIVER_SCRIPT,
     applications,
     ...(loadMeasures.length > 0 ? { loadMeasures } : {}),
+    ...(withAdditional.report ? { additionalSettings: withAdditional.report } : {}),
   };
 }
 

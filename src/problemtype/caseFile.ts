@@ -193,6 +193,29 @@ function readCollections(raw: unknown, warnings: string[]): Record<string, Colle
   return out;
 }
 
+/**
+ * `additionalSettings`: document name → raw JSON text (roadmap item 80).
+ * Malformed pieces are dropped with a warning; empty/whitespace entries are
+ * not stored, which keeps a case without a patch byte-identical on disk.
+ */
+function readAdditionalSettings(raw: unknown, warnings: string[]): Record<string, string> | undefined {
+  if (raw === undefined) return undefined;
+  if (!isRecord(raw)) {
+    warnings.push('"additionalSettings" is not an object — ignored.');
+    return undefined;
+  }
+  const out: Record<string, string> = {};
+  for (const [document, text] of Object.entries(raw)) {
+    if (typeof text !== "string") {
+      warnings.push(`Additional settings for "${document}" must be text — ignored.`);
+      continue;
+    }
+    if (text.trim().length === 0) continue;
+    out[document] = text;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
 /** Parses a case file; returns undefined state when nothing usable is inside. */
 export function parseCaseJson(text: string): { state?: CaseState; warnings: string[] } {
   const warnings: string[] = [];
@@ -231,6 +254,10 @@ export function parseCaseJson(text: string): { state?: CaseState; warnings: stri
         ? { parallel: { type: "mpi" as const, ...(raw.parallel.partitionInMemory === true ? { partitionInMemory: true } : {}), ...(raw.parallel.solver === "amesos" || raw.parallel.solver === "multi_level" ? { solver: raw.parallel.solver } : {}) } }
         : {}),
       ...(isRecord(raw.outputProcesses) ? { outputProcesses: raw.outputProcesses as import("./types").JsonObject } : {}),
+      ...(() => {
+        const additionalSettings = readAdditionalSettings(raw.additionalSettings, warnings);
+        return additionalSettings ? { additionalSettings } : {};
+      })(),
       ...(() => {
         const collections = readCollections(raw.collections, warnings);
         return collections ? { collections } : {};
