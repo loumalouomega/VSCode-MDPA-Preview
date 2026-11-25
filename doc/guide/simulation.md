@@ -122,6 +122,8 @@ Choose a preset, choose a law and a SubModelPart, and press **+**. The water and
 
 A row that names a SubModelPart is clickable and frames that part in the viewport. Quality checks are skipped above 50 000 cells in the sidebar (the Quality panel still gives the full report). Headlessly, `case_validate` returns the same findings.
 
+A `condition-shared-nodes` warning (two conditions fixing the same variable on shared nodes) also marks the two assignment cards themselves: each badge names the other condition and SubModelPart, both processes' positions in the generated process list, which one wins (or that both fix the same value) and how many nodes they share. Clicking a badge selects all shared nodes in the viewport. The badges are drawn from the finding's data after the cards render, so they never interrupt an edit, and the next report after fixing or removing an assignment clears them.
+
 ## Additional settings
 
 The **Additional settings** card, collapsed at the bottom of the Solution stage, holds one raw JSON box per solver document the problemtype writes: `ProjectParameters.json` for a single-physics problemtype, and one box for each participant document of a coupled one (CoSimulation: `ProjectParametersCoSim.json`, `ProjectParametersCFD.json`, `ProjectParametersCSM.json`). It exists for what the form does not declare — a linear-solver factory option, a process a newer Kratos version added, a flag the GiD writer omits.

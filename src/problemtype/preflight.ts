@@ -57,6 +57,23 @@ export interface FindingTarget {
   entityKind?: EntityKind;
   /** A bounded sample of entity ids (the full list stays in `mesh_quality`). */
   entityIds?: number[];
+  /** The node ids a target names, for a selection rather than a scroll (`entityIds` stays the bounded sample). */
+  nodeIds?: number[];
+  /**
+   * A second card the same finding implicates (roadmap item 81). Used by the
+   * shared-node conflict badge, which sits on both condition cards: the target
+   * above names the earlier process, `related*` names the later one.
+   */
+  relatedSmpPath?: string;
+  relatedConditionId?: string;
+  /** How many nodes the two parts share (the full count; `nodeIds` lists them all, `entityIds` is sampled). */
+  sharedNodeCount?: number;
+  /** 1-based position in the generated `constraints_process_list`. */
+  appliedOrder?: number;
+  /** The related card's position in the same list. */
+  relatedAppliedOrder?: number;
+  /** True when the two processes fix different values; false when they agree. */
+  valuesDiffer?: boolean;
 }
 
 export interface Finding {
