@@ -25,6 +25,8 @@ interface FixedEntry {
   /** Per component: the fixed value (number, or the JSON text of an expression), or undefined when free. */
   fixed: (string | number | undefined)[];
   interval: [number, number];
+  /** 1-based position in the generated process list (the later one is applied last). */
+  order: number;
 }
 
 function intervalOf(v: unknown): [number, number] {
@@ -41,7 +43,8 @@ function entriesOf(pp: unknown, smpByDotted: (name: string) => string | undefine
   const list = (pp as { processes?: { constraints_process_list?: unknown } } | null)?.processes?.constraints_process_list;
   if (!Array.isArray(list)) return [];
   const out: FixedEntry[] = [];
-  for (const e of list) {
+  for (let i = 0; i < list.length; i++) {
+    const e = list[i];
     const p = (e as { Parameters?: Record<string, unknown> } | null)?.Parameters;
     if (!p || typeof p.variable_name !== "string" || typeof p.model_part_name !== "string") continue;
     const smpPath = smpByDotted(p.model_part_name);
@@ -50,16 +53,16 @@ function entriesOf(pp: unknown, smpByDotted: (name: string) => string | undefine
     const constrained = p.constrained;
     const width = Array.isArray(value) ? value.length : Array.isArray(constrained) ? constrained.length : 1;
     const fixed: (string | number | undefined)[] = [];
-    for (let i = 0; i < width; i++) {
-      const c = Array.isArray(constrained) ? constrained[i] : constrained;
-      if (c === false) {
+    for (let c = 0; c < width; c++) {
+      const flag = Array.isArray(constrained) ? constrained[c] : constrained;
+      if (flag === false) {
         fixed.push(undefined);
         continue;
       }
-      const v = Array.isArray(value) ? value[i] : value;
+      const v = Array.isArray(value) ? value[c] : value;
       fixed.push(typeof v === "number" ? v : v === undefined || v === null ? 0 : JSON.stringify(v));
     }
-    out.push({ smpPath, variable: p.variable_name, fixed, interval: intervalOf(p.interval) });
+    out.push({ smpPath, variable: p.variable_name, fixed, interval: intervalOf(p.interval), order: i + 1 });
   }
   return out;
 }
@@ -126,8 +129,11 @@ export function sharedNodeConflicts(
       const lb = labelFor(b.smpPath, b.variable);
       const compText = a.fixed.length > 1 ? `${a.variable} (${comps.map((k) => AXES[k] ?? k).join(", ")})` : a.variable;
       const vals = differ
-        ? ` with different values (${comps.map((k) => `${a.fixed[k]} vs ${b.fixed[k]}`).join("; ")}) — the one applied last wins`
+        ? ` with different values (${comps.map((k) => `${a.fixed[k]} vs ${b.fixed[k]}`).join("; ")}) — "${lb.label}" on "${b.smpPath}" is applied later and wins`
         : " with the same values";
+      // The selection a badge click makes uses the full list; `entityIds` stays
+      // the bounded sample the preflight rows have always carried.
+      const sharedNodes = shared.sort((x, y) => x - y);
       out.push({
         severity: differ ? "warning" : "info",
         code: "condition-shared-nodes",
@@ -135,7 +141,14 @@ export function sharedNodeConflicts(
         target: {
           smpPath: a.smpPath,
           ...(la.id ? { conditionId: la.id } : {}),
-          entityIds: shared.sort((x, y) => x - y).slice(0, SAMPLE),
+          ...(lb.id ? { relatedConditionId: lb.id } : {}),
+          relatedSmpPath: b.smpPath,
+          sharedNodeCount: shared.length,
+          appliedOrder: a.order,
+          relatedAppliedOrder: b.order,
+          valuesDiffer: differ,
+          entityIds: sharedNodes.slice(0, SAMPLE),
+          nodeIds: sharedNodes,
         },
       });
     }

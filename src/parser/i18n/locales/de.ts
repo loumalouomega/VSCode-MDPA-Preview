@@ -693,4 +693,7 @@ export const de: Catalogue = {
   "Named values for the numeric fields: L = 2[m], then type L/2 in a field. Units in brackets convert to the field's unit.": "Benannte Werte für die Zahlenfelder: L = 2[m], dann L/2 in ein Feld eingeben. Einheiten in Klammern werden in die Einheit des Feldes umgerechnet.",
   "Remove parameter": "Parameter entfernen",
   "Add parameter": "Parameter hinzufügen",
+  "Shares {n} nodes with {condition} on {part} · process {order}, overwritten by process {otherOrder}": "Teilt {n} Knoten mit {condition} auf {part} · Prozess {order}, überschrieben von Prozess {otherOrder}",
+  "Shares {n} nodes with {condition} on {part} · process {order}, wins over process {otherOrder}": "Teilt {n} Knoten mit {condition} auf {part} · Prozess {order}, setzt sich gegen Prozess {otherOrder} durch",
+  "Shares {n} nodes with {condition} on {part} · process {order} and {otherOrder}, same value": "Teilt {n} Knoten mit {condition} auf {part} · Prozesse {order} und {otherOrder}, gleicher Wert",
 };
