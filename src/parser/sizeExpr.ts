@@ -46,6 +46,14 @@ const FUNCTIONS: Record<string, { arity: number | "any"; fn: (a: number[]) => nu
 /** Named constants usable as bare identifiers. */
 const CONSTANTS: Record<string, number> = { pi: Math.PI, e: Math.E };
 
+/** Function names and arities exported for formula name completion (roadmap item 85). */
+export const EXPR_FUNCTION_INFO: readonly { name: string; arity: number | "any" }[] = Object.entries(FUNCTIONS).map(
+  ([name, { arity }]) => ({ name, arity })
+);
+
+/** Constant names exported for formula name completion (roadmap item 85). */
+export const EXPR_CONSTANT_NAMES: readonly string[] = Object.keys(CONSTANTS);
+
 /**
  * The variable names the remesher exposes to a sizing expression. `std` has the
  * spelling aliases `stdev`/`sigma` (normalized to `std` before evaluation).

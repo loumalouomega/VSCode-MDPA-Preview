@@ -17,8 +17,10 @@ import { validateSizeExpr, remeshSizeExprVars, describeUnknownRemeshVar } from "
 import { noteFieldFire, noteFieldFireFromMessage } from "./fieldRegistry";
 import { ensureBoundaryLayerVariables } from "./variablesPanel";
 import { scopeVariables as fieldScopeVariables } from "../src/parser/fieldCalc";
-import { FieldData } from "../src/parser/types";
+import { buildExprCompletions } from "../src/parser/formulaComplete";
+import { FieldBlockKind, FieldData } from "../src/parser/types";
 import { isQueueMode, stageOp, buildApplyBatchMsg } from "./opQueue";
+import { attachExprCompletion } from "./formulaComplete";
 
 type PostMessage = (msg: unknown) => void;
 
@@ -50,6 +52,8 @@ let xferPath = "";
 let remeshFieldVars: string[] = [];
 /** Global variable names for the same scope (recomputed alongside the above). */
 let remeshGlobalVars: string[] = [];
+/** Live model fields for formula name completion (updated in setMeshModFields). */
+let meshModFields: FieldData[] = [];
 
 /** The per-SubModelPart sizing overrides currently entered in the form. */
 let sizeParts: { path: string; expr: string }[] = [];
@@ -138,9 +142,19 @@ export function initMeshMod(postMessage: PostMessage): void {
   // actually available at the chosen location (recomputed on every change,
   // since the allowed variable set depends on it).
   const calcLocation = document.getElementById("calc-location") as HTMLSelectElement | null;
-  const calcExpr = document.getElementById("calc-expr");
+  const calcExpr = document.getElementById("calc-expr") as HTMLInputElement | null;
   calcLocation?.addEventListener("change", () => validateCalcExpr());
   calcExpr?.addEventListener("input", () => validateCalcExpr());
+  if (calcExpr) {
+    attachExprCompletion(calcExpr, () =>
+      buildExprCompletions({
+        mode: "fieldCalc",
+        location: (calcLocation?.value as FieldBlockKind) || "Nodal",
+        fields: meshModFields,
+        globals: remeshGlobalVars,
+      })
+    );
+  }
 
   // Merge mesh: "Browse…" asks the host for a file; the host replies with
   // `mergeMeshPicked` (wired in setMergeMeshPath below).
@@ -230,9 +244,18 @@ export function initMeshMod(postMessage: PostMessage): void {
   updateRemeshModeUI();
 
   // Live-validate the global expression and reflect parse errors inline.
-  document
-    .getElementById("remesh-sizeexpr")
-    ?.addEventListener("input", () => validateExprInputs());
+  const remeshExpr = document.getElementById("remesh-sizeexpr") as HTMLInputElement | null;
+  remeshExpr?.addEventListener("input", () => validateExprInputs());
+  if (remeshExpr) {
+    attachExprCompletion(remeshExpr, () =>
+      buildExprCompletions({
+        mode: "remesh",
+        fields: meshModFields,
+        globals: remeshGlobalVars,
+        hasDistanceSurface: false,
+      })
+    );
+  }
 
   // Per-part sizing: add a fresh override row.
   document.getElementById("remesh-sizeparts-add")?.addEventListener("click", () => {
@@ -506,6 +529,14 @@ function renderSizeParts(): void {
       sizeParts[index].expr = expr.value;
       validateExprInputs();
     });
+    attachExprCompletion(expr, () =>
+      buildExprCompletions({
+        mode: "remesh",
+        fields: meshModFields,
+        globals: remeshGlobalVars,
+        hasDistanceSurface: false,
+      })
+    );
 
     const del = document.createElement("button");
     del.type = "button";
@@ -885,6 +916,7 @@ export function setMeshModFields(
   fields: FieldData[],
   globals?: Record<string, { variable: string; kind: string; reduction: string }>
 ): void {
+  meshModFields = fields;
   const nodal = fields.filter((f) => f.kind === "Nodal");
   // Field-derived remesh variables (see remeshFieldVars' doc comment). Wrong
   // formula validation here would be worse than none: this must track

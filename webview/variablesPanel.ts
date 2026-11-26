@@ -52,6 +52,8 @@ import { t } from "../src/parser/i18n/runtime";
 import { validateSizeExpr } from "../src/parser/sizeExpr";
 import { maskRegionalCalls } from "../src/parser/regionalCalls";
 import { scopeVariables } from "../src/parser/fieldCalc";
+import { buildExprCompletions } from "../src/parser/formulaComplete";
+import { attachExprCompletion } from "./formulaComplete";
 import {
   GLOBAL_REDUCTIONS,
   GlobalReduction,
@@ -1186,6 +1188,14 @@ function renderDefinitionRow(row: VarRow, index: number): HTMLElement {
           row.expr = v;
           revalidateStatus(wrap, row);
         }
+      );
+      attachExprCompletion(exprInput, () =>
+        buildExprCompletions({
+          mode: "fieldCalc",
+          location: outputKindOf(row),
+          fields: liveFields,
+          globals: Object.keys(liveGlobals),
+        })
       );
       const field = document.createElement("label");
       field.className = "edit-expr-field edit-field-grow";

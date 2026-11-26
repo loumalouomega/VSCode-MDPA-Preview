@@ -5084,3 +5084,44 @@ body.ribbon-compact .ribbon-group-label { display: none; }
   border-radius: var(--ui-r-sm);
 }
 #label-bar.visible { display: flex; }
+
+.formula-complete {
+  position: fixed;
+  z-index: 60;
+  max-height: 220px;
+  overflow-y: auto;
+  background: var(--vscode-editorSuggestWidget-background, var(--vscode-editorWidget-background));
+  color: var(--vscode-editorSuggestWidget-foreground, var(--vscode-foreground));
+  border: 1px solid var(--vscode-editorSuggestWidget-border, var(--vscode-panel-border));
+  border-radius: var(--ui-r-sm);
+  box-shadow: var(--ui-shadow);
+  font-size: var(--ui-fs-sm);
+}
+.formula-complete.hidden { display: none; }
+.fc-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--ui-s-2);
+  padding: 3px 8px;
+  cursor: pointer;
+}
+.fc-item:hover {
+  background: var(--vscode-list-hoverBackground);
+}
+.fc-item.active {
+  background: var(--vscode-editorSuggestWidget-selectedBackground, var(--vscode-list-activeSelectionBackground));
+  color: var(--vscode-editorSuggestWidget-selectedForeground, var(--vscode-list-activeSelectionForeground));
+}
+.fc-label {
+  font-family: var(--vscode-editor-font-family, monospace);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fc-meta {
+  opacity: 0.75;
+  font-size: var(--ui-fs-xs);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
