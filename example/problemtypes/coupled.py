@@ -1326,7 +1326,7 @@ FLUID_CONDITIONS = [
                       "reference_point": "$field:referencePoint",
                   },
               },
-              help="Integrates pressure and viscous traction over this wall and writes Fx Fy Fz (and moments) per step to <model part>_drag.dat.", category="other", icon="ptResults"),
+              help="Integrates pressure and viscous traction over this wall and writes Fx Fy Fz (and moments) per step to <model part>_drag.dat.", category="other", icon="results"),
     condition("f_aerodynamicCoefficients", "Aerodynamic coefficients", list="fluid_auxiliar_process_list", target="surface",
               fields=[field("referenceArea", "Reference area [m²]", "number", default=1, min=0),
                       field("referenceChord", "Reference chord [m]", "number", default=1, min=0),
@@ -1349,7 +1349,7 @@ FLUID_CONDITIONS = [
                       "dynamic_pressure": "$field:dynamicPressure",
                   },
               },
-              help="Writes drag, lift and moment coefficients of this wall: force over the dynamic pressure times the reference area (moments also times the reference chord).", category="other", icon="ptResults"),
+              help="Writes drag, lift and moment coefficients of this wall: force over the dynamic pressure times the reference area (moments also times the reference chord).", category="other", icon="results"),
     condition("f_pressureCoefficient", "Pressure coefficient", list="fluid_auxiliar_process_list", target="surface",
               fields=[field("freestreamDensity", "Free-stream density [kg/m³]", "number", default=1.204, min=0),
                       field("freestreamVelocity", "Free-stream speed [m/s]", "number", default=1, min=0),
@@ -1367,7 +1367,7 @@ FLUID_CONDITIONS = [
                       "execution_step": "ExecuteBeforeOutputStep",
                   },
               },
-              help="Writes PRESSURE_COEFFICIENT on this part's nodes for the output: (p − p∞) over the free-stream dynamic pressure.", category="other", icon="ptResults"),
+              help="Writes PRESSURE_COEFFICIENT on this part's nodes for the output: (p − p∞) over the free-stream dynamic pressure.", category="other", icon="results"),
     condition("f_yPlus", "Wall y+", list="fluid_auxiliar_process_list", target="surface",
               fields=[],
               process_template={
@@ -1382,7 +1382,7 @@ FLUID_CONDITIONS = [
                       "echo_level": 0,
                   },
               },
-              help="Writes Y_PLUS on this wall's faces for the output, to check the first cell height against the wall model.", category="other", icon="ptResults"),
+              help="Writes Y_PLUS on this wall's faces for the output, to check the first cell height against the wall model.", category="other", icon="results"),
 ]
 
 STRUCTURE_CONDITIONS = [

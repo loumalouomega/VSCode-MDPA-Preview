@@ -1343,6 +1343,7 @@
     "vtkwasm:prepare": "node scripts/vtk-wasm/prepare-assets.mjs",
     "build:tests": "tsc -p ./tsconfig.test.json",
     "test": "npm run build:tests && node --test out/test/",
+    "docs:reference": "npm run build:tests && node scripts/gen-docs-reference.mjs",
     "mcp": "node dist/mcpServer.js",
     "bench:heartbeat": "node scripts/bench/host-heartbeat.mjs",
     "bench:plot": "node scripts/bench/plot-budget.mjs",

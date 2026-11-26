@@ -603,6 +603,8 @@ Admission criterion: closes a gap between a generated case and how its results a
 
 ### 84. Generated problemtype, operation, command and tool reference — M
 
+**First increment delivered 2026-11-26:** `src/parser/referenceDocs.ts` (pure) renders the command list and the operations table into marked islands in `doc/reference/commands.md` and `operations.md`; `npm run docs:reference` writes them and `referenceDocs.test.ts` fails on drift. **Still pending:** problemtype pages, the MCP tool table, the README island and the `docs:build` link check. Original text follows.
+
 **Pending — added 2026-11-13 (ElmerStudio fourth pass).** Four references are written by hand and drift: the problemtype pages (sections, fields, units, conditions, material laws), the operation tables here and in `README.md`, the command-line guide and the MCP tool tables. All four already exist as data: `ProblemtypeDeclaration`, `OP_LABELS` with the `meshio181` specs, `COMMANDS` in `commandSpec.ts`, and the tool registrations with `OPS_HELP`. Add `scripts/gen-docs-reference.mjs`, which writes marked islands (the pattern KKSS uses for its configuration reference) into `doc/reference/problemtypes/<id>.md`, an operations page, the command list and the tool table, and a Node test that fails when a committed island differs from a fresh generation. Hand-written prose stays outside the islands. The GiDInterface comparison page keeps its own text and links to the generated field lists.
 
 **Acceptance:** adding a field to a built-in or an op to the registry fails the test until the reference is regenerated; `docs:build` has no dead link; the README tool table is an island too. **MCP:** none (documentation); `problemtype_describe` and `mesh_capabilities` stay the live answers.
@@ -614,6 +616,8 @@ Admission criterion: closes a gap between a generated case and how its results a
 **Acceptance:** a Chromium check types two letters in the calculator and in a Variables row, accepts a field name and posts a message the host validates; a field added by an earlier step appears without reopening the panel; Escape closes the list and leaves the text. **MCP:** UI-only.
 
 ### 86. Icon contact sheet and validation — S
+
+**Static half delivered 2026-11-26:** `iconReferences.test.ts` checks that every icon id a built-in names exists and that no icon or UI glyph has no drawing element or empty path data. It found `ptResults`, named by 17+ result conditions but never defined (they drew no icon); they now use `results`. **Still pending:** the rasterised contact sheet, the lit-pixel threshold and the TeX-diff (they need an SVG rasteriser dependency). Original text follows.
 
 **Pending — added 2026-11-13 (ElmerStudio fourth pass; the same check is queued in CAD-Preview and KKSS).** The icon pipeline turns TikZ into `toolbarIcons.ts`, and about two dozen `svg-ui` files are hand-authored beside a `.tex` twin; nothing looks at the result. Add `icons/icon-sheet.mjs`: render every generated icon and every `uiGlyphs` entry at 14, 16 and 24 px on the dark and light backgrounds into one labelled sheet (a committed PNG, regenerated like the screenshots), and fail when an id used in `webviewChrome.ts` or a built-in's `decl.icon` is missing, when an icon rasterises blank or to fewer lit pixels than a threshold at 14 px, or when a hand-authored SVG differs from what its `.tex` compiles to on a machine with TeX. An icon touching the outer pixel ring is a warning.
 

@@ -682,7 +682,7 @@ CONDITIONS = [
                       "reference_point": "$field:referencePoint",
                   },
               },
-              help="Integrates pressure and viscous traction over this wall and writes Fx Fy Fz (and moments) per step to <model part>_drag.dat.", category="other", icon="ptResults"),
+              help="Integrates pressure and viscous traction over this wall and writes Fx Fy Fz (and moments) per step to <model part>_drag.dat.", category="other", icon="results"),
     condition("aerodynamicCoefficients", "Aerodynamic coefficients", list="auxiliar_process_list", target="surface",
               fields=[field("referenceArea", "Reference area [m²]", "number", default=1, min=0),
                       field("referenceChord", "Reference chord [m]", "number", default=1, min=0),
@@ -705,7 +705,7 @@ CONDITIONS = [
                       "dynamic_pressure": "$field:dynamicPressure",
                   },
               },
-              help="Writes drag, lift and moment coefficients of this wall: force over the dynamic pressure times the reference area (moments also times the reference chord).", category="other", icon="ptResults"),
+              help="Writes drag, lift and moment coefficients of this wall: force over the dynamic pressure times the reference area (moments also times the reference chord).", category="other", icon="results"),
     condition("pressureCoefficient", "Pressure coefficient", list="auxiliar_process_list", target="surface",
               fields=[field("freestreamDensity", "Free-stream density [kg/m³]", "number", default=1.204, min=0),
                       field("freestreamVelocity", "Free-stream speed [m/s]", "number", default=1, min=0),
@@ -723,7 +723,7 @@ CONDITIONS = [
                       "execution_step": "ExecuteBeforeOutputStep",
                   },
               },
-              help="Writes PRESSURE_COEFFICIENT on this part's nodes for the output: (p − p∞) over the free-stream dynamic pressure.", category="other", icon="ptResults"),
+              help="Writes PRESSURE_COEFFICIENT on this part's nodes for the output: (p − p∞) over the free-stream dynamic pressure.", category="other", icon="results"),
     condition("yPlus", "Wall y+", list="auxiliar_process_list", target="surface",
               fields=[],
               process_template={
@@ -738,7 +738,7 @@ CONDITIONS = [
                       "echo_level": 0,
                   },
               },
-              help="Writes Y_PLUS on this wall's faces for the output, to check the first cell height against the wall model.", category="other", icon="ptResults"),
+              help="Writes Y_PLUS on this wall's faces for the output, to check the first cell height against the wall model.", category="other", icon="results"),
     condition("integrationStats", "Integration-point statistics", list="auxiliar_process_list", target="volume",
               fields=[field("statisticType", "Statistic", "enum", default="average", options=[{"value": "average", "label": "Average"}, {"value": "variance", "label": "Variance"}, {"value": "third_order_moment", "label": "Third-order moment"}]),
                       field("variable", "Variable(s)", "string", default="VELOCITY", help="One variable for an average, one or two for a variance, three for a third-order moment, comma-separated."),
@@ -748,7 +748,7 @@ CONDITIONS = [
               process_template={
 
               },
-              help="Samples a statistic at the integration points over time (average, variance or third-order moment) and writes it to a file. One entry per assignment on the same part merges into a single process; a variance or third-order moment needs its average on the same part, and a vector average needs a tag per component (VELOCITY tags itself).", category="other", icon="ptResults", no_process=True),
+              help="Samples a statistic at the integration points over time (average, variance or third-order moment) and writes it to a file. One entry per assignment on the same part merges into a single process; a variance or third-order moment needs its average on the same part, and a vector average needs a tag per component (VELOCITY tags itself).", category="other", icon="results", no_process=True),
 ]
 
 MATERIAL_LAWS = [
