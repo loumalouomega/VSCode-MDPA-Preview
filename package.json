@@ -1363,7 +1363,7 @@
     "typescript": "^5.4.5"
   },
   "dependencies": {
-    "@kitware/vtk.js": "^38.0.11",
+    "@kitware/vtk.js": "^38.1.0",
     "@kratos-flowgraph/flowgraph": "^1.0.2",
     "@loumalouomega/mmg-wasm": "^0.1.0",
     "@meshioplusplus/wasm": "^20.1.0",
@@ -1372,7 +1372,7 @@
     "ejs": "^7.0.2",
     "express": "^5.3.0",
     "gifenc": "1.0.3",
-    "mediabunny": "1.66.0",
+    "mediabunny": "1.66.2",
     "plotly.js-strict-dist-min": "4.3.0",
     "pyodide": "^314.0.8",
     "seek-bzip": "^2.0.0",
