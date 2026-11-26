@@ -617,6 +617,8 @@ Admission criterion: closes a gap between a generated case and how its results a
 
 ### 86. Icon contact sheet and validation — S
 
+**Static half delivered 2026-11-26:** `iconReferences.test.ts` checks that every icon id a built-in names exists and that no icon or UI glyph has no drawing element or empty path data. It found `ptResults`, named by 17+ result conditions but never defined (they drew no icon); they now use `results`. **Still pending:** the rasterised contact sheet, the lit-pixel threshold and the TeX-diff (they need an SVG rasteriser dependency). Original text follows.
+
 **Pending — added 2026-11-13 (ElmerStudio fourth pass; the same check is queued in CAD-Preview and KKSS).** The icon pipeline turns TikZ into `toolbarIcons.ts`, and about two dozen `svg-ui` files are hand-authored beside a `.tex` twin; nothing looks at the result. Add `icons/icon-sheet.mjs`: render every generated icon and every `uiGlyphs` entry at 14, 16 and 24 px on the dark and light backgrounds into one labelled sheet (a committed PNG, regenerated like the screenshots), and fail when an id used in `webviewChrome.ts` or a built-in's `decl.icon` is missing, when an icon rasterises blank or to fewer lit pixels than a threshold at 14 px, or when a hand-authored SVG differs from what its `.tex` compiles to on a machine with TeX. An icon touching the outer pixel ring is a warning.
 
 **Acceptance:** blanking one icon's path fails the script; the sheet is linked from `icons/README.md`; the check runs in CI without LaTeX (codegen only). **MCP:** none.

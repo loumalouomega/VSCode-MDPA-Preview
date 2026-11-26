@@ -124,7 +124,7 @@ const massCheck: ConditionSpec = {
   list: "auxiliar_process_list",
   target: "volume",
   category: "other",
-  icon: "ptResults",
+  icon: "results",
   noProcess: false,
   help: "Reports the volume each fluid gains or loses against the inflow and, optionally, corrects the interface to keep it. Assign it to the fluid part.",
   fields: [
