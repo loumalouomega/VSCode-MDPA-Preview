@@ -5,12 +5,15 @@ import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
 
-import { REFERENCE_PAGES, applyIsland, extractIsland } from "../parser/referenceDocs";
+import { REFERENCE_PAGES, mcpToolsPage, readmeToolsPage, applyIsland, extractIsland } from "../parser/referenceDocs";
+import { extractMcpTools } from "../parser/mcpToolExtract";
 import { OP_LABELS } from "../parser/opLabels";
 
 const root = path.join(__dirname, "..", "..");
+const mcpTools = extractMcpTools(fs.readFileSync(path.join(root, "src", "mcp", "register.ts"), "utf8"));
+const ALL_PAGES = [...REFERENCE_PAGES, mcpToolsPage(mcpTools), readmeToolsPage(mcpTools)];
 
-for (const page of REFERENCE_PAGES) {
+for (const page of ALL_PAGES) {
   test(`${page.file} island is current (run npm run docs:reference)`, () => {
     const content = fs.readFileSync(path.join(root, page.file), "utf8").replace(/\r\n/g, "\n"); // Windows checkouts may use CRLF
     assert.equal(extractIsland(page, content), page.render());

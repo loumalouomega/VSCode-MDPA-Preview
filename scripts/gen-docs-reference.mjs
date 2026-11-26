@@ -7,9 +7,13 @@ import { fileURLToPath } from "node:url";
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const require = createRequire(import.meta.url);
-const { REFERENCE_PAGES, applyIsland } = require(path.join(root, "out", "parser", "referenceDocs.js"));
+const { REFERENCE_PAGES, mcpToolsPage, readmeToolsPage, applyIsland } = require(path.join(root, "out", "parser", "referenceDocs.js"));
+const { extractMcpTools } = require(path.join(root, "out", "parser", "mcpToolExtract.js"));
 
-for (const page of REFERENCE_PAGES) {
+const tools = extractMcpTools(fs.readFileSync(path.join(root, "src", "mcp", "register.ts"), "utf8"));
+const pages = [...REFERENCE_PAGES, mcpToolsPage(tools), readmeToolsPage(tools)];
+
+for (const page of pages) {
   const file = path.join(root, page.file);
   const existing = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : undefined;
   const next = applyIsland(page, existing);
