@@ -1,0 +1,32 @@
+/** Fails when a committed reference island differs from a fresh generation (roadmap item 84). */
+
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import test from "node:test";
+
+import { REFERENCE_PAGES, applyIsland, extractIsland } from "../parser/referenceDocs";
+import { OP_LABELS } from "../parser/opLabels";
+
+const root = path.join(__dirname, "..", "..");
+
+for (const page of REFERENCE_PAGES) {
+  test(`${page.file} island is current (run npm run docs:reference)`, () => {
+    const content = fs.readFileSync(path.join(root, page.file), "utf8");
+    assert.equal(extractIsland(page, content), page.render());
+  });
+}
+
+test("applyIsland keeps prose outside the island and is idempotent", () => {
+  const page = REFERENCE_PAGES[1];
+  const hand = `# T\n\nhand prose\n\n<!-- BEGIN GENERATED: operations -->\nold\n<!-- END GENERATED: operations -->\n\ntail prose\n`;
+  const next = applyIsland(page, hand);
+  assert.ok(next.startsWith("# T\n\nhand prose\n"));
+  assert.ok(next.endsWith("\ntail prose\n"));
+  assert.equal(applyIsland(page, next), next);
+});
+
+test("operations island lists every operation", () => {
+  const text = REFERENCE_PAGES[1].render();
+  for (const op of Object.keys(OP_LABELS)) assert.ok(text.includes(`| \`${op}\` |`), op);
+});

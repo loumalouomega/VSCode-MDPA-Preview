@@ -603,6 +603,8 @@ Admission criterion: closes a gap between a generated case and how its results a
 
 ### 84. Generated problemtype, operation, command and tool reference — M
 
+**First increment delivered 2026-11-26:** `src/parser/referenceDocs.ts` (pure) renders the command list and the operations table into marked islands in `doc/reference/commands.md` and `operations.md`; `npm run docs:reference` writes them and `referenceDocs.test.ts` fails on drift. **Still pending:** problemtype pages, the MCP tool table, the README island and the `docs:build` link check. Original text follows.
+
 **Pending — added 2026-11-13 (ElmerStudio fourth pass).** Four references are written by hand and drift: the problemtype pages (sections, fields, units, conditions, material laws), the operation tables here and in `README.md`, the command-line guide and the MCP tool tables. All four already exist as data: `ProblemtypeDeclaration`, `OP_LABELS` with the `meshio181` specs, `COMMANDS` in `commandSpec.ts`, and the tool registrations with `OPS_HELP`. Add `scripts/gen-docs-reference.mjs`, which writes marked islands (the pattern KKSS uses for its configuration reference) into `doc/reference/problemtypes/<id>.md`, an operations page, the command list and the tool table, and a Node test that fails when a committed island differs from a fresh generation. Hand-written prose stays outside the islands. The GiDInterface comparison page keeps its own text and links to the generated field lists.
 
 **Acceptance:** adding a field to a built-in or an op to the registry fails the test until the reference is regenerated; `docs:build` has no dead link; the README tool table is an island too. **MCP:** none (documentation); `problemtype_describe` and `mesh_capabilities` stay the live answers.
