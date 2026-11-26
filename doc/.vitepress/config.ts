@@ -98,6 +98,16 @@ export default defineConfig({
         ]
       },
       {
+        text: 'Reference',
+        items: [
+          { text: 'Commands', link: '/reference/commands' },
+          { text: 'Operations', link: '/reference/operations' },
+          { text: 'MCP Tools', link: '/reference/tools' },
+          { text: 'Structural Problemtype', link: '/reference/problemtypes/structural' },
+          { text: 'Fluid Problemtype', link: '/reference/problemtypes/fluid' }
+        ]
+      },
+      {
         text: 'Project',
         items: [
           { text: 'Development', link: '/guide/development' },

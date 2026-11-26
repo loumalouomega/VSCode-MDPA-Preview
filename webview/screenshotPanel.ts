@@ -1,5 +1,13 @@
 import { t } from "../src/parser/i18n/runtime";
 import { CaptureSettings } from "../src/parser/capturePlan";
+import type { CaptionCompletionContext } from "../src/parser/formulaComplete";
+import { attachCaptionCompletion } from "./formulaComplete";
+
+let getCaptionContext: () => CaptionCompletionContext = () => ({});
+
+export function setCaptionCompletionContext(fn: () => CaptionCompletionContext): void {
+  getCaptionContext = fn;
+}
 
 export interface ScreenshotPanelState {
   settings: CaptureSettings;
@@ -40,10 +48,11 @@ export function renderCaptureControls(root: HTMLElement, settings: CaptureSettin
     choices.forEach(([value, label]) => { const o = document.createElement("option"); o.value = value; o.textContent = label; el.append(o); });
     el.value = String(settings[key]); el.onchange = () => set(key, el.value); row(name, el);
   };
-  const input = (name: string, key: keyof CaptureSettings, type: string): void => {
+  const input = (name: string, key: keyof CaptureSettings, type: string): HTMLInputElement => {
     const el = document.createElement("input"); el.type = type; el.dataset.setting = key; el.value = String(settings[key]);
     if (type === "number") { el.min = key === "fontSize" ? "8" : "1"; el.max = key === "fontSize" ? "96" : "8192"; el.step = "1"; }
     el.onchange = () => set(key, type === "number" ? Number(el.value) : el.value); row(name, el);
+    return el;
   };
   const checkbox = (name: string, key: "legends" | "labels"): void => {
     const el = document.createElement("input"); el.type = "checkbox"; el.dataset.setting = key; el.checked = settings[key];
@@ -57,9 +66,11 @@ export function renderCaptureControls(root: HTMLElement, settings: CaptureSettin
   checkbox("Automatic legends", "legends");
   select("Legend corner", "corner", [["bottom-right", "Bottom right"], ["bottom-left", "Bottom left"], ["top-right", "Top right"], ["top-left", "Top left"]]);
   input("Text size (pixels)", "fontSize", "number"); checkbox("Step/time label", "labels");
-  input("Title", "title", "text");
+  const titleInput = input("Title", "title", "text");
+  attachCaptionCompletion(titleInput, () => getCaptionContext());
   const caption = document.createElement("textarea"); caption.dataset.setting = "caption"; caption.value = settings.caption;
   caption.onchange = () => set("caption", caption.value); row("Caption", caption);
+  attachCaptionCompletion(caption, () => getCaptionContext());
   const tokenHelp = document.createElement("div"); tokenHelp.className = "panel-hint";
   tokenHelp.textContent = t("Tokens: {max(F[,unit])} {min(F[,unit])} {avg(Part,F[,unit])} {time} {step}");
   row("", tokenHelp);

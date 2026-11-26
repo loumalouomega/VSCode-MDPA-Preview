@@ -172,7 +172,7 @@ import { buildCapturePlan, captureBackground, captureFieldLabel, captureStepLabe
 import { composeCaptureOverlays, CaptureOverlay } from "./captureCompositor";
 import { evaluateCaption } from "../src/parser/captionTokens";
 import { cycleIndex, withinPickRadius, pickStackLabel, stepDirection, PICK_STACK_MAX } from "../src/parser/pickStack";
-import { renderScreenshotPanel } from "./screenshotPanel";
+import { renderScreenshotPanel, setCaptionCompletionContext } from "./screenshotPanel";
 import { thresholdCells } from "../src/parser/thresholdCells";
 import { blockCentroids } from "../src/parser/render/hardwareSelection";
 import { resolveEntity, resolvePick } from "../src/parser/pickResolve";
@@ -8356,6 +8356,8 @@ function selectionPanelState(): SelectionPanelState {
     isolate: selectionVisibility === "isolate",
     partPaths: collectSubModelPartPaths(),
     fieldNames: fieldInfos.map((f) => f.field.variable),
+    fields: fieldInfos.map((f) => f.field),
+    globals: Object.keys(model?.globals ?? {}),
   };
 }
 
@@ -10643,6 +10645,10 @@ function captureSignature(): string {
 }
 
 function updateScreenshotPanel(): void {
+  setCaptionCompletionContext(() => ({
+    fields: fieldInfos.map((f) => f.field),
+    parts: collectSubModelPartPaths(),
+  }));
   const focus = screenshotPanelEl.contains(document.activeElement) ? (document.activeElement as HTMLElement)?.dataset.setting : undefined;
   renderScreenshotPanel(screenshotPanelEl, {
     settings: screenshotSettings, image: screenshotImage, message: screenshotMessage, busy: screenshotCapturing || recordingActive,

@@ -49,6 +49,8 @@ While you type here, the single-key view shortcuts (`1`–`6`, `i`) are not trig
 
 ## Command reference
 
+For the full, generated parameter and example tables, see [Command reference](../reference/commands) and [Operation reference](../reference/operations).
+
 ### Mesh operations
 
 | Command | What it does |

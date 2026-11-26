@@ -10,11 +10,20 @@ import { COMMANDS, COMMAND_CATEGORIES, type CommandSpec, type ParamSpec } from "
 import { OP_LABELS } from "./opLabels";
 import { BUILTIN_PROBLEMTYPES } from "../problemtype/builtins";
 import type { FieldSpec, ProblemtypeDeclaration } from "../problemtype/types";
+import type { McpToolDoc } from "./mcpToolExtract";
 
 export const ISLAND_BEGIN = (id: string): string => `<!-- BEGIN GENERATED: ${id} -->`;
 export const ISLAND_END = (id: string): string => `<!-- END GENERATED: ${id} -->`;
 
 const esc = (s: string): string => s.replace(/\|/g, "\\|");
+
+function escapeMcpCell(s: string): string {
+  const flat = s.replace(/\s+/g, " ").trim();
+  const parts = flat.split(/(`[^`]*`)/g);
+  return parts
+    .map((part, i) => (i % 2 === 1 ? esc(part) : esc(part).replace(/</g, "&lt;").replace(/>/g, "&gt;")))
+    .join("");
+}
 
 function paramText(p: ParamSpec): string {
   const vals = p.values && p.values.length ? `: ${p.values.join("/")}` : "";
@@ -127,6 +136,35 @@ export const REFERENCE_PAGES: readonly ReferencePage[] = [
   },
   ...problemtypePages,
 ];
+
+/** The MCP tool table, rendered from `server.registerTool` calls in `src/mcp/register.ts`. */
+export function renderMcpToolsIsland(tools: readonly McpToolDoc[]): string {
+  const out = ["| Tool | What it does |", "| --- | --- |"];
+  for (const t of tools) {
+    out.push(`| \`${t.name}\` | ${escapeMcpCell(t.description)} |`);
+  }
+  return out.join("\n");
+}
+
+export function mcpToolsPage(tools: readonly McpToolDoc[]): ReferencePage {
+  return {
+    file: "doc/reference/tools.md",
+    title: "MCP tool reference",
+    intro: "Every tool registered by the standalone MCP server (`src/mcp/register.ts`). Run `npm run docs:reference` after changing tool registrations.",
+    islandId: "mcp-tools",
+    render: () => renderMcpToolsIsland(tools),
+  };
+}
+
+export function readmeToolsPage(tools: readonly McpToolDoc[]): ReferencePage {
+  return {
+    file: "README.md",
+    title: "MCP tool reference",
+    intro: "",
+    islandId: "mcp-tools",
+    render: () => renderMcpToolsIsland(tools),
+  };
+}
 
 /** Replace (or append) the island in `existing`; a missing file gets the default page. */
 export function applyIsland(page: ReferencePage, existing: string | undefined): string {
