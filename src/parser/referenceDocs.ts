@@ -8,6 +8,8 @@
 
 import { COMMANDS, COMMAND_CATEGORIES, type CommandSpec, type ParamSpec } from "./commandSpec";
 import { OP_LABELS } from "./opLabels";
+import { BUILTIN_PROBLEMTYPES } from "../problemtype/builtins";
+import type { FieldSpec, ProblemtypeDeclaration } from "../problemtype/types";
 
 export const ISLAND_BEGIN = (id: string): string => `<!-- BEGIN GENERATED: ${id} -->`;
 export const ISLAND_END = (id: string): string => `<!-- END GENERATED: ${id} -->`;
@@ -59,6 +61,55 @@ export interface ReferencePage {
   render: () => string;
 }
 
+const cell = (v: unknown): string => esc(String(v ?? "").replace(/\s+/g, " ").trim());
+
+function fieldRows(fields: readonly FieldSpec[]): string[] {
+  const rows = ["| Field | Label | Type | Default | Unit | Choices |", "| --- | --- | --- | --- | --- | --- |"];
+  for (const f of fields) {
+    const choices = f.options ? f.options.map((o) => o.value).join(", ") : "";
+    const def = f.default === undefined ? "" : `\`${JSON.stringify(f.default)}\``;
+    rows.push(`| \`${f.id}\` | ${cell(f.label)} | ${f.type} | ${cell(def)} | ${cell(f.unit)} | ${cell(choices)} |`);
+  }
+  return rows;
+}
+
+/** One problemtype: identity, sections, conditions and material laws. */
+export function renderProblemtypeIsland(d: ProblemtypeDeclaration): string {
+  const out: string[] = [
+    `**${d.name}** (\`${d.id}\`)${d.description ? ` — ${cell(d.description)}` : ""}`,
+    "",
+    `- Analysis stage: \`${d.analysisStage}\``,
+    `- Root model part: \`${d.modelPartName}\``,
+    `- Materials file: \`${d.materialsFileName}\``,
+    `- Domain sizes: ${d.domainSizes.join(", ")}`,
+    "",
+    "## Sections",
+    "",
+  ];
+  for (const sec of d.sections) out.push(`### ${sec.label}`, "", ...fieldRows(sec.fields), "");
+  out.push("## Conditions", "");
+  if (!d.conditions.length) out.push("None.", "");
+  for (const c of d.conditions) {
+    out.push(`### ${c.label} (\`${c.id}\`)`, "", `List: \`${c.list}\`${c.noProcess ? " — marks a SubModelPart, emits no process" : ""}`, "");
+    if (c.fields.length) out.push(...fieldRows(c.fields), "");
+  }
+  out.push("## Material laws", "");
+  if (!d.materialLaws.length) out.push("None.", "");
+  for (const l of d.materialLaws) {
+    out.push(`### ${l.id}`, "", `Constitutive law: ${l.name ? `\`${l.name}\`` : "—"}${l.domainSize ? `, ${l.domainSize}D only` : ""}`, "");
+    if (l.variables.length) out.push(...fieldRows(l.variables), "");
+  }
+  return out.join("\n").trimEnd();
+}
+
+const problemtypePages: ReferencePage[] = BUILTIN_PROBLEMTYPES.map((rt) => ({
+  file: `doc/reference/problemtypes/${rt.decl.id}.md`,
+  title: `Problemtype: ${rt.decl.name}`,
+  intro: "Generated from the built-in `ProblemtypeDeclaration`; run `npm run docs:reference` after changing it.",
+  islandId: `problemtype-${rt.decl.id}`,
+  render: () => renderProblemtypeIsland(rt.decl),
+}));
+
 export const REFERENCE_PAGES: readonly ReferencePage[] = [
   {
     file: "doc/reference/commands.md",
@@ -74,6 +125,7 @@ export const REFERENCE_PAGES: readonly ReferencePage[] = [
     islandId: "operations",
     render: renderOperationIsland,
   },
+  ...problemtypePages,
 ];
 
 /** Replace (or append) the island in `existing`; a missing file gets the default page. */

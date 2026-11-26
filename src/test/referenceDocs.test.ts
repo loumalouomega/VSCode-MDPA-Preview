@@ -18,7 +18,7 @@ for (const page of REFERENCE_PAGES) {
 }
 
 test("applyIsland keeps prose outside the island and is idempotent", () => {
-  const page = REFERENCE_PAGES[1];
+  const page = REFERENCE_PAGES.find((p) => p.islandId === "operations")!;
   const hand = `# T\n\nhand prose\n\n<!-- BEGIN GENERATED: operations -->\nold\n<!-- END GENERATED: operations -->\n\ntail prose\n`;
   const next = applyIsland(page, hand);
   assert.ok(next.startsWith("# T\n\nhand prose\n"));
@@ -27,6 +27,6 @@ test("applyIsland keeps prose outside the island and is idempotent", () => {
 });
 
 test("operations island lists every operation", () => {
-  const text = REFERENCE_PAGES[1].render();
+  const text = REFERENCE_PAGES.find((p) => p.islandId === "operations")!.render();
   for (const op of Object.keys(OP_LABELS)) assert.ok(text.includes(`| \`${op}\` |`), op);
 });
