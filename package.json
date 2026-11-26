@@ -1339,6 +1339,7 @@
     "package": "node esbuild.js --production",
     "typecheck": "tsc --noEmit -p ./",
     "build:icons": "cd icons && make ts",
+    "build:mdpa-wasm": "node scripts/build-mdpa-wasm.mjs",
     "vtkwasm:fetch": "node scripts/vtk-wasm/fetch.mjs --candidate latest-9.7.20261018",
     "vtkwasm:prepare": "node scripts/vtk-wasm/prepare-assets.mjs",
     "build:tests": "tsc -p ./tsconfig.test.json",
@@ -1348,6 +1349,7 @@
     "bench:heartbeat": "node scripts/bench/host-heartbeat.mjs",
     "bench:plot": "node scripts/bench/plot-budget.mjs",
     "bench:large-mesh": "node scripts/bench/large-mesh.mjs",
+    "bench:mdpa-wasm": "node scripts/bench/mdpa-wasm-bench.mjs",
     "check:staged": "node scripts/staged/check-staged-mcp.mjs",
     "install-ext": "bash install.sh",
     "reinstall": "bash scripts/reinstall-local.sh"

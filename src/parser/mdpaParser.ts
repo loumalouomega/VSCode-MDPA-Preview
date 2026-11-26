@@ -23,6 +23,11 @@ import {
   emptyConstraintBlock,
   parseConstraintRow,
 } from "./constraintsParser";
+import {
+  isMdpaWasmAvailable,
+  parseMdpaFileWasm,
+  parseMdpaWasm,
+} from "./mdpaWasm";
 
 type SubListKey =
   | "nodeIds"
@@ -636,7 +641,8 @@ export class MdpaParserCore {
   }
 }
 
-export function parseMdpa(text: string): MdpaModel {
+/** Pure TypeScript parser kept as the test oracle and fallback (roadmap item 87). */
+export function parseMdpaTs(text: string): MdpaModel {
   const core = new MdpaParserCore();
   const lines = text.split(/\r?\n/);
   for (const line of lines) {
@@ -645,7 +651,15 @@ export function parseMdpa(text: string): MdpaModel {
   return core.finish();
 }
 
-export async function parseMdpaFile(
+export function parseMdpa(text: string): MdpaModel {
+  if (isMdpaWasmAvailable()) {
+    return parseMdpaWasm(text);
+  }
+  return parseMdpaTs(text);
+}
+
+/** Pure TypeScript streaming parser kept as the test oracle and fallback (roadmap item 87). */
+export async function parseMdpaFileTs(
   fsPath: string,
   onProgress?: (phase: "read", bytesRead: number, totalBytes: number) => void,
   signal?: AbortSignal
@@ -739,6 +753,17 @@ export async function parseMdpaFile(
       reject(err);
     });
   });
+}
+
+export async function parseMdpaFile(
+  fsPath: string,
+  onProgress?: (phase: "read", bytesRead: number, totalBytes: number) => void,
+  signal?: AbortSignal
+): Promise<MdpaModel> {
+  if (isMdpaWasmAvailable()) {
+    return parseMdpaFileWasm(fsPath, onProgress, signal);
+  }
+  return parseMdpaFileTs(fsPath, onProgress, signal);
 }
 
 // ---- Summary scanner ------------------------------------------------------------

@@ -8,6 +8,7 @@ node_modules/
 dist/
 media/
 out/
+crates/*/target/
 
 # Python bytecode (assets/kratos_problemtype.py is authored, never compiled here)
 __pycache__/
