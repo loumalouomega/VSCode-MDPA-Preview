@@ -12,7 +12,7 @@ const root = path.join(__dirname, "..", "..");
 
 for (const page of REFERENCE_PAGES) {
   test(`${page.file} island is current (run npm run docs:reference)`, () => {
-    const content = fs.readFileSync(path.join(root, page.file), "utf8");
+    const content = fs.readFileSync(path.join(root, page.file), "utf8").replace(/\r\n/g, "\n"); // Windows checkouts may use CRLF
     assert.equal(extractIsland(page, content), page.render());
   });
 }
