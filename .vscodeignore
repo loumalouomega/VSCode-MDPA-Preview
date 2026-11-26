@@ -16,6 +16,7 @@ icons/**
 doc/**
 example/**
 scripts/**
+crates/**
 node_modules/**
 
 tsconfig.json

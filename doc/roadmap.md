@@ -625,35 +625,28 @@ Admission criterion: closes a gap between a generated case and how its results a
 
 *Admission: an L-sized, multi-phase change to how the extension is built rather than what it does. Each item starts with a probe, and nothing in it is estimated until the probe reports. Recorded 2026-11-19 from KKSS's Rust port review, which found a full Rust rewrite not viable (a VS Code extension host and its webviews run only JavaScript, and vtk.js, Plotly and the picking pipeline have no Rust equivalent), and a Rust compute core loaded as WebAssembly viable.*
 
-### 87. Rust core crates compiled to WASM — L (probe first)
+### 87. Rust core crates compiled to WASM — L (Phase 1 delivered; later candidates pending)
 
-**Pending — added 2026-11-19 (KKSS Rust port review).**
+**Phase 1 delivered 2026-11-26 (probe passed, admitted).** Added `crates/mdpa-core` (compiled to WebAssembly with `wasm-bindgen --target nodejs` via `npm run build:mdpa-wasm` / `scripts/build-mdpa-wasm.mjs`), loaded synchronously by `src/parser/mdpaWasm.ts` and copied beside the bundles into `dist/mdpa-core/` by `esbuild.js`. `parseMdpa`, `parseMdpaFile`, `writeMdpa`, and `meshSummary.ts`'s MDPA scan now dispatch to `mdpa-core` when present, while `parseMdpaTs`, `parseMdpaFileTs`, `writeMdpaTs`, and `MdpaSummaryScanner` stay as the test oracle and fallback. `mesh_capabilities` reports `runtime.mdpaBackend` (`"rust-wasm"` or `"typescript"`).
+
+**Probe measurements (2026-11-26, `npm run bench:mdpa-wasm`, isolated worker threads on a 42.5 MB / 1,000,000-element `Element3D4N` `.mdpa` with 212,400 nodes, 13,924 conditions, Properties, 50k NodalData rows, and SubModelParts):**
+- `parseMdpaFile` (streaming): **525.7 ms** vs 2547.4 ms TS (**4.85× faster**), peak RSS 207 MB vs 275 MB (JS heap 7 MB vs 74 MB).
+- `parseMdpa` (in-memory): **602.9 ms** vs 2590.2 ms TS (**4.30× faster**), peak RSS 311 MB vs 432 MB (JS heap 7 MB vs 243 MB).
+- `writeMdpa` (1M elements): **490.6 ms** vs 1704.7 ms TS (**3.47× faster**), peak RSS 319 MB vs 535 MB (JS heap 7 MB vs 263 MB), SHA-256 bit-for-bit identical across all 42,375,617 bytes.
+- `MdpaSummaryScanner`: **343.2 ms** vs 684.0 ms TS (**1.99× faster**), peak RSS 301 MB vs 369 MB (JS heap 7 MB vs 136 MB).
+- Artifact & build cost: `mdpa_core_bg.wasm` is **429 KB** (460 KB with JS/d.ts glue); cold `cargo build --target wasm32-unknown-unknown --release` takes **36 s** on Rust 1.100.0 + `wasm-bindgen 0.2.130`. Parity verified by `src/test/mdpaWasmParity.test.ts` across all 20 committed `.mdpa` fixtures plus synthetic edge cases (Properties trap door, Constraints, ragged fields, `__proto__`, diagnostics).
 
 **Hypothesis:** pure, `vscode`-free, CPU-bound modules can move into Rust crates and be compiled to WebAssembly with `wasm-bindgen`. They would load in the workers that already exist, so the extension stays an extension, and they would add no native module. KKSS stages them the same way it stages MMG and meshio++, beside `out/main.js`.
 
-**Candidates:**
-- `src/parser/mdpaParser.ts` (936 lines) and its writer, which are first.
-- `elementMetrics.ts`, `constraintsParser.ts`, and the `deriveMesh.ts` kernels that run in `derivedWorker`.
+**Remaining candidates (each a separate probe):**
+- `elementMetrics.ts`, `constraintsParser.ts` (maintenance ops), and the `deriveMesh.ts` kernels that run in `derivedWorker`.
 - The STL/OBJ/PLY parsers. These are duplicated today in `src/parser/` and in CAD-Preview's `src/`, so one crate could serve both extensions. This depends on CAD-Preview's "Rust core crates compiled to WASM" entry.
-
-**Probe (M):**
-1. Port the MDPA parse and write to a crate. Keep the delivery rule "preserve the data contract": original IDs, the separate Elements/Conditions/Geometries ID spaces, Properties, SubModelParts and field components.
-2. Run the existing parser tests against both implementations. On every fixture, the round trip must produce the same `MeshModel` and byte-identical output.
-3. Benchmark a large `.mdpa` (at least 1M elements) inside `meshioReadWorker` or `analysisWorker`, and compare time and peak memory with the TS parser.
-4. Measure the `.wasm` size, and the cost of the build in CI: a pinned Rust toolchain and the `wasm32-unknown-unknown` target.
-
-**Decision gate:**
-- **Pass:** identical output on every fixture, at least 2× faster on the large case, and a build that fits the existing CI matrix. Phase 1 is admitted.
-- **Partial:** identical output but no meaningful speedup. Keep the crate only if the shared STL/OBJ/PLY parsers justify it.
-- **Fail:** recorded under Non-goals with the measurements.
-
-**If admitted (L):** the crate replaces the TS module behind its existing function signatures, and the TS version stays as the test oracle for one release. Later candidates are each a separate probe.
 
 **Out of scope:** the webview (vtk.js, Plotly and the DOM stay TypeScript), the `vscode` providers, and a native Node addon.
 
-**MCP:** none, because behaviour is unchanged. `mesh_capabilities` may report the backend.
+**MCP:** none, because behaviour is unchanged. `mesh_capabilities` reports `runtime.mdpaBackend`.
 
-**KKSS:** the parent stages the crate and adds a preflight entry and a runtime parity test. Its roadmap lists the matching work as "Rust compute core shared with the extensions".
+**KKSS:** the parent stages `dist/mdpa-core/` alongside `dist/meshio/` and `dist/mmg-core.wasm` and adds a preflight entry and a runtime parity test. Its roadmap lists the matching work as "Rust compute core shared with the extensions".
 
 ## Non-goals / known constraints
 

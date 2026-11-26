@@ -1,0 +1,38 @@
+/* tslint:disable */
+/* eslint-disable */
+export const memory: WebAssembly.Memory;
+export const __wbg_wasmmdpastreamparser_free: (a: number, b: number) => void;
+export const __wbg_wasmmdpasummaryscanner_free: (a: number, b: number) => void;
+export const __wbg_wasmmdpawriter_free: (a: number, b: number) => void;
+export const __wbg_wasmparsedmdpa_free: (a: number, b: number) => void;
+export const parseMdpaBytes: (a: number, b: number) => number;
+export const wasmmdpastreamparser_feedChunk: (a: number, b: number, c: number) => void;
+export const wasmmdpastreamparser_feedLine: (a: number, b: number, c: number) => void;
+export const wasmmdpastreamparser_finish: (a: number) => [number, number, number];
+export const wasmmdpastreamparser_new: () => number;
+export const wasmmdpasummaryscanner_feedChunk: (a: number, b: number, c: number) => void;
+export const wasmmdpasummaryscanner_feedLine: (a: number, b: number, c: number) => void;
+export const wasmmdpasummaryscanner_finishJson: (a: number) => [number, number, number, number];
+export const wasmmdpasummaryscanner_new: () => number;
+export const wasmmdpawriter_addBlock: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
+export const wasmmdpawriter_addField: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
+export const wasmmdpawriter_addSubpartIds: (a: number, b: number, c: number) => void;
+export const wasmmdpawriter_buildBytes: (a: number) => any;
+export const wasmmdpawriter_new: (a: number, b: number) => [number, number, number];
+export const wasmmdpawriter_setNodes: (a: number, b: number, c: number, d: number, e: number) => void;
+export const wasmparsedmdpa_blockConnectivity: (a: number, b: number) => any;
+export const wasmparsedmdpa_blockEntityIds: (a: number, b: number) => any;
+export const wasmparsedmdpa_blockPropertyIds: (a: number, b: number) => any;
+export const wasmparsedmdpa_coords: (a: number) => any;
+export const wasmparsedmdpa_fieldFixed: (a: number, b: number) => any;
+export const wasmparsedmdpa_fieldIds: (a: number, b: number) => any;
+export const wasmparsedmdpa_fieldValues: (a: number, b: number) => any;
+export const wasmparsedmdpa_metaJson: (a: number) => [number, number, number, number];
+export const wasmparsedmdpa_nodeIds: (a: number) => any;
+export const wasmparsedmdpa_subpartIds: (a: number, b: number) => any;
+export const __wbindgen_externrefs: WebAssembly.Table;
+export const __wbindgen_malloc: (a: number, b: number) => number;
+export const __wbindgen_free: (a: number, b: number, c: number) => void;
+export const __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
+export const __externref_table_dealloc: (a: number) => void;
+export const __wbindgen_start: () => void;

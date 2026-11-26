@@ -58,6 +58,7 @@ import * as path from "node:path";
 import { randomUUID } from "node:crypto";
 import { MdpaModel, EntityBlock, SubModelPart, EntityKind } from "../parser/types";
 import { parseMdpa } from "../parser/mdpaParser";
+import { isMdpaWasmAvailable } from "../parser/mdpaWasm";
 import { surfaceDefects } from "../parser/surfaceDefects";
 import { curvatureModel, gaussBonnetResidual } from "../parser/curvature";
 import { meshGraph, graphFormatOf, GRAPH_KINDS, GRAPH_FORMATS, type GraphKind, type GraphFormat } from "../parser/meshGraph";
@@ -3142,7 +3143,11 @@ export async function meshCapabilities(): Promise<object> {
     // What this process actually wired (workers found beside the bundle, the
     // kernel tree's location): a packaged distribution that lost a file falls
     // back silently, and this is where that becomes visible.
-    runtime: { ...getRuntimeWiring(), meshio: meshioPackageSource() ?? null },
+    runtime: {
+      ...getRuntimeWiring(),
+      meshio: meshioPackageSource() ?? null,
+      mdpaBackend: isMdpaWasmAvailable() ? "rust-wasm" : "typescript",
+    },
     plotting: PLOT_CAPABILITIES,
     windTunnel: {
       tools: ["wind_tunnel_plan", "wind_tunnel_generate"],
