@@ -2436,7 +2436,7 @@ input.outline-label-input {
   background: var(--ds-toolbar-hover);
 }
 /* The static markup still carries the TikZ close icon (the find bar is written
-   three times — see the brief in CLAUDE.md — so its glyph swap is deferred); size
+   three times — see the brief in AGENTS.md — so its glyph swap is deferred); size
    it like the panels' 14px glyph. */
 #find-bar #find-close .toolbar-icon svg {
   width: 14px;

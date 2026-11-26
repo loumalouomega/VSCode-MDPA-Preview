@@ -56,7 +56,7 @@
  * (`triangle`, `triangle_Conditions`, …) — because reconstructing the
  * original block boundary reliably would need a THIRD region-based carrier
  * this design deliberately does not add (see the module's own decision
- * record in CLAUDE.md); it is reported once as a `blockNames` loss.
+ * record in AGENTS.md); it is reported once as a `blockNames` loss.
  *
  * For a result containing a RAGGED (polygon/polyhedron) cell block, per-cell
  * fidelity recovery is not implemented: rather than risk silently

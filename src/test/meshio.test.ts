@@ -1165,7 +1165,7 @@ test("meshio++ 11.5.0: gmsh writes $PhysicalNames, allocating tags for untagged 
   // of its own is allocated `max(existing tags of that dimension) + 1` rather
   // than dropped. Measured rather than assumed, because this is exactly the
   // kind of change that should make a stale "SubModelParts do not survive a
-  // .msh export" note in CLAUDE.md fail loudly instead of quietly
+  // .msh export" note in AGENTS.md fail loudly instead of quietly
   // misinforming.
   const { parseMdpa } = require("../parser/mdpaParser") as typeof import("../parser/mdpaParser");
   const model = parseMdpa(
@@ -1201,7 +1201,7 @@ test("meshio++ 11.5.0: gmsh writes $PhysicalNames, allocating tags for untagged 
 });
 
 test("gmsh read-back (roadmap item 3): a block region beats a same-cell part region on EVERY overlapping part", async () => {
-  // Pins the CLAUDE.md claim under meshioConvert.ts's buildRegions bullet
+  // Pins the AGENTS.md claim under meshioConvert.ts's buildRegions bullet
   // ("an overlapping part loses it to the first region in order with a
   // warning (a block region beats a same-cell part region)"), which named
   // this file but had no actual test — measured, not assumed, by reading

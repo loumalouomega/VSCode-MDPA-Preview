@@ -3,7 +3,7 @@
  * oracles: linearize, refine, simplexify, crop, fieldCalc, averageField.
  * The transforms themselves are tested in their own files; this pins that
  * each is reachable through applyOp / opRecordFromMessage / recipe JSON —
- * the checklist CLAUDE.md calls out as easy to half-finish.
+ * the checklist AGENTS.md calls out as easy to half-finish.
  */
 
 import assert from "node:assert/strict";

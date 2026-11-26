@@ -1,6 +1,6 @@
 // Floating panel for Advanced ▸ Camera Bookmarks…: named camera positions
 // saved for this webview session (not persisted across a reload — see
-// CLAUDE.md), plus a JSON textarea for cross-session/sharing via
+// AGENTS.md), plus a JSON textarea for cross-session/sharing via
 // src/parser/cameraState.ts. Pure DOM, mirrors qualityPanel.ts.
 
 import { t } from "../src/parser/i18n/runtime";

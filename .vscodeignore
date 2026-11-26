@@ -23,7 +23,7 @@ tsconfig.test.json
 esbuild.js
 install.sh
 package-lock.json
-CLAUDE.md
+AGENTS.md
 **/.gitignore
 *.vsix
 
