@@ -67,7 +67,37 @@ interface WasmMdpaWriterHandle {
   free(): void;
 }
 
-interface MdpaWasmModule {
+interface WasmMetricsMeshHandle {
+  block(
+    connectivity: Int32Array,
+    count: number,
+    stride: number,
+    shapeId: number,
+    need: number,
+    decompKind: number,
+    decomp: Int32Array
+  ): Float64Array;
+  free(): void;
+}
+
+interface WasmSkinExtractorHandle {
+  addSurfaceBlock(vtkType: number, connectivity: Int32Array, count: number, stride: number): void;
+  addVolumeBlock(vtkType: number, connectivity: Int32Array, count: number, stride: number): void;
+  finish(): number;
+  groupCount(): number;
+  groupVtkType(idx: number): number;
+  groupStride(idx: number): number;
+  groupFaceCount(idx: number): number;
+  groupEntityIds(idx: number): Int32Array;
+  groupConnectivity(idx: number): Int32Array;
+  free(): void;
+}
+
+export interface MdpaWasmModule {
+  /** Solver element-quality kernels (roadmap item 87, Phase 2); absent in older builds. */
+  WasmMetricsMesh?: new (nodeIds: Int32Array, coords: Float32Array) => WasmMetricsMeshHandle;
+  /** Boundary-skin extraction (roadmap item 87, Phase 2); absent in older builds. */
+  WasmSkinExtractor?: new (nodeIds: Int32Array) => WasmSkinExtractorHandle;
   parseMdpaBytes(bytes: Uint8Array): WasmParsedMdpaHandle;
   WasmMdpaStreamParser: new () => WasmStreamParserHandle;
   WasmMdpaSummaryScanner: new () => WasmSummaryScannerHandle;

@@ -221,6 +221,77 @@ if (Symbol.dispose) WasmMdpaWriter.prototype[Symbol.dispose] = WasmMdpaWriter.pr
 exports.WasmMdpaWriter = WasmMdpaWriter;
 
 /**
+ * Solver element-quality kernels (Phase 2). One node table, many blocks.
+ */
+class WasmMetricsMesh {
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        WasmMetricsMeshFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_wasmmetricsmesh_free(ptr, 0);
+    }
+    /**
+     * Six values per cell: scaledJacobian, skewness, warpage, taper, radiusRatio,
+     * measure. `NaN` = not applicable.
+     * @param {Int32Array | number[]} connectivity
+     * @param {number} count
+     * @param {number} stride
+     * @param {number} shape_id
+     * @param {number} need
+     * @param {number} decomp_kind
+     * @param {Int32Array | number[]} decomp
+     * @returns {Float64Array}
+     */
+    block(connectivity, count, stride, shape_id, need, decomp_kind, decomp) {
+        const val3 = +count;
+        const val4 = +stride;
+        const val5 = +shape_id;
+        const val6 = +need;
+        const val7 = +decomp_kind;
+        let ptr0, len0, ptr1, len1;
+        try {
+            ptr0 = passArray32ToWasm0(connectivity, wasm.__wbindgen_malloc);
+            len0 = WASM_VECTOR_LEN;
+            ptr1 = passArray32ToWasm0(decomp, wasm.__wbindgen_malloc);
+            len1 = WASM_VECTOR_LEN;
+        } catch (e) {
+            if (ptr1) { wasm.__wbindgen_free(ptr1, len1 * 4, 4); }
+            if (ptr0) { wasm.__wbindgen_free(ptr0, len0 * 4, 4); }
+            throw e;
+        }
+        const ret = wasm.wasmmetricsmesh_block(this.__wbg_ptr, ptr0, len0, val3, val4, val5, val6, val7, ptr1, len1);
+        return ret;
+    }
+    /**
+     * @param {Int32Array | number[]} node_ids
+     * @param {Float32Array | number[]} coords
+     */
+    constructor(node_ids, coords) {
+        let ptr0, len0, ptr1, len1;
+        try {
+            ptr0 = passArray32ToWasm0(node_ids, wasm.__wbindgen_malloc);
+            len0 = WASM_VECTOR_LEN;
+            ptr1 = passArrayF32ToWasm0(coords, wasm.__wbindgen_malloc);
+            len1 = WASM_VECTOR_LEN;
+        } catch (e) {
+            if (ptr1) { wasm.__wbindgen_free(ptr1, len1 * 4, 4); }
+            if (ptr0) { wasm.__wbindgen_free(ptr0, len0 * 4, 4); }
+            throw e;
+        }
+        const ret = wasm.wasmmetricsmesh_new(ptr0, len0, ptr1, len1);
+        this.__wbg_ptr = ret;
+        WasmMetricsMeshFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+}
+if (Symbol.dispose) WasmMetricsMesh.prototype[Symbol.dispose] = WasmMetricsMesh.prototype.free;
+exports.WasmMetricsMesh = WasmMetricsMesh;
+
+/**
  * Result of parsing an MDPA document. Holds typed arrays in WASM linear memory
  * until extracted via bulk-copy getters and freed.
  */
@@ -337,6 +408,117 @@ if (Symbol.dispose) WasmParsedMdpa.prototype[Symbol.dispose] = WasmParsedMdpa.pr
 exports.WasmParsedMdpa = WasmParsedMdpa;
 
 /**
+ * Boundary-skin extraction (roadmap item 87, Phase 2).
+ */
+class WasmSkinExtractor {
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        WasmSkinExtractorFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_wasmskinextractor_free(ptr, 0);
+    }
+    /**
+     * @param {number} vtk_type
+     * @param {Int32Array | number[]} connectivity
+     * @param {number} count
+     * @param {number} stride
+     */
+    addSurfaceBlock(vtk_type, connectivity, count, stride) {
+        const val2 = +vtk_type;
+        const val3 = +count;
+        const val4 = +stride;
+        const ptr0 = passArray32ToWasm0(connectivity, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.wasmskinextractor_addSurfaceBlock(this.__wbg_ptr, val2, ptr0, len0, val3, val4);
+    }
+    /**
+     * @param {number} vtk_type
+     * @param {Int32Array | number[]} connectivity
+     * @param {number} count
+     * @param {number} stride
+     */
+    addVolumeBlock(vtk_type, connectivity, count, stride) {
+        const val2 = +vtk_type;
+        const val3 = +count;
+        const val4 = +stride;
+        const ptr0 = passArray32ToWasm0(connectivity, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.wasmskinextractor_addVolumeBlock(this.__wbg_ptr, val2, ptr0, len0, val3, val4);
+    }
+    /**
+     * @returns {number}
+     */
+    finish() {
+        const ret = wasm.wasmskinextractor_finish(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @param {number} idx
+     * @returns {Int32Array}
+     */
+    groupConnectivity(idx) {
+        const ret = wasm.wasmskinextractor_groupConnectivity(this.__wbg_ptr, idx);
+        return ret;
+    }
+    /**
+     * @returns {number}
+     */
+    groupCount() {
+        const ret = wasm.wasmskinextractor_groupCount(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @param {number} idx
+     * @returns {Int32Array}
+     */
+    groupEntityIds(idx) {
+        const ret = wasm.wasmskinextractor_groupEntityIds(this.__wbg_ptr, idx);
+        return ret;
+    }
+    /**
+     * @param {number} idx
+     * @returns {number}
+     */
+    groupFaceCount(idx) {
+        const ret = wasm.wasmskinextractor_groupFaceCount(this.__wbg_ptr, idx);
+        return ret >>> 0;
+    }
+    /**
+     * @param {number} idx
+     * @returns {number}
+     */
+    groupStride(idx) {
+        const ret = wasm.wasmskinextractor_groupStride(this.__wbg_ptr, idx);
+        return ret >>> 0;
+    }
+    /**
+     * @param {number} idx
+     * @returns {number}
+     */
+    groupVtkType(idx) {
+        const ret = wasm.wasmskinextractor_groupVtkType(this.__wbg_ptr, idx);
+        return ret >>> 0;
+    }
+    /**
+     * @param {Int32Array | number[]} node_ids
+     */
+    constructor(node_ids) {
+        const ptr0 = passArray32ToWasm0(node_ids, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.wasmskinextractor_new(ptr0, len0);
+        this.__wbg_ptr = ret;
+        WasmSkinExtractorFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+}
+if (Symbol.dispose) WasmSkinExtractor.prototype[Symbol.dispose] = WasmSkinExtractor.prototype.free;
+exports.WasmSkinExtractor = WasmSkinExtractor;
+
+/**
  * Parse an entire UTF-8 MDPA buffer in one shot.
  * @param {Uint8Array | number[]} bytes
  * @returns {WasmParsedMdpa}
@@ -399,9 +581,15 @@ const WasmMdpaSummaryScannerFinalization = (typeof FinalizationRegistry === 'und
 const WasmMdpaWriterFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_wasmmdpawriter_free(ptr, 1));
+const WasmMetricsMeshFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_wasmmetricsmesh_free(ptr, 1));
 const WasmParsedMdpaFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_wasmparsedmdpa_free(ptr, 1));
+const WasmSkinExtractorFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_wasmskinextractor_free(ptr, 1));
 
 function getArrayF32FromWasm0(ptr, len) {
     ptr = ptr >>> 0;

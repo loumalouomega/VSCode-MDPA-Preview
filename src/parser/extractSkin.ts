@@ -33,6 +33,7 @@ import { cellCategory, cornerCount, volumeFaces, nodeIndexMap } from "./writers/
 import { rebuildNodeArrays } from "./subModelPartExtract";
 import { simplexifyModel } from "./simplexify";
 import { carryFieldMeta } from "./fieldDimensions";
+import { loadMdpaWasm } from "./mdpaWasm";
 
 const C = VtkCellType;
 
@@ -61,6 +62,50 @@ function nameFor(vtkType: number): string {
 }
 
 export function extractSkinModel(model: MdpaModel): ExtractSkinResult {
+  const wasm = loadMdpaWasm();
+  if (!wasm?.WasmSkinExtractor) return extractSkinModelTs(model);
+  const extractor = new wasm.WasmSkinExtractor(model.nodeIds.subarray(0, model.nodeCount));
+  try {
+    for (const block of model.blocks) {
+      if (cellCategory(block.vtkCellType) === "surface" && block.vtkCellType !== undefined) {
+        extractor.addSurfaceBlock(block.vtkCellType, block.connectivity, block.count, block.stride);
+      }
+    }
+    for (const block of model.blocks) {
+      if (cellCategory(block.vtkCellType) === "volume" && block.vtkCellType !== undefined) {
+        extractor.addVolumeBlock(block.vtkCellType, block.connectivity, block.count, block.stride);
+      }
+    }
+    const faceCount = extractor.finish();
+    if (faceCount === 0) {
+      return {
+        model: { ...model, blocks: [], fields: [], subModelParts: narrowParts(model.subModelParts, new Set()) },
+        faces: 0,
+      };
+    }
+    const groupCount = extractor.groupCount();
+    const blocks: EntityBlock[] = [];
+    for (let g = 0; g < groupCount; g++) {
+      const vtkType = extractor.groupVtkType(g);
+      const stride = extractor.groupStride(g);
+      const count = extractor.groupFaceCount(g);
+      blocks.push({
+        kind: "Elements",
+        name: nameFor(vtkType),
+        vtkCellType: vtkType,
+        count,
+        stride,
+        entityIds: extractor.groupEntityIds(g),
+        connectivity: extractor.groupConnectivity(g),
+      });
+    }
+    return assembleSkinModel(model, blocks, faceCount);
+  } finally {
+    extractor.free();
+  }
+}
+
+export function extractSkinModelTs(model: MdpaModel): ExtractSkinResult {
   const idToIndex = nodeIndexMap(model);
   const cornerIds = (block: EntityBlock, c: number, corners: number): number[] | undefined => {
     const out: number[] = [];
@@ -153,6 +198,10 @@ export function extractSkinModel(model: MdpaModel): ExtractSkinResult {
     connectivity: Int32Array.from(g.connectivity),
   }));
 
+  return assembleSkinModel(model, blocks, faces.length);
+}
+
+function assembleSkinModel(model: MdpaModel, blocks: EntityBlock[], faceCount: number): ExtractSkinResult {
   const keptNodes = new Set<number>();
   for (const b of blocks) for (const id of b.connectivity) keptNodes.add(id);
   const { nodeIds, coords, bounds } = rebuildNodeArrays(model, keptNodes);
@@ -196,7 +245,7 @@ export function extractSkinModel(model: MdpaModel): ExtractSkinResult {
       is3D: model.is3D,
       bounds,
     },
-    faces: faces.length,
+    faces: faceCount,
   };
 }
 

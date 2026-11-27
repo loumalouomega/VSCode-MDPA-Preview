@@ -40,6 +40,20 @@ export class WasmMdpaWriter {
 }
 
 /**
+ * Solver element-quality kernels (Phase 2). One node table, many blocks.
+ */
+export class WasmMetricsMesh {
+    free(): void;
+    [Symbol.dispose](): void;
+    /**
+     * Six values per cell: scaledJacobian, skewness, warpage, taper, radiusRatio,
+     * measure. `NaN` = not applicable.
+     */
+    block(connectivity: Int32Array | number[], count: number, stride: number, shape_id: number, need: number, decomp_kind: number, decomp: Int32Array | number[]): Float64Array;
+    constructor(node_ids: Int32Array | number[], coords: Float32Array | number[]);
+}
+
+/**
  * Result of parsing an MDPA document. Holds typed arrays in WASM linear memory
  * until extracted via bulk-copy getters and freed.
  */
@@ -57,6 +71,24 @@ export class WasmParsedMdpa {
     metaJson(): string;
     nodeIds(): Int32Array;
     subpartIds(flat_idx: number): Int32Array;
+}
+
+/**
+ * Boundary-skin extraction (roadmap item 87, Phase 2).
+ */
+export class WasmSkinExtractor {
+    free(): void;
+    [Symbol.dispose](): void;
+    addSurfaceBlock(vtk_type: number, connectivity: Int32Array | number[], count: number, stride: number): void;
+    addVolumeBlock(vtk_type: number, connectivity: Int32Array | number[], count: number, stride: number): void;
+    finish(): number;
+    groupConnectivity(idx: number): Int32Array;
+    groupCount(): number;
+    groupEntityIds(idx: number): Int32Array;
+    groupFaceCount(idx: number): number;
+    groupStride(idx: number): number;
+    groupVtkType(idx: number): number;
+    constructor(node_ids: Int32Array | number[]);
 }
 
 /**

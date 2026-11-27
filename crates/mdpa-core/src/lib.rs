@@ -2,6 +2,8 @@
 
 pub mod constraints;
 pub mod geometry_map;
+pub mod metrics;
+pub mod skin;
 pub mod num_fmt;
 pub mod parser;
 pub mod properties;
@@ -232,5 +234,96 @@ impl WasmMdpaWriter {
     pub fn build_bytes(&self) -> js_sys::Uint8Array {
         let bytes = write_mdpa_bytes(&self.input);
         js_sys::Uint8Array::from(bytes.as_slice())
+    }
+}
+
+/// Solver element-quality kernels (Phase 2). One node table, many blocks.
+#[wasm_bindgen]
+pub struct WasmMetricsMesh {
+    inner: crate::metrics::MetricsMesh,
+}
+
+#[wasm_bindgen]
+impl WasmMetricsMesh {
+    #[wasm_bindgen(constructor)]
+    pub fn new(node_ids: &[i32], coords: &[f32]) -> WasmMetricsMesh {
+        WasmMetricsMesh { inner: crate::metrics::MetricsMesh::new(node_ids, coords) }
+    }
+
+    /// Six values per cell: scaledJacobian, skewness, warpage, taper, radiusRatio,
+    /// measure. `NaN` = not applicable.
+    #[wasm_bindgen(js_name = block)]
+    #[allow(clippy::too_many_arguments)]
+    pub fn block(
+        &self,
+        connectivity: &[i32],
+        count: usize,
+        stride: usize,
+        shape_id: u32,
+        need: usize,
+        decomp_kind: u32,
+        decomp: &[i32],
+    ) -> js_sys::Float64Array {
+        let v = self.inner.block(connectivity, count, stride, shape_id, need, decomp_kind, decomp);
+        js_sys::Float64Array::from(v.as_slice())
+    }
+}
+
+/// Boundary-skin extraction (roadmap item 87, Phase 2).
+#[wasm_bindgen]
+pub struct WasmSkinExtractor {
+    inner: crate::skin::SkinExtractor,
+}
+
+#[wasm_bindgen]
+impl WasmSkinExtractor {
+    #[wasm_bindgen(constructor)]
+    pub fn new(node_ids: &[i32]) -> WasmSkinExtractor {
+        WasmSkinExtractor { inner: crate::skin::SkinExtractor::new(node_ids) }
+    }
+
+    #[wasm_bindgen(js_name = addSurfaceBlock)]
+    pub fn add_surface_block(&mut self, vtk_type: u32, connectivity: &[i32], count: usize, stride: usize) {
+        self.inner.add_surface_block(vtk_type, connectivity, count, stride);
+    }
+
+    #[wasm_bindgen(js_name = addVolumeBlock)]
+    pub fn add_volume_block(&mut self, vtk_type: u32, connectivity: &[i32], count: usize, stride: usize) {
+        self.inner.add_volume_block(vtk_type, connectivity, count, stride);
+    }
+
+    #[wasm_bindgen(js_name = finish)]
+    pub fn finish(&mut self) -> usize {
+        self.inner.finish()
+    }
+
+    #[wasm_bindgen(js_name = groupCount)]
+    pub fn group_count(&self) -> usize {
+        self.inner.group_count()
+    }
+
+    #[wasm_bindgen(js_name = groupVtkType)]
+    pub fn group_vtk_type(&self, idx: usize) -> u32 {
+        self.inner.group_vtk_type(idx)
+    }
+
+    #[wasm_bindgen(js_name = groupStride)]
+    pub fn group_stride(&self, idx: usize) -> usize {
+        self.inner.group_stride(idx)
+    }
+
+    #[wasm_bindgen(js_name = groupFaceCount)]
+    pub fn group_face_count(&self, idx: usize) -> usize {
+        self.inner.group_face_count(idx)
+    }
+
+    #[wasm_bindgen(js_name = groupEntityIds)]
+    pub fn group_entity_ids(&self, idx: usize) -> js_sys::Int32Array {
+        js_sys::Int32Array::from(self.inner.group_entity_ids(idx))
+    }
+
+    #[wasm_bindgen(js_name = groupConnectivity)]
+    pub fn group_connectivity(&self, idx: usize) -> js_sys::Int32Array {
+        js_sys::Int32Array::from(self.inner.group_connectivity(idx))
     }
 }
