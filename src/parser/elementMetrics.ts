@@ -29,6 +29,7 @@ import { MdpaModel } from "./types";
 import { VtkCellType } from "./geometryMap";
 import { decompositionFor } from "./cellDecomposition";
 import { MetricResult, MetricSpec, finalize, classify } from "./meshQuality";
+import { loadMdpaWasm } from "./mdpaWasm";
 
 const C = VtkCellType;
 type Vec3 = [number, number, number];
@@ -64,6 +65,8 @@ const RAD2DEG = 180 / Math.PI;
 
 // --- cell tables --------------------------------------------------------
 interface Shape {
+  /** Id shared with crates/mdpa-core/src/metrics.rs (roadmap item 87, Phase 2). */
+  id: number;
   corners: number;
   dim: 2 | 3;
   /** Per corner, the neighbour corners (right-handed triples in 3D, ordered pair in 2D). */
@@ -84,34 +87,35 @@ const midMap = (pairs: number[][], first: number): Map<number, number> => {
 };
 
 const TRI: Shape = {
-  corners: 3, dim: 2, scale: 2 / Math.sqrt(3),
+  id: 1, corners: 3, dim: 2, scale: 2 / Math.sqrt(3),
   frames: [[1, 2], [2, 0], [0, 1]],
   faces: [[0, 1, 2]],
 };
-const TRI6: Shape = { ...TRI, mids: midMap([[0, 1], [1, 2], [2, 0]], 3) };
+const TRI6: Shape = { ...TRI, id: 2, mids: midMap([[0, 1], [1, 2], [2, 0]], 3) };
 const QUAD: Shape = {
-  corners: 4, dim: 2, scale: 1,
+  id: 3, corners: 4, dim: 2, scale: 1,
   frames: [[1, 3], [2, 0], [3, 1], [0, 2]],
   faces: [[0, 1, 2, 3]],
 };
-const QUAD8: Shape = { ...QUAD, mids: midMap([[0, 1], [1, 2], [2, 3], [3, 0]], 4) };
+const QUAD8: Shape = { ...QUAD, id: 4, mids: midMap([[0, 1], [1, 2], [2, 3], [3, 0]], 4) };
 const TET: Shape = {
-  corners: 4, dim: 3, scale: Math.SQRT2,
+  id: 5, corners: 4, dim: 3, scale: Math.SQRT2,
   frames: [[1, 2, 3], [0, 3, 2], [0, 1, 3], [0, 2, 1]],
   faces: [[0, 1, 2], [0, 3, 1], [0, 2, 3], [1, 3, 2]],
 };
-const TET10: Shape = { ...TET, mids: midMap([[0, 1], [1, 2], [2, 0], [0, 3], [1, 3], [2, 3]], 4) };
+const TET10: Shape = { ...TET, id: 6, mids: midMap([[0, 1], [1, 2], [2, 0], [0, 3], [1, 3], [2, 3]], 4) };
 const HEX: Shape = {
-  corners: 8, dim: 3, scale: 1,
+  id: 7, corners: 8, dim: 3, scale: 1,
   frames: [[1, 3, 4], [2, 0, 5], [3, 1, 6], [0, 2, 7], [7, 5, 0], [4, 6, 1], [5, 7, 2], [6, 4, 3]],
   faces: [[0, 1, 2, 3], [4, 7, 6, 5], [0, 4, 5, 1], [1, 5, 6, 2], [2, 6, 7, 3], [3, 7, 4, 0]],
 };
 const HEX20: Shape = {
   ...HEX,
+  id: 8,
   mids: midMap([[0, 1], [1, 2], [2, 3], [3, 0], [4, 5], [5, 6], [6, 7], [7, 4], [0, 4], [1, 5], [2, 6], [3, 7]], 8),
 };
 const WEDGE: Shape = {
-  corners: 6, dim: 3, scale: 2 / Math.sqrt(3),
+  id: 9, corners: 6, dim: 3, scale: 2 / Math.sqrt(3),
   frames: [[2, 1, 3], [0, 2, 4], [1, 0, 5], [4, 5, 0], [5, 3, 1], [3, 4, 2]],
 };
 
@@ -282,7 +286,7 @@ function median(values: number[]): number {
  * that has at least one applicable element, in SOLVER_METRIC_KEYS order.
  * `badEntityIds` holds the bad and unacceptable bands.
  */
-export function computeSolverMetrics(model: MdpaModel, keys: readonly SolverMetricKey[] = SOLVER_METRIC_KEYS): MetricResult[] {
+export function computeSolverMetricsTs(model: MdpaModel, keys: readonly SolverMetricKey[] = SOLVER_METRIC_KEYS): MetricResult[] {
   const wanted = new Set(keys);
   const nodeIndex = new Map<number, number>();
   for (let i = 0; i < model.nodeCount; i++) nodeIndex.set(model.nodeIds[i], i);
@@ -336,6 +340,84 @@ export function computeSolverMetrics(model: MdpaModel, keys: readonly SolverMetr
         push("volumeRatio", c.vol > 0 ? Math.max(c.vol / med, med / c.vol) : Infinity, c.id);
       }
     }
+  }
+
+  const out: MetricResult[] = [];
+  for (const k of SOLVER_METRIC_KEYS) {
+    if (!wanted.has(k) || values[k].length === 0) continue;
+    out.push(finalize(SOLVER_SPECS[k], values[k], bad[k]));
+  }
+  return out;
+}
+
+/** Flat decomposition tables handed to the Rust kernel, cached per cell type. */
+const decompCache = new Map<number, { kind: number; flat: Int32Array }>();
+function flatDecomposition(cellType: number | undefined): { kind: number; flat: Int32Array } {
+  const ct = cellType ?? -1;
+  let hit = decompCache.get(ct);
+  if (!hit) {
+    const d = decompositionFor(cellType);
+    const rows = d.tets ?? d.tris;
+    hit = { kind: d.tets ? 2 : d.tris ? 1 : 0, flat: Int32Array.from(rows ? rows.flat() : []) };
+    decompCache.set(ct, hit);
+  }
+  return hit;
+}
+
+/**
+ * Same result as `computeSolverMetricsTs`, with the per-cell kernels run in the
+ * Rust/WASM crate when it is available (roadmap item 87, Phase 2). Banding,
+ * block medians and `finalize` stay here, so only raw values cross the boundary.
+ */
+export function computeSolverMetrics(model: MdpaModel, keys: readonly SolverMetricKey[] = SOLVER_METRIC_KEYS): MetricResult[] {
+  const wasm = loadMdpaWasm();
+  if (!wasm?.WasmMetricsMesh) return computeSolverMetricsTs(model, keys);
+  const wanted = new Set(keys);
+  let blocks = model.blocks.filter((b) => b.kind === "Elements");
+  if (blocks.length === 0) blocks = model.blocks.filter((b) => decompositionFor(b.vtkCellType).corners > 0);
+
+  const values: Record<SolverMetricKey, number[]> = {
+    scaledJacobian: [], skewness: [], warpage: [], taper: [], radiusRatio: [], volumeRatio: [],
+  };
+  const bad: Record<SolverMetricKey, number[]> = {
+    scaledJacobian: [], skewness: [], warpage: [], taper: [], radiusRatio: [], volumeRatio: [],
+  };
+  const push = (k: SolverMetricKey, v: number, id: number): void => {
+    if (!Number.isFinite(v) || !wanted.has(k)) return;
+    values[k].push(v);
+    const band = classify(v, SOLVER_SPECS[k].thresholds, SOLVER_SPECS[k].higherIsBetter);
+    if (band === "bad" || band === "unacceptable") bad[k].push(id);
+  };
+  const slots: SolverMetricKey[] = ["scaledJacobian", "skewness", "warpage", "taper", "radiusRatio"];
+
+  const mesh = new wasm.WasmMetricsMesh(model.nodeIds.subarray(0, model.nodeCount), model.coords.subarray(0, model.nodeCount * 3));
+  try {
+    for (const block of blocks) {
+      const shape = shapeOf(block.vtkCellType);
+      const dec = decompositionFor(block.vtkCellType);
+      if (!shape && !dec.corners) continue;
+      const need = shape ? Math.max(shape.corners, ...(shape.mids ? [...shape.mids.values()].map((m) => m + 1) : [0])) : dec.corners;
+      const fd = flatDecomposition(block.vtkCellType);
+      const raw = mesh.block(block.connectivity, block.count, block.stride, shape ? shape.id : 0, need, fd.kind, fd.flat);
+      const volIds: number[] = [];
+      const vols: number[] = [];
+      for (let i = 0; i < block.count; i++) {
+        const o = i * 6;
+        const id = block.entityIds[i];
+        for (let s = 0; s < 5; s++) if (!Number.isNaN(raw[o + s])) push(slots[s], raw[o + s], id);
+        if (dec.corners > 0 && !Number.isNaN(raw[o + 5])) { volIds.push(id); vols.push(raw[o + 5]); }
+      }
+      if (wanted.has("volumeRatio") && vols.length > 1) {
+        const med = median(vols.filter((v) => v > 0));
+        if (med > 0) {
+          for (let i = 0; i < vols.length; i++) {
+            push("volumeRatio", vols[i] > 0 ? Math.max(vols[i] / med, med / vols[i]) : Infinity, volIds[i]);
+          }
+        }
+      }
+    }
+  } finally {
+    mesh.free();
   }
 
   const out: MetricResult[] = [];

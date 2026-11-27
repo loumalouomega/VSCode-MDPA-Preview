@@ -1350,6 +1350,8 @@
     "bench:plot": "node scripts/bench/plot-budget.mjs",
     "bench:large-mesh": "node scripts/bench/large-mesh.mjs",
     "bench:mdpa-wasm": "node scripts/bench/mdpa-wasm-bench.mjs",
+    "bench:metrics-wasm": "node scripts/bench/metrics-wasm-bench.mjs",
+    "bench:skin-wasm": "node scripts/bench/skin-wasm-bench.mjs",
     "check:staged": "node scripts/staged/check-staged-mcp.mjs",
     "install-ext": "bash install.sh",
     "reinstall": "bash scripts/reinstall-local.sh"
