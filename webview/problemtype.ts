@@ -29,6 +29,8 @@ import {
 import { supportsRestart } from "../src/problemtype/restart";
 import { supportsMpi } from "../src/problemtype/parallel";
 import { defaultCaseState, fieldDefault, flattenValues } from "../src/problemtype/api";
+import { solverDocumentNames } from "../src/problemtype/documentNames";
+import { additionalSettingsDocuments, parsePatchText } from "../src/problemtype/additionalSettings";
 import { parseNumericText, previewParameters } from "../src/problemtype/caseExpressions";
 import {
   collectionProblems,
@@ -562,6 +564,8 @@ function render(): void {
   renderOutput(decl);
   renderRestart(decl);
   renderParallel(decl);
+  // Built after the cards: badges come from the last report, never from a rebuild.
+  applyConflictBadges();
 }
 
 /** The logo tile, name, description and summary chips above the stages. */
@@ -742,6 +746,7 @@ function renderSections(decl: ProblemtypeDeclaration): void {
     host.appendChild(form);
   });
   host.appendChild(parametersCard(decl));
+  host.appendChild(additionalSettingsCard(decl));
 }
 
 /** The case-level Parameters table: `name = expression`, usable by name in any numeric field. */
@@ -1208,6 +1213,7 @@ function appliedRow(
 ): HTMLElement {
   const box = document.createElement("div");
   box.className = "pt-assign";
+  box.dataset.smpPath = smpPath;
   if (pendingCardTag) {
     if (pendingCardTag.conditionId) box.dataset.conditionId = pendingCardTag.conditionId;
     if (pendingCardTag.lawId) box.dataset.lawId = pendingCardTag.lawId;
@@ -1725,6 +1731,104 @@ function renderMaterials(decl: ProblemtypeDeclaration): void {
   host.appendChild(form);
 }
 
+/**
+ * The Additional settings card (roadmap item 80): one raw JSON box per solver
+ * document, merged last into that document. The text is the case state; empty
+ * boxes delete their key, so a case without a patch stays byte-identical.
+ */
+function additionalSettingsCard(decl: ProblemtypeDeclaration): HTMLElement {
+  const current = state;
+  if (!current) return document.createElement("div");
+  const declared = solverDocumentNames(decl);
+  const map = current.additionalSettings ?? {};
+  const documents = additionalSettingsDocuments(decl, current);
+  const filled = documents.filter((d) => (map[d] ?? "").trim().length > 0).length;
+  const { form, body } = cardBlock({
+    key: `${decl.id}:additional-settings`,
+    title: t("Additional settings"),
+    icon: "ptSolver",
+    collapsed: true,
+    count: filled,
+  });
+  const hint = document.createElement("div");
+  hint.className = "pt-hint";
+  hint.textContent = t(
+    "A JSON object merged last into each solver document with JSON Merge Patch rules: objects merge, other values replace, null removes a key. Empty leaves the document unchanged. Preflight lists every path it changes."
+  );
+  body.appendChild(hint);
+
+  for (const doc of documents) {
+    const unknown = !declared.includes(doc);
+    const row = document.createElement("div");
+    row.className = "pt-additional";
+    const head = document.createElement("div");
+    head.className = "pt-additional-head";
+    const name = document.createElement("code");
+    name.textContent = doc;
+    head.appendChild(name);
+    if (unknown) {
+      const mark = document.createElement("span");
+      mark.className = "pt-additional-unknown";
+      mark.textContent = t("not written by this problemtype");
+      head.appendChild(mark);
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "pt-additional-remove";
+      remove.textContent = t("Remove");
+      remove.addEventListener("click", () => {
+        const settings = current.additionalSettings;
+        if (!settings) return;
+        delete settings[doc];
+        if (Object.keys(settings).length === 0) delete current.additionalSettings;
+        scheduleSend();
+        render();
+      });
+      head.appendChild(remove);
+    }
+    row.appendChild(head);
+
+    const textarea = document.createElement("textarea");
+    textarea.className = "pt-additional-text";
+    textarea.rows = 6;
+    textarea.spellcheck = false;
+    textarea.value = map[doc] ?? "";
+    textarea.setAttribute("aria-label", doc);
+    const status = document.createElement("div");
+    status.className = "pt-hint pt-additional-status";
+    const updateStatus = (): void => {
+      if (textarea.value.trim().length === 0) {
+        status.textContent = t("No changes.");
+        status.classList.remove("pt-additional-error");
+        return;
+      }
+      const parsed = parsePatchText(textarea.value, doc);
+      if (parsed.problem) {
+        status.textContent = parsed.problem.message;
+        status.classList.add("pt-additional-error");
+      } else {
+        status.textContent = t("Valid JSON object.");
+        status.classList.remove("pt-additional-error");
+      }
+    };
+    textarea.addEventListener("input", () => {
+      const settings = (current.additionalSettings ??= {});
+      if (textarea.value.trim().length === 0) {
+        delete settings[doc];
+        if (Object.keys(settings).length === 0) delete current.additionalSettings;
+      } else {
+        settings[doc] = textarea.value;
+      }
+      updateStatus();
+      scheduleSend();
+    });
+    updateStatus();
+    row.appendChild(textarea);
+    row.appendChild(status);
+    body.appendChild(row);
+  }
+  return form;
+}
+
 function renderOutput(decl: ProblemtypeDeclaration): void {
   const host = el("pt-output");
   if (!host || !state) return;
@@ -1981,6 +2085,13 @@ export interface PreflightTarget {
   propertyId?: number;
   entityKind?: "Elements" | "Conditions" | "Geometries";
   entityIds?: number[];
+  nodeIds?: number[];
+  relatedSmpPath?: string;
+  relatedConditionId?: string;
+  sharedNodeCount?: number;
+  appliedOrder?: number;
+  relatedAppliedOrder?: number;
+  valuesDiffer?: boolean;
 }
 
 let preflightFrameHandler: (smpPath: string) => void = () => {};
@@ -2008,12 +2119,89 @@ function scrollToCard(target: PreflightTarget): boolean {
     : undefined;
   if (!sel) return false;
   const cards = Array.from(document.querySelectorAll<HTMLElement>(sel));
-  const card = target.smpPath ? cards.find((c) => c.querySelector(".pt-assign-path")?.textContent === target.smpPath) ?? cards[0] : cards[0];
+  const card = target.smpPath ? cards.find((c) => c.dataset.smpPath === target.smpPath) ?? cards[0] : cards[0];
   if (!card) return false;
   card.scrollIntoView({ block: "center", behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
   card.classList.add("pt-flash");
   window.setTimeout(() => card.classList.remove("pt-flash"), 1200);
   return true;
+}
+
+/**
+ * The conflict badge on both condition cards of a shared-node finding (roadmap
+ * item 81). It is applied AFTER the form is built, from the same finding the
+ * Preflight card renders, so it never rebuilds the cards or steals focus — a
+ * report arriving while a field is being edited only adds or removes badges.
+ */
+function applyConflictBadges(): void {
+  const host = el("pt-assignments");
+  if (!host) return;
+  for (const old of Array.from(host.querySelectorAll(".pt-conflict-badge"))) old.remove();
+  const findings = lastPreflight?.findings ?? [];
+  if (findings.length === 0) return;
+  const decl = currentDecl();
+  const cards = Array.from(host.querySelectorAll<HTMLElement>(".pt-assign[data-condition-id]"));
+  const cardFor = (conditionId: string, smpPath: string): HTMLElement | undefined =>
+    cards.find((c) => c.dataset.conditionId === conditionId && c.dataset.smpPath === smpPath);
+  for (const f of findings) {
+    const target = f.target;
+    if (f.code !== "condition-shared-nodes" || !target?.conditionId || !target.smpPath || !target.relatedConditionId || !target.relatedSmpPath) continue;
+    for (const side of ["self", "related"] as const) {
+      const conditionId = side === "self" ? target.conditionId : target.relatedConditionId;
+      const smpPath = side === "self" ? target.smpPath : target.relatedSmpPath;
+      const card = cardFor(conditionId, smpPath);
+      if (card) {
+        const badge = conflictBadge(f, target, side, decl);
+        const head = card.querySelector(".pt-assign-head");
+        if (head) card.insertBefore(badge, head.nextSibling);
+        else card.prepend(badge);
+      }
+    }
+  }
+}
+
+function conflictBadge(
+  finding: PreflightFinding,
+  target: PreflightTarget,
+  side: "self" | "related",
+  decl: ProblemtypeDeclaration | undefined
+): HTMLElement {
+  const selfCondition = target.conditionId as string;
+  const selfPath = target.smpPath as string;
+  const relatedCondition = target.relatedConditionId as string;
+  const relatedPath = target.relatedSmpPath as string;
+  const clickedCondition = side === "self" ? selfCondition : relatedCondition;
+  const clickedPath = side === "self" ? selfPath : relatedPath;
+  const otherCondition = side === "self" ? relatedCondition : selfCondition;
+  const otherPath = side === "self" ? relatedPath : selfPath;
+  const otherLabel = decl?.conditions.find((c) => c.id === otherCondition)?.label ?? otherCondition;
+  const order = side === "self" ? target.appliedOrder : target.relatedAppliedOrder;
+  const otherOrder = side === "self" ? target.relatedAppliedOrder : target.appliedOrder;
+  const earlier = order !== undefined && otherOrder !== undefined ? order < otherOrder : side === "self";
+  const n = target.sharedNodeCount ?? target.entityIds?.length ?? 0;
+  const vars = { n, condition: otherLabel, part: otherPath, order: order ?? "?", otherOrder: otherOrder ?? "?" };
+  const text =
+    target.valuesDiffer === false
+      ? t("Shares {n} nodes with {condition} on {part} · process {order} and {otherOrder}, same value", vars)
+      : earlier
+      ? t("Shares {n} nodes with {condition} on {part} · process {order}, overwritten by process {otherOrder}", vars)
+      : t("Shares {n} nodes with {condition} on {part} · process {order}, wins over process {otherOrder}", vars);
+  const badge = document.createElement("button");
+  badge.type = "button";
+  badge.className = "pt-conflict-badge";
+  badge.title = finding.message;
+  badge.setAttribute("aria-label", text);
+  const mark = document.createElement("span");
+  mark.className = "pt-conflict-mark";
+  mark.setAttribute("aria-hidden", "true");
+  mark.textContent = "▲";
+  badge.append(mark, document.createTextNode(text));
+  badge.addEventListener("click", () => {
+    // The scene side only needs the shared ids; the ids above keep it tied to
+    // the clicked card if a future action also scrolls.
+    preflightTargetHandler({ ...target, conditionId: clickedCondition, smpPath: clickedPath });
+  });
+  return badge;
 }
 
 function plural(n: number, word: string): string {
@@ -2033,6 +2221,7 @@ export function setProblemtypePreflight(msg: {
   if (!msg.active) {
     box.replaceChildren();
     box.hidden = true;
+    applyConflictBadges();
     return;
   }
   const counts = msg.counts ?? {};
@@ -2062,7 +2251,7 @@ export function setProblemtypePreflight(msg: {
   rows.hidden = !preflightOpen;
   for (const f of findings) {
     const tg = f.target;
-    const actionable = !!tg && !!(tg.smpPath || tg.conditionId || tg.lawId || tg.propertyId !== undefined || (tg.entityIds && tg.entityIds.length > 0));
+    const actionable = !!tg && !!(tg.smpPath || tg.conditionId || tg.lawId || tg.propertyId !== undefined || (tg.entityIds && tg.entityIds.length > 0) || (tg.nodeIds && tg.nodeIds.length > 0));
     const row = document.createElement(actionable ? "button" : "div");
     row.className = `pt-preflight-row ${f.severity}`;
     row.title = f.code;
@@ -2081,11 +2270,12 @@ export function setProblemtypePreflight(msg: {
         // Card first (a form edit), then the scene side (frame / selection / Properties).
         scrollToCard(tg);
         if (tg.smpPath) preflightFrameHandler(tg.smpPath);
-        if (tg.propertyId !== undefined || (tg.entityIds && tg.entityIds.length > 0)) preflightTargetHandler(tg);
+        if (tg.propertyId !== undefined || (tg.entityIds && tg.entityIds.length > 0) || (tg.nodeIds && tg.nodeIds.length > 0)) preflightTargetHandler(tg);
       });
     }
     rows.appendChild(row);
   }
   box.replaceChildren(head, rows);
   box.hidden = false;
+  applyConflictBadges();
 }

@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [5.42.0] - 2026-11-27
+
+### Added
+
+- Boundary-skin extraction (`extractSkinModel`) now runs its volume-face walk in the Rust/WASM `mdpa-core` crate when available, ~5.4× faster on a 1M-tet mesh (`12.5 s → 2.3 s`); `extractSkinModelTs` stays as the fallback and test oracle (roadmap item 87, Phase 2). No behaviour change.
+- Solver element-quality metrics (scaled Jacobian, skewness, warpage, taper, radius ratio, size ratio) now run their per-cell kernels in the Rust/WASM `mdpa-core` crate when it is present, about 2.2× faster on a 848,000-cell mesh; the TypeScript implementation stays as the fallback and test oracle (roadmap item 87, Phase 2). No behaviour change.
+- **Additional solver settings per case (roadmap item 80).** The Solution stage ends with an **Additional settings** card holding one raw JSON box per solver document, merged last into the generated document with JSON Merge Patch rules: objects merge, other values replace and `null` removes. The text lives in the case state (so a half-typed value survives), empty boxes leave every built-in's output byte-identical, and the patch never touches the materials files or the driver. A malformed patch, a non-object or an unknown document name refuses Generate with the document and a line/column; Preflight lists each changed path as information and each path the form already writes as a warning, and `case_validate` returns the overridden paths as `overrides`. The required-applications scan runs after the merge. The patch is recorded verbatim in `kkss-preparation-v1.json` and `case_compare` reports it as a setting difference. Coupled problemtypes declare their documents with `solverDocuments` (CoSimulation lists all three) and take one patch per document; the Python API mirrors it as `solver_documents`. MCP: `case_write_state`/`case_generate` carry `additionalSettings`, `case_generate` reports the applied changes, and `problemtype_describe` lists `solverDocuments`.
+- **"Overridden" marker on condition cards (roadmap item 81).** A `condition-shared-nodes` finding now marks both partner assignment cards, not only the Preflight card: each badge names the other condition and SubModelPart, the 1-based positions of both processes in the generated `constraints_process_list`, which one wins (or that both fix the same value) and the full shared-node count. Clicking a badge selects the shared nodes through the existing preflight target handler; the badges are re-applied from the last report after a form rebuild, so editing is never interrupted, and removing a partner clears both on the next report. The finding carries the second card's `relatedSmpPath`/`relatedConditionId`, `sharedNodeCount`, `appliedOrder`/`relatedAppliedOrder`, `valuesDiffer`, the bounded `entityIds` and the full `nodeIds`; there is no second conflict rulebook. UI-only (`case_validate` already returns the finding). Tests: `nodeConflicts.test.ts`; Chromium `check-conflict-badges.mjs`.
+
+### Fixed
+
+- The reference-doc island tests (`doc/reference/*`) no longer fail on Windows checkouts with CRLF line endings: both the generated and the on-disk text are normalized to LF before comparing, and `applyIsland` always writes LF-only islands.
+
 ## [5.41.0] - 2026-11-17
 
 ### Changed
@@ -1598,7 +1611,8 @@ Four silent-correctness fixes. None of them threw, and none was visible in the m
 
 - Initial release: custom editor preview for `.mdpa` files.
 
-[Unreleased]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.41.0...HEAD
+[Unreleased]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.42.0...HEAD
+[5.42.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.41.0...v5.42.0
 [5.41.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.40.0...v5.41.0
 [5.40.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.39.0...v5.40.0
 [5.39.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v5.38.0...v5.39.0

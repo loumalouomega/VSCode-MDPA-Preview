@@ -26,8 +26,9 @@ import { findIsolatedNodeIds } from "../parser/isolatedNodes";
 import { surfaceDefects } from "../parser/surfaceDefects";
 import { constraintNodeIds } from "../parser/constraintsParser";
 import { subModelPartNodeIds } from "../parser/subModelPartExtract";
-import { CaseState, FieldRequirement, ProblemtypeRuntime } from "./types";
+import { CaseState, AdditionalSettingsOverride, FieldRequirement, ProblemtypeRuntime } from "./types";
 import { fieldDefault, flattenValues } from "./api";
+import { checkAdditionalSettings, previewValue, withoutInvalidAdditionalSettings } from "./additionalSettings";
 import { adviseLinearSolver, solverFindings } from "./solverAdvice";
 import { isFieldVisible } from "./layout";
 import { planCaseMesh } from "./caseMesh";
@@ -56,6 +57,23 @@ export interface FindingTarget {
   entityKind?: EntityKind;
   /** A bounded sample of entity ids (the full list stays in `mesh_quality`). */
   entityIds?: number[];
+  /** The node ids a target names, for a selection rather than a scroll (`entityIds` stays the bounded sample). */
+  nodeIds?: number[];
+  /**
+   * A second card the same finding implicates (roadmap item 81). Used by the
+   * shared-node conflict badge, which sits on both condition cards: the target
+   * above names the earlier process, `related*` names the later one.
+   */
+  relatedSmpPath?: string;
+  relatedConditionId?: string;
+  /** How many nodes the two parts share (the full count; `nodeIds` lists them all, `entityIds` is sampled). */
+  sharedNodeCount?: number;
+  /** 1-based position in the generated `constraints_process_list`. */
+  appliedOrder?: number;
+  /** The related card's position in the same list. */
+  relatedAppliedOrder?: number;
+  /** True when the two processes fix different values; false when they agree. */
+  valuesDiffer?: boolean;
 }
 
 export interface Finding {
@@ -74,6 +92,8 @@ export interface PreflightReport {
   findings: Finding[];
   /** The Kratos applications the case needs (from the dry run); absent when it was refused. */
   applications?: string[];
+  /** Paths the case's additional settings override (roadmap item 80); absent when none. */
+  overrides?: AdditionalSettingsOverride[];
 }
 
 export interface PreflightOptions {
@@ -257,15 +277,35 @@ export async function preflightCase(
   const knownPaths = new Set(subModelPartPaths(model.subModelParts));
   const partIds = new Set(partsConditionIds(decl));
 
+  // Roadmap item 80: parse the patches before the dry run, so a bad one has its
+  // own finding and the rest of the report still runs. Invalid entries are
+  // removed from the dry-run state to avoid a duplicate `generate-refused`.
+  const patchCheck = checkAdditionalSettings(decl, state);
+  for (const p of patchCheck.problems) add("error", "additional-settings-invalid", p.message);
+  const dryState = patchCheck.problems.length > 0 ? withoutInvalidAdditionalSettings(state, patchCheck) : state;
+
   let applications: string[] | undefined;
   let generatedParameters: string | undefined;
+  const overrides: AdditionalSettingsOverride[] = [];
   // --- 1. Dry run of the generator: everything it refuses on is an error. ---
   try {
-    const plan = planCaseMesh(runtime, model, state, stem, opts.isMdpaSource ?? true);
+    const plan = planCaseMesh(runtime, model, dryState, stem, opts.isMdpaSource ?? true);
     for (const w of plan.warnings) add("warning", "plan-warning", w);
-    const out = await generateCase(runtime, plan.caseModel, state, plan.caseStem);
+    const out = await generateCase(runtime, plan.caseModel, dryState, plan.caseStem);
     applications = out.applications;
     generatedParameters = out.projectParameters;
+    for (const document of out.additionalSettings?.documents ?? []) {
+      for (const change of document.changes) {
+        if (change.existing) {
+          overrides.push({ document: change.document, path: change.path, action: change.action });
+          add("warning", "additional-settings-override",
+            `Additional settings ${change.action === "remove" ? "remove" : "override"} \`${change.path}\` in \`${change.document}\`, which Generate already writes; the patch wins.`);
+        } else {
+          add("info", "additional-settings",
+            `Additional settings add \`${change.path}\` = ${previewValue(change.value)} to \`${change.document}\`.`);
+        }
+      }
+    }
     for (const w of out.warnings) {
       if (COVERED_GENERATOR_WARNING.some((re) => re.test(w))) continue;
       // A dimension mismatch in a typed value has its own code so the card can group it.
@@ -502,5 +542,5 @@ export async function preflightCase(
     .map((x) => x.f);
   const counts: Record<FindingSeverity, number> = { error: 0, warning: 0, info: 0 };
   for (const f of ordered) counts[f.severity]++;
-  return { ok: counts.error === 0, counts, findings: ordered, ...(applications ? { applications } : {}) };
+  return { ok: counts.error === 0, counts, findings: ordered, ...(applications ? { applications } : {}), ...(overrides.length > 0 ? { overrides } : {}) };
 }

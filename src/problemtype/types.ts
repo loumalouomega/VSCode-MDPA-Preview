@@ -469,6 +469,13 @@ export interface ProblemtypeDeclaration {
   /** The driver script the run launches. Absent means "MainKratos.py". */
   driverScriptName?: string;
   /**
+   * Every solver JSON document this problemtype writes, primary first,
+   * excluding the materials files and the driver (roadmap item 80). The
+   * Additional settings card offers one box per document, and a case may only
+   * patch these names. Absent means just the primary document.
+   */
+  solverDocuments?: string[];
+  /**
    * Which shipped driver a problemtype without a `mainScript` hook gets:
    * `"standard"` (MainKratos.py with the cooperative stop, the default), `"fsi"`
    * (FsiAnalysis, recording coupling iterations) or `"cosim"`
@@ -603,6 +610,12 @@ export interface CaseState {
   parallel?: ParallelState;
   /** Optional explicit Kratos output-process settings, preserved by headless workflows. */
   outputProcesses?: JsonObject;
+  /**
+   * Additional solver settings (roadmap item 80): document name → raw JSON
+   * text, merged last into that document with RFC 7386 JSON Merge Patch rules.
+   * Kept as text so a half-typed value survives; empty entries are dropped.
+   */
+  additionalSettings?: Record<string, string>;
   version: 1;
   problemtypeId: string;
   /** sectionId → fieldId → value. */
@@ -712,6 +725,31 @@ export interface ProblemtypeRuntime {
   validate(ctx: GenContext): Promise<string[]>;
 }
 
+/** One path an additional-settings patch changed (roadmap item 80). */
+export interface AdditionalSettingsChange {
+  /** The solver document the path belongs to. */
+  document: string;
+  /** Dotted path into the document, e.g. `solver_settings.echo_level`. */
+  path: string;
+  action: "set" | "remove";
+  /** True when the unpatched document already had this path (Generate also writes it). */
+  existing: boolean;
+  /** The new value for a `set`; absent for a `remove`. */
+  value?: JsonValue;
+}
+
+/** The additional-settings changes applied to a generated case. */
+export interface AdditionalSettingsReport {
+  documents: { name: string; changes: AdditionalSettingsChange[] }[];
+}
+
+/** A path a case's additional settings override; returned by preflight. */
+export interface AdditionalSettingsOverride {
+  document: string;
+  path: string;
+  action: "set" | "remove";
+}
+
 export interface GeneratedCase {
   /** Pretty-printed ProjectParameters.json text. */
   projectParameters: string;
@@ -732,4 +770,6 @@ export interface GeneratedCase {
   applications: string[];
   /** Total-force loads and the measure each was divided by (roadmap item 42); absent when none. */
   loadMeasures?: import("./totalLoad").LoadMeasure[];
+  /** Applied additional-settings changes (roadmap item 80); absent when none. */
+  additionalSettings?: AdditionalSettingsReport;
 }

@@ -54,6 +54,24 @@ const copyWasmPlugin = {
   },
 };
 
+// Rust/WASM MDPA core (roadmap item 87): ships beside dist/extension.js,
+// dist/mcpServer.js, and the workers so mdpaWasm.ts loads it synchronously
+// without touching node_modules.
+const copyMdpaCorePlugin = {
+  name: "copy-mdpa-core",
+  setup(build) {
+    build.onEnd(() => {
+      const src = path.join(__dirname, "src", "parser", "wasm", "mdpa-core");
+      const out = path.join(__dirname, "dist", "mdpa-core");
+      if (!fs.existsSync(path.join(src, "mdpa_core_bg.wasm"))) return;
+      fs.mkdirSync(out, { recursive: true });
+      for (const file of ["mdpa_core.js", "mdpa_core_bg.wasm"]) {
+        fs.copyFileSync(path.join(src, file), path.join(out, file));
+      }
+    });
+  },
+};
+
 // Python problemtypes: the pyodide runtime files are copied verbatim into
 // dist/pyodide/ (the loader locates its .wasm/.zip siblings relative to its
 // own file, so it must never be bundled — see the `external` entry), and the
@@ -242,7 +260,7 @@ const extensionConfig = {
       "mmg.cjs"
     ),
   },
-  plugins: [copyWasmPlugin, copyPyodidePlugin, copyFlowgraphPlugin, copyMeshioPlugin],
+  plugins: [copyWasmPlugin, copyMdpaCorePlugin, copyPyodidePlugin, copyFlowgraphPlugin, copyMeshioPlugin],
 };
 
 // The VTK-wasm renderer runtime (roadmap item 12): the patched glue, the wasm

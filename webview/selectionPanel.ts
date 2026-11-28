@@ -11,6 +11,9 @@ import { t } from "../src/parser/i18n/runtime";
 import { glyph } from "../src/uiGlyphs";
 import { fmt } from "./panelWidgets";
 import { SelectionSet, describeSeed } from "../src/parser/selectionCore";
+import { buildExprCompletions } from "../src/parser/formulaComplete";
+import type { FieldData } from "../src/parser/types";
+import { attachExprCompletion } from "./formulaComplete";
 
 export type SelectionMode = "single" | "box" | "lasso";
 
@@ -28,6 +31,10 @@ export interface SelectionPanelState {
   partPaths: string[];
   /** Nodal/Elemental field variable names for the field seed's name box. */
   fieldNames: string[];
+  /** Live fields for formula seed name completion. */
+  fields?: readonly FieldData[];
+  /** Live global names for formula seed name completion. */
+  globals?: readonly string[];
 }
 
 export interface SelectionPanelHandlers {
@@ -72,8 +79,13 @@ function smallBtn(label: string, title: string, handler: () => void, danger = fa
   return b;
 }
 
+let liveSelectionFields: readonly FieldData[] = [];
+let liveSelectionGlobals: readonly string[] = [];
+
 /** Refresh model-derived state without replacing draft inputs or their focus. */
 export function updateSelectionPanel(container: HTMLElement, state: SelectionPanelState): void {
+  if (state.fields) liveSelectionFields = state.fields;
+  if (state.globals) liveSelectionGlobals = state.globals;
   container.querySelectorAll<HTMLElement>(".sel-set-name").forEach((label, i) => {
     const s = state.sets[i];
     if (!s) return;
@@ -357,6 +369,15 @@ export function renderSelectionPanel(
   exprInput.title =
     "Boolean formula over x, y, z, nodal fields and globals: < <= > >= == != && || ! and + - * / ^ functions. " +
     "Example: z <= 0.0 selects the base of the model.";
+  liveSelectionFields = state.fields ?? liveSelectionFields;
+  liveSelectionGlobals = state.globals ?? liveSelectionGlobals;
+  attachExprCompletion(exprInput, () =>
+    buildExprCompletions({
+      mode: "formulaSelect",
+      fields: liveSelectionFields,
+      globals: liveSelectionGlobals,
+    })
+  );
   seedRow.appendChild(exprInput);
   const ruleSel = document.createElement("select");
   ruleSel.id = "sel-seed-rule";

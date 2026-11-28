@@ -8,17 +8,17 @@ The built-in problemtypes mirror [KratosMultiphysics/GiDInterface](https://githu
 
 | GiD app | Built-in | Notes |
 |---|---|---|
-| Structural | `structural` | formulations (small/large displacement, mixed, shells, beams, trusses, cables), static / dynamic / eigenvalue strategies, Newmark and Bossak schemes, Rayleigh damping, non-linear convergence criteria, linear solver, rotation and strain DOFs, initial conditions and loads |
-| Fluid | `fluid` | monolithic QSVMS / DVMS / FIC / VMS with BDF2 or Bossak, fractional step, wall law, custom constraints, gravity, skin / no-skin split |
-| CompressibleFluid | `compressibleFluid` | explicit compressible Navier-Stokes (2D) with shock capturing |
-| EmbeddedFluid | `embeddedFluid` | embedded formulation, distance reading, drag, MMG adaptivity; the bounding-box wizard is not reproduced |
-| FreeSurface | `freeSurface` | edge-based level set |
-| ConvectionDiffusion | `convectionDiffusion` | stationary / transient, convergence criteria, heat flux and thermal face |
-| PotentialFluid | `potentialFlow` | far field, wake, body |
-| ShallowWater | `shallowWater` | the three solvers and their schemes, adaptive time step, initial perturbation, imposed flow |
-| Buoyancy | `buoyancy` | `ThermallyCoupled` with the Boussinesq force |
-| ConjugateHeatTransfer | `conjugateHeatTransfer` | fluid and solid domains, interface lists, modelers |
-| FSI | `fsi` | partitioned Dirichlet-Neumann, ALE mesh solver, interface mapper |
+| Structural | [`structural`](../reference/problemtypes/structural) | formulations (small/large displacement, mixed, shells, beams, trusses, cables), static / dynamic / eigenvalue strategies, Newmark and Bossak schemes, Rayleigh damping, non-linear convergence criteria, linear solver, rotation and strain DOFs, initial conditions and loads |
+| Fluid | [`fluid`](../reference/problemtypes/fluid) | monolithic QSVMS / DVMS / FIC / VMS with BDF2 or Bossak, fractional step, wall law, custom constraints, gravity, skin / no-skin split |
+| CompressibleFluid | [`compressibleFluid`](../reference/problemtypes/compressibleFluid) | explicit compressible Navier-Stokes (2D) with shock capturing |
+| EmbeddedFluid | [`embeddedFluid`](../reference/problemtypes/embeddedFluid) | embedded formulation, distance reading, drag, MMG adaptivity; the bounding-box wizard is not reproduced |
+| FreeSurface | [`freeSurface`](../reference/problemtypes/freeSurface) | edge-based level set |
+| ConvectionDiffusion | [`convectionDiffusion`](../reference/problemtypes/convectionDiffusion) | stationary / transient, convergence criteria, heat flux and thermal face |
+| PotentialFluid | [`potentialFlow`](../reference/problemtypes/potentialFlow) | far field, wake, body |
+| ShallowWater | [`shallowWater`](../reference/problemtypes/shallowWater) | the three solvers and their schemes, adaptive time step, initial perturbation, imposed flow |
+| Buoyancy | [`buoyancy`](../reference/problemtypes/buoyancy) | `ThermallyCoupled` with the Boussinesq force |
+| ConjugateHeatTransfer | [`conjugateHeatTransfer`](../reference/problemtypes/conjugateHeatTransfer) | fluid and solid domains, interface lists, modelers |
+| FSI | [`fsi`](../reference/problemtypes/fsi) | partitioned Dirichlet-Neumann, ALE mesh solver, interface mapper |
 
 Saved cases from earlier versions keep working: field ids are unchanged and regrouping is purely visual.
 

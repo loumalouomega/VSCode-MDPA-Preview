@@ -607,12 +607,20 @@ async function summarizeMdpa(fsPath: string, fileSize: number): Promise<MeshSumm
   // Not a header read, and the module header says why: MDPA declares no counts,
   // so this streams the file. What it avoids is the allocation, not the I/O.
   s.cost = "scan";
-  const { MdpaSummaryScanner } = await import("./mdpaParser");
-  const scanner = new MdpaSummaryScanner();
-  s.bytesRead = await scanLines(fsPath, (line) => {
-    scanner.feedLine(line);
-  });
-  const r = scanner.finish();
+  const { isMdpaWasmAvailable, scanMdpaFileWasm } = await import("./mdpaWasm");
+  let r: import("./mdpaParser").MdpaScanResult;
+  if (isMdpaWasmAvailable()) {
+    const scanned = await scanMdpaFileWasm(fsPath);
+    s.bytesRead = scanned.bytesRead;
+    r = scanned.result;
+  } else {
+    const { MdpaSummaryScanner } = await import("./mdpaParser");
+    const scanner = new MdpaSummaryScanner();
+    s.bytesRead = await scanLines(fsPath, (line) => {
+      scanner.feedLine(line);
+    });
+    r = scanner.finish();
+  }
 
   s.nodeCount = r.nodeCount;
   s.cellCount = r.blocks.reduce((n, b) => n + b.count, 0);

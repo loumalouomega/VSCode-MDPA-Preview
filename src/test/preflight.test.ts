@@ -343,8 +343,16 @@ test("two conditions fixing the same variable on shared nodes are reported (item
   assert.match(shared[0].message, /DISPLACEMENT/);
   assert.match(shared[0].message, /1 shared node/);
   assert.match(shared[0].message, /different values/);
+  assert.match(shared[0].message, /applied later and wins/);
   assert.deepEqual(shared[0].target?.entityIds, [1]);
+  assert.deepEqual(shared[0].target?.nodeIds, [1]);
   assert.equal(shared[0].target?.conditionId, "displacement");
+  assert.equal(shared[0].target?.relatedConditionId, "displacement");
+  assert.equal(shared[0].target?.relatedSmpPath, "Unused");
+  assert.equal(shared[0].target?.sharedNodeCount, 1);
+  assert.equal(shared[0].target?.valuesDiffer, true);
+  assert.equal(shared[0].target?.appliedOrder, 1);
+  assert.equal(shared[0].target?.relatedAppliedOrder, 2);
 
   // Same values: an info, not a warning.
   state.assignments[state.assignments.length - 1].values = { value: [0, 0, 0], constrained: true };
@@ -352,6 +360,7 @@ test("two conditions fixing the same variable on shared nodes are reported (item
   shared = codes(report.findings, "condition-shared-nodes");
   assert.equal(shared[0].severity, "info");
   assert.match(shared[0].message, /same values/);
+  assert.equal(shared[0].target?.valuesDiffer, false);
 
   // Disjoint parts ("Loaded" is node 4 only) report nothing.
   state.assignments[state.assignments.length - 1] = { conditionId: "displacement", smpPath: "Loaded", values: { value: [1, 0, 0], constrained: true } };

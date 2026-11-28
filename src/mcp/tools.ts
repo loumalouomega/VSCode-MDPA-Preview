@@ -58,6 +58,7 @@ import * as path from "node:path";
 import { randomUUID } from "node:crypto";
 import { MdpaModel, EntityBlock, SubModelPart, EntityKind } from "../parser/types";
 import { parseMdpa } from "../parser/mdpaParser";
+import { isMdpaWasmAvailable } from "../parser/mdpaWasm";
 import { surfaceDefects } from "../parser/surfaceDefects";
 import { curvatureModel, gaussBonnetResidual } from "../parser/curvature";
 import { meshGraph, graphFormatOf, GRAPH_KINDS, GRAPH_FORMATS, type GraphKind, type GraphFormat } from "../parser/meshGraph";
@@ -171,6 +172,7 @@ import { findIsolatedNodeIds } from "../parser/isolatedNodes";
 import { CaseState, FieldSpec, JsonValue, MaterialAssignment, ProblemtypeRuntime, ProblemtypeSource } from "../problemtype/types";
 import { BUILTIN_PROBLEMTYPES } from "../problemtype/builtins";
 import { generateCase, subModelPartPaths } from "../problemtype/generate";
+import { solverDocumentNames } from "../problemtype/documentNames";
 import { preflightCase } from "../problemtype/preflight";
 import { readHandoff } from "../problemtype/handoffFile";
 import { handoffIdentity } from "../problemtype/handoff";
@@ -3141,7 +3143,11 @@ export async function meshCapabilities(): Promise<object> {
     // What this process actually wired (workers found beside the bundle, the
     // kernel tree's location): a packaged distribution that lost a file falls
     // back silently, and this is where that becomes visible.
-    runtime: { ...getRuntimeWiring(), meshio: meshioPackageSource() ?? null },
+    runtime: {
+      ...getRuntimeWiring(),
+      meshio: meshioPackageSource() ?? null,
+      mdpaBackend: isMdpaWasmAvailable() ? "rust-wasm" : "typescript",
+    },
     plotting: PLOT_CAPABILITIES,
     windTunnel: {
       tools: ["wind_tunnel_plan", "wind_tunnel_generate"],
@@ -3342,6 +3348,7 @@ export async function problemtypeDescribe(args: {
   return {
     declaration: runtime.decl,
     defaultState: defaultCaseState(runtime.decl),
+    solverDocuments: solverDocumentNames(runtime.decl),
     fieldUnits,
     expressions: "Numeric and vector3 fields accept a number, a unit-suffixed value (10[mm], 20[degC]) or an expression over the case's `parameters` table ({name, expr} entries in the case state); they are resolved to numbers in the field's unit at generation.",
   };
@@ -3452,6 +3459,8 @@ export async function caseValidate(args: {
     advisories: report.findings.filter((f) => f.severity !== "error").map((f) => f.message),
     counts: report.counts,
     findings: report.findings,
+    // Paths the additional settings override (roadmap item 80); empty when none.
+    overrides: report.overrides ?? [],
     // Recommended element size and the inputs it came from; absent when the problemtype has no defensible rule.
     ...(() => {
       const a = adviseElementSize(runtime.decl.id, flattenValues(runtime.decl, state), state.materials, model.bounds.min, model.bounds.max);
@@ -3647,6 +3656,7 @@ export async function caseGenerate(args: {
     renames: plan.renames,
     warnings,
     preparation: prepared.preparation,
+    ...(out.additionalSettings ? { additionalSettings: out.additionalSettings } : {}),
   };
 }
 

@@ -172,7 +172,7 @@ import { buildCapturePlan, captureBackground, captureFieldLabel, captureStepLabe
 import { composeCaptureOverlays, CaptureOverlay } from "./captureCompositor";
 import { evaluateCaption } from "../src/parser/captionTokens";
 import { cycleIndex, withinPickRadius, pickStackLabel, stepDirection, PICK_STACK_MAX } from "../src/parser/pickStack";
-import { renderScreenshotPanel } from "./screenshotPanel";
+import { renderScreenshotPanel, setCaptionCompletionContext } from "./screenshotPanel";
 import { thresholdCells } from "../src/parser/thresholdCells";
 import { blockCentroids } from "../src/parser/render/hardwareSelection";
 import { resolveEntity, resolvePick } from "../src/parser/pickResolve";
@@ -4272,8 +4272,14 @@ setPreflightFrameHandler((smpPath) => frameLayer(`smp:${smpPath}`));
 // Entity ids -> a transient-looking selection set ("Preflight"); a Properties id
 // -> the Properties editor scrolled to that set. Neither is an OpRecord.
 setPreflightTargetHandler((target) => {
-  if (target.entityKind && target.entityIds && target.entityIds.length > 0) {
-    applySelectionSeed({ name: "Preflight", kinds: { [target.entityKind]: target.entityIds } });
+  const entityIds = target.entityKind && target.entityIds?.length ? target.entityIds : undefined;
+  const nodeIds = target.nodeIds?.length ? target.nodeIds : undefined;
+  if (entityIds || nodeIds) {
+    applySelectionSeed({
+      name: "Preflight",
+      kinds: entityIds ? { [target.entityKind as string]: entityIds } : { Elements: [], Conditions: [], Geometries: [] },
+      ...(nodeIds ? { nodes: nodeIds } : {}),
+    });
   }
   if (target.propertyId !== undefined) {
     if (!propertiesVisible) showPropertiesPanel();
@@ -8246,11 +8252,17 @@ function applySelectionOverlays(): void {
       ...selectionCellsFor("Elements", s.kinds.Elements),
       ...selectionCellsFor("Conditions", s.kinds.Conditions),
       ...selectionCellsFor("Geometries", s.kinds.Geometries),
+      // Picked nodes ride the same set as one-node cells; without them a
+      // host-pushed node selection (roadmap item 81) would exist only in data.
+      ...(s.nodes ?? []).map((nid) => ({ cellType: undefined as number | undefined, nodeIds: [nid] })),
     ];
     if (cells.length === 0) continue;
     const color = SELECTION_COLORS[i % SELECTION_COLORS.length];
     // Overlays never pick (registerGlobalOverlay's rule). One layer per set.
-    addLayer(`${SEL_LAYER_PREFIX}${i}`, cells, color, true, -1, undefined, 1, true);
+    const layerId = `${SEL_LAYER_PREFIX}${i}`;
+    if (addLayer(layerId, cells, color, true, -1, undefined, 1, true) && s.nodes?.length) {
+      styleLayer(layers.get(layerId)!, { pointSize: 10 });
+    }
   }
   applySelectionVisibility();
 }
@@ -8273,7 +8285,15 @@ function applySelectionSeed(msg: Record<string, unknown>): void {
   const kinds = (msg.kinds ?? {}) as Record<string, unknown>;
   const ids = (k: string): number[] =>
     Array.isArray(kinds[k]) ? [...new Set((kinds[k] as unknown[]).filter((v): v is number => typeof v === "number" && Number.isInteger(v)))].sort((a, b) => a - b) : [];
-  const set: SelectionSet = { name, seed: { kind: "explicit" }, kinds: { Elements: ids("Elements"), Conditions: ids("Conditions"), Geometries: ids("Geometries") } };
+  const nodes = Array.isArray(msg.nodes)
+    ? [...new Set(msg.nodes.filter((v): v is number => typeof v === "number" && Number.isInteger(v)))].sort((a, b) => a - b)
+    : [];
+  const set: SelectionSet = {
+    name,
+    seed: { kind: "explicit" },
+    kinds: { Elements: ids("Elements"), Conditions: ids("Conditions"), Geometries: ids("Geometries") },
+    ...(nodes.length > 0 ? { nodes } : {}),
+  };
   const at = selectionSets.findIndex((s) => s.name === name);
   if (at >= 0) selectionSets[at] = set;
   else selectionSets.push(set);
@@ -8282,8 +8302,12 @@ function applySelectionSeed(msg: Record<string, unknown>): void {
   if (!model) return;
   refreshAndApplySelection();
   if (!selectionVisible) showSelectionPanel();
-  const n = set.kinds.Elements.length + set.kinds.Conditions.length;
-  toast(`Selection "${name}" — ${n} entit${n === 1 ? "y" : "ies"} from the host.`);
+  if (nodes.length > 0 && set.kinds.Elements.length + set.kinds.Conditions.length + set.kinds.Geometries.length === 0) {
+    toast(`Selection "${name}" — ${nodes.length} node${nodes.length === 1 ? "" : "s"} from the host.`);
+  } else {
+    const n = set.kinds.Elements.length + set.kinds.Conditions.length + set.kinds.Geometries.length;
+    toast(`Selection "${name}" — ${n} entit${n === 1 ? "y" : "ies"} from the host.`);
+  }
   render();
 }
 
@@ -8332,6 +8356,8 @@ function selectionPanelState(): SelectionPanelState {
     isolate: selectionVisibility === "isolate",
     partPaths: collectSubModelPartPaths(),
     fieldNames: fieldInfos.map((f) => f.field.variable),
+    fields: fieldInfos.map((f) => f.field),
+    globals: Object.keys(model?.globals ?? {}),
   };
 }
 
@@ -10619,6 +10645,10 @@ function captureSignature(): string {
 }
 
 function updateScreenshotPanel(): void {
+  setCaptionCompletionContext(() => ({
+    fields: fieldInfos.map((f) => f.field),
+    parts: collectSubModelPartPaths(),
+  }));
   const focus = screenshotPanelEl.contains(document.activeElement) ? (document.activeElement as HTMLElement)?.dataset.setting : undefined;
   renderScreenshotPanel(screenshotPanelEl, {
     settings: screenshotSettings, image: screenshotImage, message: screenshotMessage, busy: screenshotCapturing || recordingActive,

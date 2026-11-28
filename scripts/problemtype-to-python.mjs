@@ -151,6 +151,7 @@ const meta = {
   coupling_interfaces: decl.couplingInterfaces,
   primary_document_name: decl.primaryDocumentName,
   driver_script_name: decl.driverScriptName,
+  solver_documents: decl.solverDocuments,
   driver_template: decl.driverTemplate,
   output: { nodal_defaults: decl.output.nodalDefaults, ...(decl.output.gaussDefaults ? { gauss_defaults: decl.output.gaussDefaults } : {}) },
 };

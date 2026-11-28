@@ -32,6 +32,7 @@ import {
   groupRowsByMasterCount,
 } from "../constraintsParser";
 import { formatPropertyTable, formatPropertyValue } from "../propertiesParser";
+import { isMdpaWasmAvailable, writeMdpaWasm } from "../mdpaWasm";
 import { num } from "./writerCommon";
 
 export interface MdpaWriteOptions {
@@ -219,8 +220,8 @@ function writeSubModelPart(part: SubModelPart, lines: string[], indent: string):
   lines.push(`${indent}End SubModelPart`);
 }
 
-/** Serialises an MdpaModel to Kratos .mdpa text. */
-export function writeMdpa(model: MdpaModel, opts: MdpaWriteOptions = {}): string {
+/** Pure TypeScript serializer kept as the test oracle and fallback (roadmap item 87). */
+export function writeMdpaTs(model: MdpaModel, opts: MdpaWriteOptions = {}): string {
   const lines: string[] = [];
 
   const preserved = opts.sourceText
@@ -253,6 +254,19 @@ export function writeMdpa(model: MdpaModel, opts: MdpaWriteOptions = {}): string
   }
 
   return lines.join("\n") + "\n";
+}
+
+/** Serialises an MdpaModel to Kratos .mdpa text (Rust/WASM when available, else TS). */
+export function writeMdpa(model: MdpaModel, opts: MdpaWriteOptions = {}): string {
+  if (isMdpaWasmAvailable()) {
+    const text = writeMdpaWasm(model, opts);
+    if (opts.onWarning) {
+      warnAboutConstraints(model, opts.sourceText, opts.onWarning);
+      warnAboutProperties(model, opts.sourceText, opts.onWarning);
+    }
+    return text;
+  }
+  return writeMdpaTs(model, opts);
 }
 
 /**

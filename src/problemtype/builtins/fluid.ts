@@ -555,7 +555,7 @@ export const fluid = defineProblemtype(
         list: "auxiliar_process_list",
         target: "surface",
         category: "other",
-        icon: "ptResults",
+        icon: "results",
         help: "Integrates pressure and viscous traction over this wall and writes Fx Fy Fz (and moments) per step to <model part>_drag.dat.",
         fields: [
           { id: "referencePoint", label: "Moment reference point", type: "vector3", default: [0, 0, 0] },
@@ -582,7 +582,7 @@ export const fluid = defineProblemtype(
         list: "auxiliar_process_list",
         target: "surface",
         category: "other",
-        icon: "ptResults",
+        icon: "results",
         help: "Writes drag, lift and moment coefficients of this wall: force over the dynamic pressure times the reference area (moments also times the reference chord).",
         fields: [
           { id: "referenceArea", label: "Reference area [m²]", type: "number", default: 1.0, min: 0 },
@@ -614,7 +614,7 @@ export const fluid = defineProblemtype(
         list: "auxiliar_process_list",
         target: "surface",
         category: "other",
-        icon: "ptResults",
+        icon: "results",
         help: "Writes PRESSURE_COEFFICIENT on this part's nodes for the output: (p − p∞) over the free-stream dynamic pressure.",
         fields: [
           { id: "freestreamDensity", label: "Free-stream density [kg/m³]", type: "number", default: 1.204, min: 0 },
@@ -641,7 +641,7 @@ export const fluid = defineProblemtype(
         list: "auxiliar_process_list",
         target: "surface",
         category: "other",
-        icon: "ptResults",
+        icon: "results",
         help: "Writes Y_PLUS on this wall's faces for the output, to check the first cell height against the wall model.",
         fields: [],
         processTemplate: {
@@ -657,7 +657,7 @@ export const fluid = defineProblemtype(
         list: "auxiliar_process_list",
         target: "volume",
         category: "other",
-        icon: "ptResults",
+        icon: "results",
         noProcess: true,
         help: "Samples a statistic at the integration points over time (average, variance or third-order moment) and writes it to a file. One entry per assignment on the same part merges into a single process; a variance or third-order moment needs its average on the same part, and a vector average needs a tag per component (VELOCITY tags itself).",
         fields: [
