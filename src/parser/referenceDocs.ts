@@ -168,7 +168,10 @@ export function readmeToolsPage(tools: readonly McpToolDoc[]): ReferencePage {
 
 /** Replace (or append) the island in `existing`; a missing file gets the default page. */
 export function applyIsland(page: ReferencePage, existing: string | undefined): string {
-  const block = `${ISLAND_BEGIN(page.islandId)}\n${page.render()}\n${ISLAND_END(page.islandId)}`;
+  // Islands are always written LF-only: on a Windows (CRLF) checkout the rendered text is built
+  // from CRLF sources, and writing it verbatim would commit mixed line endings.
+  const rendered = page.render().replace(/\r\n?/g, "\n");
+  const block = `${ISLAND_BEGIN(page.islandId)}\n${rendered}\n${ISLAND_END(page.islandId)}`;
   if (existing === undefined) return `# ${page.title}\n\n${page.intro}\n\n${block}\n`;
   const b = existing.indexOf(ISLAND_BEGIN(page.islandId));
   const e = existing.indexOf(ISLAND_END(page.islandId));

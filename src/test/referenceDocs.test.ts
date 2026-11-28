@@ -15,8 +15,11 @@ const ALL_PAGES = [...REFERENCE_PAGES, mcpToolsPage(mcpTools), readmeToolsPage(m
 
 for (const page of ALL_PAGES) {
   test(`${page.file} island is current (run npm run docs:reference)`, () => {
-    const content = fs.readFileSync(path.join(root, page.file), "utf8").replace(/\r\n/g, "\n"); // Windows checkouts may use CRLF
-    assert.equal(extractIsland(page, content), page.render());
+    // Windows checkouts may use CRLF: normalize BOTH sides, since page.render() builds its
+    // text from source files (src/mcp/register.ts and friends) that are CRLF there too.
+    const content = fs.readFileSync(path.join(root, page.file), "utf8").replace(/\r\n?/g, "\n");
+    const rendered = page.render().replace(/\r\n?/g, "\n");
+    assert.equal(extractIsland(page, content), rendered);
   });
 }
 
